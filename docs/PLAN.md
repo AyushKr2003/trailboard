@@ -363,12 +363,33 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   - Shift+h/j/k/l pans a quarter window; + / - zoom ×1.25 about the middle
     (Ctrl +/- stay free for per-page zoom). Delete closes the current card
     (one undo step), Q quits (the board is saved continuously, so no question).
-  - Board keys (F, N, T, S, O, R, C, `[`, `]`, `?`, Ctrl+A, Ctrl+Z/Y) work
+  - Board keys (f, N, T, S, O, R, C, `[`, `]`, `?`, Ctrl+A, Ctrl+Z/Y) work
     whenever no page has the keys and act on the current card first.
   - Enter on a note opens its editor at the end (`tbEdit`).
-  - Not done: link hints (`f` to follow a link by keyboard), moving and
-    resizing cards by keyboard, the Menu key / Shift+F10 for the page menu,
-    keyboard selection of several cards.
+  - Not done: moving and resizing cards by keyboard, the Menu key /
+    Shift+F10 for the page menu, keyboard selection of several cards.
+- ✅ Link hints (`f`; `scene::hint`, `web::links`, `App::link_hints`). Decisions (2026-11-14):
+  - f (no page has the keys) acts on the current card, else the one in the
+    middle of the view, which becomes current. Fit moves to Shift+F (Ctrl+0
+    stays); with no card, f says there is no page.
+  - Our script (`web::links::SCRIPT`) runs in the main frame and answers with
+    one console message (`web::links::PREFIX`): the layout width, then the
+    visible part of each `a[href]` / `area[href]` with an http(s) or file URL
+    that is on screen and not covered at its middle (`elementFromPoint`), in
+    document order, at most 500. The width scales the rects to the view's CSS
+    px if the page is zoomed. Any page could send that message, so the app only
+    takes it from the card it asked; following only opens a URL beside, which a
+    page could already do with `window.open`. Iframes are not searched.
+  - The app draws the labels (accent pills at each link's start, kept inside
+    the page), so they follow the theme and stay readable at any board zoom.
+    Labels are prefix-free from the home row `asdfghjkl`, one letter shorter
+    for the first links (`scene::hint::labels`); a label follows as soon as it
+    is typed in full, no Enter. Typed letters dim; labels that no longer fit
+    hide; a letter no label continues is ignored; Backspace takes one back.
+  - Following opens the link beside its card with a trail edge (as a click
+    would) and makes the new card current, so f again walks on. Esc, any other
+    key, a click, a scroll, a navigation of the page, Read Mode, a space
+    switch or another current card cancels.
 - ✅ Keyboard-shortcut sheet: `?` with no card focused (`app::hints`). Decisions
   (2026-11-14): only when no card is focused, so `?` still types in pages; Esc,
   `?`, any other key or a click hides it, and that click/key does nothing else.
@@ -458,25 +479,39 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M6 Keyboard-driven board (Omarchy app conventions).
-**Repo state:** on `master`, committed after e076443; working tree clean.
+**Last session:** 2026-11-14. M6 Link hints (`f`).
+**Repo state:** on `master`, committed after 9617c78; working tree clean.
 **Done this session:**
-- Save as Markdown (e076443; see M5 and the notes below).
-- `scene::nav`: `Dir`, `neighbour` (directional card search); tests.
-- `app`: board mode vs page mode (`typing`, `current`, `move_current`,
-  `pan_by_key`, `zoom_by_key`, `enter_current`, `leave_page`); h/j/k/l and
-  arrows, Shift to pan, +/-, Enter/Space, Esc twice, Delete, Q; board keys act
-  on the current card; ring width shows which mode; Keyboard section in the
-  sheet; `note.html` `tbEdit` (`note::EDIT_SCRIPT`). README table.
-**Next up:** link hints (`f`: label the links of the current page and follow
-one by typing its label, opening beside), then keyboard move/resize of cards.
-These finish the keyboard story; then sticky notes (M5) and the trails
-sidebar (M6).
-Small follow-ups: Omarchy app conventions still missing: a `.desktop` entry
+- `scene::hint`: prefix-free home-row labels (`labels`) and typing state
+  (`Hints`: `type_char` → Follow / Narrowed / NoMatch, `backspace`, `shown`); tests.
+- `web::links`: the link-collecting script, its console message prefix and
+  `parse` (tests); `WebEvent::Links`, `Page::request_links`.
+- `app`: `link_hints` state; f shows them (`show_link_hints`, `got_links`),
+  keys while they're up (`link_hint_key`), `follow_link` opens beside and makes
+  the new card current, `link_hint_layer` draws the labels; cancelled on click,
+  wheel, navigation, focus change, Read Mode, space switch. Fit is now Shift+F.
+  Sheet, README, CHANGELOG updated.
+**Next up:** keyboard move/resize of the current card (e.g. a move mode with
+h/j/k/l, Shift for resize), which finishes the keyboard story; then sticky notes
+(M5) and the trails sidebar (M6).
+Small follow-ups: link hints inside iframes and for buttons/inputs (click
+or focus by label); Omarchy app conventions still missing: a `.desktop` entry
 and icon, xdg-desktop-portal file chooser for Save as Markdown, following the
 Omarchy language (i18n). Also: rename a trail from the page menu or its tag;
 animate cards to their Tidy places.
 **Notes for the next session:**
+- Link hints verified e2e (`~/.cache/trailboard-e2e-hints`, `run.sh N shot…`
+  opens `links.html`: 12 links plus a hidden, a covered, a `javascript:` and a
+  below-the-fold one). Run 1: f labelled exactly the 12 (S…L, AA AS AD AF);
+  `a` narrowed to the four A labels (A dimmed); `s` opened link 10 beside as
+  card 2 with edge 1 → 2, card 2 current; f on the link-less target page →
+  "No links in view"; h back, f, `z` ignored, Backspace, Esc cancelled;
+  Shift+F fit. Run 2: f then `d` opened link 2. Screenshots hints1, hints2,
+  none1, zoom2 checked, dark theme only.
+- Not verified: a zoomed page (Ctrl+= doesn't zoom pages yet, so the width
+  scaling is untested), a real keyboard (script keys only), light themes for
+  the labels, hints on a note's rendered links, a card woken by f
+  (asleep → loading → probably "No links yet"), crowded pages (labels overlap).
 - Keyboard verified e2e (`~/.cache/trailboard-e2e-keys`, same `run.sh`;
   seed = the export run's seed). Run 1: after Fit, j made card 3 current, l
   → 4, h → 3; N + `abc`, Esc (keys back, note 6 still current), Enter, ` def`

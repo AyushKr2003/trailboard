@@ -9,8 +9,11 @@
 //!   them (`App::typing`). h/j/k/l or arrows go to the nearest card that way
 //!   (`scene::nav`), Shift with them pans, +/- zoom, Enter/Space give the current card
 //!   the keys, Esc takes them back (the card stays current) and a second Esc lets go
-//!   of the card, Delete closes it, Q quits. Board keys (F, N, T, S, O, R, C, [, ])
+//!   of the card, Delete closes it, Q quits. Board keys (f, N, T, S, O, R, C, [, ])
 //!   act on the current card, else the one in the middle of the view.
+//! - f labels the links on the current card's page (`scene::hint`, `web::links`);
+//!   typing a label opens that link beside the card, which becomes current. Esc,
+//!   another key, a click or a scroll ends the labels. Shift+F fits everything.
 //! - Ctrl+L address bar, Ctrl+T new card, Ctrl+W close, Ctrl+Shift+T reopen,
 //!   Ctrl+R reload, Alt+←/→ back/forward, Ctrl+0 fit all.
 //! - Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y) undo/redo board edits (open, close, move,
@@ -48,6 +51,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use compositor::{Background, Layer, Quad, Renderer, Shape, Text};
+use scene::hint;
 use scene::nav::{self, Dir};
 use scene::{liveness, placement, read, selection, tidy, Camera, Change, Edge, History, Node, NodeId, Rect, Scene, Selection, TrailStep, Vec2};
 use storage::spaces::{self, SpaceId, SpaceIndex};
@@ -110,6 +114,14 @@ enum Drag {
     Page { id: NodeId, button: WebButton },
 }
 
+/// Link hints on card `id`: its visible links (rects in the page view's CSS
+/// px) and their labels, `None` until the page has answered.
+struct LinkHints {
+    id: NodeId,
+    links: Vec<(Rect, String)>,
+    hints: Option<hint::Hints>,
+}
+
 struct Card {
     page: Page,
     loading: bool,
@@ -143,6 +155,8 @@ pub struct App {
     menu: Option<ContextMenu>,
     /// The shortcut sheet (`?`) is showing.
     hints: bool,
+    /// Link hints (`f`) on a card's page: asked for, or showing labels.
+    link_hints: Option<LinkHints>,
     /// Read Mode: this card fills the window (see `scene::read`).
     read: Option<NodeId>,
     /// The current mouse press started inside the context menu.
@@ -215,6 +229,7 @@ impl App {
             omnibox: None,
             menu: None,
             hints: false,
+            link_hints: None,
             read: None,
             menu_pressed: false,
             clipboard: Clipboard::new(),
@@ -406,6 +421,7 @@ impl App {
     }
 
     fn switch_space(&mut self, to: SpaceId) {
+        self.link_hints = None;
         if to == self.spaces.active {
             self.toast(format!("{} is the only space · Ctrl+Shift+N makes another", self.spaces.active_entry().name));
             return;
@@ -417,6 +433,7 @@ impl App {
     }
 
     fn new_space(&mut self) {
+        self.link_hints = None;
         let id = self.spaces.add();
         self.unload_space();
         self.spaces.active = id;
@@ -786,6 +803,7 @@ impl App {
             return;
         }
         self.keys_in_page = false;
+        self.link_hints = None;
         if let Some(old) = self.focused.and_then(|o| self.cards.get(&o)) {
             old.page.set_focus(false);
         }
@@ -887,6 +905,145 @@ impl App {
             p.set_focus(false);
         }
         log::info!("left the page of card {:?}", self.focused.map(|f| f.0));
+    }
+
+    // ---------------------------------------------------------------- link hints
+
+    /// f: label the links on the current card's page (else the one in the
+    /// middle of the view), which becomes current. The labels show once the
+    /// page has answered (`got_links`).
+    fn show_link_hints(&mut self) {
+        let Some(id) = self.current() else {
+            self.toast("No page here to follow links on");
+            return;
+        };
+        self.selection.clear();
+        self.focus(Some(id)); // wakes it if asleep
+        self.ensure_visible(id);
+        let Some(card) = self.cards.get(&id) else {
+            self.toast("No page here to follow links on");
+            return;
+        };
+        card.page.request_links();
+        self.link_hints = Some(LinkHints { id, links: Vec::new(), hints: None });
+        log::info!("link hints asked of card {}", id.0);
+    }
+
+    /// The page of card `id` answered with its links (`width`: its layout
+    /// width in CSS px). Ignored unless hints were asked of that card.
+    fn got_links(&mut self, id: NodeId, width: f32, links: Vec<web::links::Link>) {
+        // The page may be zoomed: its CSS px are not the view's.
+        let Some((_, css)) = self.page_view(id) else { return };
+        let Some(lh) = self.link_hints.as_mut().filter(|h| h.id == id && h.hints.is_none()) else {
+            log::debug!("links from card {} not asked for", id.0);
+            return;
+        };
+        let k = css.x / width.max(1.0);
+        lh.links = links
+            .into_iter()
+            .map(|l| (Rect::new(l.rect[0] * k, l.rect[1] * k, l.rect[2] * k, l.rect[3] * k), l.url))
+            .collect();
+        if lh.links.is_empty() {
+            self.link_hints = None;
+            let loading = self.cards.get(&id).is_some_and(|c| c.loading);
+            log::info!("link hints on card {}: no links in view", id.0);
+            self.toast(if loading { "No links yet · the page is still loading" } else { "No links in view" });
+            return;
+        }
+        let h = hint::Hints::new(lh.links.len());
+        log::info!(
+            "link hints on card {}: {} links, {}",
+            id.0,
+            lh.links.len(),
+            h.labels.iter().zip(&lh.links).take(6).map(|(l, (_, u))| format!("{l}={u}")).collect::<Vec<_>>().join(" ")
+        );
+        lh.hints = Some(h);
+    }
+
+    /// A key while link hints are up. `chord`: Ctrl or Alt is held.
+    fn link_hint_key(&mut self, ev: &KeyIn, chord: bool) {
+        let Some(lh) = self.link_hints.as_mut() else { return };
+        let letter = ev.text.as_deref().and_then(|t| {
+            let mut cs = t.chars();
+            cs.next().filter(|c| cs.next().is_none() && c.is_alphabetic())
+        });
+        match (ev.named, letter, lh.hints.as_mut()) {
+            (Some(NamedKey::Backspace), _, Some(h)) if !chord => {
+                h.backspace();
+            }
+            (_, Some(c), Some(h)) if !chord => match h.type_char(c) {
+                hint::Typed::Follow(i) => {
+                    let (id, url) = (lh.id, lh.links[i].1.clone());
+                    self.link_hints = None;
+                    self.follow_link(id, &url);
+                }
+                hint::Typed::Narrowed => {}
+                hint::Typed::NoMatch => log::debug!("no link hint starts with {c:?}"),
+            },
+            // Still waiting: letters wait too, anything else gives up.
+            (_, Some(_), None) if !chord => {}
+            _ => {
+                self.link_hints = None;
+                log::info!("link hints cancelled");
+            }
+        }
+    }
+
+    /// Open `url` beside card `from`, as a click on the link would, and make
+    /// the new card current, so the next f follows on from it.
+    fn follow_link(&mut self, from: NodeId, url: &str) {
+        if self.scene.node(from).is_none() {
+            return;
+        }
+        log::info!("followed a link hint on card {} to {url}", from.0);
+        if let Some(id) = self.open_card(Rect::default(), url, Some(from)) {
+            self.focus(Some(id));
+            self.ensure_visible(id);
+        }
+    }
+
+    /// The labels of the link hints, over their links on screen.
+    fn link_hint_layer(&mut self) -> Option<Layer> {
+        let lh = self.link_hints.as_ref()?;
+        let h = lh.hints.as_ref()?;
+        let (view, _) = self.page_view(lh.id)?;
+        let th = &self.theme;
+        let ui = self.ui();
+        let scale = self.scale();
+        let size = 11.5 * ui;
+        let (pad, bh) = (size * 0.4, size * 1.45);
+        let typed_n = h.typed.chars().count();
+        let (bg, fg, done) = (rgb(th.accent(), 1.0), rgb(th.accent_foreground(), 1.0), rgb(th.accent_foreground(), 0.45));
+        let border = rgb(th.background(), 0.9);
+        let radius = th.small_radius(scale);
+        let mut items = Vec::new();
+        for (i, (rect, _)) in lh.links.iter().enumerate() {
+            if !h.shown(i) {
+                continue;
+            }
+            let Some(at) = self.page_rect_to_screen(lh.id, *rect) else { continue };
+            let label = h.labels[i].to_uppercase();
+            let (head, tail): (String, String) = (label.chars().take(typed_n).collect(), label.chars().skip(typed_n).collect());
+            items.push((at, head, tail));
+        }
+        let mut l = Layer::default();
+        let r = self.renderer.as_mut()?;
+        for (at, head, tail) in items {
+            let head_w = r.measure(&head, size, true);
+            let w = head_w + r.measure(&tail, size, true) + pad * 2.0;
+            // At the link's start, kept inside the page.
+            let x = at.x.max(view.x).min(view.right() - w).max(view.x);
+            let y = (at.y + (at.h - bh) / 2.0).max(view.y).min(view.bottom() - bh).max(view.y);
+            let b = Rect::new(x, y, w, bh);
+            l.quads.push(Quad { shape: Shape::Rect { rect: b.inflate(scale.max(1.0)), radius }, color: border, texture: None });
+            l.quads.push(Quad { shape: Shape::Rect { rect: b, radius }, color: bg, texture: None });
+            let ty = y + (bh - size * 1.3) / 2.0;
+            if !head.is_empty() {
+                l.texts.push(Text { text: head, pos: [x + pad, ty], size, color: done, clip: view, bold: true });
+            }
+            l.texts.push(Text { text: tail, pos: [x + pad + head_w, ty], size, color: fg, clip: view, bold: true });
+        }
+        Some(l)
     }
 
     // ---------------------------------------------------------------- camera
@@ -1080,6 +1237,7 @@ impl App {
 
     /// Tab: read the focused card (or the one in the middle of the view), or go back to the board.
     fn toggle_read(&mut self) {
+        self.link_hints = None;
         if self.read.is_some() {
             self.leave_read();
         } else if let Some(id) = read::pick(&self.scene, self.focused, self.camera.center) {
@@ -1235,6 +1393,9 @@ impl App {
                     }
                 }
                 WebEvent::UrlChanged { page, url } => {
+                    if self.link_hints.as_ref().is_some_and(|h| Some(h.id) == self.node_of(page)) {
+                        self.link_hints = None; // its links went with the old page
+                    }
                     if let Some(n) = self.node_of(page).and_then(|id| self.scene.node_mut(id)) {
                         n.url = url;
                         self.dirty = true;
@@ -1253,6 +1414,11 @@ impl App {
                     if over_page {
                         log::debug!("page {page} cursor {cursor:?}");
                         self.set_cursor(cursor);
+                    }
+                }
+                WebEvent::Links { page, width, links } => {
+                    if let Some(id) = self.node_of(page) {
+                        self.got_links(id, width, links);
                     }
                 }
                 WebEvent::ContextMenu { page, x, y, context } => {
@@ -1336,6 +1502,10 @@ impl App {
                 self.menu_pressed = true;
             }
             return;
+        }
+        // A press ends link hints, then does what it always does.
+        if state == ElementState::Pressed && self.link_hints.take().is_some() {
+            log::info!("link hints cancelled by a click");
         }
         // The context menu takes clicks first. A click outside closes it; a right
         // click outside still goes through so it can open a new menu.
@@ -1565,6 +1735,7 @@ impl App {
         };
         self.camera_goal = None;
         self.menu = None;
+        self.link_hints = None; // scrolling a page moves its links
         if self.mods.control_key() {
             if self.read.is_some() {
                 return; // the board isn't on screen
@@ -1616,6 +1787,14 @@ impl App {
                     self.confirm_delete = false;
                     self.toast(format!("Kept {}", self.spaces.active_entry().name));
                 }
+            }
+            return;
+        }
+        if self.link_hints.is_some() {
+            // Letters type a label; Backspace takes one back; Esc or any other
+            // key (but a modifier) ends the hints and is dropped.
+            if pressed && !matches!(ev.named, Some(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super)) {
+                self.link_hint_key(&ev, ctrl || alt);
             }
             return;
         }
@@ -1908,8 +2087,12 @@ impl App {
                     self.quit = true;
                     true
                 }
-                Some(KeyCode::KeyF) if !self.typing() && !ctrl => {
+                Some(KeyCode::KeyF) if !self.typing() && !ctrl && !alt && shift => {
                     self.fit_all();
+                    true
+                }
+                Some(KeyCode::KeyF) if !self.typing() && !ctrl && !alt && self.drag_is_idle() => {
+                    self.show_link_hints();
                     true
                 }
                 Some(KeyCode::KeyT) if !self.typing() && !ctrl && !alt && self.drag_is_idle() => {
@@ -2236,6 +2419,12 @@ impl App {
                     bold: false,
                 }],
             });
+        }
+
+        if self.read.is_none()
+            && let Some(l) = self.link_hint_layer()
+        {
+            layers.push(l);
         }
 
         if let Some(ob) = &self.omnibox {

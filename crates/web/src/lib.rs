@@ -4,6 +4,7 @@
 //! with `external_message_pump` + [`pump`], so plain `Rc`/`RefCell` are enough.
 
 pub mod keys;
+pub mod links;
 pub mod menu;
 pub mod popup;
 
@@ -28,6 +29,10 @@ pub enum WebEvent {
     ContextMenu { page: u64, x: f32, y: f32, context: menu::MenuContext },
     /// The text of note page `page` changed (sent by the note editor, see [`PageKind::Note`]).
     NoteText { page: u64, text: String },
+    /// The links visible in page `page`, answering [`Page::request_links`]:
+    /// the page's layout width in CSS px (to scale their rects to the view's)
+    /// and the links. Any page can send this, so only expect it after asking.
+    Links { page: u64, width: f32, links: Vec<links::Link> },
 }
 
 /// What a page is: a web page, or one of the app's own note editors.
@@ -671,10 +676,16 @@ wrap_display_handler! {
             _source: Option<&CefString>,
             _line: ::std::os::raw::c_int,
         ) -> ::std::os::raw::c_int {
+            let Some(message) = message.map(|m| m.to_string()) else { return 0 };
+            if let Some(body) = message.strip_prefix(links::PREFIX) {
+                if let Some((width, links)) = links::parse(body) {
+                    emit(WebEvent::Links { page: self.shared.key, width, links });
+                }
+                return 1;
+            }
             if self.shared.kind != PageKind::Note {
                 return 0;
             }
-            let Some(message) = message.map(|m| m.to_string()) else { return 0 };
             if let Some(text) = message.strip_prefix(NOTE_MESSAGE) {
                 emit(WebEvent::NoteText { page: self.shared.key, text: text.to_string() });
                 return 1; // not worth logging every keystroke
@@ -1038,6 +1049,11 @@ impl Page {
         if let Some(f) = self.browser.main_frame() {
             f.execute_java_script(Some(&CefString::from(script)), None, 0);
         }
+    }
+
+    /// Ask for the links visible in the page; they arrive as [`WebEvent::Links`].
+    pub fn request_links(&self) {
+        self.run_script(links::SCRIPT);
     }
 
     pub fn kind(&self) -> PageKind {

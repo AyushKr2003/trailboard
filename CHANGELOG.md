@@ -7,6 +7,16 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Link hints**: press f with no page having the keys to label the links
+  you can see in the current card's page (or the one in the middle of the
+  view) with short home-row labels. Type a label to open that link beside the
+  card, which becomes the current card, so f follows on from there. Backspace
+  takes a letter back; Esc, another key, a click or a scroll cancels.
+
+### Changed
+- Fit everything moved from F to Shift+F (Ctrl+0 still works), because f
+  now shows link hints.
+
 - **Keyboard-driven board**, the way Omarchy's apps work: h/j/k/l or the
   arrow keys go to the nearest card in that direction, which becomes the
   current card (thin accent ring). Enter or Space gives its page the keys

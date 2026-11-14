@@ -111,6 +111,51 @@ impl PageColours {
     }
 }
 
+/// How far a wheel notch or touchpad movement scrolls a page (`scroll`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScrollSpeed {
+    Slow,
+    Normal,
+    Fast,
+    Faster,
+}
+
+impl ScrollSpeed {
+    pub const ALL: [ScrollSpeed; 4] = [ScrollSpeed::Slow, ScrollSpeed::Normal, ScrollSpeed::Fast, ScrollSpeed::Faster];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            ScrollSpeed::Slow => "slow",
+            ScrollSpeed::Normal => "normal",
+            ScrollSpeed::Fast => "fast",
+            ScrollSpeed::Faster => "faster",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<ScrollSpeed> {
+        ScrollSpeed::ALL.into_iter().find(|c| c.id() == id)
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            ScrollSpeed::Slow => "Slow",
+            ScrollSpeed::Normal => "Normal",
+            ScrollSpeed::Fast => "Fast",
+            ScrollSpeed::Faster => "Faster",
+        }
+    }
+
+    /// Multiplier of `scroll::NOTCH` and `scroll::TOUCHPAD_GAIN`.
+    pub fn factor(self) -> f32 {
+        match self {
+            ScrollSpeed::Slow => 0.6,
+            ScrollSpeed::Normal => 1.0,
+            ScrollSpeed::Fast => 1.5,
+            ScrollSpeed::Faster => 2.2,
+        }
+    }
+}
+
 /// The choices for how many cards keep a live page.
 pub const LIVE_PAGES: [usize; 8] = [2, 3, 4, 6, 8, 10, 12, 16];
 pub const DEFAULT_LIVE_PAGES: usize = 6;
@@ -123,11 +168,18 @@ pub struct Settings {
     /// Pages opened are kept in history (text and thumbnail).
     pub history: bool,
     pub page_colours: PageColours,
+    pub scroll_speed: ScrollSpeed,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { search: SearchEngine::DuckDuckGo, live_pages: DEFAULT_LIVE_PAGES, history: true, page_colours: PageColours::Theme }
+        Settings {
+            search: SearchEngine::DuckDuckGo,
+            live_pages: DEFAULT_LIVE_PAGES,
+            history: true,
+            page_colours: PageColours::Theme,
+            scroll_speed: ScrollSpeed::Normal,
+        }
     }
 }
 
@@ -138,11 +190,12 @@ pub enum Key {
     LivePages,
     History,
     PageColours,
+    ScrollSpeed,
 }
 
 impl Key {
     /// In the panel's order.
-    pub const ALL: [Key; 4] = [Key::Search, Key::LivePages, Key::History, Key::PageColours];
+    pub const ALL: [Key; 5] = [Key::Search, Key::LivePages, Key::History, Key::PageColours, Key::ScrollSpeed];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -150,6 +203,7 @@ impl Key {
             Key::LivePages => "Pages kept awake",
             Key::History => "Keep history",
             Key::PageColours => "Page colours",
+            Key::ScrollSpeed => "Scroll speed",
         }
     }
 
@@ -160,6 +214,7 @@ impl Key {
             Key::LivePages => ("live cards memory sleep tabs browsers", Vec::new()),
             Key::History => ("record visited pages privacy pause", vec!["on", "off"]),
             Key::PageColours => ("light dark mode colour color scheme", PageColours::ALL.iter().map(|c| c.name()).collect()),
+            Key::ScrollSpeed => ("wheel touchpad mouse smooth", ScrollSpeed::ALL.iter().map(|c| c.name()).collect()),
         };
         let mut s = words.to_string();
         for v in values {
@@ -185,6 +240,7 @@ impl Settings {
             Key::LivePages => self.live_pages.to_string(),
             Key::History => if self.history { "On" } else { "Off" }.to_string(),
             Key::PageColours => self.page_colours.name().to_string(),
+            Key::ScrollSpeed => self.scroll_speed.name().to_string(),
         }
     }
 
@@ -197,6 +253,7 @@ impl Settings {
         match key {
             Key::Search => self.search = cycle(&SearchEngine::ALL, self.search, dir),
             Key::PageColours => self.page_colours = cycle(&PageColours::ALL, self.page_colours, dir),
+            Key::ScrollSpeed => self.scroll_speed = cycle(&ScrollSpeed::ALL, self.scroll_speed, dir),
             Key::History => self.history = !self.history,
             Key::LivePages => {
                 let n = self.live_pages;
@@ -227,6 +284,12 @@ mod tests {
         assert_eq!(s.search, SearchEngine::DuckDuckGo);
         s.step(Key::PageColours, 1);
         assert_eq!(s.page_colours, PageColours::Light);
+        assert!(s.step(Key::ScrollSpeed, 1));
+        assert_eq!(s.scroll_speed, ScrollSpeed::Fast);
+        s.step(Key::ScrollSpeed, -1);
+        s.step(Key::ScrollSpeed, -1);
+        s.step(Key::ScrollSpeed, -1);
+        assert_eq!(s.scroll_speed, ScrollSpeed::Faster, "wraps");
         assert!(s.step(Key::History, 1));
         assert!(!s.history);
         assert!(s.step(Key::History, -1));
@@ -257,6 +320,10 @@ mod tests {
         for c in PageColours::ALL {
             assert_eq!(PageColours::from_id(c.id()), Some(c));
         }
+        for c in ScrollSpeed::ALL {
+            assert_eq!(ScrollSpeed::from_id(c.id()), Some(c));
+        }
+        assert_eq!(Settings::default().value(Key::ScrollSpeed), "Normal");
         assert_eq!(SearchEngine::from_id("altavista"), None);
         let s = Settings::default();
         assert_eq!(s.value(Key::Search), "DuckDuckGo");

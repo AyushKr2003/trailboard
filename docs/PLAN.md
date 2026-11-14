@@ -622,6 +622,18 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     version is ignored and left alone until a setting changes.
   - `TRAILBOARD_MAX_LIVE` still wins for the run it is set in (the row says
     "5 · TRAILBOARD_MAX_LIVE"); stepping the row replaces it.
+  - *Scroll speed* (2026-11-14; Slow 0.6×, Normal, Fast 1.5×, Faster 2.2×):
+    scales page scrolling (`scene::scroll`). Pages scroll like a desktop
+    browser. Measured in a page: Chromium animates each wheel event unless
+    it carries `EVENTFLAG_PRECISION_SCROLLING_DELTA`, so a wheel notch goes
+    out as one event of 120 px and Chromium glides it (~200 ms), while
+    touchpad movement goes out precise (applied within a frame), × 4 (it was
+    1:1 surface px, the "slow scrolling"), and a flick flings on lift
+    (speed of the last 100 ms, exponential slow-down, τ 0.33 s, stops under
+    60 px/s, sent once per 60 Hz frame; any new scroll stops it). An
+    earlier try that eased notches ourselves stacked on Chromium's glide
+    (330 ms a notch) and was dropped. Wheel over an unfocused card still
+    pans the board.
   - Not yet settings: a start page for an empty board (still a random
     Wikipedia page), a custom search URL, the default card size, downloads
     folder (downloads use the desktop's folder for now), ad blocking (M8).
@@ -846,6 +858,8 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
   marks (`scene::sidebar::{toggle_pin, move_group, drop_to}`), undoable.
   Script runner gained `press` / `release` (look at a drag half-way).
 - M4 and M5 headers were 🟡 though every item was ✅; marked ✅.
+- Page scrolling like a desktop browser (`scene::scroll`, `Page::mouse_wheel`
+  `precise`), touchpad × 4 with flings, *Scroll speed* setting.
 **Next up:** M6's translations (needs a string table first), or M8 privacy
 (adblock engine), or M9 packaging. Small follow-ups: rename a trail from the
 sidebar; auto-scroll the sidebar while dragging; a downloads folder setting (needs a free-text row or a
@@ -867,6 +881,14 @@ several cards; link hints inside iframes; xdg-desktop-portal file chooser for
 Save as Markdown; i18n; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out.
 **Notes for the next session:**
+- Scrolling verified e2e (`~/.cache/trailboard-e2e-scroll`, `run.sh N`;
+  `long.html` puts `ms:scrollY` since its first wheel event in its title).
+  One notch: n=1 event, 0→120 px over ~205 ms (Chromium's glide). Flick of 6
+  × 8 surface px: each 32 px applied within ~17 ms, then a fling to ~930
+  px, done at ~1.2 s. Not verified: a real touchpad or mouse (scripted
+  deltas only; winit on Hyprland gives wheels as `LineDelta`, touchpads as
+  `PixelDelta` with `Ended` on lift, read from winit/sctk source),
+  horizontal scrolling, pages that scroll an inner element, Read Mode.
 - Sidebar pins/order verified e2e (`~/.cache/trailboard-e2e-sidebar`,
   `run.sh N shot…`; `data5` is `seed` (a v5 board) plus an edge 5→6, so
   trails Reading (1–4), P5 (5–6), sticky 7 alone). Run 5: B, End, p → "Buy

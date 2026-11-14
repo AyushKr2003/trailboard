@@ -1,6 +1,7 @@
 //! The user's settings (`scene::settings`), shared by every space:
 //! `$DATA/settings.json` =
-//! `{ "version": 1, "search": "duckduckgo", "live_pages": 6, "history": true, "page_colours": "theme" }`.
+//! `{ "version": 1, "search": "duckduckgo", "live_pages": 6, "history": true, "page_colours": "theme",
+//! "scroll_speed": "normal" }`.
 //!
 //! Each field is read on its own: a missing or unknown value (say, an engine
 //! a newer build added) keeps its default and the rest still load.
@@ -8,7 +9,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use scene::settings::{PageColours, SearchEngine, Settings};
+use scene::settings::{PageColours, ScrollSpeed, SearchEngine, Settings};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -23,6 +24,7 @@ struct SettingsFile<'a> {
     live_pages: usize,
     history: bool,
     page_colours: &'a str,
+    scroll_speed: &'a str,
 }
 
 #[derive(Deserialize)]
@@ -63,6 +65,9 @@ pub fn load_settings(data_dir: &Path) -> Settings {
     if let Some(c) = v["page_colours"].as_str().and_then(PageColours::from_id) {
         s.page_colours = c;
     }
+    if let Some(c) = v["scroll_speed"].as_str().and_then(ScrollSpeed::from_id) {
+        s.scroll_speed = c;
+    }
     s
 }
 
@@ -73,6 +78,7 @@ pub fn save_settings(data_dir: &Path, s: &Settings) -> std::io::Result<()> {
         live_pages: s.live_pages,
         history: s.history,
         page_colours: s.page_colours.id(),
+        scroll_speed: s.scroll_speed.id(),
     };
     let json = serde_json::to_vec_pretty(&file).map_err(std::io::Error::other)?;
     write_atomic(&settings_path(data_dir), &json)
@@ -86,7 +92,13 @@ mod tests {
     fn round_trip_and_bad_files() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(load_settings(dir.path()), Settings::default());
-        let s = Settings { search: SearchEngine::Kagi, live_pages: 3, history: false, page_colours: PageColours::Dark };
+        let s = Settings {
+            search: SearchEngine::Kagi,
+            live_pages: 3,
+            history: false,
+            page_colours: PageColours::Dark,
+            scroll_speed: ScrollSpeed::Faster,
+        };
         save_settings(dir.path(), &s).unwrap();
         assert_eq!(load_settings(dir.path()), s);
 

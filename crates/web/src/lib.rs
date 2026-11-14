@@ -407,6 +407,10 @@ struct PopupState {
     pixels: Vec<u8>,
 }
 
+/// `EVENTFLAG_PRECISION_SCROLLING_DELTA` (cef_types.h): a wheel event with
+/// exact pixel deltas, as from a touchpad.
+const PRECISE_SCROLL: u32 = 1 << 14;
+
 /// Chromium zoom level (factor = 1.2^level) that renders at `scale`.
 pub fn zoom_level_for(scale: f32) -> f64 {
     (scale.max(0.01) as f64).ln() / 1.2f64.ln()
@@ -1276,8 +1280,12 @@ impl Page {
         }
     }
 
-    pub fn mouse_wheel(&self, x: i32, y: i32, modifiers: u32, dx: i32, dy: i32) {
+    /// Scrolls the page at view px (`x`, `y`) by view px. `precise` marks
+    /// touchpad-like movement, which Chromium applies as is; otherwise it
+    /// animates the scroll as for a mouse wheel notch.
+    pub fn mouse_wheel(&self, x: i32, y: i32, modifiers: u32, dx: i32, dy: i32, precise: bool) {
         let (x, y) = self.shared.widget_point(x, y);
+        let modifiers = if precise { modifiers | PRECISE_SCROLL } else { modifiers };
         // Deltas are view pixels; scale them so a notch scrolls the same CSS distance.
         let s = *self.shared.scale.borrow();
         let (dx, dy) = ((dx as f32 * s).round() as i32, (dy as f32 * s).round() as i32);

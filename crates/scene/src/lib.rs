@@ -19,6 +19,7 @@ pub mod pagetext;
 pub mod palette;
 pub mod placement;
 pub mod read;
+pub mod scroll;
 pub mod selection;
 pub mod settings;
 pub mod sidebar;

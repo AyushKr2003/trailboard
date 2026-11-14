@@ -97,7 +97,7 @@ use winit::application::ApplicationHandler;
 use web::menu::{MenuAction, MenuItem};
 use web::EditCommand;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
-use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, ModifiersState, NamedKey};
 use winit::platform::wayland::WindowAttributesExtWayland;
@@ -220,6 +220,9 @@ pub struct App {
     camera: Camera,
     /// Camera we're gliding toward (fit / read mode).
     camera_goal: Option<Camera>,
+    /// Wheel and touchpad scrolling inside a page, and flings (`scene::scroll`):
+    /// to card, at view px.
+    page_scroll: scene::scroll::Scroller<(NodeId, i32, i32)>,
     /// Live browsers. A card in the scene but not here is asleep.
     cards: HashMap<NodeId, Card>,
     max_live: usize,
@@ -442,6 +445,7 @@ impl App {
             scene: Scene::new(),
             camera: Camera::default(),
             camera_goal: None,
+            page_scroll: Default::default(),
             cards: HashMap::new(),
             max_live: live_env.unwrap_or(settings.live_pages),
             settings,
@@ -1670,7 +1674,7 @@ impl App {
         self.settings = s;
         log::info!("setting {key:?} = {}", s.value(key));
         match key {
-            prefs::Key::Search => {}
+            prefs::Key::Search | prefs::Key::ScrollSpeed => {}
             prefs::Key::LivePages => {
                 self.max_live = s.live_pages;
                 self.live_from_env = false;
@@ -2357,7 +2361,7 @@ impl App {
         let Some(card) = self.cards.get(&id) else { return };
         let half = (css.y / 2.0).round() as i32;
         let (x, y) = ((css.x / 2.0) as i32, (css.y / 2.0) as i32);
-        card.page.mouse_wheel(x, y, 0, 0, if down { -half } else { half });
+        card.page.mouse_wheel(x, y, 0, 0, if down { -half } else { half }, false);
         self.link_hints = None; // scrolling moves the targets
     }
 
@@ -3499,7 +3503,7 @@ impl App {
         }
     }
 
-    fn wheel(&mut self, delta: MouseScrollDelta) {
+    fn wheel(&mut self, delta: MouseScrollDelta, phase: TouchPhase) {
         let (dx, dy, lines) = match delta {
             MouseScrollDelta::LineDelta(x, y) => (x, y, true),
             MouseScrollDelta::PixelDelta(p) => (p.x as f32, p.y as f32, false),
@@ -3537,8 +3541,20 @@ impl App {
         if let Hit::Content(id) | Hit::Grip(id) = self.hit(self.cursor)
             && Some(id) == self.focused {
                 if let (Some(card), Some((x, y))) = (self.cards.get(&id), self.page_point(id, self.cursor)) {
-                    let (px, py) = if lines { (dx * 100.0, dy * 100.0) } else { (dx, dy) };
-                    card.page.mouse_wheel(x, y, keymap::modifiers(self.mods), px as i32, py as i32);
+                    // A wheel notch goes at once and Chromium glides it;
+                    // touchpad movement goes at once, precise, and may
+                    // fling after (`tick`). See `scene::scroll`.
+                    let speed = self.settings.scroll_speed.factor();
+                    let d = Vec2::new(dx, dy);
+                    let now = if lines {
+                        self.page_scroll.wheel((id, x, y), d, speed)
+                    } else {
+                        let ended = matches!(phase, TouchPhase::Ended | TouchPhase::Cancelled);
+                        self.page_scroll.touch((id, x, y), d, speed, ended)
+                    };
+                    if now != Vec2::default() {
+                        card.page.mouse_wheel(x, y, keymap::modifiers(self.mods), now.x as i32, now.y as i32, !lines);
+                    }
                 }
                 return;
             }
@@ -4700,6 +4716,16 @@ impl App {
         l
     }
 
+    /// Sends this frame's part of a touchpad fling to its page.
+    fn step_page_scroll(&mut self, dt: f32) {
+        let Some(((id, x, y), d)) = self.page_scroll.step(dt) else { return };
+        match self.cards.get(&id) {
+            Some(card) => card.page.mouse_wheel(x, y, keymap::modifiers(self.mods), d.x as i32, d.y as i32, true),
+            // The card closed or fell asleep.
+            None => self.page_scroll.stop(),
+        }
+    }
+
     /// One iteration of app work outside winit callbacks.
     pub fn tick(&mut self, dt: f32) {
         self.run_script();
@@ -4709,6 +4735,7 @@ impl App {
         self.sync_find();
         self.autosave();
         self.step_camera(dt);
+        self.step_page_scroll(dt);
         self.sync_pages();
         self.sync_ime();
         if let Some(w) = self.window() {
@@ -5047,11 +5074,15 @@ impl App {
                     self.mouse_input(ElementState::Pressed, button);
                     self.mouse_input(ElementState::Released, button);
                 }
-                Cmd::Wheel(x, y) => self.wheel(MouseScrollDelta::LineDelta(x, y)),
+                Cmd::Wheel(x, y) => self.wheel(MouseScrollDelta::LineDelta(x, y), TouchPhase::Moved),
+                Cmd::Touchpad { dx, dy, end } => {
+                    let phase = if end { TouchPhase::Ended } else { TouchPhase::Moved };
+                    self.wheel(MouseScrollDelta::PixelDelta(PhysicalPosition::new(dx as f64, dy as f64)), phase);
+                }
                 Cmd::CtrlWheel(y) => {
                     let saved = self.mods;
                     self.mods = ModifiersState::CONTROL;
-                    self.wheel(MouseScrollDelta::LineDelta(0.0, y));
+                    self.wheel(MouseScrollDelta::LineDelta(0.0, y), TouchPhase::Moved);
                     self.mods = saved;
                 }
                 Cmd::Fit => self.fit_all(),
@@ -5410,7 +5441,7 @@ impl ApplicationHandler for App {
                     }
             }
             WindowEvent::MouseInput { state, button, .. } => self.mouse_input(state, button),
-            WindowEvent::MouseWheel { delta, .. } => self.wheel(delta),
+            WindowEvent::MouseWheel { delta, phase, .. } => self.wheel(delta, phase),
             WindowEvent::KeyboardInput { event, is_synthetic: false, .. } => self.key(KeyIn::from_winit(&event)),
             WindowEvent::Ime(ime) => self.ime(ime),
             WindowEvent::Focused(false) => self.mods = ModifiersState::empty(),

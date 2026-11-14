@@ -7,6 +7,12 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Scrolling like a desktop browser**: touchpad scrolling inside a page is
+  about 4× faster than before (it moved the page 1:1 with the fingers) and a
+  flick keeps the page going after you lift your fingers, slowing down
+  smoothly. A mouse wheel notch scrolls 120 px (was 100) with Chromium's
+  smooth glide. New *Scroll speed* setting (Ctrl+,): Slow, Normal, Fast,
+  Faster. The test script runner gains `touchpad dx dy [end]`.
 - **Trails sidebar: pins and order**: in the sidebar (B), `p` pins a trail
   (or a lone card) to the top, marked ★; Shift+J / Shift+K move a trail up
   or down, and dragging a trail's header moves it too. Pins and order are

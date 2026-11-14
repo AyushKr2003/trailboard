@@ -160,7 +160,7 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 ## 6. Handoff (updated at the end of every session)
 
 **Last session:** 2026-11-14. Built M0–M2, most of M3, persistence from M4, and the docs.
-**Repo state:** nothing committed yet. The next session makes the initial commit first.
+**Repo state:** initial commit 4e73f50 on `master`; working tree clean.
 **Next up:** M3 remaining items in order: undo/redo → live-browser cap →
 `<select>`/popup painting → IME/clipboard/context menu → multi-select.
 **Notes for the next session:**

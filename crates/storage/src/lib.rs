@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 use scene::{Camera, Scene};
 use serde::{Deserialize, Serialize};
 
-pub const BOARD_VERSION: u32 = 1;
+/// 1: cards, edges, camera. 2: adds folded trails (`scene.stacks`).
+pub const BOARD_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Board {
@@ -57,11 +58,25 @@ pub fn load_board(path: &Path) -> Result<Board, LoadError> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(LoadError::Missing),
         Err(e) => return Err(LoadError::Io(e)),
     };
-    let board: Board = serde_json::from_slice(&bytes).map_err(LoadError::Corrupt)?;
-    if board.version > BOARD_VERSION {
-        return Err(LoadError::UnsupportedVersion(board.version));
+    let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(LoadError::Corrupt)?;
+    let value = migrate_board(value)?;
+    serde_json::from_value(value).map_err(LoadError::Corrupt)
+}
+
+/// Upgrades a board file's JSON to [`BOARD_VERSION`] one step at a time.
+/// Newer versions are refused (and the file is left alone).
+pub fn migrate_board(mut v: serde_json::Value) -> Result<serde_json::Value, LoadError> {
+    loop {
+        let Some(version) = v.get("version").and_then(|n| n.as_u64()) else {
+            return Err(LoadError::Corrupt(serde::de::Error::missing_field("version")));
+        };
+        match version as u32 {
+            BOARD_VERSION => return Ok(v),
+            // Version 2 only adds `scene.stacks`, which defaults to none.
+            1 => v["version"] = 2.into(),
+            other => return Err(LoadError::UnsupportedVersion(other)),
+        }
     }
-    Ok(board)
 }
 
 pub fn save_board(path: &Path, board: &Board) -> std::io::Result<()> {
@@ -125,5 +140,40 @@ mod tests {
         let mut back = load_board(&path).unwrap().scene;
         let b = back.add_page(Rect::new(50.0, 0.0, 10.0, 10.0), "b");
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn version_1_boards_load_and_newer_ones_are_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = board_path(dir.path());
+        let mut scene = Scene::new();
+        let a = scene.add_page(Rect::new(0.0, 0.0, 10.0, 10.0), "a");
+        scene.spawn_beside(a, "b").unwrap();
+        let mut v = serde_json::to_value(Board::new(scene, Camera::default())).unwrap();
+        v["version"] = 1.into();
+        assert!(v["scene"].get("stacks").is_none());
+        fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
+        let back = load_board(&path).unwrap();
+        assert_eq!(back.version, BOARD_VERSION);
+        assert_eq!(back.scene.nodes().count(), 2);
+        assert!(back.scene.stacks().is_empty());
+
+        v["version"] = 99.into();
+        fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
+        assert!(matches!(load_board(&path), Err(LoadError::UnsupportedVersion(99))));
+    }
+
+    #[test]
+    fn stacks_are_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = board_path(dir.path());
+        let mut scene = Scene::new();
+        let a = scene.add_page(Rect::new(0.0, 0.0, 10.0, 10.0), "a");
+        let b = scene.spawn_beside(a, "b").unwrap();
+        scene.fold(b).unwrap();
+        save_board(&path, &Board::new(scene.clone(), Camera::default())).unwrap();
+        let back = load_board(&path).unwrap().scene;
+        assert_eq!(back.stacks(), scene.stacks());
+        assert!(back.is_hidden(a));
     }
 }

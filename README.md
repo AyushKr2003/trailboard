@@ -60,6 +60,8 @@ you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change th
 | Address bar / new card | Ctrl+L / Ctrl+T (or N with no page focused) |
 | Fit everything | Ctrl+0 (or F with no page focused) |
 | Tidy: lay trails out left to right, no overlaps | T (with no page focused; Ctrl+Z undoes it) |
+| Fold the trail in the middle of the view into a stack / unfold it | S (with no page focused; Ctrl+Z undoes it) |
+| Peek at the previous / next card of a stack | [ / ] (with no page focused) |
 | Back / forward / reload | Alt+← / Alt+→ / Ctrl+R |
 | Page context menu | right-click in a page (open link beside, copy link, edit, search selection) |
 | Copy / cut / paste | Ctrl+C / Ctrl+X / Ctrl+V (shared with the desktop clipboard) |
@@ -94,9 +96,9 @@ Done: live page cards, open-links-beside with trail edges, pan/zoom, move,
 resize, close/reopen, multi-select and group move, undo/redo, omnibox, zoom-aware page resolution, off-screen
 pages paused, live-browser cap, page context menu, desktop clipboard, IME input,
 board persistence, spaces (several boards with their own camera and background),
-Read Mode, Tidy.
+Read Mode, Tidy, Fold.
 
-Next: Fold, notes, trails sidebar, Ctrl+K palette,
+Next: stack outline, notes, trails sidebar, Ctrl+K palette,
 history with full-text search, ad blocking, then optional semantic search and
 an LLM-backed "Explain" panel.
 

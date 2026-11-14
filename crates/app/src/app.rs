@@ -302,9 +302,9 @@ impl App {
                 self.camera = board.camera;
                 // Pages start asleep; `sync_liveness` wakes the ones on screen, up to the cap.
                 // Stacking order stands in for recency (focusing brings a card to front).
-                self.used = self.scene.nodes().map(|n| (n.id, n.z)).collect();
+                self.used = self.scene.all_nodes().map(|n| (n.id, n.z)).collect();
                 self.use_clock = self.used.values().copied().max().unwrap_or(0);
-                log::info!("restored {} cards from {}", self.scene.nodes().count(), board_path.display());
+                log::info!("restored {} cards from {}", self.scene.all_nodes().count(), board_path.display());
                 !self.scene.is_empty()
             }
             Err(storage::LoadError::Missing) => false,
@@ -345,7 +345,7 @@ impl App {
     /// Save the current space and close its pages; keep its undo history for later.
     fn unload_space(&mut self) {
         self.save();
-        let keys: Vec<u64> = self.scene.nodes().map(|n| self.page_key(n.id)).collect();
+        let keys: Vec<u64> = self.scene.all_nodes().map(|n| self.page_key(n.id)).collect();
         if let Some(r) = self.renderer.as_mut() {
             for k in keys {
                 r.remove_page(k);
@@ -745,6 +745,49 @@ impl App {
         self.toast(format!("Tidied {} card{}", before.len(), if before.len() == 1 { "" } else { "s" }));
     }
 
+    /// S: fold the trail of the card in the middle of the view into a stack
+    /// with that card in front, or unfold it if it is a stack. One undo step.
+    fn toggle_fold(&mut self) {
+        let Some(id) = read::pick(&self.scene, None, self.camera.center) else { return };
+        if self.scene.stack_of(id).is_some() {
+            if let Some(stack) = self.scene.unfold(id) {
+                log::info!("unfold: {} card(s) around {}", stack.members.len(), id.0);
+                self.history.unfolded(&stack);
+                self.toast(format!("Unfolded {} pages", stack.members.len()));
+            }
+        } else if let Some(f) = self.scene.fold(id) {
+            log::info!("fold: {:?} in front of {}", f.members.iter().map(|m| m.0).collect::<Vec<_>>(), id.0);
+            self.history.folded(&f);
+            self.after_fold();
+            self.toast(format!("Folded {} pages · S unfolds, [ ] peek", f.members.len()));
+        } else {
+            self.toast("No trail to fold");
+            return;
+        }
+        self.dirty = true;
+    }
+
+    /// [ / ]: show the previous / next card of the stack in the middle of the view.
+    fn peek_stack(&mut self, step: isize) {
+        let Some(id) = read::pick(&self.scene, None, self.camera.center) else { return };
+        let Some(front) = self.scene.peek(id, step) else { return };
+        let stack = self.scene.stack_of(front).expect("peeked a stack");
+        log::info!("peek: card {} ({} of {})", front.0, stack.front_index() + 1, stack.members.len());
+        self.after_fold();
+        self.dirty = true;
+    }
+
+    /// Cards folded away lose focus and selection; their pages sleep in `sync_liveness`.
+    fn after_fold(&mut self) {
+        if self.focused.is_some_and(|f| self.scene.is_hidden(f)) {
+            self.focus(None);
+        }
+        let hidden: Vec<NodeId> = self.selection.ids().into_iter().filter(|id| self.scene.is_hidden(*id)).collect();
+        for id in hidden {
+            self.selection.remove(id);
+        }
+    }
+
     fn fill_view(&mut self, id: NodeId) {
         if let Some(n) = self.scene.node(id) {
             let mut goal = Camera::fit(n.frame(), self.viewport(), self.scale(), 8.0 * self.scale());
@@ -871,6 +914,12 @@ impl App {
     /// Keep at most `max_live` live browsers. Sleeping cards on screen wake only
     /// when `allow_wake` (the camera has settled), so panning doesn't start pages.
     fn sync_liveness(&mut self, allow_wake: bool) {
+        // Cards folded away in a stack never keep a live browser.
+        let folded: Vec<NodeId> = self.cards.keys().copied().filter(|id| self.scene.is_hidden(*id)).collect();
+        for id in folded {
+            log::info!("sleeping card {} (folded)", id.0);
+            self.sleep_page(id);
+        }
         let vp = self.viewport();
         let screen = Rect::new(0.0, 0.0, vp.x, vp.y);
         let candidates: Vec<liveness::Candidate> = self
@@ -1464,6 +1513,16 @@ impl App {
                     self.toggle_read();
                     true
                 }
+                Some(KeyCode::KeyS) if self.focused.is_none() && !ctrl && !alt && self.drag_is_idle() => {
+                    self.toggle_fold();
+                    true
+                }
+                Some(KeyCode::BracketLeft | KeyCode::BracketRight)
+                    if self.focused.is_none() && !ctrl && !alt && self.drag_is_idle() =>
+                {
+                    self.peek_stack(if code == Some(KeyCode::BracketLeft) { -1 } else { 1 });
+                    true
+                }
                 Some(KeyCode::Escape) if self.read.is_some() && self.drag_is_idle() => {
                     // The page sees Esc too (closes its menus); the card stays focused.
                     if let Some(p) = self.focused_page() {
@@ -1554,8 +1613,8 @@ impl App {
 
         // Trail edges under everything: a gentle S-curve from source's right edge to target's left edge.
         let mut edges = Layer::default();
-        let board_edges = if self.read.is_some() { &[][..] } else { self.scene.edges() };
-        for e in board_edges {
+        let board_edges: Vec<Edge> = if self.read.is_some() { Vec::new() } else { self.scene.visible_edges().copied().collect() };
+        for e in &board_edges {
             let (Some(a), Some(b)) = (self.scene.node(e.from), self.scene.node(e.to)) else { continue };
             let fa = self.to_screen_rect(a.frame());
             let fb = self.to_screen_rect(b.frame());
@@ -1599,6 +1658,30 @@ impl App {
             let focused = self.focused == Some(n.id);
             let card = self.cards.get(&n.id);
             let mut l = Layer::default();
+            // A stack shows the edges of up to two cards behind its front, down and to the right.
+            let stack = self.scene.stack_of(n.id).map(|s| (s.front_index() + 1, s.members.len()));
+            if let Some((_, len)) = stack {
+                // At least a few px apart, so a stack still reads when zoomed far out.
+                let step = (10.0 * k).max(5.0 * scale);
+                for i in (1..len.min(3)).rev() {
+                    let back = frame.translate(Vec2::new(step * i as f32, step * i as f32));
+                    l.quads.push(Quad {
+                        shape: Shape::Shadow { rect: back.translate(Vec2::new(0.0, 4.0 * k)), radius, blur: (14.0 * k).max(2.0) },
+                        color: th.shadow(0.3),
+                        texture: None,
+                    });
+                    l.quads.push(Quad {
+                        shape: Shape::Rect { rect: back, radius },
+                        color: rgb(th.stack_edge(), 1.0),
+                        texture: None,
+                    });
+                    l.quads.push(Quad {
+                        shape: Shape::Rect { rect: back.inflate(-(1.0 * scale).max(1.0)), radius: (radius - 1.0).max(0.0) },
+                        color: rgb(th.card(false), 1.0),
+                        texture: None,
+                    });
+                }
+            }
             l.quads.push(Quad {
                 shape: Shape::Shadow { rect: frame.translate(Vec2::new(0.0, 6.0 * k)), radius, blur: (22.0 * k).max(2.0) },
                 color: th.shadow(if focused { 0.55 } else { 0.4 }),
@@ -1669,6 +1752,10 @@ impl App {
                 let pad = 10.0 * k;
                 let title = if n.title.is_empty() { n.url.as_str() } else { n.title.as_str() };
                 let title = if asleep { format!("{title} · asleep") } else { title.to_string() };
+                let title = match stack {
+                    Some((i, len)) => format!("{i}/{len} · {title}"),
+                    None => title,
+                };
                 let clip = Rect::new(header.x + pad, header.y, (header.w - pad * 2.0 - CLOSE_W * k).max(1.0), header.h);
                 l.texts.push(Text {
                     text: title,
@@ -1690,6 +1777,29 @@ impl App {
                     color: rgb(th.dim_text(), 1.0),
                     clip: header,
                     bold: false,
+                });
+            }
+            // A stack's size on its top-left corner (clear of ×), readable at any zoom.
+            if let Some((_, len)) = stack {
+                let ui = self.ui();
+                let size = 11.0 * ui;
+                let text = len.to_string();
+                let tw = self.renderer.as_mut().map_or(size * 0.6, |r| r.measure(&text, size, true));
+                let h = size * 1.6;
+                let w = (tw + size).max(h);
+                let pill = Rect::new(frame.x - w * 0.4, frame.y - h * 0.4, w, h);
+                l.quads.push(Quad {
+                    shape: Shape::Rect { rect: pill, radius: if th.rounding > 0.0 { h / 2.0 } else { 0.0 } },
+                    color: rgb(th.accent(), 1.0),
+                    texture: None,
+                });
+                l.texts.push(Text {
+                    text,
+                    pos: [pill.x + (w - tw) / 2.0, pill.y + (h - size * 1.3) / 2.0],
+                    size,
+                    color: rgb(th.accent_foreground(), 1.0),
+                    clip: pill,
+                    bold: true,
                 });
             }
             layers.push(l);
@@ -2238,12 +2348,18 @@ impl App {
                 Cmd::Undo => self.undo(false),
                 Cmd::Redo => self.undo(true),
                 Cmd::Cards => {
-                    for n in self.scene.nodes() {
+                    for n in self.scene.all_nodes() {
                         let (r, f) = (n.rect, self.to_screen_rect(n.frame()));
                         log::info!(
-                            "script card {}: world ({:.0},{:.0} {:.0}x{:.0}) screen ({:.0},{:.0} {:.0}x{:.0}) live={} sel={} title={:?} {}",
+                            "script card {}: world ({:.0},{:.0} {:.0}x{:.0}) screen ({:.0},{:.0} {:.0}x{:.0}) live={} sel={} hidden={} title={:?} {}",
                             n.id.0, r.x, r.y, r.w, r.h, f.x, f.y, f.w, f.h, self.cards.contains_key(&n.id),
-                            self.selection.contains(n.id), n.title, n.url
+                            self.selection.contains(n.id), self.scene.is_hidden(n.id), n.title, n.url
+                        );
+                    }
+                    for st in self.scene.stacks() {
+                        log::info!(
+                            "script stack: {:?} front={} anchor=({:.0},{:.0})",
+                            st.ids().map(|i| i.0).collect::<Vec<_>>(), st.front.0, st.anchor.x, st.anchor.y
                         );
                     }
                     for e in self.scene.edges() {

@@ -7,6 +7,15 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Fold**: press S with no page focused to fold the trail in the middle of the
+  view into a stack: only the card you were looking at stays on the board, with
+  the edges of the others behind it, `2/4 ·` in its title and a count badge on
+  its corner. `[` and `]` peek at the previous and next page of the stack in
+  its place; S again unfolds the trail around the stack, as it was. The other
+  pages sleep while folded. Fold and unfold are undoable, and stacks are saved
+  with the board. Script `cards` logs folded cards (`hidden=`) and stacks.
+- Board files are now version 2 (adds stacks); version 1 boards are upgraded
+  when read and newer ones are refused, left untouched.
 - **Tidy**: press T with no page focused to lay the board out again: each trail
   reads left to right from its first page, one column per step, with nothing
   overlapping; cards without a trail line up in rows below. Card sizes are kept,

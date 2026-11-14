@@ -73,6 +73,16 @@ impl Rect {
         Rect::new(x, y, self.right().max(o.right()) - x, self.bottom().max(o.bottom()) - y)
     }
 
+    /// Top-left corner.
+    pub fn pos(&self) -> Vec2 {
+        Vec2::new(self.x, self.y)
+    }
+
+    pub fn set_pos(&mut self, p: Vec2) {
+        self.x = p.x;
+        self.y = p.y;
+    }
+
     pub fn translate(&self, d: Vec2) -> Rect {
         Rect::new(self.x + d.x, self.y + d.y, self.w, self.h)
     }

@@ -272,6 +272,11 @@ impl Theme {
         self.step(if self.light() { 0.25 } else { 0.2 })
     }
 
+    /// Outline of the cards behind a stack's front.
+    pub fn stack_edge(&self) -> Rgb {
+        self.step(0.32)
+    }
+
     pub fn divider(&self) -> Rgb {
         self.step(0.15)
     }

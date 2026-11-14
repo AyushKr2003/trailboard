@@ -2,6 +2,7 @@
 //! and the camera that views them. Pure data — no GPU or browser types — so it
 //! can be unit-tested and serialized.
 
+pub mod fold;
 pub mod geom;
 pub mod history;
 pub mod liveness;
@@ -12,6 +13,7 @@ pub mod tidy;
 
 use std::collections::BTreeMap;
 
+pub use fold::{Folded, Member, Stack};
 pub use geom::{Camera, Rect, Vec2};
 pub use history::{Change, Edit, History};
 pub use selection::Selection;
@@ -58,6 +60,9 @@ pub struct Scene {
     edges: Vec<Edge>,
     next_id: u64,
     next_z: u64,
+    /// Folded trails (`fold`). Absent in boards saved before stacks.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    stacks: Vec<Stack>,
 }
 
 impl Scene {
@@ -89,6 +94,7 @@ impl Scene {
     /// Removes a card and its trail edges, returning both so the card can be restored.
     pub fn remove(&mut self, id: NodeId) -> Option<(Node, Vec<Edge>)> {
         let node = self.nodes.remove(&id)?;
+        self.forget_in_stacks(id, node.rect.pos());
         let (gone, kept) = self.edges.drain(..).partition(|e| e.from == id || e.to == id);
         self.edges = kept;
         Some((node, gone))
@@ -129,12 +135,24 @@ impl Scene {
         self.nodes.get_mut(&id)
     }
 
+    /// Cards on the board, in id order: every card but those folded away in a stack.
     pub fn nodes(&self) -> impl Iterator<Item = &Node> {
+        self.nodes.values().filter(|n| !self.is_hidden(n.id))
+    }
+
+    /// Every card, folded away or not.
+    pub fn all_nodes(&self) -> impl Iterator<Item = &Node> {
         self.nodes.values()
     }
 
+    /// Every trail edge, including those between folded cards.
     pub fn edges(&self) -> &[Edge] {
         &self.edges
+    }
+
+    /// Edges between two cards on the board (neither folded away).
+    pub fn visible_edges(&self) -> impl Iterator<Item = &Edge> {
+        self.edges.iter().filter(|e| !self.is_hidden(e.from) && !self.is_hidden(e.to))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -143,7 +161,7 @@ impl Scene {
 
     /// Nodes ordered back to front.
     pub fn draw_order(&self) -> Vec<&Node> {
-        let mut v: Vec<&Node> = self.nodes.values().collect();
+        let mut v: Vec<&Node> = self.nodes().collect();
         v.sort_by_key(|n| n.z);
         v
     }
@@ -158,8 +176,7 @@ impl Scene {
 
     /// Topmost card whose frame (title bar + content) contains `p`.
     pub fn topmost_at(&self, p: Vec2) -> Option<NodeId> {
-        self.nodes
-            .values()
+        self.nodes()
             .filter(|n| n.frame().contains(p))
             .max_by_key(|n| n.z)
             .map(|n| n.id)
@@ -167,7 +184,7 @@ impl Scene {
 
     /// Bounding box of every card frame, if any.
     pub fn bounds(&self) -> Option<Rect> {
-        self.nodes.values().map(Node::frame).reduce(|a, b| a.union(&b))
+        self.nodes().map(Node::frame).reduce(|a, b| a.union(&b))
     }
 }
 

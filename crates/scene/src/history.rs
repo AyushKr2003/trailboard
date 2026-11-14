@@ -1,11 +1,12 @@
-//! Undo/redo for board edits: opening, closing, moving and resizing cards.
+//! Undo/redo for board edits: opening, closing, moving and resizing cards, and
+//! folding or unfolding trails. Peeking through a stack is not an edit.
 //!
 //! Each stack holds the edit that reverses an action. Applying an edit to the
 //! scene returns its own reverse, which goes on the other stack, so undo and
 //! redo share one code path. Page navigation, titles and stacking order are not
 //! board edits and are not recorded.
 
-use crate::{Edge, Node, NodeId, Rect, Scene};
+use crate::{Edge, Folded, Node, NodeId, Rect, Scene, Stack};
 
 /// Most actions kept for undo.
 pub const LIMIT: usize = 200;
@@ -18,6 +19,10 @@ pub enum Edit {
     Insert { node: Node, edges: Vec<Edge> },
     /// Remove a card.
     Remove(NodeId),
+    /// Fold an unfolded stack again, as it was.
+    Refold(Stack),
+    /// Unfold the stack holding this card.
+    Unfold(NodeId),
     /// Several edits undone and redone as one step, applied in order.
     Batch(Vec<Edit>),
 }
@@ -48,6 +53,18 @@ impl Edit {
             Edit::Remove(id) => {
                 let (node, edges) = scene.remove(id)?;
                 Some((Edit::Insert { node, edges }, vec![Change::Removed(id)]))
+            }
+            Edit::Refold(stack) => {
+                let front = stack.front;
+                scene.refold(stack).then(|| {
+                    let front = scene.stack_of(front).map_or(front, |s| s.front);
+                    (Edit::Unfold(front), vec![Change::Moved(front)])
+                })
+            }
+            Edit::Unfold(id) => {
+                let stack = scene.unfold(id)?;
+                let front = stack.front;
+                Some((Edit::Refold(stack), vec![Change::Moved(front)]))
             }
             Edit::Batch(edits) => {
                 let mut reverse = Vec::new();
@@ -109,6 +126,19 @@ impl History {
         // Restore in reverse: an edge between two closed cards went with the first.
         let edits = closed.into_iter().rev().map(|(node, edges)| Edit::Insert { node, edges }).collect();
         self.push_group(edits);
+    }
+
+    /// A trail was folded ([`Scene::fold`]). Undo unfolds it and folds again
+    /// any stack the fold took in.
+    pub fn folded(&mut self, f: &Folded) {
+        let mut edits = vec![Edit::Unfold(f.front)];
+        edits.extend(f.unfolded.iter().cloned().map(Edit::Refold));
+        self.push_group(edits);
+    }
+
+    /// A stack was unfolded; `stack` is what [`Scene::unfold`] returned.
+    pub fn unfolded(&mut self, stack: &Stack) {
+        self.push(Edit::Refold(stack.clone()));
     }
 
     pub fn can_undo(&self) -> bool {
@@ -328,5 +358,33 @@ mod tests {
             h.opened(id);
         }
         assert_eq!(h.undo.len(), LIMIT);
+    }
+
+    #[test]
+    fn fold_and_unfold_undo_and_redo() {
+        let (mut s, mut h, a) = board();
+        let b = s.spawn_beside(a, "b").unwrap();
+        let snapshot = |s: &Scene| s.all_nodes().map(|n| (n.id, n.rect)).collect::<Vec<_>>();
+        let before = snapshot(&s);
+        let f = s.fold(b).unwrap();
+        h.folded(&f);
+        assert_eq!(h.undo(&mut s), vec![Change::Moved(b)]);
+        assert!(s.stacks().is_empty());
+        assert_eq!(snapshot(&s), before);
+        h.redo(&mut s);
+        assert!(s.is_hidden(a));
+        let stack = s.unfold(a).unwrap();
+        h.unfolded(&stack);
+        h.undo(&mut s);
+        assert_eq!(s.stack_of(a).map(|st| st.front), Some(b));
+
+        // Peek, unfold, undo: the stack comes back exactly where it was.
+        s.peek(b, 1);
+        let peeked = snapshot(&s);
+        let stack = s.unfold(a).unwrap();
+        h.unfolded(&stack);
+        h.undo(&mut s);
+        assert_eq!(snapshot(&s), peeked);
+        assert_eq!(s.stack_of(b).map(|st| st.front), Some(a));
     }
 }

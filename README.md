@@ -41,6 +41,20 @@ cargo build --release && ./scripts/install-desktop.sh
 xdg-settings set default-web-browser trailboard.desktop   # optional
 ```
 
+To make a self-contained folder that runs on another machine (the release
+binary with CEF's runtime beside it, ~380 MB; `--tar` also packs a ~150 MB
+`.tar.zst`):
+
+```sh
+./scripts/bundle.sh --tar                     # -> target/bundle/trailboard-VERSION-x86_64/
+./target/bundle/trailboard-*/trailboard --version
+./scripts/install-desktop.sh target/bundle/trailboard-*-x86_64/trailboard   # optional
+```
+
+`trailboard --help` lists the options. If Trailboard panics, a report (version,
+message, backtrace) is appended to `crash.log` in the data folder below, and
+the next start says so once.
+
 Starting Trailboard again while it runs (from the launcher, a shell or a link
 in another app) opens the given pages as new cards in the running window, in
 the space on screen, and exits. Arguments can be URLs, hosts, search words or

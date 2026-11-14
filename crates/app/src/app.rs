@@ -299,6 +299,7 @@ pub struct App {
     /// The cookie jar of the active space when it is private.
     jar: Option<web::Jar>,
     /// Short message at the top of the window, until it expires.
+    /// Message and when it goes.
     toast: Option<(String, Instant)>,
     /// Waiting for Enter to do something that can't be undone.
     confirm: Option<Confirm>,
@@ -642,9 +643,24 @@ impl App {
     }
 
     fn toast(&mut self, msg: impl Into<String>) {
+        self.toast_for(msg, TOAST_FOR);
+    }
+
+    fn toast_for(&mut self, msg: impl Into<String>, show: Duration) {
         let msg = msg.into();
         log::info!("toast: {msg}");
-        self.toast = Some((msg, Instant::now()));
+        self.toast = Some((msg, Instant::now() + show));
+    }
+
+    /// Tell, once, that the last run crashed and where its report is.
+    pub fn note_crash(&mut self, log: &std::path::Path) {
+        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+        let shown = match home.as_deref().and_then(|h| log.strip_prefix(h).ok()) {
+            Some(rest) => format!("~/{}", rest.display()),
+            None => log.display().to_string(),
+        };
+        // Longer than a toast: it comes up while the window is still opening.
+        self.toast_for(format!("Trailboard closed unexpectedly last time · report in {shown}"), Duration::from_secs(8));
     }
 
     /// "Name (2 of 3)" for the active space, "Name · Private" or
@@ -4597,7 +4613,7 @@ impl App {
             layers.push(self.pill(msg, pos, size, None, false));
         }
         if let Some((msg, at)) = &self.toast {
-            if self.confirm.is_some() || at.elapsed() < TOAST_FOR {
+            if self.confirm.is_some() || Instant::now() < *at {
                 if self.omnibox.is_none() {
                     let size = 15.0 * ui;
                     let msg = msg.clone();
@@ -5281,6 +5297,7 @@ impl App {
                     self.new_card_at_center(&url);
                 }
                 Cmd::Log(msg) => log::info!("script log: {msg} (cards={}, edges={})", self.scene.nodes().count(), self.scene.edges().len()),
+                Cmd::Panic => panic!("script: panic on purpose"),
                 Cmd::Quit => self.quit = true,
             }
         }

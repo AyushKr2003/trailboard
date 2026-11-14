@@ -7,6 +7,15 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **A self-contained build**: `scripts/bundle.sh` makes a folder with the
+  release binary and the Chromium runtime beside it (with `--tar`, a
+  `.tar.zst` of it, about 150 MB) that runs from wherever it is unpacked;
+  `scripts/install-desktop.sh` can point the launcher entry at it.
+- **`trailboard --version` and `--help`**, answered without starting the
+  browser (and never handed to a Trailboard that is already running).
+- **Crash reports**: if Trailboard panics, a report with the version, the
+  message and a backtrace is added to `crash.log` in the data folder, and the
+  next start says so once.
 - **Scrolling like a desktop browser**: touchpad scrolling inside a page is
   about 4× faster than before (it moved the page 1:1 with the fingers) and a
   flick keeps the page going after you lift your fingers, slowing down

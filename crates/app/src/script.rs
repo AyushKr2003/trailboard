@@ -35,6 +35,7 @@
 //! palette              # log the Ctrl+K palette: query, highlight, each result row and where to click it
 //! open https://…       # same as Ctrl+T + Enter
 //! log some note        # print to the log (marks screenshot moments)
+//! panic               # panic on purpose (tests the crash report)
 //! quit
 //! ```
 
@@ -80,6 +81,7 @@ pub enum Cmd {
     Find,
     Open(String),
     Log(String),
+    Panic,
     Quit,
 }
 
@@ -152,6 +154,7 @@ fn parse(line: &str) -> Option<Cmd> {
         "find" => Cmd::Find,
         "open" => Cmd::Open(rest.trim().to_string()),
         "log" => Cmd::Log(rest.trim().to_string()),
+        "panic" => Cmd::Panic,
         "quit" => Cmd::Quit,
         other => {
             log::warn!("script: unknown command {other:?}");

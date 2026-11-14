@@ -33,6 +33,52 @@ pub fn target(arg: &str, cwd: &Path, engine: SearchEngine) -> Option<String> {
     omnibox::resolve(arg, engine)
 }
 
+/// What a command line asks for before anything starts.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Command {
+    /// Open the window (with these arguments' pages).
+    Run,
+    /// `--version` / `-V`: print the version and exit.
+    Version,
+    /// `--help` / `-h`: print the usage and exit.
+    Help,
+}
+
+/// Read the arguments after the program name. `--version` and `--help` win
+/// anywhere before a `--`; other switches are left to Chromium (its helper
+/// processes re-run this binary with `--type=…`).
+pub fn command<S: AsRef<str>>(args: &[S]) -> Command {
+    for a in args {
+        match a.as_ref() {
+            "--" => break,
+            "--version" | "-V" => return Command::Version,
+            "--help" | "-h" => return Command::Help,
+            _ => {}
+        }
+    }
+    Command::Run
+}
+
+/// `trailboard 0.1.0 (CEF …)`, for `--version` and crash reports.
+pub fn version_line() -> String {
+    format!("trailboard {} (CEF {})", env!("CARGO_PKG_VERSION"), web::engine_version())
+}
+
+pub const USAGE: &str = "\
+Usage: trailboard [URL | FILE | WORDS]...
+
+Opens each argument as a card: a URL, a file or folder (relative to the
+current directory), a host name, or words to search for. With Trailboard
+already running, the pages open in its window.
+
+Options:
+  -h, --help     Show this help and exit
+  -V, --version  Show the version and exit
+
+Data (board, history, settings, crash.log) is kept in
+$XDG_DATA_HOME/trailboard (default ~/.local/share/trailboard).
+";
+
 /// `file://` URL of an absolute path, with the bytes a URL path can't hold
 /// percent-encoded.
 fn file_url(path: &Path) -> String {
@@ -50,6 +96,19 @@ fn file_url(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn version_and_help_switches() {
+        assert_eq!(command::<&str>(&[]), Command::Run);
+        assert_eq!(command(&["example.com"]), Command::Run);
+        assert_eq!(command(&["--version"]), Command::Version);
+        assert_eq!(command(&["a.com", "-V"]), Command::Version);
+        assert_eq!(command(&["-h"]), Command::Help);
+        assert_eq!(command(&["--help", "--version"]), Command::Help);
+        assert_eq!(command(&["--", "--version"]), Command::Run);
+        assert_eq!(command(&["--type=renderer", "--lang=en-US"]), Command::Run);
+        assert!(version_line().starts_with(&format!("trailboard {} (CEF ", env!("CARGO_PKG_VERSION"))));
+    }
 
     #[test]
     fn urls_hosts_and_searches() {

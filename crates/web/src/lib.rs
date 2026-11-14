@@ -291,6 +291,12 @@ pub enum Startup {
     Handed,
 }
 
+/// The CEF build this was compiled against, e.g.
+/// `156.0.26+g8ea0c73+chromium-156.0.8078.88`. Needs no running CEF.
+pub fn engine_version() -> &'static str {
+    std::ffi::CStr::from_bytes_with_nul(sys::CEF_VERSION).ok().and_then(|c| c.to_str().ok()).unwrap_or("unknown")
+}
+
 /// Must run first in `main`. Handles CEF helper subprocesses (which re-execute
 /// this same binary) and initializes CEF in the browser process.
 pub fn start(cef_dir: &Path, cache_dir: &Path) -> Result<Startup, String> {

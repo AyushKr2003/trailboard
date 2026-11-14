@@ -809,10 +809,40 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
 - Cookie-banner auto-reject (cosmetic rules + known CMP actions).
 - Per-site "disable protections" toggle.
 
-### M9: Packaging and release ⬜
-- Release build profile, bundle layout (binary + CEF files + locales), `.desktop` file, icon.
-- AUR `PKGBUILD` (Arch/Omarchy first), then AppImage/Flatpak.
-- Crash logging to a local file; `--version`; first-run defaults.
+### M9: Packaging and release 🟡
+- ✅ Bundle layout (`scripts/bundle.sh [--tar]`): `target/bundle/trailboard-VERSION-ARCH/`
+  holds the release binary, CEF's runtime files and locales beside it,
+  `share/applications/trailboard.desktop`, the icon, README, CHANGELOG and
+  `CEF-CREDITS.html`. Decisions (2026-11-14):
+  - The binary carries `$ORIGIN` in its rpath (`crates/app/build.rs`, committed),
+    after the developer's `CEF_PATH` rpath from the local `.cargo/config.toml`;
+    `cef_dir()` already used CEF files next to the executable. So the plain
+    `cargo build --release` output is what gets bundled; no separate target dir
+    or RUSTFLAGS (which would rebuild everything). The extra developer path is
+    harmless where it doesn't exist; a packager's build (no local config) has
+    only `$ORIGIN`.
+  - `libcef.so` ships stripped (`strip --strip-unneeded`: 1.4 GB → ~250 MB);
+    folder ~384 MB, `.tar.zst` ~152 MB. All locales are kept (for UI
+    translations later and Chromium's own pages).
+  - `chrome-sandbox` is left out: Trailboard runs Chromium with `no_sandbox`
+    (as it always has). Turning the sandbox on is its own item (below).
+  - Default release profile, no LTO: the 7.6 GB machine and build time matter
+    more than a smaller 17 MB binary next to 250 MB of CEF. Revisit for the AUR.
+- ✅ `--version` / `-V` (`trailboard 0.1.0 (CEF 156.0.26+…)`) and `--help` / `-h`,
+  answered before CEF starts, so a running Trailboard is never handed them
+  (`launch::command`). The version line is also logged at start.
+- ✅ Crash reports: a panic hook (`app::crash`, both the browser process and
+  CEF helpers running our binary) appends time, version, thread, place,
+  message and backtrace to `$DATA/crash.log` (`storage::crash`, newest
+  reports within 256 KB, backtrace cut at 48 KB) after the usual stderr
+  message, and leaves `crash-unseen`; the next start shows "Trailboard closed
+  unexpectedly last time · report in …" for 8 s and clears the mark. Not
+  caught: crashes inside Chromium (signals); those still go to stderr.
+- ⬜ AUR `PKGBUILD` (Arch/Omarchy first; install to `/usr/lib/trailboard` with
+  a `/usr/bin` link), then AppImage/Flatpak.
+- ⬜ Chromium's sandbox (`chrome-sandbox` setuid or user namespaces) instead of `no_sandbox`.
+- ⬜ First-run defaults (a start page or a short guide card on an empty board).
+- ⬜ Licence files (`LICENSE-MIT`, `LICENSE-APACHE`: the copyright line is the owner's call).
 
 ### M10: Optional extras ⬜
 See [FUTURE.md](FUTURE.md): semantic search, Explain with your own LLM key, imports, extensions.
@@ -850,18 +880,22 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M6 trails sidebar: pins and order.
-**Repo state:** on `master`, committed after e4014ca; working tree clean.
+**Last session:** 2026-11-14. M9 packaging, first slice.
+**Repo state:** on `master`, committed after 451afd7; working tree clean.
 **Done this session:**
-- Sidebar pins and order (M6, board v6): `p` pins / unpins, Shift+J/K move a
-  trail, drag a header to move it; stored as `pinned` / `place` on trail
-  marks (`scene::sidebar::{toggle_pin, move_group, drop_to}`), undoable.
-  Script runner gained `press` / `release` (look at a drag half-way).
-- M4 and M5 headers were 🟡 though every item was ✅; marked ✅.
-- Page scrolling like a desktop browser (`scene::scroll`, `Page::mouse_wheel`
-  `precise`), touchpad × 4 with flings, *Scroll speed* setting.
-**Next up:** M6's translations (needs a string table first), or M8 privacy
-(adblock engine), or M9 packaging. Small follow-ups: rename a trail from the
+- `scripts/bundle.sh [--tar]`: a self-contained folder (binary + stripped
+  CEF runtime + desktop entry + icon), runs from anywhere thanks to an
+  `$ORIGIN` rpath from `crates/app/build.rs`.
+- `--version` / `--help` before CEF starts (`launch::command`); version
+  logged at start; `web::engine_version()`.
+- Crash reports to `$DATA/crash.log` from a panic hook (`app::crash`,
+  `storage::crash`), told once at the next start (an 8 s toast; toasts now
+  store their end time, `toast_for`). Script runner gained `panic`.
+**Next up:** the AUR `PKGBUILD` (M9; builds with `cargo build --release`
+without the local `.cargo/config.toml`, so `CEF_PATH` must come from the
+package's own CEF download, installs the bundle layout to
+`/usr/lib/trailboard`), or M6's translations (needs a string table first), or
+M8 privacy (adblock engine). Small follow-ups: rename a trail from the
 sidebar; auto-scroll the sidebar while dragging; a downloads folder setting (needs a free-text row or a
 folder picker via xdg-desktop-portal); a progress mark on the board while
 downloads run; ask before quitting with downloads running; pause/resume;
@@ -879,8 +913,23 @@ badge on a zoomed card's title bar; Ctrl+scroll inside a page to zoom it;
 Shift+Enter in the palette to open beside; rename a trail from its tag; keyboard selection of
 several cards; link hints inside iframes; xdg-desktop-portal file chooser for
 Save as Markdown; i18n; animate cards to their Tidy places; a sticky note's
-strip is hard to hit when zoomed far out.
+strip is hard to hit when zoomed far out; open `crash.log` from the crash
+toast or a palette command.
 **Notes for the next session:**
+- Packaging verified (`~/.cache/trailboard-e2e-bundle`: `run/` is a copy of
+  the bundle, `data/` the isolated `XDG_DATA_HOME`, `s1.txt` ends in
+  `panic`). `scripts/bundle.sh --tar` took 1m45 (release build from a warm
+  cache). Run 1 under `unshare -rm` with a tmpfs over `~/.local/share/cef`, so
+  only the bundle's CEF could load: page card live, titled, then `panic` →
+  exit 101, report with a symbolized backtrace in `crash.log`, `crash-unseen`
+  left; no leftover processes. (Under the user namespace Chromium logs many
+  D-Bus errors; harmless there.) Run 2: board restored, toast logged, mark
+  cleared. Run 4 (debug build, mark touched): screenshot `shot4.png` shows the
+  toast at the top, fitting a 941 px window, dark theme only. Not verified:
+  the bundle on another machine or distro (missing system libraries such as
+  nss/gtk3 would show as a loader error), a panic inside a CEF callback or a
+  renderer helper (the hook is installed before `web::start`, so it should
+  run, then the FFI boundary aborts), `--tar` extraction elsewhere.
 - Scrolling verified e2e (`~/.cache/trailboard-e2e-scroll`, `run.sh N`;
   `long.html` puts `ms:scrollY` since its first wheel event in its title).
   One notch: n=1 event, 0→120 px over ~205 ms (Chromium's glide). Flick of 6

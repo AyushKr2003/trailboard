@@ -3,6 +3,7 @@
 
 mod app;
 mod clipboard;
+mod crash;
 mod desktop;
 mod hints;
 mod keymap;
@@ -46,6 +47,20 @@ fn dirs_home() -> PathBuf {
 }
 
 fn main() -> ExitCode {
+    // Before CEF: a running Trailboard would otherwise be handed `--version`.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match launch::command(&args) {
+        launch::Command::Version => {
+            println!("{}", launch::version_line());
+            return ExitCode::SUCCESS;
+        }
+        launch::Command::Help => {
+            print!("{}", launch::USAGE);
+            return ExitCode::SUCCESS;
+        }
+        launch::Command::Run => {}
+    }
+    crash::install(data_dir());
     // CEF helper subprocesses re-run this binary; handle them before anything else.
     let engine = match web::start(&cef_dir(), &data_dir().join("browser")) {
         Ok(web::Startup::Subprocess(code)) => return ExitCode::from(code as u8),
@@ -63,13 +78,17 @@ fn main() -> ExitCode {
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,wgpu_core=warn,wgpu_hal=warn,naga=warn"))
         .init();
+    log::info!("{}", launch::version_line());
 
     let cwd = std::env::current_dir().unwrap_or_default();
     let settings = storage::settings::load_settings(&data_dir());
-    let urls = std::env::args().skip(1).filter_map(|a| launch::target(&a, &cwd, settings.search)).collect();
+    let urls = args.iter().filter_map(|a| launch::target(a, &cwd, settings.search)).collect();
     let mut event_loop = EventLoop::new().expect("event loop");
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = app::App::new(urls, data_dir(), settings);
+    if storage::crash::take_unseen(&data_dir()) {
+        app.note_crash(&storage::crash::log_path(&data_dir()));
+    }
 
     let mut last = Instant::now();
     let code = loop {

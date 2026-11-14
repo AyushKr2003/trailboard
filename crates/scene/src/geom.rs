@@ -77,6 +77,12 @@ impl Rect {
         Rect::new(self.x + d.x, self.y + d.y, self.w, self.h)
     }
 
+    /// Rectangle spanning two opposite corners, in any order.
+    pub fn from_corners(a: Vec2, b: Vec2) -> Rect {
+        let (x, y) = (a.x.min(b.x), a.y.min(b.y));
+        Rect::new(x, y, (a.x - b.x).abs(), (a.y - b.y).abs())
+    }
+
     pub fn inflate(&self, m: f32) -> Rect {
         Rect::new(self.x - m, self.y - m, self.w + 2.0 * m, self.h + 2.0 * m)
     }
@@ -165,6 +171,12 @@ mod tests {
         cam.zoom_about(1.7, anchor, vp, 1.0);
         let after = cam.screen_to_world(anchor, vp, 1.0);
         assert!((before.x - after.x).abs() < 1e-3 && (before.y - after.y).abs() < 1e-3);
+    }
+
+    #[test]
+    fn from_corners_any_order() {
+        let r = Rect::from_corners(Vec2::new(10.0, 50.0), Vec2::new(-5.0, 20.0));
+        assert_eq!(r, Rect::new(-5.0, 20.0, 15.0, 30.0));
     }
 
     #[test]

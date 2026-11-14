@@ -12,6 +12,8 @@
 //! wheel 0 -3           # line deltas
 //! ctrlwheel 2
 //! drag 10 10 300 200   # left press, move in steps, release
+//! sdrag 10 10 300 200  # same with Shift held (selection band on the board)
+//! sclick 400 300       # Shift+click (add/remove a card from the selection)
 //! key ctrl+shift+z     # press + release a key combo (US layout names, see keymap::KeyIn::from_name)
 //! type hello world     # type text (each character as a key press)
 //! ime-preedit 你好       # IME composition text (empty cancels it)
@@ -20,7 +22,7 @@
 //! fit                  # same as Ctrl+0
 //! undo                 # same as Ctrl+Z on the board
 //! redo                 # same as Ctrl+Shift+Z
-//! cards                # log every card (id, rect, live page, title, url) and edge
+//! cards                # log every card (id, rect, live page, selected, title, url) and edge
 //! open https://…       # same as Ctrl+T + Enter
 //! log some note        # print to the log (marks screenshot moments)
 //! quit
@@ -33,12 +35,13 @@ use std::time::Instant;
 pub enum Cmd {
     Wait(u64),
     Move(f32, f32),
-    Click(f32, f32),
+    Click(f32, f32, bool),
     /// Click inside card `id`'s page at CSS px; `right` uses the right button.
     PageClick { id: u64, x: f32, y: f32, right: bool },
     Wheel(f32, f32),
     CtrlWheel(f32),
-    Drag(f32, f32, f32, f32),
+    /// Left drag; `shift` holds Shift throughout.
+    Drag { from: (f32, f32), to: (f32, f32), shift: bool },
     Key(String),
     Type(String),
     ImePreedit(String),
@@ -91,11 +94,11 @@ fn parse(line: &str) -> Option<Cmd> {
         "" => return None,
         "wait" => Cmd::Wait(num(0) as u64),
         "move" => Cmd::Move(num(0), num(1)),
-        "click" => Cmd::Click(num(0), num(1)),
+        "click" | "sclick" => Cmd::Click(num(0), num(1), word == "sclick"),
         "pclick" | "prclick" => Cmd::PageClick { id: num(0) as u64, x: num(1), y: num(2), right: word == "prclick" },
         "wheel" => Cmd::Wheel(num(0), num(1)),
         "ctrlwheel" => Cmd::CtrlWheel(num(0)),
-        "drag" => Cmd::Drag(num(0), num(1), num(2), num(3)),
+        "drag" | "sdrag" => Cmd::Drag { from: (num(0), num(1)), to: (num(2), num(3)), shift: word == "sdrag" },
         "key" => Cmd::Key(rest.trim().to_string()),
         // Keep the text's own spacing; only the separator after the word is dropped.
         "type" => Cmd::Type(rest.to_string()),

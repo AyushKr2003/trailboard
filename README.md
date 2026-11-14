@@ -49,6 +49,8 @@ you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change th
 | Zoom | Ctrl + scroll |
 | Focus a page | click it (keyboard and scroll then go to the page) |
 | Move / resize a card | drag its title bar / bottom-right corner |
+| Select cards | Shift+drag on the board, Shift+click title bars, Ctrl+A (Esc clears) |
+| Move / close selected cards | drag a selected title bar / Delete |
 | Fill the view with a card | double-click its title bar |
 | Close card / reopen closed | × or Ctrl+W / Ctrl+Shift+T |
 | Undo / redo board edits | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y (after clicking the board or a title bar) |
@@ -75,7 +77,7 @@ TRAILBOARD_SCRIPT=path cargo run -p trailboard -- URL   # scripted end-to-end ru
 ## Status
 
 Done: live page cards, open-links-beside with trail edges, pan/zoom, move,
-resize, close/reopen, undo/redo, omnibox, zoom-aware page resolution, off-screen
+resize, close/reopen, multi-select and group move, undo/redo, omnibox, zoom-aware page resolution, off-screen
 pages paused, live-browser cap, page context menu, desktop clipboard, IME input,
 board persistence.
 

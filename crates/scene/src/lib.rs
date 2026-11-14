@@ -6,11 +6,13 @@ pub mod geom;
 pub mod history;
 pub mod liveness;
 pub mod placement;
+pub mod selection;
 
 use std::collections::BTreeMap;
 
 pub use geom::{Camera, Rect, Vec2};
 pub use history::{Change, Edit, History};
+pub use selection::Selection;
 use serde::{Deserialize, Serialize};
 
 /// Height of a card's title bar, in world units, drawn above the page content.

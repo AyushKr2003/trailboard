@@ -9,6 +9,10 @@
 //!   Ctrl+R reload, Alt+←/→ back/forward, Ctrl+0 fit all.
 //! - Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y) undo/redo board edits (open, close, move,
 //!   resize). After clicking inside a page they go to the page instead (text undo).
+//! - Shift+drag on the board draws a selection band; Shift+click a title bar adds or
+//!   removes that card; Ctrl+A (no card focused) selects all. Dragging a selected
+//!   card's title bar moves the whole selection; Delete/Backspace closes it. A click
+//!   on the board or Esc clears it.
 //!
 //! - Right-click in a page opens a context menu (drawn by the app); Esc, a click
 //!   outside, scrolling or moving the board closes it.
@@ -24,7 +28,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use compositor::{rgba, Background, Layer, Quad, Renderer, Shape, Text};
-use scene::{liveness, placement, Camera, Change, Edge, History, Node, NodeId, Rect, Scene, Vec2};
+use scene::{liveness, placement, selection, Camera, Change, Edge, History, Node, NodeId, Rect, Scene, Selection, Vec2};
 use web::{MouseButton as WebButton, Page, SpawnBeside, WebEvent};
 use winit::application::ApplicationHandler;
 use web::menu::{MenuAction, MenuItem};
@@ -54,7 +58,10 @@ const DEFAULT_MAX_LIVE: usize = 6;
 enum Drag {
     None,
     Pan { last: Vec2 },
-    Move { id: NodeId, grab: Vec2, start: Rect },
+    /// Title-bar drag of `id`; `App::group` holds the start rects of every card it moves.
+    Move { id: NodeId, grab: Vec2 },
+    /// Selection band from `anchor` (world) to the cursor.
+    Band { anchor: Vec2 },
     Resize { id: NodeId, anchor: Vec2, start: Rect },
     /// Mouse is down inside a page; moves and release go to it.
     Page { id: NodeId, button: WebButton },
@@ -84,6 +91,9 @@ pub struct App {
     /// Closed cards for Ctrl+Shift+T, newest last.
     closed: Vec<(Node, Vec<Edge>)>,
     history: History,
+    selection: Selection,
+    /// Cards moved by the current title-bar drag, with their start rects.
+    group: Vec<(NodeId, Rect)>,
     /// The last click landed inside the focused page, so its keys (incl. Ctrl+Z) go there.
     keys_in_page: bool,
     omnibox: Option<Omnibox>,
@@ -130,6 +140,8 @@ impl App {
             focused: None,
             closed: Vec::new(),
             history: History::new(),
+            selection: Selection::new(),
+            group: Vec::new(),
             keys_in_page: false,
             omnibox: None,
             menu: None,
@@ -288,11 +300,20 @@ impl App {
     }
 
     fn close_card(&mut self, id: NodeId) {
-        if let Some((node, edges)) = self.scene.remove(id) {
-            self.closed.push((node.clone(), edges.clone()));
-            self.history.closed(node, edges);
+        self.close_cards(&[id]);
+    }
+
+    /// Closes cards as one undo step; each can still be reopened with Ctrl+Shift+T.
+    fn close_cards(&mut self, ids: &[NodeId]) {
+        let mut gone = Vec::new();
+        for &id in ids {
+            if let Some(removed) = self.scene.remove(id) {
+                self.closed.push(removed.clone());
+                gone.push(removed);
+            }
+            self.drop_page(id);
         }
-        self.drop_page(id);
+        self.history.closed_many(gone);
     }
 
     /// Put a card to sleep: close its browser but keep its last frame on screen.
@@ -307,6 +328,7 @@ impl App {
         self.dirty = true;
         self.cards.remove(&id);
         self.used.remove(&id);
+        self.selection.remove(id);
         if let Some(r) = self.renderer.as_mut() {
             r.remove_page(id.0);
         }
@@ -331,20 +353,22 @@ impl App {
     }
 
     fn undo(&mut self, redo: bool) {
-        let change = if redo { self.history.redo(&mut self.scene) } else { self.history.undo(&mut self.scene) };
-        log::info!("{}: {change:?}", if redo { "redo" } else { "undo" });
-        match change {
-            Some(Change::Added(id)) => {
-                self.create_page(id);
-                self.dirty = true;
-                self.ensure_visible(id);
+        let changes = if redo { self.history.redo(&mut self.scene) } else { self.history.undo(&mut self.scene) };
+        log::info!("{}: {changes:?}", if redo { "redo" } else { "undo" });
+        let mut shown = None;
+        for change in changes {
+            match change {
+                Change::Added(id) => {
+                    self.create_page(id);
+                    shown = Some(id);
+                }
+                Change::Removed(id) => self.drop_page(id),
+                Change::Moved(id) => shown = Some(id),
             }
-            Some(Change::Removed(id)) => self.drop_page(id),
-            Some(Change::Moved(id)) => {
-                self.dirty = true;
-                self.ensure_visible(id);
-            }
-            None => {}
+            self.dirty = true;
+        }
+        if let Some(id) = shown {
+            self.ensure_visible(id);
         }
     }
 
@@ -613,32 +637,48 @@ impl App {
                 MouseButton::Right => WebButton::Right,
                 _ => return,
             };
+            let shift = self.mods.shift_key();
             match self.hit(p) {
+                Hit::Board if shift && button == MouseButton::Left => {
+                    // Band adds to the current selection.
+                    self.keys_in_page = false;
+                    self.focus(None);
+                    self.drag = Drag::Band { anchor: self.to_world(p) };
+                }
                 Hit::Board => {
                     self.keys_in_page = false;
                     self.focus(None);
+                    self.selection.clear();
                     self.drag = Drag::Pan { last: p };
                 }
                 Hit::Close(id) => self.close_card(id),
                 Hit::Header(id) => {
+                    if shift {
+                        self.selection.toggle(id);
+                    } else if !self.selection.contains(id) {
+                        self.selection.clear();
+                    }
                     self.focus(Some(id));
                     self.keys_in_page = false;
-                    if self.click_count >= 2 {
+                    if self.click_count >= 2 && !shift {
                         self.fill_view(id);
                         self.drag = Drag::None;
                     } else {
                         let n = self.scene.node(id).expect("hit node");
                         let w = self.to_world(p);
-                        self.drag = Drag::Move { id, grab: w - Vec2::new(n.rect.x, n.rect.y), start: n.rect };
+                        self.group = selection::drag_group(&self.scene, &self.selection, id);
+                        self.drag = Drag::Move { id, grab: w - Vec2::new(n.rect.x, n.rect.y) };
                     }
                 }
                 Hit::Grip(id) => {
+                    self.selection.clear();
                     self.focus(Some(id));
                     self.keys_in_page = false;
                     let start = self.scene.node(id).expect("hit node").rect;
                     self.drag = Drag::Resize { id, anchor: self.to_world(p), start };
                 }
                 Hit::Content(id) => {
+                    self.selection.clear();
                     self.focus(Some(id));
                     self.keys_in_page = true;
                     if let (Some(card), Some((x, y))) = (self.cards.get(&id), self.page_point(id, p)) {
@@ -652,8 +692,15 @@ impl App {
                 && let (Some(card), Some((x, y))) = (self.cards.get(&id), self.page_point(id, p)) {
                     card.page.mouse_button(x, y, mods, b, true, self.click_count.min(3));
                 }
-            if let Drag::Move { id, start, .. } | Drag::Resize { id, start, .. } = self.drag {
-                self.history.moved(&self.scene, id, start);
+            match self.drag {
+                Drag::Resize { id, start, .. } => self.history.moved(&self.scene, id, start),
+                Drag::Move { .. } => self.history.moved_many(&self.scene, &std::mem::take(&mut self.group)),
+                Drag::Band { .. } => {
+                    let band = self.band().expect("band drag");
+                    self.selection.extend(selection::in_band(&self.scene, band));
+                    log::info!("selected {} card(s)", self.selection.len());
+                }
+                _ => {}
             }
             self.drag = Drag::None;
         }
@@ -681,14 +728,15 @@ impl App {
                 self.drag = Drag::Pan { last: p };
                 self.camera_moved();
             }
-            Drag::Move { id, grab, .. } => {
+            Drag::Move { id, grab } => {
                 self.dirty = true;
                 let w = self.to_world(p);
-                if let Some(n) = self.scene.node_mut(id) {
-                    n.rect.x = w.x - grab.x;
-                    n.rect.y = w.y - grab.y;
+                if let Some(&(_, start)) = self.group.iter().find(|(g, _)| *g == id) {
+                    let d = Vec2::new(w.x - grab.x - start.x, w.y - grab.y - start.y);
+                    selection::move_group(&mut self.scene, &self.group, d);
                 }
             }
+            Drag::Band { .. } => self.set_cursor(web::Cursor::Crosshair),
             Drag::Resize { id, anchor, start } => {
                 self.dirty = true;
                 let d = self.to_world(p) - anchor;
@@ -909,7 +957,24 @@ impl App {
                     }
                     true
                 }
+                Some(KeyCode::Delete | KeyCode::Backspace)
+                    if !self.selection.is_empty() && !self.keys_in_page && !ctrl && !alt && self.drag_is_idle() =>
+                {
+                    let ids = self.selection.ids();
+                    log::info!("closing {} selected card(s)", ids.len());
+                    self.close_cards(&ids);
+                    true
+                }
+                Some(KeyCode::KeyA) if ctrl && !shift && self.focused.is_none() => {
+                    self.selection.select_all(&self.scene);
+                    true
+                }
+                Some(KeyCode::Escape) if self.focused.is_none() && !self.selection.is_empty() => {
+                    self.selection.clear();
+                    true
+                }
                 Some(KeyCode::Escape) if self.focused.is_some() && self.drag_is_idle() => {
+                    self.selection.clear();
                     // Let the page see Esc too (closes its menus), then leave the page.
                     if let Some(p) = self.focused_page() {
                         p.send_key(&ev.to_web(self.mods));
@@ -939,6 +1004,14 @@ impl App {
 
     fn drag_is_idle(&self) -> bool {
         matches!(self.drag, Drag::None)
+    }
+
+    /// The selection band being drawn, in world units.
+    fn band(&self) -> Option<Rect> {
+        match self.drag {
+            Drag::Band { anchor } => Some(Rect::from_corners(anchor, self.to_world(self.cursor))),
+            _ => None,
+        }
     }
 
     // ---------------------------------------------------------------- drawing
@@ -998,6 +1071,8 @@ impl App {
         layers.push(edges);
 
         let screen = Rect::new(0.0, 0.0, vp.x, vp.y);
+        let band = self.band();
+        let in_band = band.map(|b| selection::in_band(&self.scene, b)).unwrap_or_default();
         for n in self.scene.draw_order() {
             let frame = self.to_screen_rect(n.frame());
             if !frame.inflate(40.0).intersects(&screen) {
@@ -1014,6 +1089,15 @@ impl App {
                 color: [0.0, 0.0, 0.0, if focused { 0.55 } else { 0.4 }],
                 texture: None,
             });
+            if self.selection.contains(n.id) || in_band.contains(&n.id) {
+                // Selection ring outside the focus ring, so both can show.
+                let m = if focused { 5.0 } else { 3.0 };
+                l.quads.push(Quad {
+                    shape: Shape::Rect { rect: frame.inflate(m * scale), radius: radius + m * scale },
+                    color: rgba(255, 190, 70, 1.0),
+                    texture: None,
+                });
+            }
             if focused {
                 l.quads.push(Quad {
                     shape: Shape::Rect { rect: frame.inflate(2.0), radius: radius + 2.0 },
@@ -1154,6 +1238,23 @@ impl App {
                 clip: r,
                 bold: false,
             });
+            layers.push(l);
+        }
+
+        if let Some(b) = band {
+            let r = self.to_screen_rect(b);
+            let t = scale.max(1.0);
+            let line = rgba(255, 190, 70, 0.9);
+            let mut l = Layer::default();
+            l.quads.push(Quad { shape: Shape::Rect { rect: r, radius: 0.0 }, color: rgba(255, 190, 70, 0.12), texture: None });
+            for edge in [
+                Rect::new(r.x, r.y, r.w, t),
+                Rect::new(r.x, r.bottom() - t, r.w, t),
+                Rect::new(r.x, r.y, t, r.h),
+                Rect::new(r.right() - t, r.y, t, r.h),
+            ] {
+                l.quads.push(Quad { shape: Shape::Rect { rect: edge, radius: 0.0 }, color: line, texture: None });
+            }
             layers.push(l);
         }
 
@@ -1409,10 +1510,15 @@ impl App {
             match cmd {
                 Cmd::Wait(_) => {}
                 Cmd::Move(x, y) => self.cursor_moved(Vec2::new(x, y)),
-                Cmd::Click(x, y) => {
+                Cmd::Click(x, y, shift) => {
+                    let saved = self.mods;
+                    if shift {
+                        self.mods = ModifiersState::SHIFT;
+                    }
                     self.cursor_moved(Vec2::new(x, y));
                     self.mouse_input(ElementState::Pressed, MouseButton::Left);
                     self.mouse_input(ElementState::Released, MouseButton::Left);
+                    self.mods = saved;
                 }
                 Cmd::PageClick { id, x, y, right } => {
                     let Some(n) = self.scene.node(NodeId(id)) else {
@@ -1463,7 +1569,11 @@ impl App {
                         self.script_key(&c.to_string(), mods);
                     }
                 }
-                Cmd::Drag(x0, y0, x1, y1) => {
+                Cmd::Drag { from: (x0, y0), to: (x1, y1), shift } => {
+                    let saved = self.mods;
+                    if shift {
+                        self.mods = ModifiersState::SHIFT;
+                    }
                     self.cursor_moved(Vec2::new(x0, y0));
                     self.mouse_input(ElementState::Pressed, MouseButton::Left);
                     for i in 1..=8 {
@@ -1471,6 +1581,7 @@ impl App {
                         self.cursor_moved(Vec2::new(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t));
                     }
                     self.mouse_input(ElementState::Released, MouseButton::Left);
+                    self.mods = saved;
                 }
                 Cmd::Undo => self.undo(false),
                 Cmd::Redo => self.undo(true),
@@ -1478,8 +1589,9 @@ impl App {
                     for n in self.scene.nodes() {
                         let (r, f) = (n.rect, self.to_screen_rect(n.frame()));
                         log::info!(
-                            "script card {}: world ({:.0},{:.0} {:.0}x{:.0}) screen ({:.0},{:.0} {:.0}x{:.0}) live={} title={:?} {}",
-                            n.id.0, r.x, r.y, r.w, r.h, f.x, f.y, f.w, f.h, self.cards.contains_key(&n.id), n.title, n.url
+                            "script card {}: world ({:.0},{:.0} {:.0}x{:.0}) screen ({:.0},{:.0} {:.0}x{:.0}) live={} sel={} title={:?} {}",
+                            n.id.0, r.x, r.y, r.w, r.h, f.x, f.y, f.w, f.h, self.cards.contains_key(&n.id),
+                            self.selection.contains(n.id), n.title, n.url
                         );
                     }
                     for e in self.scene.edges() {

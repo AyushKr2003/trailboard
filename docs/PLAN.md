@@ -74,7 +74,7 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
 - Mouse, wheel and keyboard forwarded to the focused page; logical-key shortcuts.
 - Omnibox (Ctrl+L / Ctrl+T): URL vs search detection (DuckDuckGo).
 
-### M3: Many cards and trails 🟡
+### M3: Many cards and trails ✅
 - ✅ Links open beside their source (`on_before_browse` LINK + gesture, popups, Ctrl/middle-click).
 - ✅ Bezier trail edges; placement right of the source, sliding down past siblings.
 - ✅ Move, resize, close, reopen closed, double-click title → fill view.
@@ -123,7 +123,19 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   compositions are forwarded with `ime_set_composition`/`ime_commit_text` and the
   candidate window follows `on_ime_composition_range_changed`. The address bar
   takes committed IME text only (no preedit shown).
-- ⬜ Card multi-select (rubber band) and group move.
+- ✅ Card multi-select and group move: `scene::selection` (`Selection`, `in_band`,
+  `drag_group`, `move_group`) and `Edit::Batch` in `scene::history`.
+  Decisions (2026-11-14): plain drag on the board still pans, so the band is
+  **Shift+drag** on the board and it adds to the selection; it picks cards whose
+  frame (title bar included) touches it. Shift+click a title bar toggles a card;
+  Ctrl+A with no card focused selects all; a plain click on the board, Esc, or a
+  click into a page / resize grip clears it. Selection is separate from focus and
+  not saved. Dragging a selected card's title bar moves every selected card;
+  dragging an unselected one clears the selection. Delete/Backspace (when keys
+  aren't going to a page) closes the selection. A group move or close is one undo
+  step (`Edit::Batch`, applied in order, reversed on undo; stale parts skipped),
+  and closed cards are restored in reverse so trail edges between them come back.
+  Undo returns every change (`Vec<Change>`).
 
 ### M4: Persistence and Spaces 🟡
 - ✅ Board JSON at `$XDG_DATA_HOME/trailboard/board.json`, atomic write, autosave (3 s), save on exit; unreadable file set aside.
@@ -202,34 +214,28 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. IME input, desktop clipboard and page context menu (M3).
-**Repo state:** on `master`, committed after cd3b814; working tree clean.
+**Last session:** 2026-11-14. Card multi-select and group move (M3 now complete).
+**Repo state:** on `master`, committed after 44db158; working tree clean.
 **Done this session:**
-- Key handling goes through `keymap::KeyIn` (from winit or from a script), so
-  scripts can press real combos: new script commands `key`, `type`, `pclick`,
-  `prclick`, `ime-preedit`, `ime-commit`, `menuclick`.
-- Clipboard: Ctrl+A/C/V/X/Z already worked inside pages, but nothing crossed to
-  the desktop. Now bridged through `app::clipboard` (see the M3 decision).
-- IME: `WindowEvent::Ime` → `Page::ime_set_composition`/`ime_commit`/`ime_cancel`;
-  the candidate window is placed at the page caret; the address bar takes commits.
-- Context menu: `web::menu` (items) + `app::menu` (layout, hit test, keyboard) +
-  `WebEvent::ContextMenu`. Esc, a click outside, scrolling or a camera move close it.
-**Next up:** M3: card multi-select (rubber band) and group move (group move can
-record one `Edit` per card; add a batch edit then).
+- `scene::selection`: selection set, band hit test, group drag; `Rect::from_corners`.
+- `scene::history`: `Edit::Batch`, `History::moved_many` / `closed_many`;
+  `undo`/`redo` now return `Vec<Change>`.
+- App: `Drag::Band`, group title-bar drag (`App::group`), `close_cards`, amber
+  selection ring (outside the blue focus ring) and a translucent band.
+- Script commands `sdrag` and `sclick` (Shift held); `cards` logs `sel=`.
+**Next up:** M4: Spaces (several boards, each with its own camera and
+background; `spaces.json` index; New / Next / Previous / Rename / Delete Space).
+Decide key bindings and how the current `board.json` migrates into the first space.
 **Notes for the next session:**
-- Verified e2e with a local test page (two inputs, a paragraph and a link; the
-  title shows the input values): desktop → page paste, page → desktop copy and
-  cut (`wl-paste`), native paste, menu items for link / editable / selection /
-  plain page, Copy link address, Select all, Cut, Paste, Search (opened a card
-  beside with an edge), menu keyboard (↑ wraps, Enter, Esc), IME preedit
-  (screenshot shows the underlined composition), cancel and commit, address-bar
-  Ctrl+V and IME commit. Screenshot of the editable menu looked right.
-- While `TRAILBOARD_SCRIPT` runs, the window's IME stays off: a running fcitx5
-  otherwise sends its own empty preedit and cancels scripted compositions.
-- Not verified: typing with a real input method (fcitx5 Pinyin) by hand; pages
-  whose own copy handlers change what is copied (we copy the plain selection);
-  copy buttons using `navigator.clipboard` (they reach only Chromium's clipboard).
-- The desktop clipboard empties when Trailboard exits (we own the selection).
+- Verified e2e (three local file:// cards, fitted): Shift+drag band selected the
+  two cards it touched; dragging one header moved both by the same delta; undo and
+  redo moved both back and forth in one step each; Shift+click toggled a third card
+  on and off; board click, Ctrl+A and Esc cleared/selected as expected; Ctrl+A +
+  Delete closed all three and one undo restored all three with live pages.
+  Screenshot showed the rings correctly.
+- Not verified on screen: the band while it is being drawn (script drags press,
+  move and release in one go, so there is no frame to capture mid-drag).
+- Ctrl+Shift+T after a group close reopens one card at a time (newest first).
 - Card title text renders digits with wide gaps (e.g. "4 0 , 4 0"); likely a
   glyphon font fallback issue in `compositor`; pre-existing, not investigated.
 - Live-browser cap: zooming can churn (sleep, then reload in view).
@@ -238,4 +244,5 @@ record one `Edit` per card; add a batch edit then).
 - `hyprctl clients -j` can report a window off-screen right after it opens
   (open animation); take the screenshot ~5–8 s later.
 - Script `open` with a data: URL: percent-encode spaces and `#` (`#` starts a
-  script comment); a `file://` test page is easier.
+  script comment); a `file://` test page is easier. While `TRAILBOARD_SCRIPT`
+  runs, the window's IME stays off.

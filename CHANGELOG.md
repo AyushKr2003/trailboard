@@ -7,6 +7,13 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Multi-select and group move**: Shift+drag on the board draws a selection band
+  (cards it touches are added), Shift+click a title bar adds or removes a card, and
+  Ctrl+A (no card focused) selects all. Dragging a selected card's title bar moves
+  the whole selection; Delete or Backspace closes it. A click on the board or Esc
+  clears the selection. Group moves and closes undo in one step, and closed cards
+  get their trail edges back.
+- Script commands `sdrag` and `sclick` (Shift held); `cards` logs whether each card is selected.
 - **Page context menu**: right-click in a page for Open link beside, Copy link
   address, Open/Copy image address, Undo/Redo/Cut/Copy/Paste/Select all in text
   fields, Copy and Search for selected text, or Back/Forward/Reload. Arrow keys

@@ -21,12 +21,14 @@ pub enum Target {
     History,
     /// The settings panel (Ctrl+,): the text filters the settings (`palette::settings_rows`).
     Settings,
+    /// The downloads view (Ctrl+J): the text filters downloads (`palette::download_rows`).
+    Downloads,
 }
 
 impl Target {
     /// The field has a list of results under it (the palette, history or settings).
     pub fn is_list(&self) -> bool {
-        matches!(self, Target::Palette | Target::History | Target::Settings)
+        matches!(self, Target::Palette | Target::History | Target::Settings | Target::Downloads)
     }
 }
 

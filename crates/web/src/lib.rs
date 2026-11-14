@@ -3,6 +3,7 @@
 //! GPU textures. All CEF callbacks run on the main thread because we drive CEF
 //! with `external_message_pump` + [`pump`], so plain `Rc`/`RefCell` are enough.
 
+pub mod download;
 pub mod keys;
 pub mod links;
 pub mod menu;
@@ -50,6 +51,12 @@ pub enum WebEvent {
     /// switches left out) and the directory it was started in. The other
     /// process exits with [`Startup::Handed`].
     Relaunch { args: Vec<String>, cwd: String },
+    /// Page `page` started download `id` of `url`, which Chromium would call
+    /// `suggested`. Answer with [`download::save_to`]. `blank`: the page never
+    /// showed anything (a card opened for a link that turned out to be a file).
+    DownloadAsked { page: u64, id: u32, url: String, suggested: String, blank: bool },
+    /// Progress of a download answered with [`download::save_to`].
+    DownloadUpdated { id: u32, received: i64, total: i64, state: download::Progress },
 }
 
 /// Largest favicon side asked of Chromium, px (title bars draw 16 px icons, sharp at 2×).
@@ -386,6 +393,8 @@ struct Shared {
     /// The icon last asked for, so a page that repeats it isn't fetched again.
     icon_url: RefCell<String>,
     kind: PageKind,
+    /// The main frame has committed a page (a link that is a file never does).
+    committed: std::cell::Cell<bool>,
 }
 
 #[derive(Default)]
@@ -866,6 +875,55 @@ wrap_load_handler! {
             }
             emit(WebEvent::LoadingChanged { page: self.shared.key, loading: is_loading != 0 });
         }
+
+        fn on_load_start(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, _transition_type: TransitionType) {
+            if frame.is_some_and(|f| f.is_main() != 0) {
+                self.shared.committed.set(true);
+            }
+        }
+    }
+}
+
+wrap_download_handler! {
+    struct PageDownloads {
+        shared: StdRc<Shared>,
+    }
+
+    impl DownloadHandler {
+        fn can_download(&self, _browser: Option<&mut Browser>, _url: Option<&CefString>, _method: Option<&CefString>) -> ::std::os::raw::c_int {
+            // Notes never download; web pages may (the app picks the folder).
+            (self.shared.kind == PageKind::Web) as ::std::os::raw::c_int
+        }
+
+        fn on_before_download(
+            &self,
+            _browser: Option<&mut Browser>,
+            download_item: Option<&mut DownloadItem>,
+            suggested_name: Option<&CefString>,
+            callback: Option<&mut BeforeDownloadCallback>,
+        ) -> ::std::os::raw::c_int {
+            let (Some(item), Some(callback)) = (download_item, callback) else { return 0 };
+            let id = item.id();
+            let url = CefString::from(&item.url()).to_string();
+            let suggested = suggested_name.map(|n| n.to_string()).unwrap_or_default();
+            download::asked(id, callback.clone());
+            let blank = !self.shared.committed.get();
+            log::info!("page {}: download {id} of {url:?} as {suggested:?} (blank page: {blank})", self.shared.key);
+            emit(WebEvent::DownloadAsked { page: self.shared.key, id, url, suggested, blank });
+            1 // the app answers with download::save_to
+        }
+
+        fn on_download_updated(
+            &self,
+            _browser: Option<&mut Browser>,
+            download_item: Option<&mut DownloadItem>,
+            callback: Option<&mut DownloadItemCallback>,
+        ) {
+            let Some(item) = download_item else { return };
+            if let Some(update) = download::updated(item, callback) {
+                emit(update);
+            }
+        }
     }
 }
 
@@ -945,8 +1003,12 @@ wrap_find_handler! {
     }
 }
 
+// One handler per CEF callback group makes `PageClient::new` take eight.
+#[allow(clippy::too_many_arguments)]
+mod client {
+use super::*;
 wrap_client! {
-    struct PageClient {
+    pub(super) struct PageClient {
         render: RenderHandler,
         life: LifeSpanHandler,
         requests: RequestHandler,
@@ -954,6 +1016,7 @@ wrap_client! {
         load: LoadHandler,
         menu: ContextMenuHandler,
         find: FindHandler,
+        downloads: DownloadHandler,
     }
 
     impl Client {
@@ -978,8 +1041,13 @@ wrap_client! {
         fn find_handler(&self) -> Option<FindHandler> {
             Some(self.find.clone())
         }
+        fn download_handler(&self) -> Option<DownloadHandler> {
+            Some(self.downloads.clone())
+        }
     }
 }
+}
+use client::PageClient;
 
 /// One live web page, rendered off screen.
 pub struct Page {
@@ -1042,6 +1110,7 @@ impl Page {
             url: RefCell::new(url.to_string()),
             icon_url: RefCell::new(String::new()),
             kind,
+            committed: std::cell::Cell::new(false),
         });
         let mut client = PageClient::new(
             PageRender::new(shared.clone()),
@@ -1051,6 +1120,7 @@ impl Page {
             PageLoad::new(shared.clone()),
             PageMenu::new(shared.clone()),
             PageFind::new(shared.clone()),
+            PageDownloads::new(shared.clone()),
         );
         let window_info = WindowInfo { windowless_rendering_enabled: 1, ..Default::default() };
         let browser_settings = BrowserSettings {
@@ -1164,6 +1234,14 @@ impl Page {
     pub fn load(&self, url: &str) {
         if let Some(f) = self.browser.main_frame() {
             f.load_url(Some(&CefString::from(url)));
+        }
+    }
+
+    /// Downloads `url` with this page's cookies (the menu's *Download link*).
+    /// It arrives as [`WebEvent::DownloadAsked`] like any other download.
+    pub fn download(&self, url: &str) {
+        if let Some(h) = self.host() {
+            h.start_download(Some(&CefString::from(url)));
         }
     }
 

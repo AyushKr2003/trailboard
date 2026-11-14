@@ -36,6 +36,9 @@
 //! - Ctrl+, settings (`scene::settings`, saved by `storage::settings`): a list
 //!   under the field like history; Enter, → or a click steps the highlighted
 //!   setting on, Shift+Enter, ← or a right-click back. Each applies at once.
+//! - Ctrl+J downloads (`palette::download_rows`, `scene::download`): files go
+//!   straight to the Downloads folder; Enter opens one, Ctrl+Enter its folder,
+//!   Shift+Delete cancels or removes. Pages with running downloads are parked.
 //! - Ctrl+L address bar, Ctrl+T new card, Ctrl+W close, Ctrl+Shift+T reopen,
 //!   Ctrl+R reload, Alt+←/→ back/forward.
 //! - Ctrl+F find in the current card's page (the bar is an `omnibox::Target::Find`;
@@ -320,6 +323,14 @@ pub struct App {
     preview_serial: u64,
     /// Page keys of sleeping cards already looked up for a thumbnail.
     thumb_tried: HashSet<u64>,
+    /// Downloads (Ctrl+J), saved in `downloads.json`.
+    downloads: scene::download::Downloads,
+    /// Chromium's id of each running download → (list key, page key).
+    download_ids: HashMap<u32, (u64, u64)>,
+    /// Pages put to sleep or closed while downloading: kept alive (off
+    /// screen, unrendered) until their downloads end, since Chromium only
+    /// reports a download to the page that started it.
+    parked: Vec<Page>,
 }
 
 /// Last history search (history view or palette, query, results).
@@ -368,6 +379,25 @@ fn local_ms(utc_ms: i64) -> i64 {
     utc_ms + i64::from(offset) * 1000
 }
 
+/// Opens a file or folder in the desktop's app for it (`xdg-open`, or
+/// `TRAILBOARD_OPENER` for tests), without waiting for it.
+fn open_externally(path: &str) {
+    let opener = std::env::var("TRAILBOARD_OPENER").ok().filter(|o| !o.is_empty()).unwrap_or_else(|| "xdg-open".into());
+    let path = path.to_string();
+    std::thread::spawn(move || {
+        let run = std::process::Command::new(&opener)
+            .arg(&path)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .status();
+        match run {
+            Ok(s) if s.success() => {}
+            Ok(s) => log::warn!("{opener} {path:?}: {s}"),
+            Err(e) => log::warn!("{opener} {path:?}: {e}"),
+        }
+    });
+}
+
 fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
 }
@@ -384,6 +414,7 @@ impl App {
             .enumerate()
             .map(|(i, (site, icon))| (site, SiteIcon { key: ICON_KEY | i as u64, serial: 1, icon, saved: true }))
             .collect();
+        let data_dir_for_downloads = data_dir.clone();
         let page_index = match storage::pagetext::PageIndex::open(&data_dir) {
             Ok(i) => Some(i),
             Err(e) => {
@@ -464,12 +495,17 @@ impl App {
             preview: None,
             preview_serial: 0,
             thumb_tried: HashSet::new(),
+            downloads: storage::downloads::load_downloads(&data_dir_for_downloads),
+            download_ids: HashMap::new(),
+            parked: Vec::new(),
         }
     }
 
     pub fn shutdown(&mut self) {
         self.save();
+        self.stop_downloads();
         self.cards.clear(); // closes every browser before CEF shuts down
+        self.parked.clear();
     }
 
     // ---------------------------------------------------------------- persistence
@@ -614,7 +650,9 @@ impl App {
                 r.remove_page(k);
             }
         }
-        self.cards.clear(); // closes the browsers
+        for (_, card) in std::mem::take(&mut self.cards) {
+            self.release(card.page); // closes the browsers
+        }
         let session = Session {
             history: std::mem::take(&mut self.history),
             closed: std::mem::take(&mut self.closed),
@@ -1079,7 +1117,8 @@ impl App {
 
     /// Put a card to sleep: close its browser but keep its last frame on screen.
     fn sleep_page(&mut self, id: NodeId) {
-        if self.cards.remove(&id).is_some() {
+        if let Some(card) = self.cards.remove(&id) {
+            self.release(card.page);
             log::info!("sleeping card {} ({} live)", id.0, self.cards.len());
         }
     }
@@ -1087,7 +1126,9 @@ impl App {
     /// Stop the live browser of a card that has left the scene.
     fn drop_page(&mut self, id: NodeId) {
         self.dirty = true;
-        self.cards.remove(&id);
+        if let Some(card) = self.cards.remove(&id) {
+            self.release(card.page);
+        }
         self.used.remove(&id);
         self.selection.remove(id);
         let key = self.page_key(id);
@@ -1528,6 +1569,7 @@ impl App {
             }
             Item::Command(c) => self.run_command(c),
             Item::Setting(k) => self.step_setting(k, 1),
+            Item::Download(key) => self.open_download(key),
         }
     }
 
@@ -1581,6 +1623,10 @@ impl App {
             let shown = Settings { live_pages: self.max_live, ..self.settings };
             return palette::settings_rows(&ob.text, &shown, &notes);
         }
+        if ob.target == Target::Downloads {
+            let missing = |p: &str| std::fs::symlink_metadata(p).is_err();
+            return palette::download_rows(&ob.text, &self.downloads, missing, local_ms(now_ms()), local_ms);
+        }
         if ob.target == Target::History {
             let visits = visits_for(&self.page_index, &self.visits_cache, &ob.text, true);
             return palette::history_rows(&ob.text, &self.scene, &visits, local_ms(now_ms()), local_ms);
@@ -1597,6 +1643,191 @@ impl App {
         self.finish_arrange(true);
         self.omnibox = Some(Omnibox::new("", Target::History));
         log::info!("history open");
+    }
+
+    // ---------------------------------------------------------------- downloads
+
+    /// Ctrl+J: the downloads view, newest first.
+    fn open_downloads(&mut self) {
+        self.menu = None;
+        self.link_hints = None;
+        self.finish_arrange(true);
+        self.omnibox = Some(Omnibox::new("", Target::Downloads));
+        log::info!("downloads open");
+    }
+
+    /// Chromium wants to save a file from page `page`: it goes to the
+    /// downloads folder under a free name, at once (no dialog). A card that
+    /// was opened for the link and never showed a page goes away again.
+    fn download_asked(&mut self, page: u64, id: u32, url: &str, suggested: &str, blank: bool) {
+        // Chromium asks again when it resumes an interrupted download by
+        // itself: same download, same file.
+        if let Some(&(key, _)) = self.download_ids.get(&id)
+            && let Some(d) = self.downloads.get(key)
+        {
+            log::info!("download {id}: resuming into {}", d.path);
+            web::download::save_to(id, std::path::Path::new(&d.path));
+            return;
+        }
+        let dir = storage::downloads::download_dir();
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            log::warn!("downloads: making {}: {e}", dir.display()); // Chromium will fail it
+        }
+        let taken: HashSet<std::path::PathBuf> = self.downloads.running_paths().map(std::path::PathBuf::from).collect();
+        let path = storage::downloads::target(&dir, suggested, &taken);
+        if !web::download::save_to(id, &path) {
+            return;
+        }
+        let key = self.downloads.start(url, &path.to_string_lossy(), self.is_private(), now_ms());
+        self.download_ids.insert(id, (key, page));
+        log::info!("download {id}: {url} -> {}", path.display());
+        self.save_downloads();
+        let name = self.downloads.get(key).map(|d| d.name().to_string()).unwrap_or_default();
+        self.toast(format!("Downloading {name} · Ctrl+J"));
+        if blank
+            && let Some(card) = self.node_of(page)
+            && self.scene.node(card).is_some_and(|n| !n.is_note())
+        {
+            // Nothing to show or undo: the page stays parked until the file is in.
+            log::info!("closing card {} (it only downloaded a file)", card.0);
+            let source = self.scene.edges().iter().find(|e| e.to == card).map(|e| e.from);
+            let was_current = self.focused == Some(card);
+            self.scene.remove(card);
+            self.drop_page(card);
+            // The view moved to the new card when it opened; go back to the
+            // page the link was on.
+            if let Some(src) = source.filter(|&s| self.scene.node(s).is_some()) {
+                self.ensure_visible(src);
+                if was_current {
+                    self.focus(Some(src));
+                }
+            }
+        }
+    }
+
+    fn download_updated(&mut self, id: u32, received: i64, total: i64, progress: web::download::Progress) {
+        use scene::download::State;
+        let Some(&(key, _)) = self.download_ids.get(&id) else { return };
+        let state = match progress {
+            web::download::Progress::Running => State::Running,
+            web::download::Progress::Done => State::Done,
+            web::download::Progress::Cancelled => State::Cancelled,
+            web::download::Progress::Failed => State::Failed,
+        };
+        let Some(ended) = self.downloads.update(key, received, total, state) else { return };
+        self.download_ids.remove(&id);
+        let name = self.downloads.get(key).map(|d| d.name().to_string()).unwrap_or_default();
+        log::info!("download {id}: {} {received} bytes", ended.id());
+        match ended {
+            State::Done => self.toast(format!("Downloaded {name} · Ctrl+J")),
+            State::Failed => self.toast(format!("Download failed: {name}")),
+            _ => self.toast(format!("Cancelled {name}")),
+        }
+        self.save_downloads();
+        // Pages kept only for their downloads can close now.
+        let busy: HashSet<u64> = self.download_ids.values().map(|&(_, page)| page).collect();
+        let before = self.parked.len();
+        self.parked.retain(|p| busy.contains(&p.key()));
+        if self.parked.len() < before {
+            log::info!("closed {} page(s) kept for downloads", before - self.parked.len());
+        }
+    }
+
+    /// Closes a page, unless it has a download running: then it is kept,
+    /// unseen, until that ends (see `parked`).
+    fn release(&mut self, page: Page) {
+        let key = page.key();
+        if self.download_ids.values().any(|&(_, p)| p == key) {
+            log::info!("page {key} keeps running for its download");
+            self.parked.push(page);
+        }
+    }
+
+    /// At quit: running downloads can't go on without us, so they are
+    /// cancelled (Chromium removes the partial files) and listed as stopped.
+    fn stop_downloads(&mut self) {
+        use scene::download::State;
+        if self.download_ids.is_empty() {
+            return;
+        }
+        for (id, (key, _)) in std::mem::take(&mut self.download_ids) {
+            web::download::cancel(id);
+            if let Some(d) = self.downloads.get(key) {
+                let (r, t) = (d.received, d.total);
+                self.downloads.update(key, r, t, State::Stopped);
+            }
+        }
+        self.save_downloads();
+    }
+
+    fn save_downloads(&mut self) {
+        if let Err(e) = storage::downloads::save_downloads(&self.data_dir, &self.downloads) {
+            log::warn!("downloads: saving: {e}");
+        }
+    }
+
+    /// Enter on a download: opens a finished file in its app; one that
+    /// didn't finish is downloaded again (by the current page, any live one,
+    /// or else a new card).
+    fn open_download(&mut self, key: u64) {
+        use scene::download::State;
+        let Some(d) = self.downloads.get(key).cloned() else { return };
+        match d.state {
+            State::Running => self.toast("Still downloading · Shift+Del cancels"),
+            State::Done if std::fs::symlink_metadata(&d.path).is_err() => {
+                self.toast(format!("{} was deleted or moved", d.name()));
+            }
+            State::Done => {
+                log::info!("downloads: opening {}", d.path);
+                open_externally(&d.path);
+            }
+            State::Cancelled | State::Failed | State::Stopped => {
+                let page = self.focused_page().or_else(|| self.cards.values().map(|c| &c.page).next());
+                match page {
+                    Some(p) => {
+                        log::info!("downloads: again {}", d.url);
+                        p.download(&d.url);
+                    }
+                    // A card for it: it closes itself once the file starts (blank page).
+                    None => {
+                        log::info!("downloads: again in a new card {}", d.url);
+                        self.new_card_at_center(&d.url);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Ctrl+Enter on a download: opens the folder it is in.
+    fn show_download_folder(&mut self, key: u64) {
+        let Some(d) = self.downloads.get(key) else { return };
+        let dir = std::path::Path::new(&d.path).parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+        log::info!("downloads: showing {dir}");
+        open_externally(&dir);
+    }
+
+    /// Shift+Delete in the downloads view: cancels a running download, or
+    /// takes a finished one off the list (the file stays).
+    fn drop_selected_download(&mut self) {
+        let Some(ob) = self.omnibox.as_ref() else { return };
+        let Some(palette::Item::Download(key)) = self.list_rows(ob).into_iter().nth(ob.sel).map(|r| r.item) else { return };
+        let running = self.download_ids.iter().find(|(_, (k, _))| *k == key).map(|(&id, _)| id);
+        match running {
+            Some(id) => {
+                log::info!("downloads: cancelling {id}");
+                web::download::cancel(id);
+            }
+            None => {
+                if let Some(d) = self.downloads.remove(key) {
+                    log::info!("downloads: removed {} from the list", d.path);
+                }
+                self.save_downloads();
+                let len = self.omnibox.as_ref().map_or(0, |ob| self.list_rows(ob).len());
+                if let Some(ob) = self.omnibox.as_mut() {
+                    ob.sel = ob.sel.min(len.saturating_sub(1));
+                }
+            }
+        }
     }
 
     /// Shift+Delete in the palette or the history view: forgets the
@@ -1733,6 +1964,7 @@ impl App {
             Command::History => self.open_history(),
             Command::ClearHistory => self.ask_clear_history(),
             Command::Settings => self.open_settings(),
+            Command::Downloads => self.open_downloads(),
             Command::Shortcuts => {
                 self.hints = true;
                 log::info!("hints shown");
@@ -2412,6 +2644,12 @@ impl App {
         for ev in web::drain_events() {
             match ev {
                 WebEvent::Relaunch { args, cwd } => self.relaunched(&args, &cwd),
+                WebEvent::DownloadAsked { page, id, url, suggested, blank } => {
+                    self.download_asked(page, id, &url, &suggested, blank)
+                }
+                WebEvent::DownloadUpdated { id, received, total, state } => {
+                    self.download_updated(id, received, total, state)
+                }
                 WebEvent::OpenBeside { source, url } => {
                     let Some(src) = self.node_of(source) else { continue };
                     if self.scene.node(src).is_some()
@@ -3258,6 +3496,10 @@ impl App {
                 return;
             }
             let before = ob.text.clone();
+            if ctrl && code == Some(KeyCode::KeyJ) && ob.target == Target::Downloads {
+                self.omnibox = None;
+                return;
+            }
             // Palette: Up/Down (Ctrl+K/J, Ctrl+P/N), PgUp/PgDn move the highlight.
             let step = palette_len.and_then(|(_, shown)| match ev.named {
                 Some(NamedKey::ArrowDown) => Some(1),
@@ -3295,7 +3537,15 @@ impl App {
                         self.step_setting(k, if back { -1 } else { 1 });
                     }
                 }
+                Some(NamedKey::Delete) if shift && ob.target == Target::Downloads => self.drop_selected_download(),
                 Some(NamedKey::Delete) if shift && ob.target.is_list() => self.forget_selected(),
+                // Downloads: Ctrl+Enter shows the file in its folder.
+                Some(NamedKey::Enter) if ctrl && ob.target == Target::Downloads => {
+                    let ob = self.omnibox.take().expect("downloads open");
+                    if let Some(palette::Item::Download(key)) = self.list_rows(&ob).into_iter().nth(ob.sel).map(|r| r.item) {
+                        self.show_download_folder(key);
+                    }
+                }
                 Some(NamedKey::Enter) if ob.target.is_list() => {
                     let ob = self.omnibox.take().expect("palette open");
                     let rows = self.list_rows(&ob);
@@ -3430,6 +3680,10 @@ impl App {
                 }
                 Some(KeyCode::Comma) if ctrl && !shift && !alt => {
                     self.open_settings();
+                    true
+                }
+                Some(KeyCode::KeyJ) if ctrl && !shift && !alt => {
+                    self.open_downloads();
                     true
                 }
                 Some(KeyCode::KeyL) if ctrl => {
@@ -4053,6 +4307,7 @@ impl App {
                 Target::Find(_) => "Find in page",
                 Target::History => "Search history",
                 Target::Settings => "Settings · Enter or → changes, ← goes back",
+                Target::Downloads => "Downloads · Enter opens, Ctrl+Enter its folder, Shift+Del cancels or removes",
                 _ => "Search or enter address",
             };
             let selected = ob.select_all && !ob.text.is_empty();
@@ -4130,6 +4385,7 @@ impl App {
                     (Target::History, _, None) => "History is off",
                     (Target::History, true, _) => "No pages in history",
                     (Target::Settings, _, _) => "No settings match",
+                    (Target::Downloads, true, _) => "No downloads yet",
                     _ => "Nothing found",
                 };
                 if let Some(rd) = self.renderer.as_mut() {
@@ -4517,6 +4773,12 @@ impl App {
         };
         match action {
             MenuAction::OpenBeside(url) => open_beside(self, &url),
+            MenuAction::Download(url) => {
+                if let Some(c) = self.cards.get(&id) {
+                    log::info!("menu: download {url}");
+                    c.page.download(&url);
+                }
+            }
             MenuAction::Search(q) => {
                 let url = omnibox::search_url(&q, self.settings.search);
                 open_beside(self, &url)

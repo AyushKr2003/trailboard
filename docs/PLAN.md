@@ -609,8 +609,45 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     "5 · TRAILBOARD_MAX_LIVE"); stepping the row replaces it.
   - Not yet settings: a start page for an empty board (still a random
     Wikipedia page), a custom search URL, the default card size, downloads
-    folder (no downloads yet), ad blocking (M8).
-- ⬜ Download handling and a downloads list.
+    folder (downloads use the desktop's folder for now), ad blocking (M8).
+- ✅ Downloads and a downloads list (Ctrl+J; `web::download`,
+  `scene::download`, `storage::downloads`, `palette::download_rows`).
+  Decisions (2026-11-14):
+  - No dialog: every download goes straight to the Downloads folder
+    (`TRAILBOARD_DOWNLOAD_DIR`, else `XDG_DOWNLOAD_DIR` from
+    `user-dirs.dirs`, else `~/Downloads`), as desktop browsers do by default.
+    The name is Chromium's suggestion made safe (one path component, no
+    control characters, not hidden, ≤200 bytes), numbered "a (1).pdf"
+    ("src (1).tar.gz") when a file, a `.crdownload` or another running
+    download has it. Chromium asks with `on_before_download`; the app answers
+    on its next frame (`download::save_to`). A second ask for a running id
+    (Chromium resuming an interrupted transfer by itself) reuses its file.
+  - A card whose page never committed (`on_load_start` of the main frame)
+    when it starts a download was opened only for that link: it is removed
+    (no undo step, not in the closed stack) and the view returns to the card
+    the link was on, focused if the new card was.
+  - Chromium reports a download only to the client of the page that started
+    it, so a page with a running download is never closed: sleeping,
+    closing, the blank-card removal and a space switch hand it to `parked`
+    (alive, unrendered) until its downloads end. No effect on the live cap.
+  - Quit cancels running downloads (Chromium deletes their partial files) and
+    they read "Stopped when Trailboard closed"; no resuming across restarts.
+  - The list is the palette's list again (`Target::Downloads`): name, then
+    progress ("1.5 MB of 3.0 MB · 50%") or how it ended, site, when. Enter
+    opens a finished file with `xdg-open` (`TRAILBOARD_OPENER` for tests) or
+    downloads a failed / cancelled / stopped one again (current page, any live
+    page, else a new card that closes itself); Ctrl+Enter opens its folder;
+    Shift+Delete cancels a running one or takes the row off (the file stays).
+    Ctrl+J or Esc closes. Toasts on start, finish and failure.
+  - Saved in `$DATA/downloads.json` (version 1, newest 200, all spaces);
+    a private space's downloads are listed this session only. Files are saved
+    there too (it is the user's folder), with the jar's cookies.
+  - Page menu: *Download link*, *Save image* (`Page::download`); disabled in
+    notes, which never download (`can_download`).
+  - Not done: pause/resume, a folder setting (settings are choice lists), a
+    progress mark on the board while the list is closed, "show in folder"
+    selecting the file (needs the FileManager1 D-Bus call), dangerous-file
+    warnings, a confirm before quitting with running downloads.
 - ✅ Loading and site icons in titles; card names when zoomed out
   (`scene::icon`, `storage::icons`, `WebEvent::Favicon`). Decisions (2026-11-14):
   - The loading bar along the title bar's bottom edge (existing) is the
@@ -786,21 +823,25 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M6 settings panel.
-**Repo state:** on `master`, committed after 0e88125; working tree clean.
+**Last session:** 2026-11-14. M6 downloads.
+**Repo state:** on `master`, committed after b531a12; working tree clean.
 **Done this session:**
-- Ctrl+, settings panel in the palette's list UI (`Target::Settings`) with four
-  settings: search engine, pages kept awake, keep history, page colours. Pure
-  model `scene::settings`, file `storage::settings` (`settings.json` v1),
-  rows `palette::settings_rows`. See M6.
-**Next up:** M6's downloads (handling and a list), or M4/M5's partial items.
-Small follow-ups: more settings (start page for an empty board, custom
+- Downloads (M6): straight to the Downloads folder with free names, blank
+  download cards close themselves, pages with running downloads are parked
+  instead of closed, Ctrl+J list in the palette UI with progress, open /
+  folder / retry / cancel / remove, `downloads.json` v1, *Download link* and
+  *Save image* in the page menu. See M6.
+**Next up:** M4/M5's partial items, or M6's translations (needs a string table).
+Small follow-ups: a downloads folder setting (needs a free-text row or a
+folder picker via xdg-desktop-portal); a progress mark on the board while
+downloads run; ask before quitting with downloads running; pause/resume;
+more settings (start page for an empty board, custom
 search URL, card size); thumbnails are taken on the main thread (55–85 ms each
 in a debug build at 1.2 s after load; move the shrink/encode off-thread if
 it shows in release); a thumbnail on history rows or the sidebar; Shift+Delete on a closed row could drop it from the stack;
 keep closed cards across restarts (board v6?); a private space could look
 different beyond its label
-(an icon, a hatched board); downloads in a private space (none yet anyway);
+(an icon, a hatched board);
 undo for forgetting a page; site
 icons on history rows; prune `icons/` of sites no card uses; a letter tile for
 sites without an icon; the name label for a stack could list its size; a zoom
@@ -811,6 +852,27 @@ several cards; link hints inside iframes; xdg-desktop-portal file chooser for
 Save as Markdown; i18n; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out.
 **Notes for the next session:**
+- Downloads verified e2e (`~/.cache/trailboard-e2e-downloads`, `run.sh N
+  shot…` sets `TRAILBOARD_DOWNLOAD_DIR=dlN` and `TRAILBOARD_OPENER=opener.sh`
+  (logs to `opened.txt`); `python3 server.py` serves :8761: `/` links at
+  y=40/100/160/220 CSS px (attachment report.pdf beside, the same with
+  `download`, a 2 MB trickle over 8 s, a transfer cut at 1 KB) and an SVG at
+  y=300). Run 1: report.pdf via a beside card (card closed, page parked,
+  released when done); `download` attr → "report (1).pdf" from card 1; *Save
+  image* → img.svg; big.bin showed "650 KB of 2.0 MB · 32%" then done; Enter
+  opened img.svg, Ctrl+Enter its folder; Shift+Delete removed a row; Ctrl+J
+  toggled; *Downloads* in Ctrl+K. Run 1 found Chromium re-asking for a
+  resumed id (fixed; run 2: one half.zip, Failed after 5 tries). Run 2:
+  big.bin finished while Space 2 was on screen (parked page). Run 3: quit at
+  15% → no file left; run 4 (copy) listed it "Stopped…", Enter fetched it
+  again through a new card that closed itself. Run 5: Shift+Delete cancelled
+  a running one (file gone), view stayed on the source card; a private
+  space's download listed but not in `downloads.json`. Screenshots dl1, dl5
+  checked, dark theme only. Not verified: real sites (redirects, big files,
+  `blob:`/`data:` downloads, PDFs, which Chromium shows rather than
+  downloads), `xdg-open` itself (a stub opener was used), a non-default
+  `user-dirs.dirs` (unit-tested), a card put to sleep mid-download (same
+  `release` path as close and space switch), disk-full errors.
 - Settings verified e2e (`~/.cache/trailboard-e2e-settings`, `run.sh N
   shot…`, `ENVX=VAR=val` passes an env var, `NOURL=1`; serve `site/` on :8751;
   `a.html` titles itself with the `prefers-color-scheme` it sees). Run 1: four

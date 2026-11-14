@@ -31,6 +31,8 @@ pub struct MenuContext {
 pub enum MenuAction {
     OpenBeside(String),
     CopyText(String),
+    /// Save this URL to the downloads folder (with the page's cookies).
+    Download(String),
     Search(String),
     /// Quote the selected text in a note, with a link back to the page.
     AddToNote(String),
@@ -65,6 +67,12 @@ impl MenuItem {
     }
 }
 
+/// A link or image Chromium can download (not `javascript:` or `mailto:`).
+/// Notes never download (see `can_download`), so their menus disable it.
+fn downloadable(url: &str) -> bool {
+    ["http:", "https:", "data:", "blob:", "file:", "ftp:"].iter().any(|s| url.len() > s.len() && url[..s.len()].eq_ignore_ascii_case(s))
+}
+
 /// Longest stretch of selected text quoted in the "Search for" label.
 const QUOTE_CHARS: usize = 24;
 
@@ -77,12 +85,14 @@ pub fn items(ctx: &MenuContext) -> Vec<MenuItem> {
         sections.push(vec![
             MenuItem::new("Open link beside", MenuAction::OpenBeside(link.clone()), true),
             MenuItem::new("Copy link address", MenuAction::CopyText(link.clone()), true),
+            MenuItem::new("Download link", MenuAction::Download(link.clone()), downloadable(link) && !ctx.note),
         ]);
     }
     if let Some(img) = ctx.image.as_ref().filter(|l| !l.is_empty()) {
         sections.push(vec![
             MenuItem::new("Open image beside", MenuAction::OpenBeside(img.clone()), true),
             MenuItem::new("Copy image address", MenuAction::CopyText(img.clone()), true),
+            MenuItem::new("Save image", MenuAction::Download(img.clone()), downloadable(img) && !ctx.note),
         ]);
     }
     let selection = ctx.selection.trim();
@@ -181,10 +191,10 @@ mod tests {
         let items = items(&ctx);
         assert_eq!(
             labels(&items),
-            ["Open link beside", "Copy link address", "-", "Copy", "Search for “some selected text that…”", "Add to note"]
+            ["Open link beside", "Copy link address", "Download link", "-", "Copy", "Search for “some selected text that…”", "Add to note"]
         );
         assert_eq!(items[1], MenuItem::new("Copy link address", MenuAction::CopyText("https://a.example/".into()), true));
-        let MenuItem::Action { action, .. } = &items[4] else { panic!() };
+        let MenuItem::Action { action, .. } = &items[5] else { panic!() };
         assert_eq!(*action, MenuAction::Search("some\nselected   text that is rather long indeed".into()));
     }
 
@@ -212,7 +222,10 @@ mod tests {
         let ctx = MenuContext { link: Some("https://l/".into()), image: Some("https://i/x.png".into()), ..Default::default() };
         assert_eq!(
             labels(&items(&ctx)),
-            ["Open link beside", "Copy link address", "-", "Open image beside", "Copy image address"]
+            ["Open link beside", "Copy link address", "Download link", "-", "Open image beside", "Copy image address", "Save image"]
         );
+        let ctx = MenuContext { link: Some("mailto:a@b".into()), ..Default::default() };
+        assert!(!items(&ctx)[2].is_enabled(), "mailto: can't be downloaded");
+        assert!(downloadable("HTTPS://x/y.zip") && !downloadable("javascript:void(0)") && !downloadable("https:"));
     }
 }

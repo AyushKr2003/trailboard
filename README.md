@@ -99,10 +99,11 @@ in the settings (Ctrl+,), or for one run with `TRAILBOARD_MAX_LIVE=N`.
 | Scroll the current page without entering it | d / u |
 | Page menu by keyboard | Menu key or Shift+F10; j/k or ↑/↓, Enter, Esc |
 | History: pages you opened, newest first | Ctrl+H, type to filter by words in them, Enter opens, Shift+Delete forgets the page; *Clear history* in Ctrl+K forgets all |
+| Downloads: files saved, newest first | Ctrl+J (or *Downloads* in Ctrl+K), type to filter; Enter opens the file (or downloads again one that didn't finish), Ctrl+Enter opens its folder, Shift+Delete cancels a running download or takes a finished one off the list |
 | Settings: search engine, pages kept awake, keep history, page colours | Ctrl+, (or *Settings* in Ctrl+K); type to filter, ↑/↓ pick, Enter or → next value, Shift+Enter or ← previous; a click steps a row (right-click back). Changes apply and save at once |
 | Find in the current page | Ctrl+F, type (matches show as you type); Enter / Shift+Enter next / previous; Esc closes |
 | Zoom the current page in / out / back to 100% | Ctrl++ / Ctrl+- / Ctrl+0: every card on that site follows, and the zoom is remembered per site |
-| Page context menu | right-click in a page (open link beside, copy link, edit, search selection) |
+| Page context menu | right-click in a page (open link beside, copy or download link, save image, edit, search selection) |
 | Copy / cut / paste | Ctrl+C / Ctrl+X / Ctrl+V (shared with the desktop clipboard) |
 | Leave the page | Esc |
 | New space / next / previous | Ctrl+Shift+N / Ctrl+PageDown / Ctrl+PageUp |
@@ -131,6 +132,15 @@ stays searchable.
 A small picture of each page is kept too (for the newest 1000): it shows
 beside the highlighted page in Ctrl+K and Ctrl+H, and on sleeping cards
 restored after a restart until they load again.
+
+Files a page downloads go straight to your Downloads folder (`XDG_DOWNLOAD_DIR`
+from `~/.config/user-dirs.dirs`, else `~/Downloads`; `TRAILBOARD_DOWNLOAD_DIR`
+overrides it), as "name (1).ext" if the name is taken, without asking. A card
+opened for a link that turns out to be a file closes again and the view goes
+back to the page. Ctrl+J lists the downloads with their progress; the list is
+kept in `downloads.json` in the data folder (downloads made in a private space
+are listed until you quit, not saved). Quitting stops running downloads and
+removes their partial files.
 
 On [Omarchy](https://omarchy.org/), Trailboard follows the current theme live
 (colours, light or dark, including the pages' `prefers-color-scheme`, unless

@@ -12,6 +12,7 @@
 use std::collections::{HashMap, HashSet};
 
 use compositor::{Layer, Quad, Renderer, Shape, Text};
+use scene::download::{self, Downloads, State};
 use scene::pagetext;
 use scene::settings::{Key, SearchEngine, Settings};
 use scene::palette::{self, Candidate};
@@ -62,6 +63,7 @@ pub enum Command {
     DeleteSpace,
     History,
     ClearHistory,
+    Downloads,
     Settings,
     Shortcuts,
     Quit,
@@ -117,6 +119,7 @@ pub const COMMANDS: &[CommandInfo] = &[
     c(Command::DeleteSpace, "Delete space", "Ctrl+Shift+W", "board workspace remove"),
     c(Command::History, "History", "Ctrl+H", "visited pages browse past recent"),
     c(Command::ClearHistory, "Clear history", "", "forget delete erase visited pages privacy"),
+    c(Command::Downloads, "Downloads", "Ctrl+J", "files saved folder download list"),
     c(Command::Settings, "Settings", "Ctrl+,", "preferences options configure search engine history colours"),
     c(Command::Shortcuts, "Keyboard shortcuts", "?", "help keys hints sheet"),
     c(Command::Quit, "Quit Trailboard", "Q", "exit close"),
@@ -133,6 +136,9 @@ pub enum Item {
     Closed(NodeId),
     /// A row of the settings panel: Enter or a click steps its value.
     Setting(Key),
+    /// A row of the downloads view (`scene::download::Downloads` key): Enter
+    /// opens the file, or tries again if it didn't finish.
+    Download(u64),
 }
 
 /// A result row.
@@ -337,6 +343,40 @@ pub fn history_rows(query: &str, scene: &Scene, visits: &[Visit], now: i64, loca
             Row { item, label, detail, positions, dot: None, history: Some(v.url.clone()) }
         })
         .collect()
+}
+
+/// The downloads view's rows (Ctrl+J), newest first: the file's name, then
+/// its progress or how it ended, its site and when it started. A query
+/// filters by name (or, letters close together, by address). `missing` says
+/// whether a finished file is gone from where it was saved.
+pub fn download_rows(
+    query: &str,
+    list: &Downloads,
+    missing: impl Fn(&str) -> bool,
+    now: i64,
+    local: impl Fn(i64) -> i64,
+) -> Vec<Row> {
+    let items: Vec<Row> = list
+        .iter()
+        .map(|d| {
+            let gone = d.state == State::Done && missing(&d.path);
+            let mut detail = download::status(d, gone);
+            let site = host(&d.url);
+            if !site.is_empty() && !d.url.starts_with("data:") && !d.url.starts_with("blob:") {
+                detail = format!("{detail} · {site}");
+            }
+            if d.state != State::Running {
+                detail = format!("{detail} · {}", scene::when::label(local(d.started_ms), now));
+            }
+            Row { item: Item::Download(d.key), label: d.name().to_string(), detail, positions: Vec::new(), dot: None, history: None }
+        })
+        .collect();
+    if query.trim().is_empty() {
+        return items;
+    }
+    let urls: Vec<&str> = list.iter().map(|d| d.url.as_str()).collect();
+    let cands: Vec<Candidate> = items.iter().zip(&urls).map(|(r, url)| Candidate { text: &r.label, alt: url }).collect();
+    palette::rank(query, &cands).into_iter().map(|r| Row { positions: r.positions, ..items[r.index].clone() }).collect()
 }
 
 /// The settings panel's rows (Ctrl+,): each setting with its value on the
@@ -768,6 +808,37 @@ mod tests {
         assert_eq!(r[2].detail, "example.org · 3 Jan");
         assert!(r.iter().all(|r| r.history.is_some()));
         assert_eq!(r[1].history.as_deref(), Some("https://doc.rust-lang.org/book/"));
+    }
+
+    #[test]
+    fn download_view_rows() {
+        let day = 86_400_000;
+        let mut l = Downloads::default();
+        let a = l.start("https://files.example.org/report.pdf", "/home/u/Downloads/report.pdf", false, 9 * day);
+        l.update(a, 4_200_000, 4_200_000, State::Done);
+        let b = l.start("https://www.example.com/big.iso", "/home/u/Downloads/big.iso", false, 10 * day);
+        l.update(b, 1_500_000, 3_000_000, State::Running);
+        let c = l.start("data:text/plain,hi", "/home/u/Downloads/hi.txt", false, 10 * day);
+        l.update(c, 0, 0, State::Failed);
+
+        let r = download_rows("", &l, |_| false, 10 * day + 3_600_000, |ms| ms);
+        let shown: Vec<(&str, &str)> = r.iter().map(|r| (r.label.as_str(), r.detail.as_str())).collect();
+        assert_eq!(
+            shown,
+            [
+                ("hi.txt", "Failed · Today 00:00"),
+                ("big.iso", "1.5 MB of 3.0 MB · 50% · example.com"),
+                ("report.pdf", "4.2 MB · files.example.org · Yesterday 00:00"),
+            ]
+        );
+        let r = download_rows("", &l, |p| p.ends_with(".pdf"), 10 * day, |ms| ms);
+        assert!(r[2].detail.starts_with("Deleted or moved"));
+        let r = download_rows("rep", &l, |_| false, 10 * day, |ms| ms);
+        assert_eq!(r[0].item, Item::Download(a));
+        assert_eq!(r[0].positions, vec![0, 1, 2]);
+        // An address finds it too when its letters lie together.
+        let r = download_rows("files.ex", &l, |_| false, 10 * day, |ms| ms);
+        assert_eq!(r.first().map(|r| &r.item), Some(&Item::Download(a)));
     }
 
     #[test]

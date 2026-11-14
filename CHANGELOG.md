@@ -7,6 +7,18 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Downloads**: files go straight to your Downloads folder (from
+  `user-dirs.dirs`, or `TRAILBOARD_DOWNLOAD_DIR`), numbered "name (1).ext"
+  when the name is taken; a toast says when one starts and ends. A card
+  opened for a link that turns out to be a file closes itself and the view
+  returns to the page. **Ctrl+J** (or *Downloads* in Ctrl+K) lists them with
+  live progress: Enter opens a file (or downloads again one that failed),
+  Ctrl+Enter opens its folder, Shift+Delete cancels a running download or
+  takes a finished one off the list. The list is kept in `downloads.json`;
+  downloads from a private space are not saved. The page menu gains
+  *Download link* and *Save image*. Downloads keep going when their card
+  sleeps, closes or you switch spaces; quitting stops them and removes the
+  partial files.
 - **Settings**: Ctrl+, (or *Settings* in Ctrl+K) lists the settings under the
   top field; type to filter, Enter or → changes the highlighted one, ← or
   Shift+Enter goes back, a click changes a row too. Changes apply at once and

@@ -2,6 +2,7 @@
 //! the same directory, fsync, rename), so a crash never leaves a torn board.
 //! Each space has its own board; `spaces` holds the index of spaces.
 
+pub mod downloads;
 pub mod export;
 pub mod icons;
 pub mod pagetext;

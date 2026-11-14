@@ -6,6 +6,7 @@ pub mod arrange;
 pub mod export;
 pub mod fold;
 pub mod geom;
+pub mod download;
 pub mod hint;
 pub mod icon;
 pub mod history;

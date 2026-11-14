@@ -7,6 +7,10 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Stack outline**: click a stack's count badge, or press O with no page
+  focused, to list the pages in the stack. Pick one (click, or arrows and
+  Enter) to bring it to the front, or choose *Unfold trail*. Script command
+  `badgeclick ID` clicks a stack's badge.
 - **Fold**: press S with no page focused to fold the trail in the middle of the
   view into a stack: only the card you were looking at stays on the board, with
   the edges of the others behind it, `2/4 ·` in its title and a count badge on

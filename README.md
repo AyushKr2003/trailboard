@@ -62,6 +62,7 @@ you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change th
 | Tidy: lay trails out left to right, no overlaps | T (with no page focused; Ctrl+Z undoes it) |
 | Fold the trail in the middle of the view into a stack / unfold it | S (with no page focused; Ctrl+Z undoes it) |
 | Peek at the previous / next card of a stack | [ / ] (with no page focused) |
+| List a stack's pages, bring one to the front or unfold | Click the count badge, or O (with no page focused) |
 | Back / forward / reload | Alt+← / Alt+→ / Ctrl+R |
 | Page context menu | right-click in a page (open link beside, copy link, edit, search selection) |
 | Copy / cut / paste | Ctrl+C / Ctrl+X / Ctrl+V (shared with the desktop clipboard) |
@@ -87,7 +88,7 @@ TRAILBOARD_SCRIPT=path cargo run -p trailboard -- URL   # scripted end-to-end ru
 ```
 
 `TRAILBOARD_SCRIPT` drives the real input handlers (`click x y`, `pclick card x y`,
-`key ctrl+c`, `type text`, `ime-commit text`, `menuclick label`, `wheel`, `fit`,
+`key ctrl+c`, `type text`, `ime-commit text`, `menuclick label`, `badgeclick id`, `wheel`, `fit`,
 `open URL`, `wait ms`, `log`, `quit`); see `crates/app/src/script.rs`.
 
 ## Status

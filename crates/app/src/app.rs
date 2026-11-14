@@ -56,7 +56,7 @@ use crate::clipboard::{Clipboard, Paste};
 use crate::desktop::Desktop;
 use crate::theme::{rgb, Theme};
 use crate::keymap::{self, KeyIn};
-use crate::menu::{self, ContextMenu};
+use crate::menu::{self, ContextMenu, Entry};
 use crate::omnibox::{self, Omnibox, Target};
 use crate::script::{Cmd, Script};
 
@@ -750,11 +750,7 @@ impl App {
     fn toggle_fold(&mut self) {
         let Some(id) = read::pick(&self.scene, None, self.camera.center) else { return };
         if self.scene.stack_of(id).is_some() {
-            if let Some(stack) = self.scene.unfold(id) {
-                log::info!("unfold: {} card(s) around {}", stack.members.len(), id.0);
-                self.history.unfolded(&stack);
-                self.toast(format!("Unfolded {} pages", stack.members.len()));
-            }
+            return self.unfold_stack(id);
         } else if let Some(f) = self.scene.fold(id) {
             log::info!("fold: {:?} in front of {}", f.members.iter().map(|m| m.0).collect::<Vec<_>>(), id.0);
             self.history.folded(&f);
@@ -765,6 +761,23 @@ impl App {
             return;
         }
         self.dirty = true;
+    }
+
+    fn unfold_stack(&mut self, id: NodeId) {
+        if let Some(stack) = self.scene.unfold(id) {
+            log::info!("unfold: {} card(s) around {}", stack.members.len(), id.0);
+            self.history.unfolded(&stack);
+            self.toast(format!("Unfolded {} pages", stack.members.len()));
+            self.dirty = true;
+        }
+    }
+
+    /// O: the outline of the stack in the middle of the view.
+    fn outline_in_view(&mut self) {
+        match read::pick(&self.scene, None, self.camera.center) {
+            Some(id) if self.scene.stack_of(id).is_some() => self.open_outline(id),
+            _ => self.toast("No stack here · S folds a trail"),
+        }
     }
 
     /// [ / ]: show the previous / next card of the stack in the middle of the view.
@@ -1012,7 +1025,22 @@ impl App {
             return if self.read_layout().content.contains(screen) { Hit::Content(id) } else { Hit::ReadBar(id) };
         }
         let w = self.to_world(screen);
-        let Some(id) = self.scene.topmost_at(w) else { return Hit::Board };
+        let top = self.scene.topmost_at(w);
+        // Badges stick out past their card's corner, so they are hit first,
+        // unless a card drawn above covers them.
+        let top_z = top.and_then(|t| self.scene.node(t)).map(|n| n.z);
+        let badge = self
+            .scene
+            .stacks()
+            .iter()
+            .filter_map(|s| self.scene.node(s.front))
+            .filter(|n| top_z.is_none_or(|z| n.z >= z))
+            .filter(|n| self.stack_badge(n).is_some_and(|b| b.contains(screen)))
+            .max_by_key(|n| n.z);
+        if let Some(n) = badge {
+            return Hit::Badge(n.id);
+        }
+        let Some(id) = top else { return Hit::Board };
         let n = self.scene.node(id).expect("hit node exists");
         let k = self.camera.pixels_per_unit(self.scale());
         let grip = RESIZE_GRIP / k.min(1.0);
@@ -1127,6 +1155,12 @@ impl App {
                     }
                 }
                 Hit::Close(id) => self.close_card(id),
+                Hit::Badge(id) => {
+                    self.keys_in_page = false;
+                    self.open_outline(id);
+                    // Swallow the release; releasing over a row picks it, as in a native menu.
+                    self.menu_pressed = true;
+                }
                 Hit::Header(id) => {
                     if shift {
                         self.selection.toggle(id);
@@ -1244,7 +1278,7 @@ impl App {
                 let cursor = match hit {
                     Hit::Header(_) => web::Cursor::Grab,
                     Hit::Grip(_) => web::Cursor::ResizeSE,
-                    Hit::Close(_) => web::Cursor::Pointer,
+                    Hit::Close(_) | Hit::Badge(_) => web::Cursor::Pointer,
                     Hit::Content(id) => self.cards.get(&id).map_or(web::Cursor::Default, |c| c.cursor),
                     Hit::Board | Hit::ReadBar(_) => web::Cursor::Default,
                 };
@@ -1517,6 +1551,10 @@ impl App {
                     self.toggle_fold();
                     true
                 }
+                Some(KeyCode::KeyO) if self.focused.is_none() && !ctrl && !alt && !shift && self.drag_is_idle() => {
+                    self.outline_in_view();
+                    true
+                }
                 Some(KeyCode::BracketLeft | KeyCode::BracketRight)
                     if self.focused.is_none() && !ctrl && !alt && self.drag_is_idle() =>
                 {
@@ -1780,14 +1818,11 @@ impl App {
                 });
             }
             // A stack's size on its top-left corner (clear of ×), readable at any zoom.
-            if let Some((_, len)) = stack {
-                let ui = self.ui();
-                let size = 11.0 * ui;
+            if let (Some((_, len)), Some(pill)) = (stack, self.stack_badge(n)) {
+                let size = 11.0 * self.ui();
                 let text = len.to_string();
                 let tw = self.renderer.as_mut().map_or(size * 0.6, |r| r.measure(&text, size, true));
-                let h = size * 1.6;
-                let w = (tw + size).max(h);
-                let pill = Rect::new(frame.x - w * 0.4, frame.y - h * 0.4, w, h);
+                let (w, h) = (pill.w, pill.h);
                 l.quads.push(Quad {
                     shape: Shape::Rect { rect: pill, radius: if th.rounding > 0.0 { h / 2.0 } else { 0.0 } },
                     color: rgb(th.accent(), 1.0),
@@ -1898,7 +1933,7 @@ impl App {
         }
 
         if let Some(m) = &self.menu {
-            layers.push(menu_layer(m, ui, screen, &th));
+            layers.push(menu_layer(m, ui, &th));
         }
 
         // Space name in the top-left corner once there is more than one space.
@@ -2150,29 +2185,80 @@ impl App {
     fn open_menu(&mut self, id: NodeId, x: f32, y: f32, ctx: &web::menu::MenuContext) {
         let Some(at) = self.page_rect_to_screen(id, Rect::new(x, y, 0.0, 0.0)) else { return };
         let anchor = Vec2::new(at.x, at.y);
-        let items = web::menu::items(ctx);
+        let items = web::menu::items(ctx).into_iter().map(Entry::Page).collect();
+        let m = self.layout_menu(id, items, anchor);
+        log::info!("context menu on card {}: {:?}", id.0, menu_labels(&m.items));
+        self.menu = Some(m);
+        self.menu_pressed = false;
+    }
+
+    fn layout_menu(&mut self, id: NodeId, items: Vec<Entry>, anchor: Vec2) -> ContextMenu {
         let scale = self.ui();
         let label_w = match self.renderer.as_mut() {
             Some(r) => items
                 .iter()
-                .map(|i| match i {
-                    MenuItem::Action { label, .. } => r.measure(label, menu::FONT * scale, false),
-                    MenuItem::Separator => 0.0,
-                })
+                .filter(|e| !e.is_separator())
+                .map(|e| r.measure(e.label(), menu::FONT * scale, false))
                 .fold(0.0, f32::max),
             None => 0.0,
         };
-        let m = ContextMenu::new(id, items, anchor, label_w, self.viewport(), scale);
-        log::info!("context menu on card {}: {:?}", id.0, menu_labels(&m.items));
+        ContextMenu::new(id, items, anchor, label_w, self.viewport(), scale)
+    }
+
+    /// The count badge on a stack's front, screen px. Sized by digit count, so
+    /// hit testing needs no text measuring.
+    fn stack_badge(&self, n: &scene::Node) -> Option<Rect> {
+        let len = self.scene.stack_of(n.id)?.members.len();
+        let size = 11.0 * self.ui();
+        let frame = self.to_screen_rect(n.frame());
+        let h = size * 1.6;
+        let w = (size * (0.62 * len.to_string().len() as f32 + 1.0)).max(h);
+        Some(Rect::new(frame.x - w * 0.4, frame.y - h * 0.4, w, h))
+    }
+
+    /// O, or a click on the count badge: list the stack's members under its
+    /// badge, to bring one to the front (or unfold the trail).
+    fn open_outline(&mut self, front: NodeId) {
+        let Some(stack) = self.scene.stack_of(front) else { return };
+        let front = stack.front;
+        let members: Vec<(NodeId, String)> = stack
+            .ids()
+            .filter_map(|id| self.scene.all_nodes().find(|n| n.id == id))
+            .map(|n| (n.id, if n.title.trim().is_empty() { n.url.clone() } else { n.title.clone() }))
+            .collect();
+        let refs: Vec<(NodeId, &str)> = members.iter().map(|(id, t)| (*id, t.as_str())).collect();
+        let items = menu::outline(&refs, front);
+        let Some(badge) = self.scene.node(front).and_then(|n| self.stack_badge(n)) else { return };
+        let anchor = Vec2::new(badge.x, badge.bottom() + 4.0 * self.ui());
+        let m = self.layout_menu(front, items, anchor);
+        log::info!("outline of stack {}: {:?}", front.0, menu_labels(&m.items));
         self.menu = Some(m);
         self.menu_pressed = false;
     }
 
     fn activate_menu_item(&mut self, i: usize) {
         let Some(m) = self.menu.take() else { return };
-        let Some(MenuItem::Action { action, enabled: true, label }) = m.items.get(i).cloned() else { return };
-        log::info!("menu: {label}");
         let id = m.page;
+        let (action, label) = match m.items.get(i).cloned() {
+            Some(Entry::Page(MenuItem::Action { action, enabled: true, label })) => (action, label),
+            Some(Entry::Member { id: member, label, .. }) => {
+                log::info!("outline: {label}");
+                if self.scene.show(member) {
+                    let stack = self.scene.stack_of(member).expect("shown in a stack");
+                    log::info!("show: card {} ({} of {})", member.0, stack.front_index() + 1, stack.members.len());
+                    self.after_fold();
+                    self.dirty = true;
+                }
+                return;
+            }
+            Some(Entry::Unfold) => {
+                log::info!("outline: unfold");
+                self.unfold_stack(id);
+                return;
+            }
+            _ => return,
+        };
+        log::info!("menu: {label}");
         // Edits act on the focused page; the right-click focused this card.
         if self.focused != Some(id) {
             self.focus(Some(id));
@@ -2212,17 +2298,11 @@ impl App {
     }
 }
 
-fn menu_labels(items: &[MenuItem]) -> Vec<&str> {
-    items
-        .iter()
-        .map(|i| match i {
-            MenuItem::Action { label, .. } => label.as_str(),
-            MenuItem::Separator => "-",
-        })
-        .collect()
+fn menu_labels(items: &[Entry]) -> Vec<&str> {
+    items.iter().map(Entry::label).collect()
 }
 
-fn menu_layer(m: &ContextMenu, scale: f32, screen: Rect, th: &Theme) -> Layer {
+fn menu_layer(m: &ContextMenu, scale: f32, th: &Theme) -> Layer {
     let mut l = Layer::default();
     let radius = th.radius(scale / th.text_scale);
     l.quads.push(Quad {
@@ -2235,29 +2315,32 @@ fn menu_layer(m: &ContextMenu, scale: f32, screen: Rect, th: &Theme) -> Layer {
     l.quads.push(Quad { shape: Shape::Rect { rect: m.rect, radius }, color: rgb(th.panel(), 1.0), texture: None });
     let size = menu::FONT * scale;
     for (i, (item, row)) in m.items.iter().zip(&m.rows).enumerate() {
-        match item {
-            MenuItem::Separator => {
+        if item.is_separator() {
                 let y = row.y + row.h / 2.0;
                 l.quads.push(Quad {
                     shape: Shape::Rect { rect: Rect::new(row.x + 4.0 * scale, y, row.w - 8.0 * scale, scale.max(1.0)), radius: 0.0 },
                     color: rgb(th.divider(), 1.0),
                     texture: None,
                 });
-            }
-            MenuItem::Action { label, enabled, .. } => {
-                if m.hover == Some(i) {
-                    l.quads.push(Quad { shape: Shape::Rect { rect: *row, radius: th.small_radius(scale / th.text_scale) }, color: rgb(th.selection(), 1.0), texture: None });
-                }
-                l.texts.push(Text {
-                    text: label.clone(),
-                    pos: [row.x + (menu::TEXT_PAD - menu::PAD) * scale, row.y + (row.h - size * 1.3) / 2.0],
-                    size,
-                    color: rgb(if *enabled { th.foreground() } else { th.dim_text() }, 1.0),
-                    clip: screen,
-                    bold: false,
-                });
-            }
+                continue;
         }
+        if m.hover == Some(i) {
+            l.quads.push(Quad { shape: Shape::Rect { rect: *row, radius: th.small_radius(scale / th.text_scale) }, color: rgb(th.selection(), 1.0), texture: None });
+        }
+        let current = matches!(item, Entry::Member { current: true, .. });
+        if current {
+            // A short accent bar marks the card in front.
+            let bar = Rect::new(row.x + 2.0 * scale, row.y + row.h * 0.25, (2.0 * scale).max(1.0), row.h * 0.5);
+            l.quads.push(Quad { shape: Shape::Rect { rect: bar, radius: 0.0 }, color: rgb(th.accent(), 1.0), texture: None });
+        }
+        l.texts.push(Text {
+            text: item.label().to_string(),
+            pos: [row.x + (menu::TEXT_PAD - menu::PAD) * scale, row.y + (row.h - size * 1.3) / 2.0],
+            size,
+            color: rgb(if item.is_enabled() { th.foreground() } else { th.dim_text() }, 1.0),
+            clip: *row,
+            bold: current,
+        });
     }
     l
 }
@@ -2320,6 +2403,14 @@ impl App {
                         None => log::warn!("script: no open menu item {label:?}"),
                     }
                 }
+                Cmd::BadgeClick(id) => match self.scene.node(NodeId(id)).and_then(|n| self.stack_badge(n)) {
+                    Some(b) => {
+                        self.cursor_moved(b.center());
+                        self.mouse_input(ElementState::Pressed, MouseButton::Left);
+                        self.mouse_input(ElementState::Released, MouseButton::Left);
+                    }
+                    None => log::warn!("script: card {id} is no stack's front"),
+                },
                 Cmd::Key(combo) => match keymap::parse_combo(&combo) {
                     Some((mods, name)) => self.script_key(name, mods),
                     None => log::warn!("script: bad key combo {combo:?}"),
@@ -2472,13 +2563,15 @@ enum Hit {
     Content(NodeId),
     /// Read Mode's title bar.
     ReadBar(NodeId),
+    /// A stack's count badge.
+    Badge(NodeId),
 }
 
 impl Hit {
     fn id(&self) -> Option<NodeId> {
         match *self {
             Hit::Board => None,
-            Hit::Header(id) | Hit::Close(id) | Hit::Grip(id) | Hit::Content(id) | Hit::ReadBar(id) => Some(id),
+            Hit::Header(id) | Hit::Close(id) | Hit::Grip(id) | Hit::Content(id) | Hit::ReadBar(id) | Hit::Badge(id) => Some(id),
         }
     }
 }

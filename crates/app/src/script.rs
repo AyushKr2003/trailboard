@@ -19,6 +19,7 @@
 //! ime-preedit 你好       # IME composition text (empty cancels it)
 //! ime-commit 你好        # IME final text
 //! menuclick Copy       # click the open context menu's item with this label
+//! badgeclick 3         # click the count badge of the stack card 3 fronts (opens its outline)
 //! fit                  # same as Ctrl+0
 //! undo                 # same as Ctrl+Z on the board
 //! redo                 # same as Ctrl+Shift+Z
@@ -48,6 +49,8 @@ pub enum Cmd {
     ImePreedit(String),
     ImeCommit(String),
     MenuClick(String),
+    /// Click the count badge of the stack whose front is card `id`.
+    BadgeClick(u64),
     Fit,
     Undo,
     Redo,
@@ -107,6 +110,7 @@ fn parse(line: &str) -> Option<Cmd> {
         "ime-preedit" => Cmd::ImePreedit(rest.trim().to_string()),
         "ime-commit" => Cmd::ImeCommit(rest.trim().to_string()),
         "menuclick" => Cmd::MenuClick(rest.trim().to_string()),
+        "badgeclick" => Cmd::BadgeClick(num(0) as u64),
         "fit" => Cmd::Fit,
         "undo" => Cmd::Undo,
         "redo" => Cmd::Redo,

@@ -209,7 +209,7 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     (`read::pick`), so that card stays put on screen.
   - Key: T with no card focused (was a second "new card" key; N and Ctrl+T
     remain). Cards jump to their places; animating them is a follow-up.
-- 🟡 Fold (S): a trail collapses into a stack (`scene::fold`). Decisions (2026-11-14):
+- ✅ Fold (S): a trail collapses into a stack (`scene::fold`). Decisions (2026-11-14):
   - A trail is every card joined to the picked one by edges, either way; its
     members are kept in reading order (roots, then links depth first). The
     picked card (as for Tidy: the topmost under the middle of the view, else
@@ -236,8 +236,16 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   - Look: up to two card edges behind the front, offset down-right by 10 world
     units (never under 5 px); the title reads `3/4 · Title`; a badge with the
     count on the top-left corner stays readable at any zoom.
-  - ⬜ Still to do: the stack *outline* (a list of members to jump to), and
-    peeking with the mouse.
+  - ✅ Outline (2026-11-14): a click on the count badge, or O (no card
+    focused, the stack in the middle of the view), lists the members under
+    the badge in reading order (`n  Title`, URL if untitled, cut at 60
+    characters), the front one bold with an accent bar and highlighted, then
+    *Unfold trail*. Picking a member brings it to the front in place
+    (`Scene::show`, like peeking: not an edit, focus unchanged, so `[`/`]`
+    keep working); arrows, Enter, Esc and click-outside behave as in the page
+    menu, which it shares (`app::menu::Entry`). This is also the mouse way to
+    peek; there is no separate mouse peek. Badges are hit before cards
+    (they stick out past the corner) unless a card above covers them.
 - Next/Previous on Trail navigation; trail names and colours.
 - Notes (N): native Markdown note cards; sticky notes; "Add to note" quotes the
   selected text with a link back to its source card.
@@ -336,24 +344,31 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M5 Fold.
-**Repo state:** on `master`, committed after e48ae9c; working tree clean.
+**Last session:** 2026-11-14. M5 Fold: stack outline.
+**Repo state:** on `master`, committed after 50a438c; working tree clean.
 **Done this session:**
-- `scene::fold`: `Stack { members (id + offset), front, anchor }`,
-  `Scene::{trail_of, fold, fold_members, refold, unfold, peek, stack_of,
-  is_hidden, all_nodes, visible_edges}`; `nodes()` and friends skip folded
-  cards; `remove` brings the next member forward. 7 tests, plus a history test
-  (fold/unfold undo and redo, peeked stack restored exactly).
-- `History::{folded, unfolded}` with `Edit::Unfold` / `Edit::Refold`.
-- Board v2 with `storage::migrate_board` (v1 loads; newer refused); 2 tests.
-- App: S / `[` / `]` with no card focused, folded pages slept in
-  `sync_liveness`, focus and selection dropped from folded cards, stack drawn
-  with back edges, `n/m · ` title prefix and a count badge. Sheet, README rows.
-  Script `cards` logs `hidden=` per card and a `script stack:` line per stack.
-**Next up:** the stack outline (click the badge or a key to list the members and
-jump to one), then M5 Next/Previous on Trail, or Notes (N). Small follow-ups:
-animate cards to their Tidy places; `.desktop` entry and icon (M6).
+- `Scene::show(id)`: brings any stack member to the front in place; 1 test.
+- `app::menu::Entry` (`Page(MenuItem)`, `Member`, `Unfold`) so the context
+  menu overlay also draws a stack's outline; `menu::outline` builds it
+  (numbered, untitled → "Untitled", long titles cut); 1 test.
+- App: `Hit::Badge` (hit before cards, cursor is a hand), `stack_badge` rect
+  shared by drawing and hit testing (sized by digit count, no measuring), O key
+  (`outline_in_view`, toast if no stack), `open_outline` anchored under the
+  badge, `unfold_stack` split out of `toggle_fold`. Sheet row, README row,
+  script `badgeclick ID`. Fold is now ✅.
+**Next up:** M5 Next/Previous on Trail (move along a trail's cards, folded or
+not), or Notes (N). Small follow-ups: animate cards to their Tidy places;
+`.desktop` entry and icon (M6).
 **Notes for the next session:**
+- Outline verified e2e (`~/.cache/trailboard-e2e-outline`, same `run.sh N
+  shot…` harness, seeded from the fold run's folded board). Run 1: O listed
+  `1 P1 … 4 P4, -, Unfold trail` with 3 current; Down+Enter showed 4 in 3's
+  place; `badgeclick 4` opened it again; *Unfold trail* unfolded (one undo step,
+  undo refolded with 4 in front); O then Esc closed it. Run 2: `fit`, badge
+  click; screenshots checked (menu under the badge, front row bold with an
+  accent bar; Esc closes).
+- Not verified: a real mouse click on the badge (script clicks drive the same
+  handler), press-drag-release onto a row, light themes for the outline.
 - Fold verified e2e (`~/.cache/trailboard-e2e-fold`, `run.sh N shot…` runs
   `scriptN`; the seed is the Tidy test's v1 board of five pages, trail 1→2,
   1→3, 3→4 plus lone 5). Run 1: S folded [1,2,3,4] behind 3 (the centre card)

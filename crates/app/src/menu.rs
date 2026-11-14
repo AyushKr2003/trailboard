@@ -1,8 +1,67 @@
-//! The context menu overlay: layout, hit testing and keyboard movement.
-//! Which items appear comes from `web::menu`.
+//! Menu overlays: the page context menu (items from `web::menu`) and a stack's
+//! outline (its members, to jump to one). Layout, hit testing and keyboard movement.
 
 use scene::{NodeId, Rect, Vec2};
 use web::menu::MenuItem;
+
+/// Longest page title shown in a stack's outline, in characters.
+pub const OUTLINE_CHARS: usize = 60;
+
+/// A row of a menu overlay.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Entry {
+    /// A page context menu item.
+    Page(MenuItem),
+    /// A stack member; `current` is the one in front.
+    Member { id: NodeId, label: String, current: bool },
+    /// Unfold the stack.
+    Unfold,
+}
+
+impl Entry {
+    pub fn is_enabled(&self) -> bool {
+        match self {
+            Entry::Page(i) => i.is_enabled(),
+            Entry::Member { .. } | Entry::Unfold => true,
+        }
+    }
+
+    pub fn is_separator(&self) -> bool {
+        matches!(self, Entry::Page(MenuItem::Separator))
+    }
+
+    /// The row's text; "-" for a separator.
+    pub fn label(&self) -> &str {
+        match self {
+            Entry::Page(MenuItem::Action { label, .. }) | Entry::Member { label, .. } => label,
+            Entry::Page(MenuItem::Separator) => "-",
+            Entry::Unfold => "Unfold trail",
+        }
+    }
+}
+
+/// A stack's outline: `(id, title or URL)` of each member in reading order,
+/// numbered, with long titles cut short, then a separator and Unfold.
+pub fn outline(members: &[(NodeId, &str)], front: NodeId) -> Vec<Entry> {
+    let mut v: Vec<Entry> = members
+        .iter()
+        .enumerate()
+        .map(|(i, &(id, title))| {
+            let title = title.trim();
+            let title = if title.chars().count() > OUTLINE_CHARS {
+                format!("{}…", title.chars().take(OUTLINE_CHARS - 1).collect::<String>().trim_end())
+            } else if title.is_empty() {
+                "Untitled".to_string()
+            } else {
+                title.to_string()
+            };
+            Entry::Member { id, label: format!("{}  {title}", i + 1), current: id == front }
+        })
+        .collect();
+    v.push(Entry::Page(MenuItem::Separator));
+    v.push(Entry::Unfold);
+    v
+}
 
 /// Sizes in logical px; multiplied by the window scale.
 pub const ITEM_H: f32 = 28.0;
@@ -13,9 +72,9 @@ pub const FONT: f32 = 14.0;
 pub const MIN_W: f32 = 180.0;
 
 pub struct ContextMenu {
-    /// The card whose page was right-clicked.
+    /// The card whose page was right-clicked, or the stack's front for an outline.
     pub page: NodeId,
-    pub items: Vec<MenuItem>,
+    pub items: Vec<Entry>,
     /// Outer box, screen px.
     pub rect: Rect,
     /// One rect per item (separators included), screen px.
@@ -25,9 +84,11 @@ pub struct ContextMenu {
 
 impl ContextMenu {
     /// Lay out `items` at `anchor` (screen px) with the given widest label width.
-    pub fn new(page: NodeId, items: Vec<MenuItem>, anchor: Vec2, label_w: f32, viewport: Vec2, scale: f32) -> Self {
+    pub fn new(page: NodeId, items: Vec<Entry>, anchor: Vec2, label_w: f32, viewport: Vec2, scale: f32) -> Self {
         let (rect, rows) = layout(&items, anchor, label_w, viewport, scale);
-        ContextMenu { page, items, rect, rows, hover: None }
+        // An outline starts on the member in front.
+        let hover = items.iter().position(|e| matches!(e, Entry::Member { current: true, .. }));
+        ContextMenu { page, items, rect, rows, hover }
     }
 
     /// Index of the enabled item at `p`.
@@ -58,10 +119,10 @@ impl ContextMenu {
 
 /// Menu box and row rects. The menu opens down and right of `anchor`, flipping
 /// up or left when it would leave the viewport, and is clamped inside it.
-pub fn layout(items: &[MenuItem], anchor: Vec2, label_w: f32, viewport: Vec2, scale: f32) -> (Rect, Vec<Rect>) {
+pub fn layout(items: &[Entry], anchor: Vec2, label_w: f32, viewport: Vec2, scale: f32) -> (Rect, Vec<Rect>) {
     let w = (label_w + 2.0 * TEXT_PAD * scale).max(MIN_W * scale);
     let content_h: f32 =
-        items.iter().map(|i| if matches!(i, MenuItem::Separator) { SEP_H } else { ITEM_H }).sum::<f32>() * scale;
+        items.iter().map(|i| if i.is_separator() { SEP_H } else { ITEM_H }).sum::<f32>() * scale;
     let h = content_h + 2.0 * PAD * scale;
     let mut x = anchor.x;
     let mut y = anchor.y;
@@ -76,7 +137,7 @@ pub fn layout(items: &[MenuItem], anchor: Vec2, label_w: f32, viewport: Vec2, sc
     let mut rows = Vec::with_capacity(items.len());
     let mut top = y + PAD * scale;
     for i in items {
-        let rh = if matches!(i, MenuItem::Separator) { SEP_H } else { ITEM_H } * scale;
+        let rh = if i.is_separator() { SEP_H } else { ITEM_H } * scale;
         rows.push(Rect::new(x + PAD * scale, top, w - 2.0 * PAD * scale, rh));
         top += rh;
     }
@@ -88,9 +149,24 @@ mod tests {
     use super::*;
     use web::menu::{items, MenuContext};
 
-    fn sample() -> Vec<MenuItem> {
+    fn sample() -> Vec<Entry> {
         // Back (disabled), Forward (disabled), Reload, -, Select all
-        items(&MenuContext::default())
+        items(&MenuContext::default()).into_iter().map(Entry::Page).collect()
+    }
+
+    #[test]
+    fn outline_numbers_members_and_starts_on_the_front() {
+        let long = "x".repeat(100);
+        let members = [(NodeId(4), "Alpha"), (NodeId(7), "  "), (NodeId(9), long.as_str())];
+        let o = outline(&members, NodeId(7));
+        let labels: Vec<&str> = o.iter().map(Entry::label).collect();
+        assert_eq!(&labels[..2], &["1  Alpha", "2  Untitled"]);
+        assert_eq!(labels[2].chars().count(), 3 + OUTLINE_CHARS);
+        assert!(labels[2].ends_with('…'));
+        assert_eq!(&labels[3..], &["-", "Unfold trail"]);
+        let m = ContextMenu::new(NodeId(7), o, Vec2::new(0.0, 0.0), 50.0, Vec2::new(800.0, 600.0), 1.0);
+        assert_eq!(m.hover, Some(1));
+        assert!(m.items.iter().all(|e| e.is_enabled() || e.is_separator()));
     }
 
     #[test]

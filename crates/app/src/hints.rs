@@ -17,6 +17,7 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("T", "Tidy trails"),
             ("S", "Fold / unfold a trail"),
             ("[ · ]", "Peek through a stack"),
+            ("O · click the count", "List a stack's pages"),
             ("Ctrl+Z · Ctrl+Shift+Z", "Undo / redo board edits"),
             ("Ctrl+Shift+T", "Reopen closed card"),
             ("? · F1", "Show / hide these hints"),

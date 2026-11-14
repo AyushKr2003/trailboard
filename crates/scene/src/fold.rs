@@ -209,6 +209,17 @@ impl Scene {
         Some(next)
     }
 
+    /// Outline: brings the member `id` to its stack's front, in the front's
+    /// place. Returns false for a card in no stack; true (changing nothing) if
+    /// it is already the front.
+    pub fn show(&mut self, id: NodeId) -> bool {
+        let Some(i) = self.stacks.iter().position(|s| s.contains(id)) else { return false };
+        if self.stacks[i].front != id {
+            self.set_front(i, id);
+        }
+        true
+    }
+
     fn set_front(&mut self, stack: usize, id: NodeId) {
         let old = self.stacks[stack].front;
         if let Some(at) = self.nodes.get(&old).map(|n| n.rect.pos())
@@ -314,6 +325,21 @@ mod tests {
         assert_eq!(s.peek(d, 1), Some(a));
         assert_eq!(s.peek(a, 2), Some(c));
         assert_eq!(s.stack_of(b).unwrap().front, c);
+    }
+
+    #[test]
+    fn show_brings_any_member_forward_in_place() {
+        let (mut s, [a, b, c, d, e]) = board();
+        s.fold(b).unwrap();
+        let at = s.node(b).unwrap().rect.pos();
+        assert!(s.show(d));
+        assert_eq!(s.stack_of(a).unwrap().front, d);
+        assert_eq!(s.node(d).unwrap().rect.pos(), at);
+        assert!(s.is_hidden(b) && !s.is_hidden(d));
+        assert_eq!(s.topmost_at(at + Vec2::new(1.0, 1.0)), Some(d));
+        assert!(s.show(d), "already in front");
+        assert_eq!(s.stack_of(c).unwrap().front, d);
+        assert!(!s.show(e), "not in a stack");
     }
 
     #[test]

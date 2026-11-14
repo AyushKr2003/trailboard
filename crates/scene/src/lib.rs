@@ -4,6 +4,7 @@
 
 pub mod geom;
 pub mod history;
+pub mod liveness;
 pub mod placement;
 
 use std::collections::BTreeMap;

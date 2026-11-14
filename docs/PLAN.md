@@ -82,7 +82,13 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   a page, Ctrl+Z goes to the page (text undo) until the board, a title bar or a
   resize grip is clicked; a card restored by undo keeps its id and trail edges
   whose other end still exists, and Ctrl+Shift+T skips cards already restored.
-- ⬜ Live-browser cap (e.g. 6–8 live; others show a cached snapshot and wake on focus).
+- ✅ Live-browser cap: `scene::liveness::plan`. Decisions: default 6 live
+  (`TRAILBOARD_MAX_LIVE` overrides); rank focused → on screen → most recently used,
+  ties keep already-live cards; a sleeping card closes its browser but keeps its
+  last frame as a dimmed snapshot (dark placeholder if it never painted); it wakes
+  on focus, or when on screen and the camera has settled (not mid-pan). Waking
+  reloads the card's current URL, so scroll position and form state are lost.
+  On restore all pages start asleep and recency is seeded from z-order.
 - ⬜ `<select>`/popup widgets (`PET_POPUP` painting) and cursor shape from pages.
 - ⬜ IME / composition input; clipboard shortcuts verified; context menu.
 - ⬜ Card multi-select (rubber band) and group move.
@@ -164,25 +170,33 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. Added undo/redo for board edits (M3).
-**Repo state:** on `master`, undo/redo committed after 597d07f; working tree clean.
+**Last session:** 2026-11-14. Added the live-browser cap (M3).
+**Repo state:** on `master`, live-browser cap committed after a790233; working tree clean.
 **Done this session:**
-- `scene::history` (`History`, `Edit`, `Change`): each stack holds the reversing
-  edit, and applying an edit returns its own reverse. `Scene::remove` now returns
-  the card's edges, and `Scene::insert` restores a card under its old id.
-- App records open (incl. links and Ctrl+Shift+T), close, move and resize, and
-  maps Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y. Ctrl+Shift+T now restores trail edges too.
-- Script commands `drag`, `undo`, `redo`, `cards` (logs world and screen rects).
-**Next up:** M3 remaining items in order: live-browser cap →
-`<select>`/popup painting → IME/clipboard/context menu → multi-select (group
-move can record one `Edit` per card; add a batch edit then).
+- `scene::liveness` (`Candidate`, `Plan`, `plan`): pure ranking of which cards
+  stay live, with unit tests (cap never exceeded, focused always wakes, stable ties).
+- App: `cards` now holds only live browsers; `used` tracks recency (`touch` on
+  create/focus). `sync_liveness` runs every tick from `sync_pages`; it sleeps over
+  the cap at any time but wakes on-screen cards only once the camera settles.
+- Sleeping cards draw their last texture dimmed with "· asleep" after the title;
+  never-painted sleepers draw a dark placeholder with "Click to load".
+- Restore no longer starts every page; z-order seeds recency.
+**Next up:** M3 remaining items in order: `<select>`/popup painting →
+IME/clipboard/context menu → multi-select (group move can record one `Edit` per
+card; add a batch edit then).
 **Notes for the next session:**
-- Verified e2e: move, resize and close each undone/redone with live pages restored;
-  screenshot after close+undo showed the page re-rendered. Undo of a card opened
-  from a page link (trail edge) is covered only by unit tests, not e2e.
-- Real Ctrl+Z key routing (page vs board) was not tested with a physical keyboard;
-  the script calls the same handler directly.
+- Verified e2e with `TRAILBOARD_MAX_LIVE=2` and 4 cards: oldest cards sleep on
+  open, restore wakes the two most recent, clicking a sleeping card wakes it and
+  sleeps another, zooming swaps which on-screen cards are live. Screenshots showed
+  the dark placeholder and a sleeping card's kept snapshot.
+- Zooming in/out can churn (a card sleeps, then reloads when it is back on screen).
+  If that feels bad in daily use, add a grace period before sleeping, or keep a
+  snapshot-only wake.
+- The "Click to load" label and "· asleep" title suffix were not seen in a
+  screenshot (text hides below 6 px at the zoom used); only the logic is exercised.
+- Real Ctrl+Z key routing (page vs board) was not tested with a physical keyboard.
 - Typing into pages has not been verified by hand; ask the user to try it if relevant.
 - Keep test boards small (RAM). Use an isolated `XDG_DATA_HOME` under `~/.cache` for e2e runs.
 - `hyprctl clients -j` can report a window off-screen right after it opens
-  (open animation); take the screenshot a few seconds later.
+  (open animation); take the screenshot ~8 s later. A board's saved camera
+  carries over between e2e runs that share a data dir.

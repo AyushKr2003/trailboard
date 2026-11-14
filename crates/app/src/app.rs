@@ -9,13 +9,17 @@
 //!   Ctrl+R reload, Alt+←/→ back/forward, Ctrl+0 fit all.
 //! - Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y) undo/redo board edits (open, close, move,
 //!   resize). After clicking inside a page they go to the page instead (text undo).
+//!
+//! Live-browser cap: at most `TRAILBOARD_MAX_LIVE` (default 6) cards keep a live
+//! browser (see `scene::liveness`). The others sleep: their page is closed and the
+//! card shows its last frame, dimmed, until it is focused or scrolled into view.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use compositor::{rgba, Background, Layer, Quad, Renderer, Shape, Text};
-use scene::{placement, Camera, Change, Edge, History, Node, NodeId, Rect, Scene, Vec2};
+use scene::{liveness, placement, Camera, Change, Edge, History, Node, NodeId, Rect, Scene, Vec2};
 use web::{MouseButton as WebButton, Page, SpawnBeside, WebEvent};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
@@ -33,6 +37,8 @@ const CARD_H: f32 = 720.0;
 const MIN_CARD: f32 = 240.0;
 const RESIZE_GRIP: f32 = 18.0;
 const CLOSE_W: f32 = 30.0;
+/// Default number of cards that keep a live browser.
+const DEFAULT_MAX_LIVE: usize = 6;
 
 #[derive(Debug, Clone, Copy)]
 enum Drag {
@@ -56,7 +62,12 @@ pub struct App {
     camera: Camera,
     /// Camera we're gliding toward (fit / read mode).
     camera_goal: Option<Camera>,
+    /// Live browsers. A card in the scene but not here is asleep.
     cards: HashMap<NodeId, Card>,
+    max_live: usize,
+    /// Recency of use per card (larger is more recent), for choosing which cards sleep.
+    used: HashMap<NodeId, u64>,
+    use_clock: u64,
     focused: Option<NodeId>,
     /// Closed cards for Ctrl+Shift+T, newest last.
     closed: Vec<(Node, Vec<Edge>)>,
@@ -91,6 +102,9 @@ impl App {
             camera: Camera::default(),
             camera_goal: None,
             cards: HashMap::new(),
+            max_live: max_live_from_env(),
+            used: HashMap::new(),
+            use_clock: 0,
             focused: None,
             closed: Vec::new(),
             history: History::new(),
@@ -145,10 +159,10 @@ impl App {
             Ok(board) => {
                 self.scene = board.scene;
                 self.camera = board.camera;
-                let ids: Vec<NodeId> = self.scene.nodes().map(|n| n.id).collect();
-                for id in ids {
-                    self.create_page(id);
-                }
+                // Pages start asleep; `sync_liveness` wakes the ones on screen, up to the cap.
+                // Stacking order stands in for recency (focusing brings a card to front).
+                self.used = self.scene.nodes().map(|n| (n.id, n.z)).collect();
+                self.use_clock = self.used.values().copied().max().unwrap_or(0);
                 log::info!("restored {} cards from {}", self.scene.nodes().count(), self.board_path.display());
                 !self.scene.is_empty()
             }
@@ -212,8 +226,18 @@ impl App {
         Some(id)
     }
 
-    /// Start the live browser for an existing card.
+    /// Mark a card as just used, so it is among the last to be put to sleep.
+    fn touch(&mut self, id: NodeId) {
+        self.use_clock += 1;
+        self.used.insert(id, self.use_clock);
+    }
+
+    /// Start the live browser for an existing card (no-op if it is already live).
     fn create_page(&mut self, id: NodeId) {
+        self.touch(id);
+        if self.cards.contains_key(&id) {
+            return;
+        }
         let Some(n) = self.scene.node(id) else { return };
         let (url, r) = (n.url.clone(), n.rect);
         match Page::new(id.0, &url, (r.w as i32, r.h as i32), self.page_scale, &self.spawn_beside) {
@@ -241,10 +265,18 @@ impl App {
         self.drop_page(id);
     }
 
+    /// Put a card to sleep: close its browser but keep its last frame on screen.
+    fn sleep_page(&mut self, id: NodeId) {
+        if self.cards.remove(&id).is_some() {
+            log::info!("sleeping card {} ({} live)", id.0, self.cards.len());
+        }
+    }
+
     /// Stop the live browser of a card that has left the scene.
     fn drop_page(&mut self, id: NodeId) {
         self.dirty = true;
         self.cards.remove(&id);
+        self.used.remove(&id);
         if let Some(r) = self.renderer.as_mut() {
             r.remove_page(id.0);
         }
@@ -298,6 +330,10 @@ impl App {
         if let Some(id) = id {
             self.scene.bring_to_front(id);
             self.dirty = true;
+            if !self.cards.contains_key(&id) {
+                log::info!("waking card {} on focus", id.0);
+            }
+            self.create_page(id); // wakes a sleeping card; marks it used either way
             if let Some(c) = self.cards.get(&id) {
                 c.page.set_focus(true);
             }
@@ -362,6 +398,7 @@ impl App {
     /// pages that are off screen so they stop painting.
     fn sync_pages(&mut self) {
         let settled = self.camera_changed.elapsed() > Duration::from_millis(250) && self.camera_goal.is_none();
+        self.sync_liveness(settled && !matches!(self.drag, Drag::Pan { .. }));
         if settled {
             let want = ((self.camera.zoom * self.scale()) * 4.0).round().clamp(2.0, 8.0) / 4.0;
             if (want - self.page_scale).abs() > f32::EPSILON {
@@ -384,6 +421,38 @@ impl App {
                 }
                 card.page.resize(size, page_scale);
             }
+        }
+    }
+
+    /// Keep at most `max_live` live browsers. Sleeping cards on screen wake only
+    /// when `allow_wake` (the camera has settled), so panning doesn't start pages.
+    fn sync_liveness(&mut self, allow_wake: bool) {
+        let vp = self.viewport();
+        let screen = Rect::new(0.0, 0.0, vp.x, vp.y);
+        let candidates: Vec<liveness::Candidate> = self
+            .scene
+            .nodes()
+            .map(|n| liveness::Candidate {
+                id: n.id,
+                live: self.cards.contains_key(&n.id),
+                visible: self.to_screen_rect(n.frame()).intersects(&screen),
+                focused: self.focused == Some(n.id),
+                last_used: self.used.get(&n.id).copied().unwrap_or(0),
+            })
+            .collect();
+        let plan = liveness::plan(&candidates, self.max_live, allow_wake);
+        for id in plan.sleep {
+            self.sleep_page(id);
+        }
+        for id in plan.wake {
+            log::info!("waking card {} (on screen)", id.0);
+            let used = self.used.get(&id).copied();
+            self.create_page(id);
+            // Coming into view isn't use; keep its old recency.
+            match used {
+                Some(u) => self.used.insert(id, u),
+                None => self.used.remove(&id),
+            };
         }
     }
 
@@ -823,11 +892,32 @@ impl App {
                 texture: None,
             });
             let has_tex = self.renderer.as_ref().is_some_and(|r| r.has_page(n.id.0));
+            let asleep = card.is_none();
             l.quads.push(Quad {
                 shape: Shape::Rect { rect: content, radius: 0.0 },
-                color: if has_tex { [1.0; 4] } else { rgba(250, 250, 250, 1.0) },
+                color: match (has_tex, asleep) {
+                    (true, false) => [1.0; 4],
+                    (true, true) => [0.78, 0.78, 0.8, 1.0], // dimmed snapshot
+                    (false, false) => rgba(250, 250, 250, 1.0), // live, first paint pending
+                    (false, true) => rgba(52, 52, 60, 1.0),     // asleep, never painted
+                },
                 texture: has_tex.then_some(n.id.0),
             });
+            if asleep && !has_tex {
+                let size = 15.0 * k;
+                if size >= 6.0 {
+                    let msg = "Click to load";
+                    let w = self.renderer.as_mut().map_or(100.0, |r| r.measure(msg, size, false));
+                    l.texts.push(Text {
+                        text: msg.into(),
+                        pos: [content.x + (content.w - w) / 2.0, content.y + (content.h - size * 1.3) / 2.0],
+                        size,
+                        color: rgba(150, 150, 160, 1.0),
+                        clip: content,
+                        bold: false,
+                    });
+                }
+            }
             // Loading bar along the bottom of the title bar.
             if card.is_some_and(|c| c.loading) {
                 let t = (self.started.elapsed().as_secs_f32() * 0.8).fract();
@@ -843,12 +933,17 @@ impl App {
             if font >= 6.0 {
                 let pad = 10.0 * k;
                 let title = if n.title.is_empty() { n.url.as_str() } else { n.title.as_str() };
+                let title = if asleep { format!("{title} · asleep") } else { title.to_string() };
                 let clip = Rect::new(header.x + pad, header.y, (header.w - pad * 2.0 - CLOSE_W * k).max(1.0), header.h);
                 l.texts.push(Text {
-                    text: title.to_string(),
+                    text: title,
                     pos: [header.x + pad, header.y + (header.h - font * 1.3) / 2.0],
                     size: font,
-                    color: if focused { rgba(240, 240, 245, 1.0) } else { rgba(190, 190, 200, 1.0) },
+                    color: match (focused, asleep) {
+                        (true, _) => rgba(240, 240, 245, 1.0),
+                        (false, false) => rgba(190, 190, 200, 1.0),
+                        (false, true) => rgba(140, 140, 150, 1.0),
+                    },
                     clip,
                     bold: true,
                 });
@@ -997,6 +1092,17 @@ impl App {
                 Cmd::Log(msg) => log::info!("script log: {msg} (cards={}, edges={})", self.scene.nodes().count(), self.scene.edges().len()),
                 Cmd::Quit => self.quit = true,
             }
+        }
+    }
+}
+
+fn max_live_from_env() -> usize {
+    match std::env::var("TRAILBOARD_MAX_LIVE").ok().map(|v| v.trim().parse::<usize>()) {
+        None => DEFAULT_MAX_LIVE,
+        Some(Ok(n)) if n >= 1 => n,
+        Some(_) => {
+            log::warn!("TRAILBOARD_MAX_LIVE must be a whole number ≥ 1; using {DEFAULT_MAX_LIVE}");
+            DEFAULT_MAX_LIVE
         }
     }
 }

@@ -7,6 +7,10 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Live-browser cap**: at most 6 cards (set with `TRAILBOARD_MAX_LIVE`) keep a
+  live browser: the focused card, then cards on screen, then the most recently
+  used. The others sleep and show their last frame, dimmed, and wake when clicked
+  or brought into view. On start, pages load only as they come on screen.
 - **Undo/redo for board edits**: Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y undo and redo
   opening, closing, moving and resizing cards. A restored card gets its live page
   and trail edges back. After a click inside a page, Ctrl+Z goes to the page.
@@ -49,5 +53,5 @@ All notable changes to Trailboard. The format follows
 
 ### Known issues
 - `<select>` dropdowns and other popup widgets inside pages are not drawn yet.
-- No limit on live browsers; many cards use a lot of memory.
+- A card that wakes from sleep reloads its page, losing scroll position and form input.
 - Manual keyboard typing into pages has not been verified by automated tests.

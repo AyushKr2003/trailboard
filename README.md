@@ -37,6 +37,10 @@ The board is saved to `$XDG_DATA_HOME/trailboard/board.json` (default
 `~/.local/share/trailboard/`) and restored on the next start; the browser
 profile (cookies, cache) lives next to it.
 
+Only the 6 most relevant cards keep a live browser (focused first, then on screen,
+then most recently used). The rest sleep and show their last frame, dimmed, until
+you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change the cap.
+
 ## Using it
 
 | Action | Input |

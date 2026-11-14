@@ -39,7 +39,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use compositor::{Background, Layer, Quad, Renderer, Shape, Text};
-use scene::{liveness, placement, read, selection, tidy, Camera, Change, Edge, History, Node, NodeId, Rect, Scene, Selection, Vec2};
+use scene::{liveness, placement, read, selection, tidy, Camera, Change, Edge, History, Node, NodeId, Rect, Scene, Selection, TrailStep, Vec2};
 use storage::spaces::{self, SpaceId, SpaceIndex};
 use web::{MouseButton as WebButton, Page, SpawnBeside, WebEvent};
 use winit::application::ApplicationHandler;
@@ -790,6 +790,33 @@ impl App {
         self.dirty = true;
     }
 
+    /// Alt+PgDn / Alt+PgUp: focus the next / previous card along the trail of
+    /// the focused card (or the one in the middle of the view), showing it at
+    /// its stack's front if it is folded away, and bring it on screen (in Read
+    /// Mode, read it). Stops at the ends of the trail.
+    fn step_trail(&mut self, step: isize) {
+        let Some(id) = read::pick(&self.scene, self.focused, self.camera.center) else { return };
+        match self.scene.step_trail(id, step) {
+            TrailStep::Moved { to, index, len } => {
+                log::info!("trail: card {} ({} of {})", to.0, index + 1, len);
+                self.selection.clear();
+                self.after_fold();
+                self.focus(Some(to));
+                self.ensure_visible(to);
+                let title = self.scene.node(to).map(|n| n.title.clone()).filter(|t| !t.is_empty());
+                let title = title.unwrap_or_else(|| self.scene.node(to).map(|n| n.url.clone()).unwrap_or_default());
+                self.toast(format!("{}/{} · {}", index + 1, len, menu::cut(&title, menu::OUTLINE_CHARS)));
+                self.dirty = true;
+            }
+            TrailStep::End { first, .. } => {
+                // Focus the card we stepped from, so the next step starts there.
+                self.focus(Some(id));
+                self.toast(if first { "Start of the trail" } else { "End of the trail" });
+            }
+            TrailStep::Lone => self.toast("Not on a trail"),
+        }
+    }
+
     /// Cards folded away lose focus and selection; their pages sleep in `sync_liveness`.
     fn after_fold(&mut self) {
         if self.focused.is_some_and(|f| self.scene.is_hidden(f)) {
@@ -1452,6 +1479,10 @@ impl App {
                 // Spaces.
                 Some(KeyCode::KeyN) if ctrl && shift && !alt => {
                     self.new_space();
+                    true
+                }
+                Some(KeyCode::PageDown | KeyCode::PageUp) if alt && !ctrl && !shift && self.drag_is_idle() => {
+                    self.step_trail(if code == Some(KeyCode::PageDown) { 1 } else { -1 });
                     true
                 }
                 Some(KeyCode::PageDown | KeyCode::PageUp) if ctrl && !shift && !alt => {

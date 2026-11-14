@@ -10,6 +10,7 @@ pub mod placement;
 pub mod read;
 pub mod selection;
 pub mod tidy;
+pub mod trail;
 
 use std::collections::BTreeMap;
 
@@ -17,6 +18,7 @@ pub use fold::{Folded, Member, Stack};
 pub use geom::{Camera, Rect, Vec2};
 pub use history::{Change, Edit, History};
 pub use selection::Selection;
+pub use trail::TrailStep;
 use serde::{Deserialize, Serialize};
 
 /// Height of a card's title bar, in world units, drawn above the page content.

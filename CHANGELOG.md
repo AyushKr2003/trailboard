@@ -7,6 +7,11 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Next/Previous on Trail**: Alt+PgDn / Alt+PgUp go to the next / previous
+  page of the trail you are on, in reading order, and focus it (also from
+  inside a page and in Read Mode, where the page reached is read). Pages
+  folded into a stack come to its front in place. A toast shows `2/4 · Title`,
+  or the start or end of the trail.
 - **Stack outline**: click a stack's count badge, or press O with no page
   focused, to list the pages in the stack. Pick one (click, or arrows and
   Enter) to bring it to the front, or choose *Unfold trail*. Script command

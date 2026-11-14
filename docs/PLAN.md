@@ -246,7 +246,23 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     menu, which it shares (`app::menu::Entry`). This is also the mouse way to
     peek; there is no separate mouse peek. Badges are hit before cards
     (they stick out past the corner) unless a card above covers them.
-- Next/Previous on Trail navigation; trail names and colours.
+- ✅ Next/Previous on Trail (Alt+PgDn / Alt+PgUp; `scene::trail`). Decisions (2026-11-14):
+  - Steps through the trail in reading order (`Scene::trail_of`: roots, then
+    links depth first), the same order as a stack's outline, so stepping
+    through a folded trail and its outline agree.
+  - Starts from the focused card, else the one in the middle of the view
+    (`read::pick`). The card reached is focused (keys stay with the board
+    until the page is clicked) and brought on screen with the usual glide; in
+    Read Mode it is read instead.
+  - A card folded away is shown at its stack's front in place, like peeking
+    (`Scene::show`); not an edit.
+  - Stops at either end with a "Start/End of the trail" toast (no wrap; stacks
+    wrap when peeked). A lone card toasts "Not on a trail". Each step toasts
+    `n/len · Title`.
+  - Keys: Alt+PgDn / Alt+PgUp, which work everywhere (inside a page and in
+    Read Mode too), on any layout, and sit beside Ctrl+PgDn/PgUp for spaces.
+    Chromium binds nothing to them.
+- Trail names and colours.
 - Notes (N): native Markdown note cards; sticky notes; "Add to note" quotes the
   selected text with a link back to its source card.
 - Save note/board as Markdown.
@@ -344,44 +360,38 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M5 Fold: stack outline.
-**Repo state:** on `master`, committed after 50a438c; working tree clean.
+**Last session:** 2026-11-14. M5 Next/Previous on Trail.
+**Repo state:** on `master`, committed after 4843b62; working tree clean.
 **Done this session:**
-- `Scene::show(id)`: brings any stack member to the front in place; 1 test.
-- `app::menu::Entry` (`Page(MenuItem)`, `Member`, `Unfold`) so the context
-  menu overlay also draws a stack's outline; `menu::outline` builds it
-  (numbered, untitled → "Untitled", long titles cut); 1 test.
-- App: `Hit::Badge` (hit before cards, cursor is a hand), `stack_badge` rect
-  shared by drawing and hit testing (sized by digit count, no measuring), O key
-  (`outline_in_view`, toast if no stack), `open_outline` anchored under the
-  badge, `unfold_stack` split out of `toggle_fold`. Sheet row, README row,
-  script `badgeclick ID`. Fold is now ✅.
-**Next up:** M5 Next/Previous on Trail (move along a trail's cards, folded or
-not), or Notes (N). Small follow-ups: animate cards to their Tidy places;
+- `scene::trail`: `Scene::step_trail(id, step) -> TrailStep` (`Moved`, `End`,
+  `Lone`); shows a folded-away card at its stack's front; 3 tests.
+- App: `step_trail` on Alt+PgDn / Alt+PgUp (focus, glide or read, toast
+  `n/len · Title`); `menu::cut` shared by the outline and the toast. Sheet row,
+  README row.
+**Next up:** M5 Notes (N): native Markdown note cards. Or trail names and
+colours (M5). Small follow-ups: animate cards to their Tidy places;
 `.desktop` entry and icon (M6).
 **Notes for the next session:**
-- Outline verified e2e (`~/.cache/trailboard-e2e-outline`, same `run.sh N
-  shot…` harness, seeded from the fold run's folded board). Run 1: O listed
-  `1 P1 … 4 P4, -, Unfold trail` with 3 current; Down+Enter showed 4 in 3's
-  place; `badgeclick 4` opened it again; *Unfold trail* unfolded (one undo step,
-  undo refolded with 4 in front); O then Esc closed it. Run 2: `fit`, badge
-  click; screenshots checked (menu under the badge, front row bold with an
-  accent bar; Esc closes).
-- Not verified: a real mouse click on the badge (script clicks drive the same
-  handler), press-drag-release onto a row, light themes for the outline.
-- Fold verified e2e (`~/.cache/trailboard-e2e-fold`, `run.sh N shot…` runs
-  `scriptN`; the seed is the Tidy test's v1 board of five pages, trail 1→2,
-  1→3, 3→4 plus lone 5). Run 1: S folded [1,2,3,4] behind 3 (the centre card)
-  in place, the other three pages slept; `]` showed 4 in 3's place; undo
-  unfolded to the exact seed rects, redo refolded with 4 in front; S, S
-  unfolded and refolded. Run 2 (restart): the v2 board loaded the stack, S
-  unfolded every card to its original rect. Screenshots at zoom 0.45 and 1 checked.
-- Not verified: real keyboard S/[/] (script keys only; `[`/`]` on non-US
-  layouts use the physical key), dragging a stack by hand, light themes for
-  the stack edges, closing a stack's front in the app (scene-tested only).
+- Trail steps verified e2e (`~/.cache/trailboard-e2e-trail`, `run.sh N shot…`
+  runs `scriptN` with `dataN`; seed 1 is the fold test's trail 1→2, 1→3, 3→4
+  spread out plus lone 5, seed 2 the same trail folded behind 3). Run 1:
+  Alt+PgUp on 1 toasted "Start", Alt+PgDn went 2, 3, 4 (camera glided to 4),
+  then "End"; after a click inside page 4, Alt+PgUp still went to 3; in Read
+  Mode Alt+PgDn read 4, Esc returned with 4 on screen. Run 2: Alt+PgDn showed
+  4 at the stack's front, focused; three Alt+PgUp went 3, 2, 1, then "Start".
+  Screenshots (step4, read4, stack4) checked.
+- Not verified: a real keyboard Alt+PgDn (script keys only; a compositor
+  binding on Alt+PgDn would swallow it), the lone-card toast in the app
+  (scene-tested only).
+- Outline verified e2e (`~/.cache/trailboard-e2e-outline`); not verified there:
+  a real mouse click on the badge, press-drag-release onto a row, light themes.
+- Fold verified e2e (`~/.cache/trailboard-e2e-fold`). Not verified: real
+  keyboard S/[/] (`[`/`]` on non-US layouts use the physical key), dragging a
+  stack by hand, light themes for the stack edges, closing a stack's front in
+  the app (scene-tested only).
 - Known rough edge: undoing the close of a stack member brings it back as a lone
   card at the stack's place, on top of the stack (it is not put back in the
-  stack). Fine for now; fix with the outline work if it bothers.
+  stack).
 - Keep the sheet's rows in `hints::SECTIONS` in step with new shortcuts.
 - Read Mode: a stale full-window frame can show stretched for a moment after
   leaving; the read card never sleeps.

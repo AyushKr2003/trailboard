@@ -63,6 +63,7 @@ you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change th
 | Fold the trail in the middle of the view into a stack / unfold it | S (with no page focused; Ctrl+Z undoes it) |
 | Peek at the previous / next card of a stack | [ / ] (with no page focused) |
 | List a stack's pages, bring one to the front or unfold | Click the count badge, or O (with no page focused) |
+| Go to the next / previous card on the trail (folded or not) | Alt+PgDn / Alt+PgUp |
 | Back / forward / reload | Alt+← / Alt+→ / Ctrl+R |
 | Page context menu | right-click in a page (open link beside, copy link, edit, search selection) |
 | Copy / cut / paste | Ctrl+C / Ctrl+X / Ctrl+V (shared with the desktop clipboard) |

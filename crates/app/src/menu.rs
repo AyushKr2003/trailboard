@@ -40,6 +40,19 @@ impl Entry {
     }
 }
 
+/// A page title for one line: trimmed, cut to `max` characters with "…", or
+/// "Untitled" if empty.
+pub fn cut(title: &str, max: usize) -> String {
+    let title = title.trim();
+    if title.chars().count() > max {
+        format!("{}…", title.chars().take(max - 1).collect::<String>().trim_end())
+    } else if title.is_empty() {
+        "Untitled".to_string()
+    } else {
+        title.to_string()
+    }
+}
+
 /// A stack's outline: `(id, title or URL)` of each member in reading order,
 /// numbered, with long titles cut short, then a separator and Unfold.
 pub fn outline(members: &[(NodeId, &str)], front: NodeId) -> Vec<Entry> {
@@ -47,14 +60,7 @@ pub fn outline(members: &[(NodeId, &str)], front: NodeId) -> Vec<Entry> {
         .iter()
         .enumerate()
         .map(|(i, &(id, title))| {
-            let title = title.trim();
-            let title = if title.chars().count() > OUTLINE_CHARS {
-                format!("{}…", title.chars().take(OUTLINE_CHARS - 1).collect::<String>().trim_end())
-            } else if title.is_empty() {
-                "Untitled".to_string()
-            } else {
-                title.to_string()
-            };
+            let title = cut(title, OUTLINE_CHARS);
             Entry::Member { id, label: format!("{}  {title}", i + 1), current: id == front }
         })
         .collect();

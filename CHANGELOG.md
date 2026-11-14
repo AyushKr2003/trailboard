@@ -7,6 +7,10 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **An Arch Linux package**: `cd packaging/arch && makepkg -si` builds
+  Trailboard with its own copy of the Chromium runtime and installs it to
+  `/usr/lib/trailboard`, with `trailboard` on the `PATH` and the launcher
+  entry and icon. No `install-cef.sh` or `.cargo/config.toml` needed.
 - **A self-contained build**: `scripts/bundle.sh` makes a folder with the
   release binary and the Chromium runtime beside it (with `--tar`, a
   `.tar.zst` of it, about 150 MB) that runs from wherever it is unpacked;

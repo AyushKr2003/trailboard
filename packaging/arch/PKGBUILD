@@ -1,0 +1,107 @@
+# Trailboard for Arch Linux (and Omarchy). Builds the git checkout this file
+# sits in, with the CEF build the `cef` crate expects downloaded alongside, and
+# installs the bundle layout to /usr/lib/trailboard with a /usr/bin link.
+#
+#   cd packaging/arch && makepkg -si
+#
+# TRAILBOARD_GIT overrides the source repository (any git URL). Before this
+# goes to the AUR it needs `url=` and `_url` set to the project's public
+# repository (and a .SRCINFO); see docs/PLAN.md, M9.
+
+pkgname=trailboard
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='A canvas browser: web pages as live cards on an infinite board'
+arch=('x86_64')
+license=('MIT OR Apache-2.0' 'BSD-3-Clause')
+
+_cef=156.0.26+g8ea0c73+chromium-156.0.8078.88
+_cefname="cef_binary_${_cef}_linux64_minimal"
+_cefsha1=cacfbb7d7261fea682fb67c108de7e4347519ff7  # from CEF's build index
+_url="${TRAILBOARD_GIT:-file://$(realpath "$startdir/../..")}"
+
+# libcef.so links the GTK/NSS/X11 stack; winit and wgpu load Wayland, X11 and
+# Vulkan or GL at run time.
+depends=(
+  'alsa-lib' 'at-spi2-core' 'cairo' 'dbus' 'expat' 'glib2' 'glibc' 'libcups'
+  'libgcc' 'libx11' 'libxcb' 'libxcomposite' 'libxdamage' 'libxext'
+  'libxfixes' 'libxkbcommon' 'libxrandr' 'mesa' 'nspr' 'nss' 'pango'
+  'systemd-libs' 'wayland' 'vulkan-icd-loader' 'hicolor-icon-theme' 'ttf-font'
+)
+makedepends=('cargo' 'cmake' 'git' 'ninja')
+optdepends=(
+  'xdg-utils: open downloaded files and their folders'
+  'xdg-user-dirs: find the Downloads folder'
+)
+# LTO would turn CEF's C++ wrapper into bitcode the Rust link can't use, and
+# the split debug package would carry libcef.so's 1.2 GB of symbols.
+options=('!lto' '!debug')
+source=(
+  "trailboard::git+${_url}"
+  "${_cefname}.tar.bz2::https://cef-builds.spotifycdn.com/${_cefname//+/%2B}.tar.bz2"
+)
+sha256sums=(
+  'SKIP'
+  '600ac0b8f37cb953f884e7c89998a6c200d24959aa74820ad431b61d5ebcf360'
+)
+
+prepare() {
+  # The layout cef-dll-sys expects at CEF_PATH (as scripts/install-cef.sh
+  # makes it): runtime files at the top, plus the headers and wrapper sources.
+  rm -rf cef
+  mkdir cef
+  cp -al "$_cefname"/Release/. "$_cefname"/Resources/. cef/
+  cp -a "$_cefname"/{CMakeLists.txt,cmake,include,libcef_dll,CREDITS.html} cef/
+  printf '{"type": "minimal", "name": "%s.tar.bz2", "sha1": "%s"}\n' "$_cefname" "$_cefsha1" > cef/archive.json
+
+  cd trailboard
+  local version
+  version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+  if [[ $version != "$pkgver" ]]; then
+    echo "Cargo.toml says $version, PKGBUILD says $pkgver" >&2
+    return 1
+  fi
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd trailboard
+  export RUSTUP_TOOLCHAIN=stable CARGO_TARGET_DIR=target CEF_PATH="$srcdir/cef"
+  cargo build --frozen --release -p trailboard
+}
+
+check() {
+  cd trailboard
+  export RUSTUP_TOOLCHAIN=stable CARGO_TARGET_DIR=target CEF_PATH="$srcdir/cef"
+  # The pure logic; the app's own tests need the same build again with cfg(test).
+  cargo test --frozen --release -p scene -p storage
+  ./target/release/trailboard --version
+}
+
+package() {
+  local lib="$pkgdir/usr/lib/trailboard"
+  install -Dm755 trailboard/target/release/trailboard "$lib/trailboard"
+
+  # CEF's runtime beside the binary (its rpath has $ORIGIN and it looks for
+  # resources next to itself). No chrome-sandbox: Trailboard runs Chromium
+  # with no_sandbox. makepkg's strip takes libcef.so from 1.4 GB to ~250 MB.
+  local f
+  for f in cef/*; do
+    case ${f##*/} in
+      include | cmake | libcef_dll | CMakeLists.txt | archive.json | chrome-sandbox | CREDITS.html) ;;
+      *) cp -r --no-preserve=ownership "$f" "$lib/" ;;
+    esac
+  done
+  chmod -R u=rwX,go=rX "$lib"
+  chmod 755 "$lib/trailboard"
+
+  install -d "$pkgdir/usr/bin"
+  ln -s /usr/lib/trailboard/trailboard "$pkgdir/usr/bin/trailboard"
+
+  cd trailboard
+  install -Dm644 share/trailboard.desktop "$pkgdir/usr/share/applications/trailboard.desktop"
+  install -Dm644 share/trailboard.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/trailboard.svg"
+  install -Dm644 README.md CHANGELOG.md -t "$pkgdir/usr/share/doc/trailboard/"
+  install -Dm644 "$srcdir/cef/CREDITS.html" "$pkgdir/usr/share/licenses/trailboard/CEF-CREDITS.html"
+}

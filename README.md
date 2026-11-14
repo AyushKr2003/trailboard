@@ -51,6 +51,16 @@ binary with CEF's runtime beside it, ~380 MB; `--tar` also packs a ~150 MB
 ./scripts/install-desktop.sh target/bundle/trailboard-*-x86_64/trailboard   # optional
 ```
 
+On Arch Linux (and Omarchy), build a package instead. It downloads its own
+CEF, so it needs neither `install-cef.sh` nor `.cargo/config.toml`. It
+installs to `/usr/lib/trailboard`, with `trailboard` on the `PATH` and the
+launcher entry and icon in place. It builds the last commit of this checkout,
+not uncommitted changes:
+
+```sh
+cd packaging/arch && makepkg -si
+```
+
 `trailboard --help` lists the options. If Trailboard panics, a report (version,
 message, backtrace) is appended to `crash.log` in the data folder below, and
 the next start says so once.

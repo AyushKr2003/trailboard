@@ -838,8 +838,31 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   message, and leaves `crash-unseen`; the next start shows "Trailboard closed
   unexpectedly last time · report in …" for 8 s and clears the mark. Not
   caught: crashes inside Chromium (signals); those still go to stderr.
-- ⬜ AUR `PKGBUILD` (Arch/Omarchy first; install to `/usr/lib/trailboard` with
-  a `/usr/bin` link), then AppImage/Flatpak.
+- 🟡 Arch `PKGBUILD` (`packaging/arch/`, `cd packaging/arch && makepkg -si`);
+  AUR upload, AppImage and Flatpak to come. Decisions (2026-11-14):
+  - Source: the git checkout the PKGBUILD sits in (`git+file://`, its last
+    commit), or `TRAILBOARD_GIT`. The repo has no public remote yet, so there
+    is no `url=` and no `.SRCINFO`; publishing to the AUR needs the public
+    repository URL (the owner's call), a release tag in `source`, and
+    `makepkg --printsrcinfo > .SRCINFO`.
+  - CEF: the same minimal build `scripts/install-cef.sh` fetches, pinned by
+    name and sha256 (its sha1 from CEF's index checked first), laid out in
+    `prepare()` as cef-dll-sys expects (hard links, no copy) and handed to
+    the build as `CEF_PATH`. No `.cargo/config.toml`, so the binary's runpath
+    is only `$ORIGIN`.
+  - Layout: the bundle in `/usr/lib/trailboard` (binary + CEF runtime, no
+    `chrome-sandbox`), `/usr/bin/trailboard` a symlink (`current_exe` and
+    glibc's `$ORIGIN` both resolve it), desktop entry, icon, docs, and
+    CEF's `CREDITS.html` in `/usr/share/licenses/trailboard/`.
+  - `options=(!lto !debug)`: makepkg's LTO flags would make CEF's C++ wrapper
+    bitcode, and the debug split would carry libcef's symbols. makepkg's own
+    strip does what `bundle.sh` did. Still no Rust LTO (build time, memory).
+  - `check()` runs only the `scene` and `storage` tests (the app crate's would
+    rebuild everything with cfg(test)) and `trailboard --version`.
+  - `depends` from the `NEEDED` entries of `libcef.so` and the binary, mapped
+    with `pacman -Qo`, plus what winit/wgpu load at run time (`wayland`,
+    `vulkan-icd-loader`) and `ttf-font`; `xdg-utils` and `xdg-user-dirs`
+    optional. No licence file of our own yet (see the licence item below).
 - ⬜ Chromium's sandbox (`chrome-sandbox` setuid or user namespaces) instead of `no_sandbox`.
 - ⬜ First-run defaults (a start page or a short guide card on an empty board).
 - ⬜ Licence files (`LICENSE-MIT`, `LICENSE-APACHE`: the copyright line is the owner's call).
@@ -880,21 +903,17 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M9 packaging, first slice.
-**Repo state:** on `master`, committed after 451afd7; working tree clean.
+**Last session:** 2026-11-14. M9 packaging: the Arch `PKGBUILD`.
+**Repo state:** on `master`, committed after abacd67; working tree clean.
 **Done this session:**
-- `scripts/bundle.sh [--tar]`: a self-contained folder (binary + stripped
-  CEF runtime + desktop entry + icon), runs from anywhere thanks to an
-  `$ORIGIN` rpath from `crates/app/build.rs`.
-- `--version` / `--help` before CEF starts (`launch::command`); version
-  logged at start; `web::engine_version()`.
-- Crash reports to `$DATA/crash.log` from a panic hook (`app::crash`,
-  `storage::crash`), told once at the next start (an 8 s toast; toasts now
-  store their end time, `toast_for`). Script runner gained `panic`.
-**Next up:** the AUR `PKGBUILD` (M9; builds with `cargo build --release`
-without the local `.cargo/config.toml`, so `CEF_PATH` must come from the
-package's own CEF download, installs the bundle layout to
-`/usr/lib/trailboard`), or M6's translations (needs a string table first), or
+- `packaging/arch/PKGBUILD` (+ `.gitignore` for makepkg's output): builds the
+  checkout's last commit with its own pinned CEF download, installs to
+  `/usr/lib/trailboard` with a `/usr/bin` link, desktop entry and icon.
+  README gains the `makepkg -si` line. No Rust changes.
+**Next up:** publishing to the AUR needs the owner's public repository URL
+and a release tag (then `url=`, `source`, `.SRCINFO`). Without that: M9's
+first-run defaults (a guide card on an empty board) or the licence files
+(owner's copyright line), M6's translations (needs a string table first), or
 M8 privacy (adblock engine). Small follow-ups: rename a trail from the
 sidebar; auto-scroll the sidebar while dragging; a downloads folder setting (needs a free-text row or a
 folder picker via xdg-desktop-portal); a progress mark on the board while
@@ -916,6 +935,21 @@ Save as Markdown; i18n; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out; open `crash.log` from the crash
 toast or a palette command.
 **Notes for the next session:**
+- PKGBUILD verified (`~/.cache/trailboard-aur`: a copy of the PKGBUILD,
+  the CEF tarball symlinked from `~/.cache/cef-dl`, built with
+  `TRAILBOARD_GIT=file:///home/shadow/Work/marble-linux makepkg -f`, log in
+  `makepkg.log`). ~5 min: release build 3m57, `check()` 126 + 58 tests and
+  the version line. Package 158 MB `.pkg.tar.zst`, 377 MB installed;
+  runpath `[$ORIGIN]` only; libcef.so stripped (278 MB). E2e
+  (`~/.cache/trailboard-e2e-aur`, `log1.txt`): run through a symlink to
+  `pkg/…/usr/lib/trailboard/trailboard` under `unshare -rm` with a tmpfs
+  over `~/.local/share/cef` and no `CEF_PATH`: CEF 156 loaded, the file card
+  live and titled, `quit` clean. Not verified: `pacman -U` itself (not
+  installed system-wide; the `/usr/bin` link and desktop entry inside the
+  package were checked by listing), `namcap` (not installed), a clean chroot
+  build (`extra-x86_64-build`), whether `depends` is complete on a minimal
+  system, and a fresh CEF download (the tarball came from the cache, its sha1
+  matched CEF's index).
 - Packaging verified (`~/.cache/trailboard-e2e-bundle`: `run/` is a copy of
   the bundle, `data/` the isolated `XDG_DATA_HOME`, `s1.txt` ends in
   `panic`). `scripts/bundle.sh --tar` took 1m45 (release build from a warm

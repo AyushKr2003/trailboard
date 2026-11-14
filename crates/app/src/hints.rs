@@ -32,6 +32,7 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl + Scroll", "Zoom"),
             ("Ctrl+K", "Find a card, space or command"),
             ("Ctrl+H", "History (Shift+Del forgets a page)"),
+            ("Ctrl+,", "Settings"),
             ("Shift+F", "Fit everything"),
             ("Ctrl+T", "New card"),
             ("N · Shift+N", "New note / sticky note"),

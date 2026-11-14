@@ -54,7 +54,8 @@ board is moved to `spaces/deleted/`, not erased.
 
 Only the 6 most relevant cards keep a live browser (focused first, then on screen,
 then most recently used). The rest sleep and show their last frame, dimmed, until
-you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change the cap.
+you click them or bring them into view. Change the cap with *Pages kept awake*
+in the settings (Ctrl+,), or for one run with `TRAILBOARD_MAX_LIVE=N`.
 
 ## Using it
 
@@ -98,6 +99,7 @@ you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change th
 | Scroll the current page without entering it | d / u |
 | Page menu by keyboard | Menu key or Shift+F10; j/k or ↑/↓, Enter, Esc |
 | History: pages you opened, newest first | Ctrl+H, type to filter by words in them, Enter opens, Shift+Delete forgets the page; *Clear history* in Ctrl+K forgets all |
+| Settings: search engine, pages kept awake, keep history, page colours | Ctrl+, (or *Settings* in Ctrl+K); type to filter, ↑/↓ pick, Enter or → next value, Shift+Enter or ← previous; a click steps a row (right-click back). Changes apply and save at once |
 | Find in the current page | Ctrl+F, type (matches show as you type); Enter / Shift+Enter next / previous; Esc closes |
 | Zoom the current page in / out / back to 100% | Ctrl++ / Ctrl+- / Ctrl+0: every card on that site follows, and the zoom is remembered per site |
 | Page context menu | right-click in a page (open link beside, copy link, edit, search selection) |
@@ -123,13 +125,16 @@ folder (the newest 5000), so Ctrl+K can find them by any word on them.
 Ctrl+H lists them newest first, with when you saw each; type to keep the
 pages with those words, Enter opens one (or goes to the card showing it), and
 Shift+Delete forgets the highlighted page (in the Ctrl+K palette too). The
-palette command *Clear history* forgets every page after asking.
+palette command *Clear history* forgets every page after asking. Turn *Keep
+history* off in the settings (Ctrl+,) to stop recording pages; what is kept
+stays searchable.
 A small picture of each page is kept too (for the newest 1000): it shows
 beside the highlighted page in Ctrl+K and Ctrl+H, and on sleeping cards
 restored after a restart until they load again.
 
 On [Omarchy](https://omarchy.org/), Trailboard follows the current theme live
-(colours, light or dark, including the pages' `prefers-color-scheme`),
+(colours, light or dark, including the pages' `prefers-color-scheme`, unless
+*Page colours* in the settings says Light or Dark),
 Hyprland's window rounding and the desktop text size. Elsewhere it uses a dark
 palette with a yellow accent and square corners.
 

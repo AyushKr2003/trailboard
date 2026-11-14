@@ -1,6 +1,8 @@
 //! The address/search box. Opens over the board; Enter loads into the focused
 //! card or a new one.
 
+use scene::settings::SearchEngine;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
     /// Load into the currently focused card.
@@ -17,12 +19,14 @@ pub enum Target {
     Find(scene::NodeId),
     /// The history view (Ctrl+H): the text filters visited pages (`palette::history_rows`).
     History,
+    /// The settings panel (Ctrl+,): the text filters the settings (`palette::settings_rows`).
+    Settings,
 }
 
 impl Target {
-    /// The field has a list of results under it (the palette or history).
+    /// The field has a list of results under it (the palette, history or settings).
     pub fn is_list(&self) -> bool {
-        matches!(self, Target::Palette | Target::History)
+        matches!(self, Target::Palette | Target::History | Target::Settings)
     }
 }
 
@@ -107,8 +111,8 @@ impl Omnibox {
 }
 
 /// Turn what the user typed into a URL: keep URLs, add a scheme to bare hosts,
-/// and send everything else to the search engine.
-pub fn resolve(input: &str) -> Option<String> {
+/// and send everything else to `engine`.
+pub fn resolve(input: &str, engine: SearchEngine) -> Option<String> {
     let s = input.trim();
     if s.is_empty() {
         return None;
@@ -125,12 +129,12 @@ pub fn resolve(input: &str) -> Option<String> {
     if looks_like_host {
         return Some(format!("https://{s}"));
     }
-    Some(search_url(s))
+    Some(search_url(s, engine))
 }
 
-/// Search engine results page for `query`.
-pub fn search_url(query: &str) -> String {
-    format!("https://duckduckgo.com/?q={}", encode_query(query.trim()))
+/// `engine`'s results page for `query`.
+pub fn search_url(query: &str, engine: SearchEngine) -> String {
+    engine.url(&encode_query(query.trim()))
 }
 
 fn encode_query(s: &str) -> String {
@@ -151,11 +155,13 @@ mod tests {
 
     #[test]
     fn resolves_inputs() {
-        assert_eq!(resolve("example.com").as_deref(), Some("https://example.com"));
-        assert_eq!(resolve("http://a.b/c").as_deref(), Some("http://a.b/c"));
-        assert_eq!(resolve("rust lang").as_deref(), Some("https://duckduckgo.com/?q=rust+lang"));
-        assert_eq!(resolve("c++").as_deref(), Some("https://duckduckgo.com/?q=c%2B%2B"));
-        assert_eq!(resolve("  "), None);
+        let ddg = SearchEngine::DuckDuckGo;
+        assert_eq!(resolve("example.com", ddg).as_deref(), Some("https://example.com"));
+        assert_eq!(resolve("http://a.b/c", ddg).as_deref(), Some("http://a.b/c"));
+        assert_eq!(resolve("rust lang", ddg).as_deref(), Some("https://duckduckgo.com/?q=rust+lang"));
+        assert_eq!(resolve("c++", ddg).as_deref(), Some("https://duckduckgo.com/?q=c%2B%2B"));
+        assert_eq!(resolve("rust lang", SearchEngine::Google).as_deref(), Some("https://www.google.com/search?q=rust+lang"));
+        assert_eq!(resolve("  ", ddg), None);
     }
 
     #[test]

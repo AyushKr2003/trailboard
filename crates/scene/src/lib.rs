@@ -19,6 +19,7 @@ pub mod palette;
 pub mod placement;
 pub mod read;
 pub mod selection;
+pub mod settings;
 pub mod sidebar;
 pub mod tidy;
 pub mod trail;

@@ -33,6 +33,9 @@
 //! - Ctrl+H history view (`palette::history_rows`): visited pages newest first,
 //!   filtered by words; Shift+Delete forgets one (in Ctrl+K too); *Clear history*
 //!   asks first (`Confirm`).
+//! - Ctrl+, settings (`scene::settings`, saved by `storage::settings`): a list
+//!   under the field like history; Enter, → or a click steps the highlighted
+//!   setting on, Shift+Enter, ← or a right-click back. Each applies at once.
 //! - Ctrl+L address bar, Ctrl+T new card, Ctrl+W close, Ctrl+Shift+T reopen,
 //!   Ctrl+R reload, Alt+←/→ back/forward.
 //! - Ctrl+F find in the current card's page (the bar is an `omnibox::Target::Find`;
@@ -67,7 +70,8 @@
 //!   private space's pages are not recorded (history, icons, zoom on disk) and
 //!   share a cookie jar in memory (`web::Jar`) that lasts until the app quits.
 //!
-//! Live-browser cap: at most `TRAILBOARD_MAX_LIVE` (default 6) cards keep a live
+//! Live-browser cap: at most *Pages kept awake* (a setting, default 6;
+//! `TRAILBOARD_MAX_LIVE` overrides it for a run) cards keep a live
 //! browser (see `scene::liveness`). The others sleep: their page is closed and the
 //! card shows its last frame, dimmed, until it is focused or scrolled into view.
 
@@ -82,6 +86,7 @@ use scene::arrange::Arrange;
 use scene::hint;
 use scene::nav::{self, Dir};
 use scene::pagezoom::{self, SiteZooms};
+use scene::settings::{self as prefs, Settings};
 use scene::{liveness, placement, read, selection, tidy, Camera, Change, Edge, History, Node, NodeId, Rect, Scene, Selection, TrailStep, Vec2};
 use storage::spaces::{self, SpaceId, SpaceIndex};
 use web::{MouseButton as WebButton, Page, SpawnBeside, WebEvent};
@@ -164,8 +169,6 @@ struct Session {
     jar: Option<web::Jar>,
     zooms: Option<std::collections::BTreeMap<String, f64>>,
 }
-/// Default number of cards that keep a live browser.
-const DEFAULT_MAX_LIVE: usize = 6;
 
 #[derive(Debug, Clone, Copy)]
 enum Drag {
@@ -205,6 +208,10 @@ pub struct App {
     /// Live browsers. A card in the scene but not here is asleep.
     cards: HashMap<NodeId, Card>,
     max_live: usize,
+    /// The user's settings (Ctrl+,), saved in `settings.json`.
+    settings: Settings,
+    /// `TRAILBOARD_MAX_LIVE` set the live-page cap for this run (until the setting changes).
+    live_from_env: bool,
     /// Recency of use per card (larger is more recent), for choosing which cards sleep.
     used: HashMap<NodeId, u64>,
     use_clock: u64,
@@ -366,7 +373,9 @@ fn now_ms() -> i64 {
 }
 
 impl App {
-    pub fn new(initial_urls: Vec<String>, data_dir: std::path::PathBuf) -> Self {
+    pub fn new(initial_urls: Vec<String>, data_dir: std::path::PathBuf, settings: Settings) -> Self {
+        let live_env = max_live_from_env();
+        log::info!("settings: {settings:?}");
         let zooms = Rc::new(RefCell::new(storage::zoom::load_zooms(&data_dir)));
         let lookup = zooms.clone();
         web::set_page_zoom(move |url| lookup.borrow().get(url));
@@ -388,7 +397,9 @@ impl App {
             camera: Camera::default(),
             camera_goal: None,
             cards: HashMap::new(),
-            max_live: max_live_from_env(),
+            max_live: live_env.unwrap_or(settings.live_pages),
+            settings,
+            live_from_env: live_env.is_some(),
             used: HashMap::new(),
             use_clock: 0,
             focused: None,
@@ -726,6 +737,19 @@ impl App {
         self.set_theme(t);
     }
 
+    /// Tells pages light or dark, from the theme and the *Page colours* setting.
+    fn apply_page_scheme(&mut self) {
+        let dark = self.settings.page_colours.dark(self.theme.light());
+        if self.page_scheme != Some(dark) {
+            log::info!("pages: {}", if dark { "dark" } else { "light" });
+            web::set_color_scheme(dark);
+            for c in self.cards.values() {
+                c.page.apply_color_scheme();
+            }
+            self.page_scheme = Some(dark);
+        }
+    }
+
     fn set_theme(&mut self, t: Theme) {
         log::info!(
             "theme: {} accent={:?} background={:?} rounding={} text-scale={:.2}",
@@ -736,14 +760,7 @@ impl App {
             t.text_scale
         );
         self.theme = t;
-        let dark = !self.theme.light();
-        if self.page_scheme != Some(dark) {
-            web::set_color_scheme(dark);
-            for c in self.cards.values() {
-                c.page.apply_color_scheme();
-            }
-            self.page_scheme = Some(dark);
-        }
+        self.apply_page_scheme();
         let notes: Vec<NodeId> = self.cards.keys().copied().collect();
         for id in notes {
             self.recolour_note(id);
@@ -1030,7 +1047,7 @@ impl App {
     /// Trailboard was started again while running: open what it was given as
     /// new cards in the space on screen and ask for the window to come forward.
     fn relaunched(&mut self, args: &[String], cwd: &str) {
-        let urls: Vec<String> = args.iter().filter_map(|a| launch::target(a, std::path::Path::new(cwd))).collect();
+        let urls: Vec<String> = args.iter().filter_map(|a| launch::target(a, std::path::Path::new(cwd), self.settings.search)).collect();
         log::info!("relaunched with {} page(s): {urls:?}", urls.len());
         if !urls.is_empty() && self.read.is_some() {
             self.leave_read();
@@ -1510,18 +1527,67 @@ impl App {
                 self.reopen_closed_card(id);
             }
             Item::Command(c) => self.run_command(c),
+            Item::Setting(k) => self.step_setting(k, 1),
+        }
+    }
+
+    /// Ctrl+,: the settings panel, a list of settings to step through.
+    fn open_settings(&mut self) {
+        self.menu = None;
+        self.link_hints = None;
+        self.finish_arrange(true);
+        self.omnibox = Some(Omnibox::new("", Target::Settings));
+        log::info!("settings open");
+    }
+
+    /// Moves setting `key` to its next (`dir` > 0) or previous value, applies
+    /// it at once and saves it.
+    fn step_setting(&mut self, key: prefs::Key, dir: i32) {
+        let mut s = self.settings;
+        if key == prefs::Key::LivePages {
+            s.live_pages = self.max_live; // step from what is in force
+        }
+        if !s.step(key, dir) {
+            return;
+        }
+        self.settings = s;
+        log::info!("setting {key:?} = {}", s.value(key));
+        match key {
+            prefs::Key::Search => {}
+            prefs::Key::LivePages => {
+                self.max_live = s.live_pages;
+                self.live_from_env = false;
+            }
+            prefs::Key::History => {
+                if !s.history {
+                    self.text_due.clear();
+                }
+            }
+            prefs::Key::PageColours => self.apply_page_scheme(),
+        }
+        if let Err(e) = storage::settings::save_settings(&self.data_dir, &self.settings) {
+            log::warn!("settings: saving: {e}");
+            self.toast("Couldn't save settings");
         }
     }
 
     /// The rows under a list field: the palette's or the history view's.
     fn list_rows(&self, ob: &Omnibox) -> Vec<palette::Row> {
+        if ob.target == Target::Settings {
+            let mut notes = HashMap::new();
+            if self.live_from_env {
+                notes.insert(prefs::Key::LivePages, "TRAILBOARD_MAX_LIVE".to_string());
+            }
+            let shown = Settings { live_pages: self.max_live, ..self.settings };
+            return palette::settings_rows(&ob.text, &shown, &notes);
+        }
         if ob.target == Target::History {
             let visits = visits_for(&self.page_index, &self.visits_cache, &ob.text, true);
             return palette::history_rows(&ob.text, &self.scene, &visits, local_ms(now_ms()), local_ms);
         }
         let visits = visits_for(&self.page_index, &self.visits_cache, &ob.text, false);
         let closed: Vec<&Node> = self.closed.iter().map(|(n, _)| n).collect();
-        palette::rows(&ob.text, &self.scene, &self.used, &closed, &self.spaces, &visits)
+        palette::rows(&ob.text, &self.scene, &self.used, &closed, &self.spaces, &visits, self.settings.search)
     }
 
     /// Ctrl+H: the history view, every page kept, newest first.
@@ -1666,6 +1732,7 @@ impl App {
             Command::DeleteSpace => self.ask_delete_space(),
             Command::History => self.open_history(),
             Command::ClearHistory => self.ask_clear_history(),
+            Command::Settings => self.open_settings(),
             Command::Shortcuts => {
                 self.hints = true;
                 log::info!("hints shown");
@@ -2448,7 +2515,7 @@ impl App {
         if self.text_due.is_empty() {
             return;
         }
-        if self.is_private() {
+        if self.is_private() || !self.settings.history {
             self.text_due.clear();
             return;
         }
@@ -2467,7 +2534,7 @@ impl App {
 
     /// Keeps a page's text in the history index. Returns whether it was kept.
     fn record_visit(&mut self, url: &str, title: &str, text: &str) -> bool {
-        if self.is_private() {
+        if self.is_private() || !self.settings.history {
             return false;
         }
         let Some(index) = self.page_index.as_mut() else { return false };
@@ -2795,8 +2862,16 @@ impl App {
             let panel = palette::Panel::new(self.viewport(), self.ui(), rows.len());
             let scroll = ob.scroll.min(rows.len().saturating_sub(panel.shown));
             if let Some(i) = panel.row_at(p, scroll, rows.len()) {
-                self.omnibox = None;
                 self.menu_pressed = true; // swallow the release
+                // A setting steps on (back with the right button); the panel stays.
+                if let Item::Setting(k) = rows[i].item {
+                    if let Some(ob) = self.omnibox.as_mut() {
+                        ob.sel = i;
+                    }
+                    self.step_setting(k, if button == MouseButton::Right { -1 } else { 1 });
+                    return;
+                }
+                self.omnibox = None;
                 if button == MouseButton::Left {
                     self.run_palette(rows[i].clone());
                 }
@@ -3171,6 +3246,13 @@ impl App {
             let len = self.list_rows(ob).len();
             (len, palette::Panel::new(self.viewport(), self.ui(), len).shown)
         });
+        // The settings panel's highlighted setting, for Enter and ←/→.
+        let setting_sel = self.omnibox.as_ref().filter(|ob| ob.target == Target::Settings).and_then(|ob| {
+            match self.list_rows(ob).into_iter().nth(ob.sel)?.item {
+                Item::Setting(k) => Some(k),
+                _ => None,
+            }
+        });
         if let Some(ob) = self.omnibox.as_mut() {
             if !pressed {
                 return;
@@ -3205,6 +3287,14 @@ impl App {
                     }
                 }
                 _ if ctrl && code == Some(KeyCode::KeyH) && ob.target == Target::History => self.omnibox = None,
+                _ if ctrl && code == Some(KeyCode::Comma) && ob.target == Target::Settings => self.omnibox = None,
+                // Settings: Enter or → steps the highlighted one on, Shift+Enter or ← back.
+                Some(NamedKey::Enter | NamedKey::ArrowRight | NamedKey::ArrowLeft) if ob.target == Target::Settings => {
+                    let back = ev.named == Some(NamedKey::ArrowLeft) || (shift && ev.named == Some(NamedKey::Enter));
+                    if let Some(k) = setting_sel {
+                        self.step_setting(k, if back { -1 } else { 1 });
+                    }
+                }
                 Some(NamedKey::Delete) if shift && ob.target.is_list() => self.forget_selected(),
                 Some(NamedKey::Enter) if ob.target.is_list() => {
                     let ob = self.omnibox.take().expect("palette open");
@@ -3219,7 +3309,7 @@ impl App {
                         self.rename_space(&ob.text);
                     } else if let Target::NameTrail(id) = ob.target {
                         self.name_trail(id, &ob.text);
-                    } else if let Some(url) = omnibox::resolve(&ob.text) {
+                    } else if let Some(url) = omnibox::resolve(&ob.text, self.settings.search) {
                         match (ob.target, self.focused_page()) {
                             (Target::Focused, Some(page)) => page.load(&url),
                             _ => {
@@ -3336,6 +3426,10 @@ impl App {
                 }
                 Some(KeyCode::KeyH) if ctrl && !shift && !alt => {
                     self.open_history();
+                    true
+                }
+                Some(KeyCode::Comma) if ctrl && !shift && !alt => {
+                    self.open_settings();
                     true
                 }
                 Some(KeyCode::KeyL) if ctrl => {
@@ -3958,6 +4052,7 @@ impl App {
                 Target::Palette => "Find a card, space or command",
                 Target::Find(_) => "Find in page",
                 Target::History => "Search history",
+                Target::Settings => "Settings · Enter or → changes, ← goes back",
                 _ => "Search or enter address",
             };
             let selected = ob.select_all && !ob.text.is_empty();
@@ -4022,12 +4117,19 @@ impl App {
             }
             layers.push(l);
             if ob.target.is_list() {
-                let rows = self.list_rows(ob);
+                let mut rows = self.list_rows(ob);
+                // The highlighted setting shows that ← and → change it.
+                if ob.target == Target::Settings
+                    && let Some(row) = rows.get_mut(ob.sel)
+                {
+                    row.detail = format!("‹  {}  ›", row.detail);
+                }
                 let panel = palette::Panel::new(vp, ui, rows.len());
                 let scroll = ob.scroll.min(rows.len().saturating_sub(panel.shown));
                 let empty = match (&ob.target, ob.text.trim().is_empty(), &self.page_index) {
                     (Target::History, _, None) => "History is off",
                     (Target::History, true, _) => "No pages in history",
+                    (Target::Settings, _, _) => "No settings match",
                     _ => "Nothing found",
                 };
                 if let Some(rd) = self.renderer.as_mut() {
@@ -4415,7 +4517,10 @@ impl App {
         };
         match action {
             MenuAction::OpenBeside(url) => open_beside(self, &url),
-            MenuAction::Search(q) => open_beside(self, &omnibox::search_url(&q)),
+            MenuAction::Search(q) => {
+                let url = omnibox::search_url(&q, self.settings.search);
+                open_beside(self, &url)
+            }
             MenuAction::AddToNote(text) => self.add_to_note(id, &text),
             MenuAction::SaveMarkdown => self.save_markdown(Some(id)),
             MenuAction::ToggleSticky => self.toggle_sticky(id),
@@ -4797,13 +4902,14 @@ fn cursor_icon(c: web::Cursor) -> Option<CursorIcon> {
     })
 }
 
-fn max_live_from_env() -> usize {
+/// `TRAILBOARD_MAX_LIVE`, if set: it overrides the *Pages kept awake* setting for this run.
+fn max_live_from_env() -> Option<usize> {
     match std::env::var("TRAILBOARD_MAX_LIVE").ok().map(|v| v.trim().parse::<usize>()) {
-        None => DEFAULT_MAX_LIVE,
-        Some(Ok(n)) if n >= 1 => n,
+        None => None,
+        Some(Ok(n)) if n >= 1 => Some(n),
         Some(_) => {
-            log::warn!("TRAILBOARD_MAX_LIVE must be a whole number ≥ 1; using {DEFAULT_MAX_LIVE}");
-            DEFAULT_MAX_LIVE
+            log::warn!("TRAILBOARD_MAX_LIVE must be a whole number ≥ 1; ignored");
+            None
         }
     }
 }

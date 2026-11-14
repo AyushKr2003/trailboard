@@ -72,7 +72,7 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
 - CEF 156 bootstrap (subprocesses re-exec the same binary), off-screen browsers.
 - Paint → texture upload; rounded cards with title bar, shadow, focus ring, close ×.
 - Mouse, wheel and keyboard forwarded to the focused page; logical-key shortcuts.
-- Omnibox (Ctrl+L / Ctrl+T): URL vs search detection (DuckDuckGo).
+- Omnibox (Ctrl+L / Ctrl+T): URL vs search detection (DuckDuckGo; the engine is a setting since M6).
 
 ### M3: Many cards and trails ✅
 - ✅ Links open beside their source (`on_before_browse` LINK + gesture, popups, Ctrl/middle-click).
@@ -93,7 +93,7 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   resize grip is clicked; a card restored by undo keeps its id and trail edges
   whose other end still exists, and Ctrl+Shift+T skips cards already restored.
 - ✅ Live-browser cap: `scene::liveness::plan`. Decisions: default 6 live
-  (`TRAILBOARD_MAX_LIVE` overrides); rank focused → on screen → most recently used,
+  (the *Pages kept awake* setting, M6; `TRAILBOARD_MAX_LIVE` overrides it for a run); rank focused → on screen → most recently used,
   ties keep already-live cards; a sleeping card closes its browser but keeps its
   last frame as a dimmed snapshot (dark placeholder if it never painted); it wakes
   on focus, or when on screen and the camera has settled (not mid-pan). Waking
@@ -581,7 +581,36 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     would. Several arguments open several cards (first launch too).
 - ⬜ Translations of the UI strings (needs a string table first; split off the
   `.desktop` item).
-- ⬜ Settings panel; download handling and a downloads list.
+- ✅ Settings panel (Ctrl+,; `scene::settings`, `storage::settings`,
+  `palette::settings_rows`). Decisions (2026-11-14):
+  - Not a page or a window: the palette's field and list again
+    (`Target::Settings`), like the history view, so it looks and works like
+    the rest (type to filter, ↑/↓, wheel, Esc). Ctrl+, anywhere, inside pages
+    too; Ctrl+, again or Esc closes; also *Settings* in Ctrl+K.
+  - Every setting is a short list of choices; no free text, so nothing to
+    validate. Enter, → or a click steps the highlighted row on, Shift+Enter, ←
+    or a right-click back (←/→ no longer move the caret in this field: a
+    filter of a few letters doesn't need it). The highlighted row's value
+    shows ‹ ›. Choices wrap; the live-page number stops at its ends. The
+    panel stays open after a change; each change applies at once and is saved.
+  - The first four: *Search engine* (DuckDuckGo default, Google, Bing, Brave
+    Search, Startpage, Ecosia, Kagi; used by the address bar, the palette's
+    last row, the page menu's search and command-line words), *Pages kept
+    awake* (2–16, default 6), *Keep history* (off stops recording text and
+    thumbnails, like a private space, for every space; what is kept stays
+    searchable, Clear history still works), *Page colours* (follow the
+    theme / light / dark for `prefers-color-scheme`; the board keeps the theme).
+  - Saved in `$DATA/settings.json` (version 1, shared by all spaces), next to
+    `zoom.json` rather than in `~/.config`, so one `XDG_DATA_HOME` isolates a
+    test run. Each field is read on its own: an unknown value (an engine a
+    newer build added) keeps its default, the rest still load; a newer
+    version is ignored and left alone until a setting changes.
+  - `TRAILBOARD_MAX_LIVE` still wins for the run it is set in (the row says
+    "5 · TRAILBOARD_MAX_LIVE"); stepping the row replaces it.
+  - Not yet settings: a start page for an empty board (still a random
+    Wikipedia page), a custom search URL, the default card size, downloads
+    folder (no downloads yet), ad blocking (M8).
+- ⬜ Download handling and a downloads list.
 - ✅ Loading and site icons in titles; card names when zoomed out
   (`scene::icon`, `storage::icons`, `WebEvent::Favicon`). Decisions (2026-11-14):
   - The loading bar along the title bar's bottom edge (existing) is the
@@ -757,21 +786,22 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M6 desktop entry, icon and hand-off to a running instance.
-**Repo state:** on `master`, committed after 35cab5e; working tree clean.
+**Last session:** 2026-11-14. M6 settings panel.
+**Repo state:** on `master`, committed after 0e88125; working tree clean.
 **Done this session:**
-- `share/trailboard.desktop`, `share/trailboard.svg`, `scripts/install-desktop.sh`.
-- A second launch hands its URLs to the running window (CEF process
-  singleton → `WebEvent::Relaunch`) instead of failing with "CEF initialize
-  failed"; command-line paths resolve against the launch's directory. See M6.
-**Next up:** M6's settings panel, then downloads (or M4/M5's partial items).
-Small follow-ups: thumbnails are taken on the main thread (55–85 ms each
+- Ctrl+, settings panel in the palette's list UI (`Target::Settings`) with four
+  settings: search engine, pages kept awake, keep history, page colours. Pure
+  model `scene::settings`, file `storage::settings` (`settings.json` v1),
+  rows `palette::settings_rows`. See M6.
+**Next up:** M6's downloads (handling and a list), or M4/M5's partial items.
+Small follow-ups: more settings (start page for an empty board, custom
+search URL, card size); thumbnails are taken on the main thread (55–85 ms each
 in a debug build at 1.2 s after load; move the shrink/encode off-thread if
 it shows in release); a thumbnail on history rows or the sidebar; Shift+Delete on a closed row could drop it from the stack;
 keep closed cards across restarts (board v6?); a private space could look
 different beyond its label
 (an icon, a hatched board); downloads in a private space (none yet anyway);
-undo for forgetting a page; a pause-history toggle; site
+undo for forgetting a page; site
 icons on history rows; prune `icons/` of sites no card uses; a letter tile for
 sites without an icon; the name label for a stack could list its size; a zoom
 badge on a zoomed card's title bar; Ctrl+scroll inside a page to zoom it;
@@ -781,6 +811,22 @@ several cards; link hints inside iframes; xdg-desktop-portal file chooser for
 Save as Markdown; i18n; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out.
 **Notes for the next session:**
+- Settings verified e2e (`~/.cache/trailboard-e2e-settings`, `run.sh N
+  shot…`, `ENVX=VAR=val` passes an env var, `NOURL=1`; serve `site/` on :8751;
+  `a.html` titles itself with the `prefers-color-scheme` it sees). Run 1: four
+  cards; Ctrl+, listed the defaults; → Google, ← ← live 3 (card 1 then slept,
+  "3 live"), Enter history off, → page colours Light ("pages: light");
+  `settings.json` held all four; Ctrl+K "rust lang" → "Search Google for …"
+  with a google.com URL; *Settings* from Ctrl+K reopened it; a page opened
+  after that was not recorded (history still 4). Run 2 (copy, `NOURL=1`,
+  `TRAILBOARD_MAX_LIVE=5`): settings restored, the woken a.html saw "light";
+  live row said "5 · TRAILBOARD_MAX_LIVE"; → Dark, → Follow the theme: page
+  saw "dark" live. Run 3: two clicks on the search row → Bing → Brave
+  Search, panel stayed open. Screenshots panel2, dark2 checked, dark theme
+  only. Not verified: right-click stepping back (scripts can't right-click
+  the board), Ctrl+, typed by a real keyboard inside a page (scripted keys
+  only), a light Omarchy theme with *Page colours* Dark, the search engines'
+  real result pages (URLs unit-tested only).
 - Hand-off verified e2e (`~/.cache/trailboard-e2e-desktop`, `site/a.html`,
   `b.html`; `inst/` has the entry installed by the script for a copy of the
   binary named `trail$board` in `bin dir/`, to test Exec quoting). With one

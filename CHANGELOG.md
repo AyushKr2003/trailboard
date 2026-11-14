@@ -7,6 +7,15 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Settings**: Ctrl+, (or *Settings* in Ctrl+K) lists the settings under the
+  top field; type to filter, Enter or → changes the highlighted one, ← or
+  Shift+Enter goes back, a click changes a row too. Changes apply at once and
+  are kept in `settings.json` in the data folder. The settings: the **search
+  engine** for the address bar and the palette (DuckDuckGo, Google, Bing,
+  Brave Search, Startpage, Ecosia or Kagi), how many **pages are kept awake**
+  (2–16, default 6; `TRAILBOARD_MAX_LIVE` still overrides it for one run),
+  **keep history** (off stops recording the pages you open), and **page
+  colours** (follow the theme, or always light or dark pages).
 - **Desktop entry and icon**: `scripts/install-desktop.sh` installs
   `trailboard.desktop` and its icon for your user, so Trailboard shows in the
   app launcher and can be chosen as the default browser.

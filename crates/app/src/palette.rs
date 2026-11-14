@@ -13,6 +13,7 @@ use std::collections::{HashMap, HashSet};
 
 use compositor::{Layer, Quad, Renderer, Shape, Text};
 use scene::pagetext;
+use scene::settings::{Key, SearchEngine, Settings};
 use scene::palette::{self, Candidate};
 use scene::{Node, NodeId, Rect, Scene, Vec2};
 use storage::pagetext::Visit;
@@ -61,6 +62,7 @@ pub enum Command {
     DeleteSpace,
     History,
     ClearHistory,
+    Settings,
     Shortcuts,
     Quit,
 }
@@ -115,6 +117,7 @@ pub const COMMANDS: &[CommandInfo] = &[
     c(Command::DeleteSpace, "Delete space", "Ctrl+Shift+W", "board workspace remove"),
     c(Command::History, "History", "Ctrl+H", "visited pages browse past recent"),
     c(Command::ClearHistory, "Clear history", "", "forget delete erase visited pages privacy"),
+    c(Command::Settings, "Settings", "Ctrl+,", "preferences options configure search engine history colours"),
     c(Command::Shortcuts, "Keyboard shortcuts", "?", "help keys hints sheet"),
     c(Command::Quit, "Quit Trailboard", "Q", "exit close"),
 ];
@@ -128,6 +131,8 @@ pub enum Item {
     Open(String),
     /// Bring back this closed card where it was.
     Closed(NodeId),
+    /// A row of the settings panel: Enter or a click steps its value.
+    Setting(Key),
 }
 
 /// A result row.
@@ -200,7 +205,16 @@ fn card_detail(n: &Node) -> (String, String) {
 /// commands, ranked together; then pages from history (`visits`, best first)
 /// that no card shows; then the row that opens the query as an address or a
 /// search.
-pub fn rows(query: &str, scene: &Scene, used: &HashMap<NodeId, u64>, closed: &[&Node], spaces: &SpaceIndex, visits: &[Visit]) -> Vec<Row> {
+#[allow(clippy::too_many_arguments)]
+pub fn rows(
+    query: &str,
+    scene: &Scene,
+    used: &HashMap<NodeId, u64>,
+    closed: &[&Node],
+    spaces: &SpaceIndex,
+    visits: &[Visit],
+    engine: SearchEngine,
+) -> Vec<Row> {
     let mut cards: Vec<_> = scene.all_nodes().collect();
     cards.sort_by_key(|n| std::cmp::Reverse((used.get(&n.id).copied().unwrap_or(0), n.z)));
 
@@ -288,10 +302,10 @@ pub fn rows(query: &str, scene: &Scene, used: &HashMap<NodeId, u64>, closed: &[&
         }
     }
 
-    if let Some(url) = omnibox::resolve(query) {
+    if let Some(url) = omnibox::resolve(query, engine) {
         let q = query.trim();
-        let search = url == omnibox::search_url(q);
-        let label = if search { format!("Search the web for “{q}”") } else { format!("Open {q}") };
+        let search = url == omnibox::search_url(q, engine);
+        let label = if search { format!("Search {} for “{q}”", engine.name()) } else { format!("Open {q}") };
         let row = Row { item: Item::Open(url), label, detail: "New card".into(), positions: Vec::new(), dot: None, history: None };
         if search { out.push(row) } else { out.insert(0, row) }
     }
@@ -323,6 +337,27 @@ pub fn history_rows(query: &str, scene: &Scene, visits: &[Visit], now: i64, loca
             Row { item, label, detail, positions, dot: None, history: Some(v.url.clone()) }
         })
         .collect()
+}
+
+/// The settings panel's rows (Ctrl+,): each setting with its value on the
+/// right, in the panel's order, or ranked by `query` (which also finds a
+/// setting by its values: "google" finds *Search engine*). `notes` add a word
+/// after a value (where it came from, say).
+pub fn settings_rows(query: &str, settings: &Settings, notes: &HashMap<Key, String>) -> Vec<Row> {
+    let items: Vec<Row> = Key::ALL
+        .iter()
+        .map(|&k| {
+            let value = settings.value(k);
+            let detail = match notes.get(&k) {
+                Some(n) => format!("{value} · {n}"),
+                None => value,
+            };
+            Row { item: Item::Setting(k), label: k.label().into(), detail, positions: Vec::new(), dot: None, history: None }
+        })
+        .collect();
+    let alts: Vec<String> = Key::ALL.iter().map(|k| k.words()).collect();
+    let cands: Vec<Candidate> = items.iter().zip(&alts).map(|(r, alt)| Candidate { text: &r.label, alt }).collect();
+    palette::rank(query, &cands).into_iter().map(|r| Row { positions: r.positions, ..items[r.index].clone() }).collect()
 }
 
 /// Sizes in logical px; multiplied by the UI scale.
@@ -573,7 +608,7 @@ mod tests {
         let ids: Vec<NodeId> = s.nodes().map(|n| n.id).collect();
         let mut used = HashMap::new();
         used.insert(ids[0], 5);
-        let r = rows("", &s, &used, &[], &SpaceIndex::default(), &[]);
+        let r = rows("", &s, &used, &[], &SpaceIndex::default(), &[], SearchEngine::DuckDuckGo);
         assert_eq!(r[0].item, Item::Card(ids[0]));
         assert_eq!(r[0].detail, "rust-lang.org");
         assert_eq!(r[1].item, Item::Card(ids[1]));
@@ -585,22 +620,22 @@ mod tests {
     #[test]
     fn query_ranks_cards_commands_and_search() {
         let s = board();
-        let r = rows("trail", &s, &HashMap::new(), &[], &SpaceIndex::default(), &[]);
+        let r = rows("trail", &s, &HashMap::new(), &[], &SpaceIndex::default(), &[], SearchEngine::DuckDuckGo);
         assert_eq!(r[0].label, "Trail - Wikipedia");
         assert_eq!(r[0].positions, vec![0, 1, 2, 3, 4]);
         assert!(r.iter().any(|r| r.label == "Trails sidebar"));
         let last = r.last().expect("rows");
         assert_eq!(last.item, Item::Open("https://duckduckgo.com/?q=trail".into()));
-        assert_eq!(last.label, "Search the web for “trail”");
+        assert_eq!(last.label, "Search DuckDuckGo for “trail”");
         // Found by its URL.
-        let r = rows("rust-lang", &s, &HashMap::new(), &[], &SpaceIndex::default(), &[]);
+        let r = rows("rust-lang", &s, &HashMap::new(), &[], &SpaceIndex::default(), &[], SearchEngine::DuckDuckGo);
         assert_eq!(r[0].label, "Learn Rust");
         assert!(r[0].positions.is_empty());
     }
 
     #[test]
     fn an_address_opens_first() {
-        let r = rows("example.com", &board(), &HashMap::new(), &[], &SpaceIndex::default(), &[]);
+        let r = rows("example.com", &board(), &HashMap::new(), &[], &SpaceIndex::default(), &[], SearchEngine::DuckDuckGo);
         assert_eq!(r[0].item, Item::Open("https://example.com".into()));
         assert_eq!(r[0].label, "Open example.com");
     }
@@ -610,10 +645,10 @@ mod tests {
         let mut spaces = SpaceIndex::default();
         let other = spaces.add();
         spaces.rename(other, "Reading");
-        let r = rows("read", &Scene::new(), &HashMap::new(), &[], &spaces, &[]);
+        let r = rows("read", &Scene::new(), &HashMap::new(), &[], &spaces, &[], SearchEngine::DuckDuckGo);
         assert_eq!(r[0].item, Item::Space(other));
         assert!(r.iter().any(|r| r.item == Item::Command(Command::Read)));
-        let r = rows("", &Scene::new(), &HashMap::new(), &[], &spaces, &[]);
+        let r = rows("", &Scene::new(), &HashMap::new(), &[], &spaces, &[], SearchEngine::DuckDuckGo);
         assert!(r.iter().any(|r| r.item == Item::Command(Command::NextSpace)));
         // The active space is not offered.
         assert!(!r.iter().any(|r| r.item == Item::Space(spaces.active)));
@@ -627,7 +662,7 @@ mod tests {
             v("https://doc.rust-lang.org/book/", "The Rust Book"),
             v("https://example.org/x", ""),
         ];
-        let r = rows("rust", &board(), &HashMap::new(), &[], &SpaceIndex::default(), &visits);
+        let r = rows("rust", &board(), &HashMap::new(), &[], &SpaceIndex::default(), &visits, SearchEngine::DuckDuckGo);
         // The card showing the first page is found by its title already, and only once.
         assert_eq!(r.iter().filter(|r| r.label == "Learn Rust").count(), 1);
         let hist: Vec<&Row> = r.iter().filter(|r| r.detail.starts_with("History")).collect();
@@ -637,14 +672,14 @@ mod tests {
         assert_eq!(hist[0].positions, vec![4, 5, 6, 7]);
         assert_eq!(hist[1].label, "https://example.org/x");
         assert_eq!(r[r.len() - 2].label, "https://example.org/x");
-        assert!(r.last().unwrap().label.starts_with("Search the web"));
+        assert!(r.last().unwrap().label.starts_with("Search DuckDuckGo"));
         // Text only the index matched finds the card that shows it.
-        let r = rows("borrowing", &board(), &HashMap::new(), &[], &SpaceIndex::default(), &visits[..1]);
+        let r = rows("borrowing", &board(), &HashMap::new(), &[], &SpaceIndex::default(), &visits[..1], SearchEngine::DuckDuckGo);
         assert_eq!(r[0].label, "Learn Rust");
         assert!(matches!(r[0].item, Item::Card(_)));
         assert_eq!(r[0].detail, "rust-lang.org");
         // Nothing typed: no history.
-        let r = rows("", &board(), &HashMap::new(), &[], &SpaceIndex::default(), &visits);
+        let r = rows("", &board(), &HashMap::new(), &[], &SpaceIndex::default(), &visits, SearchEngine::DuckDuckGo);
         assert!(!r.iter().any(|r| r.detail.starts_with("History")));
     }
 
@@ -666,7 +701,7 @@ mod tests {
         let used = HashMap::new();
 
         // Nothing typed: the newest few, after the open cards, before the commands.
-        let rows0 = rows("", &s, &used, &closed, &SpaceIndex::default(), &[]);
+        let rows0 = rows("", &s, &used, &closed, &SpaceIndex::default(), &[], SearchEngine::DuckDuckGo);
         let items: Vec<&Item> = rows0.iter().map(|r| &r.item).collect();
         assert!(matches!(items[0], Item::Card(_)) && matches!(items[1], Item::Card(_)));
         assert_eq!(&items[2..5], &[&Item::Closed(d.id), &Item::Closed(b.id), &Item::Closed(c.id)]);
@@ -674,24 +709,41 @@ mod tests {
         assert_eq!(rows0[2].detail, "Closed · hypr.land");
 
         // Typed: found by title or address.
-        let found = rows("gnu", &s, &used, &closed, &SpaceIndex::default(), &[]);
+        let found = rows("gnu", &s, &used, &closed, &SpaceIndex::default(), &[], SearchEngine::DuckDuckGo);
         assert_eq!(found[0].item, Item::Closed(a.id));
         assert_eq!(found[0].label, "GNU");
-        let found = rows("kernel.org", &s, &used, &closed, &SpaceIndex::default(), &[]);
+        let found = rows("kernel.org", &s, &used, &closed, &SpaceIndex::default(), &[], SearchEngine::DuckDuckGo);
         assert_eq!(found[1].item, Item::Closed(c.id), "after the Open row");
 
         // A history page a closed card showed is that card's row.
         let visits = [Visit { url: "https://archlinux.org/".into(), title: "Arch Linux".into(), seen_ms: 0 }];
-        let found = rows("wiki pacman", &s, &used, &closed, &SpaceIndex::default(), &visits);
+        let found = rows("wiki pacman", &s, &used, &closed, &SpaceIndex::default(), &visits, SearchEngine::DuckDuckGo);
         assert_eq!(found[0].item, Item::Closed(b.id));
         assert!(found[0].history.is_some());
 
         // A closed card that is back on the board (undo) is not offered.
         let mut s2 = s.clone();
         assert!(s2.insert(d.clone(), &[]));
-        let r2 = rows("hypr", &s2, &used, &closed, &SpaceIndex::default(), &[]);
+        let r2 = rows("hypr", &s2, &used, &closed, &SpaceIndex::default(), &[], SearchEngine::DuckDuckGo);
         assert!(!r2.iter().any(|r| r.item == Item::Closed(d.id)));
         assert!(r2.iter().any(|r| r.item == Item::Card(d.id)));
+    }
+
+    #[test]
+    fn settings_rows_find_by_name_and_value() {
+        let s = Settings::default();
+        let all = settings_rows("", &s, &HashMap::new());
+        assert_eq!(all.iter().map(|r| r.item.clone()).collect::<Vec<_>>(), Key::ALL.map(Item::Setting).to_vec());
+        assert_eq!(all[0].detail, "DuckDuckGo");
+        let r = settings_rows("google", &s, &HashMap::new());
+        assert_eq!(r[0].item, Item::Setting(Key::Search));
+        let r = settings_rows("hist", &s, &HashMap::new());
+        assert_eq!(r[0].item, Item::Setting(Key::History));
+        assert_eq!(r[0].positions, vec![5, 6, 7, 8]);
+        let notes = HashMap::from([(Key::LivePages, "TRAILBOARD_MAX_LIVE".to_string())]);
+        let r = settings_rows("awake", &s, &notes);
+        assert_eq!(r[0].detail, "6 · TRAILBOARD_MAX_LIVE");
+        assert!(settings_rows("zzqx", &s, &HashMap::new()).is_empty());
     }
 
     #[test]

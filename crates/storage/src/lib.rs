@@ -5,6 +5,7 @@
 pub mod export;
 pub mod icons;
 pub mod pagetext;
+pub mod settings;
 pub mod spaces;
 pub mod thumbs;
 pub mod zoom;

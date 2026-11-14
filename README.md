@@ -59,6 +59,7 @@ you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change th
 | Undo / redo board edits | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y (after clicking the board or a title bar) |
 | Address bar / new card | Ctrl+L / Ctrl+T (or N with no page focused) |
 | Fit everything | Ctrl+0 (or F with no page focused) |
+| Tidy: lay trails out left to right, no overlaps | T (with no page focused; Ctrl+Z undoes it) |
 | Back / forward / reload | Alt+← / Alt+→ / Ctrl+R |
 | Page context menu | right-click in a page (open link beside, copy link, edit, search selection) |
 | Copy / cut / paste | Ctrl+C / Ctrl+X / Ctrl+V (shared with the desktop clipboard) |
@@ -92,9 +93,10 @@ TRAILBOARD_SCRIPT=path cargo run -p trailboard -- URL   # scripted end-to-end ru
 Done: live page cards, open-links-beside with trail edges, pan/zoom, move,
 resize, close/reopen, multi-select and group move, undo/redo, omnibox, zoom-aware page resolution, off-screen
 pages paused, live-browser cap, page context menu, desktop clipboard, IME input,
-board persistence, spaces (several boards with their own camera and background).
+board persistence, spaces (several boards with their own camera and background),
+Read Mode, Tidy.
 
-Next: Tidy and Fold, Read Mode, notes, trails sidebar, Ctrl+K palette,
+Next: Fold, notes, trails sidebar, Ctrl+K palette,
 history with full-text search, ad blocking, then optional semantic search and
 an LLM-backed "Explain" panel.
 

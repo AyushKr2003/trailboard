@@ -7,6 +7,11 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Tidy**: press T with no page focused to lay the board out again: each trail
+  reads left to right from its first page, one column per step, with nothing
+  overlapping; cards without a trail line up in rows below. Card sizes are kept,
+  the card in the middle of the view stays where it is on screen, and Ctrl+Z
+  undoes the whole Tidy in one step.
 - **Read Mode**: Tab makes the focused card (or the one in the middle of the
   view) fill the window, with its page laid out at the window's size under a
   slim title bar. Tab, Esc or a double-click on the bar returns to the board as
@@ -95,6 +100,7 @@ All notable changes to Trailboard. The format follows
 - README, plan (`docs/PLAN.md`), future plans (`docs/FUTURE.md`) and `CLAUDE.md`.
 
 ### Changed
+- T on the board now tidies it; N and Ctrl+T still open a new card.
 - Ctrl+Shift+T now restores the closed card's trail edges and skips cards
   already brought back with undo.
 

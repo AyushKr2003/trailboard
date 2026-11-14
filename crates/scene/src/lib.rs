@@ -8,6 +8,7 @@ pub mod liveness;
 pub mod placement;
 pub mod read;
 pub mod selection;
+pub mod tidy;
 
 use std::collections::BTreeMap;
 
@@ -112,6 +113,12 @@ impl Scene {
             }
         }
         true
+    }
+
+    /// Adds an edge as is, even a dangling or looping one (as a hand-edited file could hold).
+    #[cfg(test)]
+    pub(crate) fn insert_edge(&mut self, e: Edge) {
+        self.edges.push(e);
     }
 
     pub fn node(&self, id: NodeId) -> Option<&Node> {

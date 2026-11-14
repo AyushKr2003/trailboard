@@ -191,7 +191,23 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     is still added on the board. Closing the read card, F/Ctrl+0 or a space
     switch go back to the board. Ctrl+scroll does nothing while reading (page
     zoom is M6).
-- Tidy (T): our own tree layout per trail (roots left, children in columns, no overlaps).
+- ✅ Tidy (T): our own tree layout per trail (`scene::tidy`). Decisions (2026-11-14):
+  - Whole board, every time (a selection-only Tidy could push cards onto the
+    untouched ones; left for later). Card sizes never change.
+  - A trail is a tree from its edges (first edge into a card wins; cycles and
+    dangling edges are tolerated). Root on the left, one column per generation
+    as wide as that generation's widest card, gap 60. A card sits at the top
+    of the band its descendants fill, so a first child is level with its
+    source, as when it was opened beside it. Siblings and trails keep their
+    current top-to-bottom order; trails stack with a 120 gap.
+  - Lone cards (no edges) go in rows below the trails, wrapping at the widest
+    trail or at ⌈√n⌉ cards, whichever is wider.
+  - Starts at the board's old top-left corner; running it twice changes nothing
+    ("Already tidy" toast). One undo step (`History::moved_many`).
+  - The camera glides by the move of the card in the middle of the view
+    (`read::pick`), so that card stays put on screen.
+  - Key: T with no card focused (was a second "new card" key; N and Ctrl+T
+    remain). Cards jump to their places; animating them is a follow-up.
 - Fold (S): collapse a trail into a stack; peek/unfold; stack outline.
 - Next/Previous on Trail navigation; trail names and colours.
 - Notes (N): native Markdown note cards; sticky notes; "Add to note" quotes the
@@ -291,51 +307,39 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M5 Read Mode.
-**Repo state:** on `master`, committed after 8de8c90; working tree clean.
+**Last session:** 2026-11-14. M5 Tidy.
+**Repo state:** on `master`, committed after 2a82a9f; working tree clean.
 **Done this session:**
-- `scene::read`: `layout` (bar, content rect, CSS size for a viewport and
-  scale) and `pick` (focused → topmost under the view centre → nearest); 3 tests.
-- App: `read: Option<NodeId>`, `read_card` / `toggle_read` / `leave_read`,
-  `Hit::ReadBar`, `read_layer` (page 1:1 under a title bar with title, loading
-  bar and a "Tab · Esc Board" hint). One `page_view` (screen rect + CSS size)
-  now backs `page_point` and `page_rect_to_screen`, used by input, the context
-  menu anchor, the IME caret and script `pclick`, so they all work in both modes.
-- `sync_pages`/`sync_liveness`: only the read card is visible; it is sized to
-  the window and the raster scale acts as zoom 1. `ensure_visible` reads the
-  card instead while in Read Mode. Toasts sit below the bar; the space label hides.
-- Shortcut sheet row "Tab · Read mode / back to the board"; README row.
-- Script `cards` also logs `script read: …` (read card, its CSS size, page
-  scale, focus, keys_in_page, camera).
-**Next up:** M5 Tidy (T): our own tree layout per trail (roots left, children in
-columns, no overlaps), pure in `scene` with tests, one undo step (`Edit::Batch`).
-Small follow-up: `.desktop` entry and icon (M6).
+- `scene::tidy::tidy(&Scene) -> Vec<(NodeId, Rect)>`: trails as trees
+  (columns per generation, band-stacked subtrees, top-aligned), trails stacked
+  in reading order, lone cards in wrapped rows below; 6 tests (columns, no
+  collisions between subtrees, stacking/wrapping, idempotent, cycles and
+  dangling edges, empty board).
+- App: T with no card focused → `tidy_board` (one undo step, camera keeps the
+  centre card on screen, toast "Tidied N cards" / "Already tidy"). T no longer
+  opens a new card (N, Ctrl+T do). Shortcut sheet and README rows.
+**Next up:** M5 Fold (S): collapse a trail into a stack, peek/unfold, stack
+outline. Decide how a folded trail is stored (a `folded` flag on the root in
+the board file means the first board migration: v1 → v2, see M4 notes).
+Small follow-ups: animate cards to their Tidy places; `.desktop` entry and icon (M6).
 **Notes for the next session:**
-- Read Mode verified e2e (`~/.cache/trailboard-e2e-read`, two local pages whose
-  title shows `innerWidth×innerHeight`): Tab read card 1 and its page reflowed
-  1024×720 → 1886×996 (the window), page scale 1.25 → 1; a link click while
-  reading opened card 2 beside (edge 1→2) and Read Mode followed it; Tab went
-  back with both pages at 1024×720 / scale 1.25 and the camera panned to card 2;
-  Tab then Esc left with card 2 still focused; after a click inside the page,
-  Tab went to the page (no Read Mode); Ctrl+W while reading went back to the
-  board. With the window tiled to half width, Read Mode reflowed to 941×996.
-  Screenshots checked: read bar + full-window page, board afterwards.
-- Screenshots in e2e runs: trigger `grim` when the log shows a `script log:`
-  marker instead of fixed sleeps; a fixed-sleep shot caught the moment after
-  leaving Read Mode, when the old full-window frame is briefly stretched into
-  the card until the card-size repaint lands (well under a second). Drawing a
-  stale frame at its own aspect (clipped) would hide that, and the same glitch
-  while resizing a card; not done.
-- Not verified: real keyboard Tab (script keys only), a window resize while
-  reading by dragging (the half-width tiling covered the reflow), HiDPI scale.
-- The live-browser cap still counts the read card as focused (never sleeps);
-  other cards are hidden while reading but keep their browsers.
+- Tidy verified e2e (`~/.cache/trailboard-e2e-tidy`, `run.sh` seeds a board of
+  five 640×420 coloured pages, trail 1→2, 1→3, 3→4 plus lone 5, scattered and
+  overlapping): T moved 5 cards to the expected rects, card 2 (under the view
+  centre) kept its screen position, a second T said "Already tidy", undo and
+  redo restored / re-applied all five in one step. Screenshots before/after
+  checked. `run.sh` waits for `script log: shot …` markers before `grim`.
+- Not verified: real keyboard T (script keys only), big boards (layout is
+  O(n log n), but each card is a renderer, so not tried beyond 5).
+- Read Mode notes from last session still hold: a stale full-window frame can
+  show stretched for a moment after leaving Read Mode; the read card never sleeps.
 - A sleeping card's last frame is dropped on switch, so after switching back
   cards beyond the live cap show the plain "asleep" placeholder until woken.
 - Keep the sheet's rows in `hints::SECTIONS` in step with new shortcuts.
 - Live-browser cap: zooming can churn (sleep, then reload in view).
 - Keep test boards small (RAM). Use a fresh `XDG_DATA_HOME` under `~/.cache` for
-  each e2e run (a saved board plus the URL argument gives two cards).
+  each e2e run (a saved board plus the URL argument gives two cards; seeding a
+  board file and running without a URL is easiest for layout tests).
 - `hyprctl clients -j` can report a window off-screen right after it opens
   (open animation); take the screenshot ~5–8 s later.
 - Script `open` with a data: URL: percent-encode spaces and `#` (`#` starts a

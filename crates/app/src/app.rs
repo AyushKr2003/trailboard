@@ -39,7 +39,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use compositor::{Background, Layer, Quad, Renderer, Shape, Text};
-use scene::{liveness, placement, read, selection, Camera, Change, Edge, History, Node, NodeId, Rect, Scene, Selection, Vec2};
+use scene::{liveness, placement, read, selection, tidy, Camera, Change, Edge, History, Node, NodeId, Rect, Scene, Selection, Vec2};
 use storage::spaces::{self, SpaceId, SpaceIndex};
 use web::{MouseButton as WebButton, Page, SpawnBeside, WebEvent};
 use winit::application::ApplicationHandler;
@@ -712,6 +712,37 @@ impl App {
         if let Some(b) = self.scene.bounds() {
             self.camera_goal = Some(Camera::fit(b, self.viewport(), self.scale(), 48.0 * self.scale()));
         }
+    }
+
+    /// T: lay every trail out left to right with nothing overlapping
+    /// (`scene::tidy`), as one undo step. The card in the middle of the view
+    /// keeps its place on screen, so the board doesn't jump away.
+    fn tidy_board(&mut self) {
+        let anchor = read::pick(&self.scene, None, self.camera.center)
+            .and_then(|id| self.scene.node(id).map(|n| (id, n.rect)));
+        let mut before = Vec::new();
+        for (id, rect) in tidy::tidy(&self.scene) {
+            if let Some(n) = self.scene.node_mut(id)
+                && n.rect != rect
+            {
+                before.push((id, std::mem::replace(&mut n.rect, rect)));
+            }
+        }
+        log::info!("tidy: moved {} card(s)", before.len());
+        if before.is_empty() {
+            self.toast("Already tidy");
+            return;
+        }
+        self.history.moved_many(&self.scene, &before);
+        self.dirty = true;
+        if let Some((id, old)) = anchor
+            && let Some(new) = self.scene.node(id).map(|n| n.rect)
+        {
+            let mut goal = self.camera_goal.unwrap_or(self.camera);
+            goal.center = goal.center + Vec2::new(new.x - old.x, new.y - old.y);
+            self.camera_goal = Some(goal);
+        }
+        self.toast(format!("Tidied {} card{}", before.len(), if before.len() == 1 { "" } else { "s" }));
     }
 
     fn fill_view(&mut self, id: NodeId) {
@@ -1459,7 +1490,11 @@ impl App {
                     self.fit_all();
                     true
                 }
-                Some(KeyCode::KeyN | KeyCode::KeyT) if self.focused.is_none() && !ctrl => {
+                Some(KeyCode::KeyT) if self.focused.is_none() && !ctrl && !alt && self.drag_is_idle() => {
+                    self.tidy_board();
+                    true
+                }
+                Some(KeyCode::KeyN) if self.focused.is_none() && !ctrl => {
                     self.omnibox = Some(Omnibox::new("", Target::NewCard));
                     true
                 }

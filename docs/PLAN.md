@@ -594,6 +594,30 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   - Arguments resolve with `launch::target`: an existing file (relative to the
     launch's directory) becomes a `file://` URL, otherwise as the address bar
     would. Several arguments open several cards (first launch too).
+- ✅ Visual polish pass (`app::chrome`; 2026-11-14). Decisions:
+  - Corners keep following Hyprland (asked: sharp stays on Omarchy's
+    default); the polish is depth, edges, type and motion instead.
+  - One surface style for everything over the board (`chrome::panel`): a
+    two-part shadow (tight contact + wide ambient; `Lift` Low/Mid/High), a
+    hairline edge a step off the panel (`chrome::edge`), and a 1 px top
+    sheen. Used by the palette, menu, toasts and labels, the shortcut sheet,
+    the page preview and the card name label; the sidebar casts the same
+    two shadows sideways.
+  - The palette's field and list are one sheet with a hairline between them,
+    over a dimmed board (`chrome::scrim`); the highlighted row gets a short
+    accent bar; a command's keys show as keycaps (`chrome::keycaps`: only a
+    single shortcut, modifiers first; hosts and "B · Esc" stay text).
+  - Overlays ease in over 150 ms (`chrome::Appear`, cubic ease-out, restarted
+    when what they show changes): the palette slides 8 px down into place
+    and fades, toasts 10 px, menus 4 px, the sheet fades, the sidebar slides
+    in from the left. Hit testing uses the settled places throughout.
+  - Cards: a wide ambient shadow plus a contact shadow (the focused card's
+    higher), a hairline edge on unfocused cards, an accent glow around the
+    current card (stronger while it has the keys), a sheen and a hairline
+    on the title bar.
+  - The board darkens slightly towards the window's corners (vignette 0.13
+    dark, 0.04 light; `Background::vignette`).
+  - The empty board says "An empty board" over its hint, keys as keycaps.
 - ⬜ Translations of the UI strings (needs a string table first; split off the
   `.desktop` item).
 - ✅ Settings panel (Ctrl+,; `scene::settings`, `storage::settings`,
@@ -903,13 +927,19 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M9 packaging: the Arch `PKGBUILD`.
-**Repo state:** on `master`, committed after abacd67; working tree clean.
+**Last session:** 2026-11-14. M9 Arch `PKGBUILD`, then an M6 visual polish pass.
+**Repo state:** on `master`, committed; working tree clean.
 **Done this session:**
-- `packaging/arch/PKGBUILD` (+ `.gitignore` for makepkg's output): builds the
-  checkout's last commit with its own pinned CEF download, installs to
-  `/usr/lib/trailboard` with a `/usr/bin` link, desktop entry and icon.
-  README gains the `makepkg -si` line. No Rust changes.
+- `packaging/arch/PKGBUILD` (see M9): builds the checkout's last commit with
+  its own pinned CEF, installs to `/usr/lib/trailboard`.
+- Visual polish (`app::chrome`, see M6): layered shadows, hairline edges and
+  sheen on every overlay; the palette as one sheet over a dimmed board, with
+  keycaps and an accent bar; 150 ms ease-in for overlays; card glow,
+  shadows and title-bar detail; board vignette; a keycap empty-board hint.
+- Fixed: the compositor's text cache was cleared in the middle of a frame
+  once it passed 512 entries, panicking ("no entry found for key") when a
+  text-heavy overlay (the shortcut sheet after the palette) opened. It is
+  now trimmed between frames only.
 **Next up:** publishing to the AUR needs the owner's public repository URL
 and a release tag (then `url=`, `source`, `.SRCINFO`). Without that: M9's
 first-run defaults (a guide card on an empty board) or the licence files
@@ -935,6 +965,14 @@ Save as Markdown; i18n; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out; open `crash.log` from the crash
 toast or a palette command.
 **Notes for the next session:**
+- Polish verified with screenshots (`~/.cache/trailboard-e2e-polish`,
+  `run.sh N shot…`, `START=file://…/a.html`; `runlight.sh` adds a fake light
+  theme from `light/`). `*1.png` are the before shots, `*2–4.png` after:
+  board, palette (empty and typed), settings, sidebar, sheet, menu, a
+  zoomed card, an empty space, and the palette and empty board in the light
+  theme. Not verified: the animations frame by frame (screenshots are taken
+  after they settle), rounded corners (Hyprland rounding > 0) with the new
+  edges and sheen, HiDPI, private-space and warning (red-edged) toasts.
 - PKGBUILD verified (`~/.cache/trailboard-aur`: a copy of the PKGBUILD,
   the CEF tarball symlinked from `~/.cache/cef-dl`, built with
   `TRAILBOARD_GIT=file:///home/shadow/Work/marble-linux makepkg -f`, log in

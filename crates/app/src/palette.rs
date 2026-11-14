@@ -488,16 +488,10 @@ impl Panel {
 /// The result list (the field is drawn with the address bar's code).
 /// `empty` is what an empty list says.
 #[allow(clippy::too_many_arguments)]
+/// The result list's rows; the sheet behind them is drawn with the field.
 pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], sel: usize, scroll: usize, empty: &str, th: &Theme, ui: f32) -> Layer {
     let mut l = Layer::default();
     let p = panel.rect;
-    let radius = th.radius(ui);
-    l.quads.push(Quad {
-        shape: Shape::Shadow { rect: p.translate(Vec2::new(0.0, 8.0 * ui)), radius, blur: 28.0 * ui },
-        color: th.shadow(0.6),
-        texture: None,
-    });
-    l.quads.push(Quad { shape: Shape::Rect { rect: p, radius }, color: rgb(th.panel(), 1.0), texture: None });
 
     let size = FONT * ui;
     let dsize = DETAIL * ui;
@@ -518,8 +512,11 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], sel: usize, scroll: 
         let Some(rr) = panel.row_rect(i, scroll) else { continue };
         let selected = i == sel;
         if selected {
-            let hl = Rect::new(rr.x + PAD * ui, rr.y, rr.w - 2.0 * PAD * ui, rr.h);
+            // The highlighted row: a fill, and a short accent bar at its start.
+            let hl = Rect::new(rr.x + PAD * ui, rr.y + 1.0 * ui, rr.w - 2.0 * PAD * ui, rr.h - 2.0 * ui);
             l.quads.push(Quad { shape: Shape::Rect { rect: hl, radius: th.small_radius(ui) }, color: rgb(th.selection(), 1.0), texture: None });
+            let bar = Rect::new(hl.x, hl.y + hl.h * 0.22, (2.5 * ui).max(2.0), hl.h * 0.56);
+            l.quads.push(Quad { shape: Shape::Rect { rect: bar, radius: 0.0 }, color: rgb(th.accent(), 1.0), texture: None });
         }
         let mut x = rr.x + pad;
         let dot = 8.0 * ui;
@@ -533,16 +530,28 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], sel: usize, scroll: 
         }
         x += dot + 8.0 * ui;
 
-        let dw = r.measure(&row.detail, dsize, false);
-        let detail_x = rr.right() - pad - dw;
-        l.texts.push(Text {
-            text: row.detail.clone(),
-            pos: [detail_x, rr.y + (rr.h - dsize * 1.3) / 2.0],
-            size: dsize,
-            color: rgb(th.dim_text(), 1.0),
-            clip: rr,
-            bold: false,
-        });
+        // A command's keys as keycaps; anything else (a host, "Space") as dim text.
+        let caps = matches!(row.item, Item::Command(_)).then(|| crate::chrome::keycaps(&row.detail)).flatten();
+        let detail_x = match caps {
+            Some(keys) => {
+                let ksize = dsize * 0.9;
+                let widths: Vec<f32> = keys.iter().map(|k| r.measure(k, ksize, false)).collect();
+                crate::chrome::draw_keycaps(&mut l, &keys, &widths, rr.right() - pad, rr.y + rr.h / 2.0, ksize, th, ui, rr)
+            }
+            None => {
+                let dw = r.measure(&row.detail, dsize, false);
+                let x = rr.right() - pad - dw;
+                l.texts.push(Text {
+                    text: row.detail.clone(),
+                    pos: [x, rr.y + (rr.h - dsize * 1.3) / 2.0],
+                    size: dsize,
+                    color: rgb(th.dim_text(), if selected { 1.0 } else { 0.85 }),
+                    clip: rr,
+                    bold: false,
+                });
+                x
+            }
+        };
         let clip = Rect::new(rr.x, rr.y, (detail_x - 12.0 * ui - rr.x).max(0.0), rr.h);
         let y = rr.y + (rr.h - size * 1.3) / 2.0;
         // The label in runs: matched letters in the accent, the rest in the text colour.
@@ -567,14 +576,7 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], sel: usize, scroll: 
 pub fn preview_layer(at: Rect, key: u64, th: &Theme, ui: f32) -> Layer {
     let mut l = Layer::default();
     let radius = th.radius(ui);
-    let border = (1.0 * ui).max(1.0);
-    let frame = at.inflate(border);
-    l.quads.push(Quad {
-        shape: Shape::Shadow { rect: frame.translate(Vec2::new(0.0, 8.0 * ui)), radius, blur: 28.0 * ui },
-        color: th.shadow(0.6),
-        texture: None,
-    });
-    l.quads.push(Quad { shape: Shape::Rect { rect: frame, radius: radius + border }, color: rgb(th.divider(), 1.0), texture: None });
+    crate::chrome::panel(&mut l, at, radius, th, ui, crate::chrome::Lift::High, th.panel());
     l.quads.push(Quad { shape: Shape::Rect { rect: at, radius }, color: [1.0; 4], texture: Some(key) });
     l
 }

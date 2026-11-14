@@ -214,6 +214,22 @@ struct Card {
     cursor: web::Cursor,
 }
 
+/// Appear animations of the overlays.
+#[derive(Default)]
+struct Anims {
+    omnibox: crate::chrome::Appear,
+    menu: crate::chrome::Appear,
+    toast: crate::chrome::Appear,
+    sheet: crate::chrome::Appear,
+    sidebar: crate::chrome::Appear,
+}
+
+/// A small hash for telling one overlay's content from the next.
+fn anim_key<T: std::hash::Hash>(v: T) -> u64 {
+    use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+    BuildHasherDefault::<DefaultHasher>::default().hash_one(v)
+}
+
 pub struct App {
     renderer: Option<Renderer>,
     scene: Scene,
@@ -301,6 +317,8 @@ pub struct App {
     /// Short message at the top of the window, until it expires.
     /// Message and when it goes.
     toast: Option<(String, Instant)>,
+    /// How far each overlay has come in (see `chrome::Appear`).
+    anim: Anims,
     /// Waiting for Enter to do something that can't be undone.
     confirm: Option<Confirm>,
     /// Board changed since the last save.
@@ -495,6 +513,7 @@ impl App {
             sessions: HashMap::new(),
             jar: None,
             toast: None,
+            anim: Anims::default(),
             confirm: None,
             dirty: false,
             last_save: Instant::now(),
@@ -3120,16 +3139,7 @@ impl App {
         let w = (pad * 2.0 + lead + tw).min(480.0 * ui).min(vp.x - 16.0 * ui);
         let rect = scene::icon::name_label(frame, Vec2::new(w, h), vp, 6.0 * ui, 8.0 * ui);
         let mut l = Layer::default();
-        l.quads.push(Quad {
-            shape: Shape::Shadow { rect: rect.translate(Vec2::new(0.0, 3.0 * ui)), radius: th.radius(ui), blur: 10.0 * ui },
-            color: th.shadow(0.35),
-            texture: None,
-        });
-        l.quads.push(Quad {
-            shape: Shape::Rect { rect, radius: th.radius(ui) },
-            color: rgb(th.card(true), 1.0),
-            texture: None,
-        });
+        crate::chrome::panel(&mut l, rect, th.radius(ui), &th, ui, crate::chrome::Lift::Low, th.card(true));
         if let Some(key) = icon {
             l.quads.push(Quad {
                 shape: Shape::Rect { rect: Rect::new(rect.x + pad, rect.y + (h - icon_px) / 2.0, icon_px, icon_px), radius: 0.0 },
@@ -4164,6 +4174,7 @@ impl App {
             grid_origin: [origin.x, origin.y],
             grid_spacing: spacing,
             dot_radius: (1.1 * scale).max(0.8),
+            vignette: if th.light() { 0.04 } else { 0.13 },
         };
 
         let mut layers: Vec<Layer> = Vec::new();
@@ -4248,11 +4259,37 @@ impl App {
                     });
                 }
             }
+            // Two shadows, scaled with the zoom: a wide ambient one and a tight
+            // contact one under the edge. The focused card floats a little higher.
+            let lift = if focused { 1.35 } else { 1.0 };
             l.quads.push(Quad {
-                shape: Shape::Shadow { rect: frame.translate(Vec2::new(0.0, 6.0 * k)), radius, blur: (22.0 * k).max(2.0) },
-                color: th.shadow(if focused { 0.55 } else { 0.4 }),
+                shape: Shape::Shadow { rect: frame.translate(Vec2::new(0.0, 12.0 * k * lift)), radius, blur: (36.0 * k * lift).max(3.0) },
+                color: th.shadow(if focused { 0.5 } else { 0.38 }),
                 texture: None,
             });
+            l.quads.push(Quad {
+                shape: Shape::Shadow { rect: frame.translate(Vec2::new(0.0, 2.0 * k)), radius, blur: (5.0 * k).max(1.5) },
+                color: th.shadow(0.35),
+                texture: None,
+            });
+            if focused {
+                // A soft glow of the accent around the current card, brighter
+                // while it has the keys.
+                let glow = if typing { 0.32 } else { 0.16 };
+                l.quads.push(Quad {
+                    shape: Shape::Shadow { rect: frame, radius: ring(2.0 * scale), blur: 16.0 * scale.max(1.0) },
+                    color: rgb(th.accent(), glow),
+                    texture: None,
+                });
+            } else if !(self.selection.contains(n.id) || in_band.contains(&n.id)) {
+                // A hairline edge keeps cards crisp against the board.
+                let bw = scale.max(1.0);
+                l.quads.push(Quad {
+                    shape: Shape::Rect { rect: frame.inflate(bw), radius: ring(bw) },
+                    color: rgb(crate::chrome::edge(&th), 0.9),
+                    texture: None,
+                });
+            }
             if self.selection.contains(n.id) || in_band.contains(&n.id) {
                 // Selection ring outside the focus ring, so both can show.
                 let m = if focused { 6.0 } else { 3.0 };
@@ -4320,6 +4357,21 @@ impl App {
                 l.quads.push(Quad {
                     shape: Shape::Rect { rect: Rect::new(x, header.bottom() - 2.0, w, 2.0), radius: th.small_radius(1.0).min(1.0) },
                     color: rgb(th.accent(), 1.0),
+                    texture: None,
+                });
+            }
+            if sticky.is_none() && header.h >= 6.0 {
+                // A faint highlight along the title bar's top and a hairline
+                // where it meets the page.
+                let hair = scale.max(1.0).min(header.h / 6.0);
+                l.quads.push(Quad {
+                    shape: Shape::Rect { rect: Rect::new(header.x + radius, header.y, (header.w - 2.0 * radius).max(0.0), hair), radius: 0.0 },
+                    color: if th.light() { rgb([255, 255, 255], 0.6) } else { rgb(th.foreground(), if focused { 0.09 } else { 0.05 }) },
+                    texture: None,
+                });
+                l.quads.push(Quad {
+                    shape: Shape::Rect { rect: Rect::new(header.x, header.bottom() - hair, header.w, hair), radius: 0.0 },
+                    color: th.shadow(0.35),
                     texture: None,
                 });
             }
@@ -4422,22 +4474,11 @@ impl App {
             layers.push(l);
         }
 
-        // Empty-board hint.
-        if self.scene.is_empty() && self.omnibox.is_none() {
-            let size = 16.0 * ui;
-            let msg = "Press N or Ctrl+T to open a page · ? for shortcuts";
-            let w = self.renderer.as_mut().map_or(300.0, |r| r.measure(msg, size, false));
-            layers.push(Layer {
-                quads: vec![],
-                texts: vec![Text {
-                    text: msg.into(),
-                    pos: [(vp.x - w) / 2.0, vp.y / 2.0 - size],
-                    size,
-                    color: rgb(th.dim_text(), 1.0),
-                    clip: screen,
-                    bold: false,
-                }],
-            });
+        // Empty-board hint: a quiet heading, then the keys as keycaps.
+        if self.scene.is_empty() && self.omnibox.is_none()
+            && let Some(r) = self.renderer.as_mut()
+        {
+            layers.push(empty_hint(r, vp, &th, ui));
         }
 
         if self.read.is_none()
@@ -4465,19 +4506,26 @@ impl App {
                 current: self.focused,
                 drop_line: self.sidebar_drop_line(&rows, &panel),
             };
+            let came = self.anim.sidebar.update(Some(0), Instant::now());
             if let Some(r) = self.renderer.as_mut() {
-                layers.push(crate::sidebar::layer(r, &panel, &rows, &marks, &self.scene, &th, ui));
+                let mut l = crate::sidebar::layer(r, &panel, &rows, &marks, &self.scene, &th, ui);
+                // Slides in from the window's left edge.
+                crate::chrome::fade(&mut l, 0.4 + 0.6 * came, Vec2::new(-panel.rect.w * 0.25 * (1.0 - came), 0.0));
+                layers.push(l);
             }
             panel.rect.w
         } else {
+            self.anim.sidebar.update(None, Instant::now());
             0.0
         };
 
+        let shown = self.omnibox.as_ref().map(|ob| anim_key(std::mem::discriminant(&ob.target)));
+        let came = self.anim.omnibox.update(shown, Instant::now());
         if let Some(ob) = &self.omnibox {
             let r = palette::field_rect(vp, ui);
             let h = r.h;
             let size = 17.0 * ui;
-            let pad = 16.0 * ui;
+            let pad = 18.0 * ui;
             let placeholder = match ob.target {
                 Target::RenameSpace => "Space name",
                 Target::NameTrail(_) => "Trail name (empty to clear)",
@@ -4488,6 +4536,19 @@ impl App {
                 Target::Downloads => "Downloads · Enter opens, Ctrl+Enter its folder, Shift+Del cancels or removes",
                 _ => "Search or enter address",
             };
+            // The list (if this field has one) hangs from the field: one sheet.
+            let list = ob.target.is_list().then(|| {
+                let mut rows = self.list_rows(ob);
+                // The highlighted setting shows that ← and → change it.
+                if ob.target == Target::Settings
+                    && let Some(row) = rows.get_mut(ob.sel)
+                {
+                    row.detail = format!("‹  {}  ›", row.detail);
+                }
+                let panel = palette::Panel::new(vp, ui, rows.len());
+                let scroll = ob.scroll.min(rows.len().saturating_sub(panel.shown));
+                (rows, panel, scroll)
+            });
             let selected = ob.select_all && !ob.text.is_empty();
             let (shown, color) = if ob.text.is_empty() {
                 (placeholder.to_string(), rgb(th.dim_text(), 1.0))
@@ -4499,22 +4560,39 @@ impl App {
             };
             let caret_x = self.renderer.as_mut().map_or(0.0, |rd| rd.measure(ob.before_caret(), size, false));
             let text_w = self.renderer.as_mut().map_or(0.0, |rd| rd.measure(&ob.text, size, false));
+            // Lists are modal: the board dims behind them.
+            let mut fading: Vec<Layer> = Vec::new();
+            if list.is_some() {
+                // The veil only fades; the sheet also slides into place.
+                layers.push(crate::chrome::scrim(screen, &th, came));
+            }
             let mut l = Layer::default();
-            l.quads.push(Quad {
-                shape: Shape::Shadow { rect: r.translate(Vec2::new(0.0, 8.0 * ui)), radius: th.radius(scale), blur: 28.0 * ui },
-                color: th.shadow(0.6),
-                texture: None,
-            });
-            l.quads.push(Quad { shape: Shape::Rect { rect: r, radius: th.radius(scale) }, color: rgb(th.panel(), 1.0), texture: None });
+            let radius = th.radius(scale);
+            let sheet = match &list {
+                Some((_, panel, _)) => Rect::new(r.x, r.y, r.w, panel.rect.bottom() - r.y),
+                None => r,
+            };
+            crate::chrome::panel(&mut l, sheet, radius, &th, ui, crate::chrome::Lift::High, th.panel());
+            if list.is_some() {
+                // A hairline between the field and its results.
+                let line = ui.max(1.0);
+                l.quads.push(Quad {
+                    shape: Shape::Rect { rect: Rect::new(r.x, r.bottom() - line, r.w, line), radius: 0.0 },
+                    color: rgb(crate::chrome::edge(&th), 1.0),
+                    texture: None,
+                });
+            }
+            let caret_h = size * 1.35;
+            let caret_y = r.y + (h - caret_h) / 2.0;
             if selected {
                 l.quads.push(Quad {
-                    shape: Shape::Rect { rect: Rect::new(r.x + pad, r.y + 12.0 * ui, text_w, h - 24.0 * ui), radius: th.small_radius(scale) },
+                    shape: Shape::Rect { rect: Rect::new(r.x + pad, caret_y, text_w, caret_h), radius: th.small_radius(scale) },
                     color: rgb(th.accent(), 1.0),
                     texture: None,
                 });
             } else {
                 l.quads.push(Quad {
-                    shape: Shape::Rect { rect: Rect::new(r.x + pad + caret_x, r.y + 12.0 * ui, 2.0 * scale.max(1.0), h - 24.0 * ui), radius: 0.0 },
+                    shape: Shape::Rect { rect: Rect::new(r.x + pad + caret_x, caret_y, 2.0 * scale.max(1.0), caret_h), radius: 0.0 },
                     color: rgb(th.accent(), 1.0),
                     texture: None,
                 });
@@ -4548,17 +4626,8 @@ impl App {
                     bold: false,
                 });
             }
-            layers.push(l);
-            if ob.target.is_list() {
-                let mut rows = self.list_rows(ob);
-                // The highlighted setting shows that ← and → change it.
-                if ob.target == Target::Settings
-                    && let Some(row) = rows.get_mut(ob.sel)
-                {
-                    row.detail = format!("‹  {}  ›", row.detail);
-                }
-                let panel = palette::Panel::new(vp, ui, rows.len());
-                let scroll = ob.scroll.min(rows.len().saturating_sub(panel.shown));
+            fading.push(l);
+            if let Some((rows, panel, scroll)) = list {
                 let empty = match (&ob.target, ob.text.trim().is_empty(), &self.page_index) {
                     (Target::History, _, None) => "History is off",
                     (Target::History, true, _) => "No pages in history",
@@ -4567,13 +4636,17 @@ impl App {
                     _ => "Nothing found",
                 };
                 if let Some(rd) = self.renderer.as_mut() {
-                    layers.push(palette::layer(rd, &panel, &rows, ob.sel, scroll, empty, &th, ui));
+                    fading.push(palette::layer(rd, &panel, &rows, ob.sel, scroll, empty, &th, ui));
                 }
                 if let Some(size) = preview
                     && let Some(at) = panel.preview_rect(vp, size, ui)
                 {
-                    layers.push(palette::preview_layer(at, PREVIEW_KEY, &th, ui));
+                    fading.push(palette::preview_layer(at, PREVIEW_KEY, &th, ui));
                 }
+            }
+            for mut l in fading {
+                crate::chrome::arrive(&mut l, came, 8.0 * ui);
+                layers.push(l);
             }
         }
 
@@ -4594,8 +4667,11 @@ impl App {
             layers.push(l);
         }
 
+        let came = self.anim.menu.update(self.menu.as_ref().map(|m| anim_key((m.rect.x as i32, m.rect.y as i32))), Instant::now());
         if let Some(m) = &self.menu {
-            layers.push(menu_layer(m, ui, &th));
+            let mut l = menu_layer(m, ui, &th);
+            crate::chrome::arrive(&mut l, came, 4.0 * ui);
+            layers.push(l);
         }
 
         // Space name in the top-left corner once there is more than one space.
@@ -4622,17 +4698,26 @@ impl App {
                     let top = if self.read.is_some() { READ_BAR * ui } else { 0.0 };
                     let pos = Vec2::new((vp.x - w) / 2.0 - 16.0 * ui, top + 18.0 * ui);
                     let warn = self.confirm.is_some();
-                    layers.push(self.pill(&msg, pos, size, None, warn));
+                    let came = self.anim.toast.update(Some(anim_key(&msg)), Instant::now());
+                    let mut l = self.pill(&msg, pos, size, None, warn);
+                    crate::chrome::arrive(&mut l, came, 10.0 * ui);
+                    layers.push(l);
                 }
             } else {
                 self.toast = None;
             }
         }
+        if self.toast.is_none() || self.omnibox.is_some() {
+            self.anim.toast.update(None, Instant::now());
+        }
 
+        let came = self.anim.sheet.update(self.hints.then_some(0), Instant::now());
         if self.hints
             && let Some(r) = self.renderer.as_mut()
         {
-            layers.push(crate::hints::layer(r, ui, screen, &th));
+            let mut l = crate::hints::layer(r, ui, screen, &th);
+            crate::chrome::fade(&mut l, came, Vec2::new(0.0, 0.0));
+            layers.push(l);
         }
 
         if let Some(r) = self.renderer.as_mut() {
@@ -4701,17 +4786,9 @@ impl App {
         let w = self.renderer.as_mut().map_or(200.0, |r| r.measure(text, size, false)) + pad * 2.0 + dot;
         let r = Rect::new(pos.x, pos.y, w, h);
         let mut l = Layer::default();
-        l.quads.push(Quad {
-            shape: Shape::Shadow { rect: r.translate(Vec2::new(0.0, 4.0 * scale)), radius, blur: 16.0 * scale },
-            color: th.shadow(0.5),
-            texture: None,
-        });
-        // A border in the divider colour (danger for a question that loses data).
-        let border = if warn { th.danger() } else { th.divider() };
-        let bw = if warn { 1.5 } else { 1.0 } * scale.max(1.0);
-        let outer = if radius > 0.0 { radius + bw } else { 0.0 };
-        l.quads.push(Quad { shape: Shape::Rect { rect: r.inflate(bw), radius: outer }, color: rgb(border, 1.0), texture: None });
-        l.quads.push(Quad { shape: Shape::Rect { rect: r, radius }, color: rgb(th.panel(), 1.0), texture: None });
+        // A question that loses data gets a red edge.
+        let (rim, bw) = if warn { (th.danger(), 1.5 * scale.max(1.0)) } else { (crate::chrome::edge(th), scale.max(1.0)) };
+        crate::chrome::panel_edged(&mut l, r, radius, th, scale, crate::chrome::Lift::Mid, th.panel(), rim, bw);
         if let Some(c) = swatch {
             // A true circle keeps its round shape whatever the rounding.
             let d = size * 0.8;
@@ -5016,17 +5093,66 @@ fn menu_labels(items: &[Entry]) -> Vec<&str> {
     items.iter().map(Entry::label).collect()
 }
 
+/// What an empty board says: a heading and how to start, keys as keycaps.
+fn empty_hint(r: &mut compositor::Renderer, vp: Vec2, th: &Theme, ui: f32) -> Layer {
+    enum Part {
+        Words(&'static str),
+        Keys(&'static [&'static str]),
+    }
+    use Part::*;
+    let parts = [Words("Press"), Keys(&["N"]), Words("or"), Keys(&["Ctrl", "T"]), Words("to open a page  ·"), Keys(&["?"]), Words("for shortcuts")];
+    let (size, ksize, space) = (15.0 * ui, 12.5 * ui, 7.0 * ui);
+    let widths: Vec<Vec<f32>> = parts
+        .iter()
+        .map(|p| match p {
+            Words(w) => vec![r.measure(w, size, false)],
+            Keys(keys) => keys.iter().map(|k| r.measure(k, ksize, false)).collect(),
+        })
+        .collect();
+    let part_w = |p: &Part, w: &[f32]| match p {
+        Words(_) => w[0],
+        Keys(_) => crate::chrome::keycaps_width(w, ksize),
+    };
+    let total: f32 = parts.iter().zip(&widths).map(|(p, w)| part_w(p, w)).sum::<f32>() + space * (parts.len() - 1) as f32;
+    let screen = Rect::new(0.0, 0.0, vp.x, vp.y);
+    let mut l = Layer::default();
+    let title = "An empty board";
+    let tsize = 22.0 * ui;
+    let tw = r.measure(title, tsize, true);
+    let mid = vp.y / 2.0;
+    l.texts.push(Text {
+        text: title.into(),
+        pos: [(vp.x - tw) / 2.0, mid - tsize * 2.4],
+        size: tsize,
+        color: rgb(crate::theme::mix(th.foreground(), th.dim_text(), 0.45), 1.0),
+        clip: screen,
+        bold: true,
+    });
+    let mut x = (vp.x - total) / 2.0;
+    for (p, w) in parts.iter().zip(&widths) {
+        match p {
+            Words(text) => l.texts.push(Text {
+                text: (*text).into(),
+                pos: [x, mid - size * 1.3 / 2.0],
+                size,
+                color: rgb(th.dim_text(), 1.0),
+                clip: screen,
+                bold: false,
+            }),
+            Keys(keys) => {
+                let right = x + crate::chrome::keycaps_width(w, ksize);
+                crate::chrome::draw_keycaps(&mut l, keys, w, right, mid, ksize, th, ui, screen);
+            }
+        }
+        x += part_w(p, w) + space;
+    }
+    l
+}
+
 fn menu_layer(m: &ContextMenu, scale: f32, th: &Theme) -> Layer {
     let mut l = Layer::default();
     let radius = th.radius(scale / th.text_scale);
-    l.quads.push(Quad {
-        shape: Shape::Shadow { rect: m.rect.translate(Vec2::new(0.0, 4.0 * scale)), radius, blur: 18.0 * scale },
-        color: th.shadow(0.55),
-        texture: None,
-    });
-    let outer = if radius > 0.0 { radius + 1.0 } else { 0.0 };
-    l.quads.push(Quad { shape: Shape::Rect { rect: m.rect.inflate(1.0), radius: outer }, color: rgb(th.divider(), 1.0), texture: None });
-    l.quads.push(Quad { shape: Shape::Rect { rect: m.rect, radius }, color: rgb(th.panel(), 1.0), texture: None });
+    crate::chrome::panel(&mut l, m.rect, radius, th, scale, crate::chrome::Lift::Mid, th.panel());
     let size = menu::FONT * scale;
     for (i, (item, row)) in m.items.iter().zip(&m.rows).enumerate() {
         if item.is_separator() {

@@ -73,15 +73,18 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], marks: &View, scene:
     let mut l = Layer::default();
     let p = panel.rect;
     let line = ui.max(1.0);
-    l.quads.push(Quad {
-        shape: Shape::Shadow { rect: p.translate(Vec2::new(4.0 * ui, 0.0)), radius: 0.0, blur: 18.0 * ui },
-        color: th.shadow(0.45),
-        texture: None,
-    });
+    // Two shadows cast to the right: a wide soft one and a tight one at the edge.
+    for (dx, blur, a) in [(10.0, 30.0, 0.4), (1.0, 4.0, 0.3)] {
+        l.quads.push(Quad {
+            shape: Shape::Shadow { rect: p.translate(Vec2::new(dx * ui, 0.0)), radius: 0.0, blur: blur * ui },
+            color: th.shadow(a),
+            texture: None,
+        });
+    }
     l.quads.push(Quad { shape: Shape::Rect { rect: p, radius: 0.0 }, color: rgb(th.panel(), 1.0), texture: None });
     l.quads.push(Quad {
         shape: Shape::Rect { rect: Rect::new(p.right() - line, p.y, line, p.h), radius: 0.0 },
-        color: rgb(th.divider(), 1.0),
+        color: rgb(crate::chrome::edge(th), 1.0),
         texture: None,
     });
 

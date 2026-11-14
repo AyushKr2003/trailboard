@@ -31,6 +31,8 @@ pub struct Background {
     /// Distance between dots, px (dots hidden below ~4px).
     pub grid_spacing: f32,
     pub dot_radius: f32,
+    /// How much darker the window's corners are than its middle (0 none).
+    pub vignette: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -86,7 +88,8 @@ struct Globals {
     grid_origin: [f32; 2],
     grid_spacing: f32,
     dot_radius: f32,
-    _pad: [f32; 2],
+    vignette: f32,
+    _pad: f32,
     bg: [f32; 4],
     dot: [f32; 4],
 }
@@ -397,9 +400,6 @@ impl Renderer {
     fn shape(&mut self, text: &str, size: f32, width: f32, bold: bool) -> TextKey {
         let key: TextKey = (text.to_string(), size.to_bits(), width.to_bits(), bold);
         if !self.text_cache.contains_key(&key) {
-            if self.text_cache.len() > 512 {
-                self.text_cache.clear();
-            }
             let fs = &mut self.font_system;
             let mut b = Buffer::new(fs, Metrics::new(size, size * 1.3));
             b.set_size(Some(width), Some(size * 1.6));
@@ -414,13 +414,19 @@ impl Renderer {
     }
 
     pub fn render(&mut self, bg: Background, layers: &[Layer]) {
+        // Trim the shaped-text cache between frames only: clearing it while a
+        // frame's texts are being shaped dropped buffers that frame still needed.
+        if self.text_cache.len() > 1024 {
+            self.text_cache.clear();
+        }
         let (w, h) = self.viewport();
         let globals = Globals {
             viewport: [w, h],
             grid_origin: bg.grid_origin,
             grid_spacing: bg.grid_spacing,
             dot_radius: bg.dot_radius,
-            _pad: [0.0; 2],
+            vignette: bg.vignette,
+            _pad: 0.0,
             bg: bg.color,
             dot: bg.dot,
         };

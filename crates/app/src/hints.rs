@@ -1,7 +1,7 @@
 //! Keyboard and mouse hint sheet, shown with `?` when no card is focused.
 
-use compositor::{Layer, Quad, Renderer, Shape, Text};
-use scene::{Rect, Vec2};
+use compositor::{Layer, Renderer, Text};
+use scene::Rect;
 
 use crate::theme::{rgb, Theme};
 
@@ -139,15 +139,8 @@ pub fn layer(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme) -> Layer {
     let panel = Rect::new(screen.x + (screen.w - w) / 2.0, screen.y + ((screen.h - h) / 2.0).max(8.0), w, h);
 
     let mut l = Layer::default();
-    l.quads.push(Quad { shape: Shape::Rect { rect: screen, radius: 0.0 }, color: th.shadow(0.45), texture: None });
-    l.quads.push(Quad {
-        shape: Shape::Shadow { rect: panel.translate(Vec2::new(0.0, 8.0 * scale)), radius, blur: 28.0 * scale },
-        color: th.shadow(0.6),
-        texture: None,
-    });
-    let outer = if radius > 0.0 { radius + 1.0 } else { 0.0 };
-    l.quads.push(Quad { shape: Shape::Rect { rect: panel.inflate(1.0), radius: outer }, color: rgb(th.divider(), 1.0), texture: None });
-    l.quads.push(Quad { shape: Shape::Rect { rect: panel, radius }, color: rgb(th.panel(), 1.0), texture: None });
+    l.quads.extend(crate::chrome::scrim(screen, th, 1.3).quads);
+    crate::chrome::panel(&mut l, panel, radius, th, scale, crate::chrome::Lift::High, th.panel());
     let text = |s: &str, x: f32, y: f32, size: f32, color, bold| Text { text: s.into(), pos: [x, y], size, color, clip: panel, bold };
     l.texts.push(text("Keyboard shortcuts", panel.x + pad, panel.y + pad, title, rgb(th.foreground(), 1.0), true));
     let close = "Esc, ? or F1 to close";

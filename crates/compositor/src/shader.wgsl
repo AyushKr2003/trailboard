@@ -8,7 +8,8 @@ struct Globals {
     grid_origin: vec2f,
     grid_spacing: f32,
     dot_radius: f32,
-    _pad: vec2f,
+    vignette: f32,
+    _pad: f32,
     bg: vec4f,
     dot: vec4f,
 };
@@ -34,6 +35,11 @@ fn fs_bg(@builtin(position) pos: vec4f) -> @location(0) vec4f {
         let a = clamp(g.dot_radius + 0.5 - length(m), 0.0, 1.0) * g.dot.a;
         c = vec4f(mix(c.rgb, g.dot.rgb, a), 1.0);
     }
+    // A soft vignette: the board falls off a little towards the corners, so
+    // the middle, where the work is, reads as lit.
+    let uv = pos.xy / g.viewport - vec2f(0.5);
+    let v = smoothstep(0.25, 0.85, length(uv * vec2f(1.0, g.viewport.y / max(g.viewport.x, 1.0))) * 1.25);
+    c = vec4f(c.rgb * (1.0 - g.vignette * v), 1.0);
     return c;
 }
 

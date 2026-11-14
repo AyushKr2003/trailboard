@@ -6,6 +6,21 @@ All notable changes to Trailboard. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **A more polished look**: panels, menus, toasts and labels have softer,
+  deeper shadows, a fine edge and a faint top highlight. The Ctrl+K palette
+  (and history, settings, downloads) is one sheet over a dimmed board, with
+  the highlighted row marked by an accent bar and commands' shortcuts shown
+  as keycaps. Overlays ease in instead of popping up, and the sidebar slides
+  in. Cards cast layered shadows, the current card glows softly in the
+  accent colour, and title bars get a crisper edge. The board darkens
+  slightly towards the corners, and an empty board shows its hint with
+  keycaps. Corners still follow Hyprland's rounding.
+
+### Fixed
+- Opening the shortcut sheet (and other text-heavy overlays) after a lot of
+  use could crash Trailboard.
+
 ### Added
 - **An Arch Linux package**: `cd packaging/arch && makepkg -si` builds
   Trailboard with its own copy of the Chromium runtime and installs it to

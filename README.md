@@ -111,6 +111,9 @@ Ctrl+H lists them newest first, with when you saw each; type to keep the
 pages with those words, Enter opens one (or goes to the card showing it), and
 Shift+Delete forgets the highlighted page (in the Ctrl+K palette too). The
 palette command *Clear history* forgets every page after asking.
+A small picture of each page is kept too (for the newest 1000): it shows
+beside the highlighted page in Ctrl+K and Ctrl+H, and on sleeping cards
+restored after a restart until they load again.
 
 On [Omarchy](https://omarchy.org/), Trailboard follows the current theme live
 (colours, light or dark, including the pages' `prefers-color-scheme`),

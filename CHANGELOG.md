@@ -7,6 +7,13 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Page thumbnails**: a small picture of each page you open is kept with
+  its history (for the newest 1000 pages). Ctrl+K and Ctrl+H show the
+  highlighted page's picture beside the list (or under it in a narrow
+  window), and cards asleep after a restart show their page instead of
+  "Click to load" until they wake. Forgetting a page or clearing history
+  removes its picture; private spaces take none. `page-text.db` is now
+  version 2 (older files are upgraded; older builds refuse the new file).
 - **Closed cards in the palette**: Ctrl+K also finds the cards you closed in
   this space since starting Trailboard, by title, address, a note's text or
   the words on the page ("Closed · example.com"). With nothing typed the

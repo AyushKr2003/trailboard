@@ -6,6 +6,7 @@ pub mod export;
 pub mod icons;
 pub mod pagetext;
 pub mod spaces;
+pub mod thumbs;
 pub mod zoom;
 
 use std::fs;

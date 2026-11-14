@@ -72,7 +72,7 @@
 //! card shows its last frame, dimmed, until it is focused or scrolled into view.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -127,6 +127,18 @@ const KEY_ID_BITS: u32 = 40;
 
 /// Texture keys of site icons: this bit set, so they never meet a page key.
 const ICON_KEY: u64 = 1 << 63;
+/// Texture key of the page preview beside the palette's list.
+const PREVIEW_KEY: u64 = 1 << 62;
+/// Sleeping cards given their page's thumbnail per frame, at most (each is a
+/// database read and a JPEG decode).
+const THUMBS_PER_FRAME: usize = 4;
+
+/// The page preview beside the palette's list: whose it is, and its size
+/// once uploaded as [`PREVIEW_KEY`] (`None` when the page has no thumbnail).
+struct Preview {
+    url: String,
+    size: Option<(u32, u32)>,
+}
 
 /// A site's icon, uploaded as texture `key` whenever `serial` changes.
 struct SiteIcon {
@@ -294,6 +306,11 @@ pub struct App {
     text_due: HashMap<NodeId, Instant>,
     /// The last history search (query, results), as the palette asks often.
     visits_cache: RefCell<VisitsCache>,
+    /// The palette's page preview, and a serial for its uploads.
+    preview: Option<Preview>,
+    preview_serial: u64,
+    /// Page keys of sleeping cards already looked up for a thumbnail.
+    thumb_tried: HashSet<u64>,
 }
 
 /// Last history search (history view or palette, query, results).
@@ -431,6 +448,9 @@ impl App {
             page_index,
             text_due: HashMap::new(),
             visits_cache: RefCell::new(None),
+            preview: None,
+            preview_serial: 0,
+            thumb_tried: HashSet::new(),
         }
     }
 
@@ -1036,6 +1056,7 @@ impl App {
         self.used.remove(&id);
         self.selection.remove(id);
         let key = self.page_key(id);
+        self.thumb_tried.remove(&key);
         if let Some(r) = self.renderer.as_mut() {
             r.remove_page(key);
         }
@@ -1503,6 +1524,7 @@ impl App {
         match index.forget(&url) {
             Ok(true) => {
                 log::info!("history: forgot {url}");
+                self.preview = None;
                 // The row going away says it; a toast would wait under the list.
                 self.visits_cache.replace(None);
             }
@@ -1541,6 +1563,7 @@ impl App {
         match index.clear() {
             Ok(n) => {
                 log::info!("history: cleared {n} pages");
+                self.preview = None;
                 self.visits_cache.replace(None);
                 self.toast("History cleared");
             }
@@ -2391,8 +2414,10 @@ impl App {
                     }
                 }
                 WebEvent::PageText { page, url, title, text } => {
-                    if self.node_of(page).is_some() {
-                        self.record_visit(&url, &title, &text);
+                    if let Some(id) = self.node_of(page)
+                        && self.record_visit(&url, &title, &text)
+                    {
+                        self.save_thumb(id, &url);
                     }
                 }
             }
@@ -2421,19 +2446,131 @@ impl App {
         }
     }
 
-    /// Keeps a page's text in the history index.
-    fn record_visit(&mut self, url: &str, title: &str, text: &str) {
+    /// Keeps a page's text in the history index. Returns whether it was kept.
+    fn record_visit(&mut self, url: &str, title: &str, text: &str) -> bool {
         if self.is_private() {
-            return;
+            return false;
         }
-        let Some(index) = self.page_index.as_mut() else { return };
+        let Some(index) = self.page_index.as_mut() else { return false };
         match index.record(url, title, text, now_ms()) {
             Ok(true) => {
                 log::info!("history: {url} {title:?} ({} chars)", text.chars().count());
                 self.visits_cache.replace(None);
+                true
             }
-            Ok(false) => {}
-            Err(e) => log::warn!("history: recording {url}: {e}"),
+            Ok(false) => false,
+            Err(e) => {
+                log::warn!("history: recording {url}: {e}");
+                false
+            }
+        }
+    }
+
+    /// Keeps what card `id` shows as the thumbnail of `url`, the page just
+    /// recorded in history.
+    fn save_thumb(&mut self, id: NodeId, url: &str) {
+        let Some(card) = self.cards.get(&id) else { return };
+        let started = Instant::now();
+        let thumb = {
+            let f = card.page.frame();
+            storage::thumbs::Thumb::from_frame(f.width, f.height, &f.pixels)
+        };
+        let Some((thumb, jpeg)) = thumb.and_then(|t| t.encode().map(|j| (t, j))) else {
+            log::info!("thumb: {url}: nothing painted yet");
+            return;
+        };
+        let Some(index) = self.page_index.as_mut() else { return };
+        match index.set_thumb(url, &jpeg) {
+            Ok(_) => {
+                log::info!("thumb: {url} {thumb:?}, {} bytes, {} ms", jpeg.len(), started.elapsed().as_millis());
+                if self.preview.as_ref().is_some_and(|p| p.url == url) {
+                    self.preview = None;
+                }
+            }
+            Err(e) => log::warn!("thumb: saving {url}: {e}"),
+        }
+    }
+
+    /// The thumbnail history keeps for `url`, decoded.
+    fn load_thumb(&self, url: &str) -> Option<storage::thumbs::Thumb> {
+        let jpeg = match self.page_index.as_ref()?.thumb(url) {
+            Ok(j) => j?,
+            Err(e) => {
+                log::warn!("thumb: reading {url}: {e}");
+                return None;
+            }
+        };
+        let t = storage::thumbs::Thumb::decode(&jpeg);
+        if t.is_none() {
+            log::warn!("thumb: {url}: unreadable ({} bytes)", jpeg.len());
+        }
+        t
+    }
+
+    /// Uploads the thumbnail of `url` as the palette's preview, if it isn't
+    /// already. Returns its size, or `None` when there's nothing to show.
+    fn load_preview(&mut self, url: Option<String>) -> Option<(u32, u32)> {
+        let url = url?;
+        if self.preview.as_ref().is_none_or(|p| p.url != url) {
+            let size = self.load_thumb(&url).and_then(|t| {
+                self.preview_serial += 1;
+                let r = self.renderer.as_mut()?;
+                r.update_page(PREVIEW_KEY, t.width, t.height, &t.pixels, self.preview_serial);
+                Some((t.width, t.height))
+            });
+            log::info!("preview: {url} {size:?}");
+            self.preview = Some(Preview { url, size });
+        }
+        self.preview.as_ref().and_then(|p| p.size)
+    }
+
+    /// The page a palette row would show in the preview: a history page, or
+    /// a closed card's.
+    fn preview_url(&self, row: &palette::Row) -> Option<String> {
+        if let Some(url) = &row.history {
+            return Some(url.clone());
+        }
+        match row.item {
+            palette::Item::Closed(id) => {
+                self.closed.iter().map(|(n, _)| n).find(|n| n.id == id && !n.is_note()).map(|n| n.url.clone())
+            }
+            _ => None,
+        }
+    }
+
+    /// Gives sleeping cards on screen that have no picture (restored after a
+    /// restart, or back from another space) their page's thumbnail, dimmed
+    /// like a snapshot, a few per frame. Each card is looked up once.
+    fn load_sleeping_thumbs(&mut self) {
+        if self.page_index.is_none() || self.read.is_some() {
+            return;
+        }
+        let Some(r) = self.renderer.as_ref() else { return };
+        let vp = self.viewport();
+        let screen = Rect::new(0.0, 0.0, vp.x, vp.y);
+        let want: Vec<(u64, String, f32)> = self
+            .scene
+            .draw_order()
+            .into_iter()
+            .filter(|n| !n.is_note() && !self.cards.contains_key(&n.id) && n.rect.h > 0.0)
+            .map(|n| (self.page_key(n.id), n))
+            .filter(|(key, n)| {
+                !self.thumb_tried.contains(key)
+                    && !r.has_page(*key)
+                    && self.to_screen_rect(n.frame()).inflate(40.0).intersects(&screen)
+            })
+            .take(THUMBS_PER_FRAME)
+            .map(|(key, n)| (key, n.url.clone(), n.rect.w / n.rect.h))
+            .collect();
+        for (key, url, aspect) in want {
+            self.thumb_tried.insert(key);
+            let Some(t) = self.load_thumb(&url) else { continue };
+            let t = t.crop_to(aspect);
+            log::info!("thumb for sleeping card {}: {url} {t:?}", key & ((1 << KEY_ID_BITS) - 1));
+            if let Some(r) = self.renderer.as_mut() {
+                r.update_page(key, t.width, t.height, &t.pixels, u64::MAX - 1);
+            }
+            self.dirty = true;
         }
     }
 
@@ -3464,6 +3601,13 @@ impl App {
                 r.update_page(s.key, s.icon.width, s.icon.height, &s.icon.pixels, s.serial);
             }
         }
+        self.load_sleeping_thumbs();
+        let preview_url = self
+            .omnibox
+            .as_ref()
+            .filter(|ob| ob.target.is_list())
+            .and_then(|ob| self.list_rows(ob).get(ob.sel).and_then(|row| self.preview_url(row)));
+        let preview = self.load_preview(preview_url);
 
         let origin = self.camera.world_to_screen(Vec2::default(), vp, scale);
         let spacing = 32.0 * k;
@@ -3869,6 +4013,11 @@ impl App {
                 };
                 if let Some(rd) = self.renderer.as_mut() {
                     layers.push(palette::layer(rd, &panel, &rows, ob.sel, scroll, empty, &th, ui));
+                }
+                if let Some(size) = preview
+                    && let Some(at) = panel.preview_rect(vp, size, ui)
+                {
+                    layers.push(palette::preview_layer(at, PREVIEW_KEY, &th, ui));
                 }
             }
         }

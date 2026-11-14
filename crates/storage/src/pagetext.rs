@@ -1,23 +1,27 @@
 //! The history index, `$DATA/page-text.db`: every page shown in a card, with
 //! its title and text, searchable by word (SQLite FTS5). Shared by all spaces.
 //!
-//! Schema (version 1, in `PRAGMA user_version`):
+//! Schema (version 2, in `PRAGMA user_version`):
 //! - `pages(id, url UNIQUE, title, seen_ms)`: one row per address, last seen time.
 //! - `pages_text` (FTS5: `title`, `url`, `body`; `rowid` = `pages.id`), with
 //!   the `unicode61` tokenizer folding diacritics, and 2- and 3-letter prefix
 //!   indexes so typing a word's start is fast.
+//! - `thumbs(page_id, jpeg)` (since version 2): a small JPEG of the page
+//!   (`crate::thumbs`), kept for the newest [`MAX_THUMBS`] pages only.
 //!
 //! Results rank by BM25 with the title counting 4×, the address 2×, the
 //! text 1×; ties go to the most recently seen. Only the newest
 //! [`MAX_PAGES`] pages are kept. Rules for what is kept live in
-//! `scene::pagetext`. Thumbnails are not stored yet.
+//! `scene::pagetext`.
 
 use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, params};
 use scene::pagetext::{self, MAX_TEXT, MAX_TITLE};
 
-pub const PAGETEXT_VERSION: i32 = 1;
+pub const PAGETEXT_VERSION: i32 = 2;
+/// The most thumbnails kept, for the most recently seen pages (about 25 KB each).
+pub const MAX_THUMBS: i64 = 1000;
 /// The most pages kept; older ones go first.
 pub const MAX_PAGES: i64 = 5000;
 /// Pruning runs once this many pages beyond [`MAX_PAGES`] have built up.
@@ -103,6 +107,16 @@ impl PageIndex {
                  COMMIT;",
             )?;
         }
+        if version < 2 {
+            db.execute_batch(
+                "BEGIN;
+                 CREATE TABLE IF NOT EXISTS thumbs(
+                     page_id INTEGER PRIMARY KEY,
+                     jpeg BLOB NOT NULL);
+                 PRAGMA user_version = 2;
+                 COMMIT;",
+            )?;
+        }
         Ok(PageIndex { db })
     }
 
@@ -142,6 +156,7 @@ impl PageIndex {
         let tx = self.db.transaction()?;
         let newest = "SELECT id FROM pages ORDER BY seen_ms DESC, id DESC LIMIT ?1";
         tx.execute(&format!("DELETE FROM pages_text WHERE rowid NOT IN ({newest})"), [keep])?;
+        tx.execute(&format!("DELETE FROM thumbs WHERE page_id NOT IN ({newest})"), [keep.min(MAX_THUMBS)])?;
         let gone = tx.execute(&format!("DELETE FROM pages WHERE id NOT IN ({newest})"), [keep])?;
         log::info!("history: forgot the {gone} oldest pages, keeping {keep}");
         tx.commit()?;
@@ -196,6 +211,7 @@ impl PageIndex {
             .or_else(|e| if e == rusqlite::Error::QueryReturnedNoRows { Ok(None) } else { Err(e) })?;
         let Some(id) = id else { return Ok(false) };
         tx.execute("DELETE FROM pages_text WHERE rowid = ?1", [id])?;
+        tx.execute("DELETE FROM thumbs WHERE page_id = ?1", [id])?;
         // A deleted FTS5 row stays in old segments until they are merged.
         tx.execute("INSERT INTO pages_text(pages_text) VALUES ('optimize')", [])?;
         tx.commit()?;
@@ -208,6 +224,7 @@ impl PageIndex {
         let tx = self.db.transaction()?;
         let n = tx.execute("DELETE FROM pages", [])?;
         tx.execute("DELETE FROM pages_text", [])?;
+        tx.execute("DELETE FROM thumbs", [])?;
         tx.execute("INSERT INTO pages_text(pages_text) VALUES ('optimize')", [])?;
         tx.commit()?;
         // Rebuild the file so freed pages don't linger in it.
@@ -222,6 +239,44 @@ impl PageIndex {
         if let Err(e) = self.db.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())) {
             log::warn!("history: checkpoint: {e}");
         }
+    }
+
+    /// Keeps `jpeg` as the thumbnail of `url`, a page already recorded.
+    /// Returns whether it was kept (not for a page history doesn't have).
+    pub fn set_thumb(&mut self, url: &str, jpeg: &[u8]) -> Result<bool, Error> {
+        let n = self.db.execute(
+            "INSERT INTO thumbs(page_id, jpeg) SELECT id, ?2 FROM pages WHERE url = ?1
+             ON CONFLICT(page_id) DO UPDATE SET jpeg = excluded.jpeg",
+            params![url, jpeg],
+        )?;
+        if n > 0 {
+            self.prune_thumbs(MAX_THUMBS, PRUNE_SLACK)?;
+        }
+        Ok(n > 0)
+    }
+
+    /// The thumbnail kept for `url`, as a JPEG.
+    pub fn thumb(&self, url: &str) -> Result<Option<Vec<u8>>, Error> {
+        let mut st = self.db.prepare_cached("SELECT t.jpeg FROM thumbs t JOIN pages p ON p.id = t.page_id WHERE p.url = ?1")?;
+        let mut rows = st.query([url])?;
+        Ok(match rows.next()? {
+            Some(r) => Some(r.get(0)?),
+            None => None,
+        })
+    }
+
+    /// Keeps the thumbnails of the newest `keep` pages once more than `keep + slack` are kept.
+    fn prune_thumbs(&mut self, keep: i64, slack: i64) -> Result<(), Error> {
+        let count: i64 = self.db.query_row("SELECT count(*) FROM thumbs", [], |r| r.get(0))?;
+        if count <= keep + slack {
+            return Ok(());
+        }
+        let gone = self.db.execute(
+            "DELETE FROM thumbs WHERE page_id NOT IN (SELECT id FROM pages ORDER BY seen_ms DESC, id DESC LIMIT ?1)",
+            [keep],
+        )?;
+        log::info!("history: dropped {gone} old thumbnails, keeping {keep}");
+        Ok(())
     }
 
     pub fn len(&self) -> Result<usize, Error> {
@@ -364,6 +419,78 @@ mod tests {
         }
         let i = PageIndex::open(dir.path()).unwrap();
         assert!(i.is_empty().unwrap());
+    }
+
+    #[test]
+    fn thumbs_follow_their_pages() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut i = PageIndex::open(dir.path()).unwrap();
+        assert!(!i.set_thumb("https://a.test/", b"jpegA").unwrap(), "not in history");
+        i.record("https://a.test/", "A", "", 1).unwrap();
+        i.record("https://b.test/", "B", "", 2).unwrap();
+        assert!(i.set_thumb("https://a.test/", b"old").unwrap());
+        assert!(i.set_thumb("https://a.test/", b"thumbAAAA").unwrap());
+        assert!(i.set_thumb("https://b.test/", b"thumbBBBB").unwrap());
+        assert_eq!(i.thumb("https://a.test/").unwrap().as_deref(), Some(&b"thumbAAAA"[..]));
+        assert_eq!(i.thumb("https://c.test/").unwrap(), None);
+        // A new visit keeps the thumbnail until a new one comes.
+        i.record("https://a.test/", "A again", "", 3).unwrap();
+        assert!(i.thumb("https://a.test/").unwrap().is_some());
+        assert!(i.forget("https://a.test/").unwrap());
+        assert_eq!(i.thumb("https://a.test/").unwrap(), None);
+        // Recorded again, it has no thumbnail from before.
+        i.record("https://a.test/", "A", "", 4).unwrap();
+        assert_eq!(i.thumb("https://a.test/").unwrap(), None);
+        i.clear().unwrap();
+        drop(i);
+        let mut bytes = std::fs::read(pagetext_path(dir.path())).unwrap();
+        if let Ok(wal) = std::fs::read(dir.path().join("page-text.db-wal")) {
+            bytes.extend(wal);
+        }
+        for w in [&b"thumbAAAA"[..], b"thumbBBBB"] {
+            assert!(!bytes.windows(w.len()).any(|x| x == w), "{} left on disk", String::from_utf8_lossy(w));
+        }
+    }
+
+    #[test]
+    fn only_the_newest_pages_keep_thumbs() {
+        let mut i = idx();
+        for n in 0..10 {
+            let url = format!("https://{n}.test/");
+            i.record(&url, "P", "", n).unwrap();
+            i.set_thumb(&url, b"j").unwrap();
+            i.prune_thumbs(3, 1).unwrap();
+        }
+        let kept: i64 = i.db.query_row("SELECT count(*) FROM thumbs", [], |r| r.get(0)).unwrap();
+        assert!((3..=4).contains(&kept), "{kept}");
+        assert!(i.thumb("https://9.test/").unwrap().is_some());
+        assert!(i.thumb("https://0.test/").unwrap().is_none());
+        // Pruning pages drops their thumbnails too.
+        i.prune(2, 0).unwrap();
+        let kept: i64 = i.db.query_row("SELECT count(*) FROM thumbs", [], |r| r.get(0)).unwrap();
+        assert_eq!(kept, 2);
+    }
+
+    #[test]
+    fn version_1_files_gain_thumbs() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let db = Connection::open(pagetext_path(dir.path())).unwrap();
+            db.execute_batch(
+                "CREATE TABLE pages(id INTEGER PRIMARY KEY, url TEXT NOT NULL UNIQUE, title TEXT NOT NULL, seen_ms INTEGER NOT NULL);
+                 CREATE INDEX pages_seen ON pages(seen_ms);
+                 CREATE VIRTUAL TABLE pages_text USING fts5(title, url, body, tokenize = 'unicode61 remove_diacritics 2', prefix = '2 3');
+                 INSERT INTO pages VALUES (1, 'https://old.test/', 'Old', 5);
+                 INSERT INTO pages_text(rowid, title, url, body) VALUES (1, 'Old', 'https://old.test/', 'kept words');
+                 PRAGMA user_version = 1;",
+            )
+            .unwrap();
+        }
+        let mut i = PageIndex::open(dir.path()).unwrap();
+        assert_eq!(urls(&i.search("kept", 5).unwrap()), ["https://old.test/"]);
+        assert!(i.set_thumb("https://old.test/", b"j").unwrap());
+        let v: i32 = i.db.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        assert_eq!(v, PAGETEXT_VERSION);
     }
 
     #[test]

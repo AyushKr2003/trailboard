@@ -584,7 +584,7 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     it (above when there's no room), kept inside the window. Hidden during a
     drag, a menu, the palette or omnibox, link hints and the shortcut sheet.
 
-### M7: History and search 🟡
+### M7: History and search ✅
 - ✅ `page-text.db` (`storage::pagetext`, rules in `scene::pagetext`,
   capture in `web::text`). Decisions (2026-11-14):
   - Our own schema, SQLite via `rusqlite` (bundled, so FTS5 is always there):
@@ -610,7 +610,26 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     card's row (so text inside open cards is found too), otherwise "History ·
     host" opens it in a new card. Words starting with a query word are
     highlighted. Results are cached per query.
-- ⬜ Thumbnails (`thumbs` table, a small JPEG per page).
+- ✅ Thumbnails (`storage::thumbs`, `PageIndex::{set_thumb, thumb}`,
+  `palette::preview_layer`, `App::load_sleeping_thumbs`). Decisions (2026-11-14):
+  - A `thumbs(page_id, jpeg)` table in `page-text.db` (version 2; version 1
+    files gain it on open, older builds refuse the file). One per page,
+    replaced on every visit; forgetting, clearing and pruning drop it, and
+    `secure_delete` wipes the bytes (unit-checked on the file).
+  - Taken when the page's text is recorded (same moment, same rules, so
+    never in a private space), from the card's last painted frame: shrunk
+    by area average to fit 480×360, JPEG quality 72 (`jpeg-encoder`; read
+    back with `zune-jpeg`). Test pages came to 3–5 KB. Kept for the newest
+    1000 pages only (pruned when 100 more have built up); text for 5000.
+  - Shown in two places. (1) The palette and the history view: the
+    highlighted row's page (a history page, or a closed card's) beside the
+    list, 320 px wide, right of it when the window has room, else under it
+    at its right edge, else not at all. (2) Sleeping cards with no picture
+    (restored after a restart, or back from another space) get their page's
+    thumbnail, cropped to the card's shape (top kept), dimmed like a sleeping
+    snapshot, up to 4 looked up per frame, each card once.
+  - Not shown on history rows themselves (the list keeps one row height and
+    no images per row).
 - ✅ History view and forgetting (`Target::History`, `palette::history_rows`,
   `scene::when`, `PageIndex::{browse, forget, clear}`). Decisions (2026-11-14):
   - Ctrl+H opens it in the palette's field and list (one list UI, same keys
@@ -719,15 +738,17 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M7 recently closed cards in the palette.
-**Repo state:** on `master`, committed after 52dea2e; working tree clean.
+**Last session:** 2026-11-14. M7 thumbnails; M7 is done.
+**Repo state:** on `master`, committed after 1221aed; working tree clean.
 **Done this session:**
-- Ctrl+K finds cards closed this session in the current space ("Closed ·
-  host"), the newest 3 listed with nothing typed; Enter brings one back where
-  it was. History pages a closed card showed resolve to that card. See M7.
-**Next up:** M7's thumbnails (the last M7 ⬜), or M6's remaining ⬜
-(`.desktop` entry and icon, settings, downloads).
-Small follow-ups: Shift+Delete on a closed row could drop it from the stack;
+- Page thumbnails in `page-text.db` (v2): taken with the page's text, shown
+  beside the highlighted row in Ctrl+K / Ctrl+H and on sleeping cards that
+  never painted this session. See M7.
+**Next up:** M6's remaining ⬜ (`.desktop` entry and icon, then settings,
+downloads), or M4/M5's partial items.
+Small follow-ups: thumbnails are taken on the main thread (55–85 ms each
+in a debug build at 1.2 s after load; move the shrink/encode off-thread if
+it shows in release); a thumbnail on history rows or the sidebar; Shift+Delete on a closed row could drop it from the stack;
 keep closed cards across restarts (board v6?); a private space could look
 different beyond its label
 (an icon, a hatched board); downloads in a private space (none yet anyway);
@@ -741,6 +762,17 @@ several cards; link hints inside iframes; xdg-desktop-portal file chooser for
 Save as Markdown; i18n; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out.
 **Notes for the next session:**
+- Thumbnails verified e2e (`~/.cache/trailboard-e2e-thumbs`, `run.sh N
+  shot…`, `MAXLIVE=` sets `TRAILBOARD_MAX_LIVE`; serve `site/` on :8741).
+  Run 1: a, b, c and c#view each got a 480×338 thumb (3.4–4.6 KB); closed
+  c; Ctrl+H previewed Glacier View, Down → "Loading app"; Ctrl+K "glacier"
+  previewed the closed card. The window was tiled 941 px wide, so the
+  preview sat under the list (first version needed room on the right and
+  showed nothing). Run 2 (copy, `NOURL=1 MAXLIVE=1`): both restored cards
+  got their thumbs; the sleeping one showed it dimmed. Screenshots hist1,
+  restored2 checked, dark theme only. Not verified: the right-of-list
+  placement in a wide window (unit-tested), real sites (heavy pages, pages
+  still blank at 1.2 s get a blank thumb), HiDPI, light themes.
 - Closed cards verified e2e (`~/.cache/trailboard-e2e-closed`, `run.sh 1
   empty1 ocean1 end1`; serve its `site/` on :8731). Opened b and c beside a,
   closed both by the *Close card* command: the empty palette listed Glacier

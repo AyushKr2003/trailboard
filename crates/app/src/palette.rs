@@ -332,6 +332,9 @@ const GAP: f32 = 6.0;
 const PAD: f32 = 6.0;
 const FONT: f32 = 15.0;
 const DETAIL: f32 = 13.0;
+/// Width of the page preview beside the list, and the least worth showing.
+pub const PREVIEW_W: f32 = 320.0;
+const PREVIEW_MIN: f32 = 160.0;
 
 /// The text field's rect (shared with the address bar).
 pub fn field_rect(viewport: Vec2, ui: f32) -> Rect {
@@ -378,6 +381,27 @@ impl Panel {
         }
         let i = scroll + ((p.y - self.rows_top()) / self.row_h) as usize;
         (i < len && i < scroll + self.shown).then_some(i)
+    }
+
+    /// Where the highlighted page's thumbnail (`size` px) goes: right of the
+    /// list, top-aligned, [`PREVIEW_W`] wide (less for a tall page, to fit
+    /// the window's height); or, in a window too narrow for that, under the
+    /// list at its right edge. `None` when neither has room.
+    pub fn preview_rect(&self, viewport: Vec2, size: (u32, u32), ui: f32) -> Option<Rect> {
+        let shape = size.0.max(1) as f32 / size.1.max(1) as f32;
+        let margin = 16.0 * ui;
+        // The largest rect of this shape within `w × h`, at most PREVIEW_W wide.
+        let fit = |w: f32, h: f32| {
+            let w = (PREVIEW_W * ui).min(w).min(h * shape);
+            (w >= PREVIEW_MIN * ui).then_some((w, w / shape))
+        };
+        let x = self.rect.right() + 2.0 * GAP * ui;
+        if let Some((w, h)) = fit(viewport.x - x - margin, viewport.y - self.rect.y - margin) {
+            return Some(Rect::new(x, self.rect.y, w, h));
+        }
+        let y = self.rect.bottom() + 2.0 * GAP * ui;
+        let (w, h) = fit(self.rect.w, viewport.y - y - margin)?;
+        Some(Rect::new(self.rect.right() - w, y, w, h))
     }
 
     /// The field or the list contains `p`.
@@ -464,6 +488,22 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], sel: usize, scroll: 
     l
 }
 
+/// The highlighted page's thumbnail (texture `key`) at `at`, framed like the list.
+pub fn preview_layer(at: Rect, key: u64, th: &Theme, ui: f32) -> Layer {
+    let mut l = Layer::default();
+    let radius = th.radius(ui);
+    let border = (1.0 * ui).max(1.0);
+    let frame = at.inflate(border);
+    l.quads.push(Quad {
+        shape: Shape::Shadow { rect: frame.translate(Vec2::new(0.0, 8.0 * ui)), radius, blur: 28.0 * ui },
+        color: th.shadow(0.6),
+        texture: None,
+    });
+    l.quads.push(Quad { shape: Shape::Rect { rect: frame, radius: radius + border }, color: rgb(th.divider(), 1.0), texture: None });
+    l.quads.push(Quad { shape: Shape::Rect { rect: at, radius }, color: [1.0; 4], texture: Some(key) });
+    l
+}
+
 /// `text` cut into runs of matched (`positions`) and unmatched letters.
 pub fn runs(text: &str, positions: &[usize]) -> Vec<(String, bool)> {
     let mut out: Vec<(String, bool)> = Vec::new();
@@ -493,6 +533,30 @@ mod tests {
         let b = s.add_page(r, "https://en.wikipedia.org/wiki/Trail");
         s.node_mut(b).expect("b").title = "Trail - Wikipedia".into();
         s
+    }
+
+    #[test]
+    fn preview_sits_right_of_the_list_when_there_is_room() {
+        let vp = Vec2::new(1600.0, 900.0);
+        let panel = Panel::new(vp, 1.0, 5);
+        let r = panel.preview_rect(vp, (480, 360), 1.0).unwrap();
+        assert_eq!((r.x, r.y, r.w, r.h), (panel.rect.right() + 12.0, panel.rect.y, PREVIEW_W, 240.0));
+        // A tall page is cut to the window's height and narrows to keep its shape.
+        let tall = panel.preview_rect(vp, (120, 360), 1.0).unwrap();
+        assert!(tall.bottom() <= vp.y - 16.0 + 0.01 && (tall.w / tall.h - 1.0 / 3.0).abs() < 0.01, "{tall:?}");
+        // Some room: a narrower preview.
+        let mid = Vec2::new(1150.0, 900.0);
+        let m = Panel::new(mid, 1.0, 5).preview_rect(mid, (480, 360), 1.0).unwrap();
+        assert!(m.w < PREVIEW_W && m.w >= PREVIEW_MIN && m.right() <= mid.x - 16.0 + 0.01, "{m:?}");
+        // A narrow window: under the list, at its right edge.
+        let small = Vec2::new(900.0, 900.0);
+        let p = Panel::new(small, 1.0, 5);
+        let u = p.preview_rect(small, (480, 360), 1.0).unwrap();
+        assert_eq!((u.right(), u.y, u.w, u.h), (p.rect.right(), p.rect.bottom() + 12.0, PREVIEW_W, 240.0));
+        // No room under a long list in a short window either: none.
+        let short = Vec2::new(900.0, 420.0);
+        let p = Panel::new(short, 1.0, 9);
+        assert_eq!(p.preview_rect(short, (480, 360), 1.0), None);
     }
 
     #[test]

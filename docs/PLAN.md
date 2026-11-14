@@ -140,10 +140,33 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
 ### M4: Persistence and Spaces 🟡
 - ✅ Board JSON at `$XDG_DATA_HOME/trailboard/board.json`, atomic write, autosave (3 s), save on exit; unreadable file set aside.
 - ✅ Browser profile (cookies, cache) persisted under the data dir.
-- ⬜ Spaces: several boards, each with its own camera and background
-  (New / Next / Previous / Rename / Delete Space). Index file `spaces.json`.
-- ⬜ Per-space wallpaper/background colour.
-- ⬜ Schema migrations (`version` field already present).
+- ✅ Spaces: several boards, each with its own camera and background
+  (New / Next / Previous / Rename / Delete Space). Index file `spaces.json`
+  (`storage::spaces`). Decisions (2026-11-14):
+  - Files: `spaces.json` (version, active, ordered list of id/name/background)
+    and one `Board` per space at `spaces/<id>.json`. On first start the old
+    `board.json` is moved to `spaces/1.json`. A missing or unreadable index is
+    rebuilt from the board files (an unreadable one is set aside first); a
+    newer-version index is left alone and the app runs without saving.
+  - Keys: Ctrl+Shift+N new (inserted after the current space), Ctrl+PageDown /
+    Ctrl+PageUp next / previous (wrapping, like browser tabs), F2 rename (the
+    address bar becomes a name field), Ctrl+Shift+B next background colour,
+    Ctrl+Shift+W delete. Ctrl+Alt combos were avoided because AltGr reports
+    Ctrl+Alt on many layouts and would steal typed characters from pages.
+  - Delete asks for Enter when the space has cards (any other key or a click
+    keeps it), refuses to delete the last space, and moves the board file to
+    `spaces/deleted/` rather than erasing it.
+  - Switching saves the board and closes every page of the old space. Undo
+    history and Ctrl+Shift+T lists are kept per space for the session (not saved).
+  - Page keys carry a per-switch epoch above the card id, so late events and
+    textures from the old space's pages can't reach the new space's cards
+    (card ids restart in every space).
+  - The current space shows as a label in the top-left corner when there is
+    more than one; switches, renames and deletes show a short toast.
+- ✅ Per-space background colour (six dark tints; new spaces take an unused one).
+  Wallpaper images are in FUTURE.md.
+- ⬜ Schema migrations (`version` field present in both files). Deferred until
+  the first format change; old files are migrated by hand-written steps then.
 
 ### M5: Board tools ⬜
 - Read Mode: a card fills the window; Tab toggles board ↔ page.
@@ -217,40 +240,39 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. Card multi-select and group move (M3 now complete);
-`?` shortcut sheet (M6); bold text font fix.
-**Repo state:** on `master`, committed after 44db158; working tree clean.
+**Last session:** 2026-11-14. M4 Spaces: several boards with their own camera,
+background, undo history and closed cards; `board.json` migrates into space 1.
+**Repo state:** on `master`, committed after 9c37f61; working tree clean.
 **Done this session:**
-- `scene::selection`: selection set, band hit test, group drag; `Rect::from_corners`.
-- `scene::history`: `Edit::Batch`, `History::moved_many` / `closed_many`;
-  `undo`/`redo` now return `Vec<Change>`.
-- App: `Drag::Band`, group title-bar drag (`App::group`), `close_cards`, amber
-  selection ring (outside the blue focus ring) and a translucent band.
-- Script commands `sdrag` and `sclick` (Shift held); `cards` logs `sel=`.
-- `app::hints`: shortcut sheet on `?` (script: `key shift+/`), logged as
-  "hints shown/hidden". Verified e2e: Esc, `?` and a click hide it; the click
-  doesn't reach the card below; with a card focused `?` goes to the page.
-- `compositor`: bold text now asks for `Weight::BOLD`; SEMIBOLD fell back to a
-  serif face with wide spaces and broken digits (the old "4 0 , 4 0" title bug;
-  digits in bold now render correctly in the screenshot). Bold fonts lack arrow
-  glyphs, so the sheet spells out "Left"/"Right".
-- Keep the sheet's rows in `hints::SECTIONS` in step with new shortcuts.
-- Page content is drawn with `Shape::RoundBottom` (shader kind 2: square top,
-  rounded bottom) so cards' bottom corners match the frame; checked with a
-  magnified screenshot of the corners.
-**Next up:** M4: Spaces (several boards, each with its own camera and
-background; `spaces.json` index; New / Next / Previous / Rename / Delete Space).
-Decide key bindings and how the current `board.json` migrates into the first space.
+- `storage::spaces`: `SpaceIndex` (add after active, neighbour with wrap,
+  rename, remove with the last space kept, cycle background, repair),
+  `open_spaces` (migration from `board.json`, rebuild from `spaces/*.json`),
+  `save_index`, `discard_space`, `space_board_path`. 13 unit tests.
+  `storage::write_atomic` is shared by boards and the index.
+- App: `unload_space` / `load_space` / `switch_space` / `new_space` /
+  `rename_space` / `cycle_background` / `ask_delete_space` / `delete_space`;
+  `Target::RenameSpace` in the omnibox; `page_key(epoch, id)` / `node_of(key)`
+  for browser and texture keys; a `pill` helper draws the space label and toasts.
+- Script command `spaces` logs each space (id, name, background, active).
+- Shortcut sheet has a Spaces section.
+**Next up:** M5: Read Mode (a card fills the window; Tab toggles board and page),
+then Tidy (T). M4's schema-migration item waits for the first format change.
 **Notes for the next session:**
-- Verified e2e (three local file:// cards, fitted): Shift+drag band selected the
-  two cards it touched; dragging one header moved both by the same delta; undo and
-  redo moved both back and forth in one step each; Shift+click toggled a third card
-  on and off; board click, Ctrl+A and Esc cleared/selected as expected; Ctrl+A +
-  Delete closed all three and one undo restored all three with live pages.
-  Screenshot showed the rings correctly.
-- Not verified on screen: the band while it is being drawn (script drags press,
-  move and release in one go, so there is no frame to capture mid-drag).
-- Ctrl+Shift+T after a group close reopens one card at a time (newest first).
+- Verified e2e (`~/.cache/trailboard-e2e-spaces`, three local file:// pages):
+  an old `board.json` with two cards became `spaces/1.json`; Ctrl+Shift+N made
+  an empty Space 2; F2 + typing renamed it "Research"; Ctrl+Shift+B changed its
+  colour; Ctrl+PageUp/PageDown switched back and forth with each board's
+  cards, camera and live pages; undo on Space 1 did nothing while undo/redo on
+  Research removed/restored its card; Ctrl+Shift+W asked, Esc kept, Enter
+  deleted and returned to Space 1; the board landed in `spaces/deleted/`; a
+  restart showed one space with its two cards. Screenshots checked: background
+  tint, corner label with colour dot, toast and the red-outlined delete prompt.
+- Not verified: real keyboard input for the new shortcuts (script keys only;
+  Hyprland could bind some combos), and the toast after a delete on screen
+  (it expired before the screenshot; the log shows it).
+- A sleeping card's last frame is dropped on switch, so after switching back
+  cards beyond the live cap show the plain "asleep" placeholder until woken.
+- Keep the sheet's rows in `hints::SECTIONS` in step with new shortcuts.
 - Live-browser cap: zooming can churn (sleep, then reload in view).
 - Keep test boards small (RAM). Use a fresh `XDG_DATA_HOME` under `~/.cache` for
   each e2e run (a saved board plus the URL argument gives two cards).

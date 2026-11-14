@@ -40,6 +40,16 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "Spaces",
+        &[
+            ("Ctrl+Shift+N", "New space"),
+            ("Ctrl+PgDn · Ctrl+PgUp", "Next / previous space"),
+            ("F2", "Rename space"),
+            ("Ctrl+Shift+B", "Next background colour"),
+            ("Ctrl+Shift+W", "Delete space"),
+        ],
+    ),
+    (
         "Pages",
         &[
             ("Ctrl+L", "Address bar"),

@@ -55,7 +55,7 @@ fn main() -> ExitCode {
     let initial_url = std::env::args().skip(1).find(|a| !a.starts_with('-'));
     let mut event_loop = EventLoop::new().expect("event loop");
     event_loop.set_control_flow(ControlFlow::Poll);
-    let mut app = app::App::new(initial_url, storage::board_path(&data_dir()));
+    let mut app = app::App::new(initial_url, data_dir());
 
     let mut last = Instant::now();
     let code = loop {

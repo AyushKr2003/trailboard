@@ -7,6 +7,8 @@ pub enum Target {
     Focused,
     /// Open a new card.
     NewCard,
+    /// Rename the current space (the text is a name, not an address).
+    RenameSpace,
 }
 
 #[derive(Debug)]

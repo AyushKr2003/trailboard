@@ -33,9 +33,11 @@ EOF
 cargo run --release -p trailboard -- https://en.wikipedia.org/wiki/Turbofan
 ```
 
-The board is saved to `$XDG_DATA_HOME/trailboard/board.json` (default
-`~/.local/share/trailboard/`) and restored on the next start; the browser
-profile (cookies, cache) lives next to it.
+Each space's board is saved to `$XDG_DATA_HOME/trailboard/spaces/<id>.json`
+(default `~/.local/share/trailboard/`), listed by `spaces.json`, and restored on
+the next start; the browser profile (cookies, cache) lives next to it. A
+`board.json` from an earlier version becomes the first space. A deleted space's
+board is moved to `spaces/deleted/`, not erased.
 
 Only the 6 most relevant cards keep a live browser (focused first, then on screen,
 then most recently used). The rest sleep and show their last frame, dimmed, until
@@ -60,6 +62,9 @@ you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change th
 | Page context menu | right-click in a page (open link beside, copy link, edit, search selection) |
 | Copy / cut / paste | Ctrl+C / Ctrl+X / Ctrl+V (shared with the desktop clipboard) |
 | Leave the page | Esc |
+| New space / next / previous | Ctrl+Shift+N / Ctrl+PageDown / Ctrl+PageUp |
+| Rename space / next background colour | F2 / Ctrl+Shift+B |
+| Delete space | Ctrl+Shift+W (asks first if it has cards) |
 | Show shortcuts | ? (with no page focused) |
 
 Input methods (e.g. fcitx5) work in pages and in the address bar.
@@ -80,9 +85,9 @@ TRAILBOARD_SCRIPT=path cargo run -p trailboard -- URL   # scripted end-to-end ru
 Done: live page cards, open-links-beside with trail edges, pan/zoom, move,
 resize, close/reopen, multi-select and group move, undo/redo, omnibox, zoom-aware page resolution, off-screen
 pages paused, live-browser cap, page context menu, desktop clipboard, IME input,
-board persistence.
+board persistence, spaces (several boards with their own camera and background).
 
-Next: Spaces, Tidy and Fold, Read Mode, notes, trails sidebar, Ctrl+K palette,
+Next: Tidy and Fold, Read Mode, notes, trails sidebar, Ctrl+K palette,
 history with full-text search, ad blocking, then optional semantic search and
 an LLM-backed "Explain" panel.
 

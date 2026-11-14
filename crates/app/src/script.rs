@@ -23,6 +23,7 @@
 //! undo                 # same as Ctrl+Z on the board
 //! redo                 # same as Ctrl+Shift+Z
 //! cards                # log every card (id, rect, live page, selected, title, url) and edge
+//! spaces               # log every space (id, name, background) and which is active
 //! open https://…       # same as Ctrl+T + Enter
 //! log some note        # print to the log (marks screenshot moments)
 //! quit
@@ -51,6 +52,7 @@ pub enum Cmd {
     Undo,
     Redo,
     Cards,
+    Spaces,
     Open(String),
     Log(String),
     Quit,
@@ -109,6 +111,7 @@ fn parse(line: &str) -> Option<Cmd> {
         "undo" => Cmd::Undo,
         "redo" => Cmd::Redo,
         "cards" => Cmd::Cards,
+        "spaces" => Cmd::Spaces,
         "open" => Cmd::Open(rest.trim().to_string()),
         "log" => Cmd::Log(rest.trim().to_string()),
         "quit" => Cmd::Quit,

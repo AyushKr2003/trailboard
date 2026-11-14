@@ -1,5 +1,8 @@
 //! On-disk state. The board is one JSON file written atomically (temp file in
 //! the same directory, fsync, rename), so a crash never leaves a torn board.
+//! Each space has its own board; `spaces` holds the index of spaces.
+
+pub mod spaces;
 
 use std::fs;
 use std::io::Write;
@@ -43,6 +46,7 @@ impl std::fmt::Display for LoadError {
     }
 }
 
+/// The single board of versions before spaces; `spaces::open_spaces` migrates it.
 pub fn board_path(data_dir: &Path) -> PathBuf {
     data_dir.join("board.json")
 }
@@ -61,17 +65,21 @@ pub fn load_board(path: &Path) -> Result<Board, LoadError> {
 }
 
 pub fn save_board(path: &Path, board: &Board) -> std::io::Result<()> {
+    let json = serde_json::to_vec_pretty(board).map_err(std::io::Error::other)?;
+    write_atomic(path, &json)
+}
+
+/// Writes `bytes` to `path` via a synced temp file and a rename, creating the directory.
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
     fs::create_dir_all(dir)?;
-    let json = serde_json::to_vec_pretty(board).map_err(std::io::Error::other)?;
     let tmp = path.with_extension("json.tmp");
     {
         let mut f = fs::File::create(&tmp)?;
-        f.write_all(&json)?;
+        f.write_all(bytes)?;
         f.sync_all()?;
     }
-    fs::rename(&tmp, path)?;
-    Ok(())
+    fs::rename(&tmp, path)
 }
 
 #[cfg(test)]

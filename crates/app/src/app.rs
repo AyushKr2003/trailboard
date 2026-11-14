@@ -19,6 +19,10 @@
 //!   outside, scrolling or moving the board closes it.
 //! - Ctrl+C / Ctrl+X / Ctrl+V in a page go through the desktop clipboard (see `clipboard`).
 //! - IME (e.g. fcitx5) composition goes to the focused page or the address bar.
+//! - Spaces: Ctrl+Shift+N new space, Ctrl+PageDown / Ctrl+PageUp next / previous,
+//!   F2 rename, Ctrl+Shift+B next background colour, Ctrl+Shift+W delete (asks
+//!   first when the space has cards). Each space keeps its own board, camera,
+//!   background, undo history and closed cards.
 //!
 //! Live-browser cap: at most `TRAILBOARD_MAX_LIVE` (default 6) cards keep a live
 //! browser (see `scene::liveness`). The others sleep: their page is closed and the
@@ -30,6 +34,7 @@ use std::time::{Duration, Instant};
 
 use compositor::{rgba, Background, Layer, Quad, Renderer, Shape, Text};
 use scene::{liveness, placement, selection, Camera, Change, Edge, History, Node, NodeId, Rect, Scene, Selection, Vec2};
+use storage::spaces::{self, SpaceId, SpaceIndex};
 use web::{MouseButton as WebButton, Page, SpawnBeside, WebEvent};
 use winit::application::ApplicationHandler;
 use web::menu::{MenuAction, MenuItem};
@@ -52,6 +57,22 @@ const CARD_H: f32 = 720.0;
 const MIN_CARD: f32 = 240.0;
 const RESIZE_GRIP: f32 = 18.0;
 const CLOSE_W: f32 = 30.0;
+/// How long a toast stays on screen.
+const TOAST_FOR: Duration = Duration::from_millis(1800);
+/// Bits of a page key that hold the card id; the space epoch sits above them.
+const KEY_ID_BITS: u32 = 40;
+
+/// Browser and texture key for card `id` while `epoch` is current.
+fn page_key(epoch: u64, id: NodeId) -> u64 {
+    (epoch << KEY_ID_BITS) | id.0
+}
+
+/// Per-space state that lives only for this session.
+#[derive(Default)]
+struct Session {
+    history: History,
+    closed: Vec<(Node, Vec<Edge>)>,
+}
 /// Default number of cards that keep a live browser.
 const DEFAULT_MAX_LIVE: usize = 6;
 
@@ -123,14 +144,26 @@ pub struct App {
     started: Instant,
     script: Option<Script>,
     pub quit: bool,
-    board_path: std::path::PathBuf,
+    data_dir: std::path::PathBuf,
+    spaces: SpaceIndex,
+    /// False when the space index could not be read safely; nothing is saved then.
+    persist: bool,
+    /// Bumped on every space switch; part of each page's key, so late events and
+    /// textures from the previous space's pages never land on this space's cards.
+    epoch: u64,
+    /// Undo history and closed cards of spaces not on screen (this session only).
+    sessions: HashMap<SpaceId, Session>,
+    /// Short message at the top of the window, until it expires.
+    toast: Option<(String, Instant)>,
+    /// Waiting for Enter to delete the current space.
+    confirm_delete: bool,
     /// Board changed since the last save.
     dirty: bool,
     last_save: Instant,
 }
 
 impl App {
-    pub fn new(initial_url: Option<String>, board_path: std::path::PathBuf) -> Self {
+    pub fn new(initial_url: Option<String>, data_dir: std::path::PathBuf) -> Self {
         Self {
             renderer: None,
             scene: Scene::new(),
@@ -166,7 +199,13 @@ impl App {
             started: Instant::now(),
             script: Script::from_env(),
             quit: false,
-            board_path,
+            data_dir,
+            spaces: SpaceIndex::default(),
+            persist: true,
+            epoch: 0,
+            sessions: HashMap::new(),
+            toast: None,
+            confirm_delete: false,
             dirty: false,
             last_save: Instant::now(),
         }
@@ -179,16 +218,29 @@ impl App {
 
     // ---------------------------------------------------------------- persistence
 
+    fn board_path(&self) -> std::path::PathBuf {
+        spaces::space_board_path(&self.data_dir, self.spaces.active)
+    }
+
     fn save(&mut self) {
-        if self.renderer.is_none() {
+        if self.renderer.is_none() || !self.persist {
             return; // never initialized; don't clobber a saved board with an empty one
         }
         let board = storage::Board::new(self.scene.clone(), self.camera);
-        match storage::save_board(&self.board_path, &board) {
+        let path = self.board_path();
+        match storage::save_board(&path, &board) {
             Ok(()) => self.dirty = false,
-            Err(e) => log::error!("saving board to {}: {e}", self.board_path.display()),
+            Err(e) => log::error!("saving board to {}: {e}", path.display()),
         }
         self.last_save = Instant::now();
+    }
+
+    fn save_index(&self) {
+        if self.persist
+            && let Err(e) = spaces::save_index(&self.data_dir, &self.spaces)
+        {
+            log::error!("saving the space index: {e}");
+        }
     }
 
     fn autosave(&mut self) {
@@ -197,9 +249,32 @@ impl App {
         }
     }
 
-    /// Load the saved board. Returns false when starting fresh.
+    /// Open the space index and load the active space. Returns false when it has no cards.
     fn restore(&mut self) -> bool {
-        match storage::load_board(&self.board_path) {
+        match spaces::open_spaces(&self.data_dir) {
+            Ok(idx) => self.spaces = idx,
+            Err(e) => {
+                log::error!("{e}; running with one unsaved space");
+                self.persist = false;
+            }
+        }
+        log::info!(
+            "space {} {:?} ({} of {})",
+            self.spaces.active.0,
+            self.spaces.active_entry().name,
+            self.spaces.position(self.spaces.active).unwrap_or(0) + 1,
+            self.spaces.spaces.len()
+        );
+        self.load_board()
+    }
+
+    /// Load the active space's board into the (empty) scene. Returns false when it has no cards.
+    fn load_board(&mut self) -> bool {
+        if !self.persist {
+            return false;
+        }
+        let board_path = self.board_path();
+        match storage::load_board(&board_path) {
             Ok(board) => {
                 self.scene = board.scene;
                 self.camera = board.camera;
@@ -207,18 +282,152 @@ impl App {
                 // Stacking order stands in for recency (focusing brings a card to front).
                 self.used = self.scene.nodes().map(|n| (n.id, n.z)).collect();
                 self.use_clock = self.used.values().copied().max().unwrap_or(0);
-                log::info!("restored {} cards from {}", self.scene.nodes().count(), self.board_path.display());
+                log::info!("restored {} cards from {}", self.scene.nodes().count(), board_path.display());
                 !self.scene.is_empty()
             }
             Err(storage::LoadError::Missing) => false,
             Err(e) => {
                 // Keep the unreadable file for the user instead of overwriting it.
-                let aside = self.board_path.with_extension(format!("unreadable-{}.json", std::process::id()));
+                let aside = board_path.with_extension(format!("unreadable-{}.json", std::process::id()));
                 log::error!("{e}; moving it to {}", aside.display());
-                let _ = std::fs::rename(&self.board_path, &aside);
+                let _ = std::fs::rename(&board_path, &aside);
                 false
             }
         }
+    }
+
+    // ---------------------------------------------------------------- spaces
+
+    fn page_key(&self, id: NodeId) -> u64 {
+        page_key(self.epoch, id)
+    }
+
+    /// The card a page key belongs to, if that page is from the current space.
+    fn node_of(&self, key: u64) -> Option<NodeId> {
+        (key >> KEY_ID_BITS == self.epoch).then_some(NodeId(key & ((1 << KEY_ID_BITS) - 1)))
+    }
+
+    fn toast(&mut self, msg: impl Into<String>) {
+        let msg = msg.into();
+        log::info!("toast: {msg}");
+        self.toast = Some((msg, Instant::now()));
+    }
+
+    /// "Name (2 of 3)" for the active space.
+    fn space_label(&self) -> String {
+        let e = self.spaces.active_entry();
+        let i = self.spaces.position(e.id).unwrap_or(0) + 1;
+        format!("{} ({i} of {})", e.name, self.spaces.spaces.len())
+    }
+
+    /// Save the current space and close its pages; keep its undo history for later.
+    fn unload_space(&mut self) {
+        self.save();
+        let keys: Vec<u64> = self.scene.nodes().map(|n| self.page_key(n.id)).collect();
+        if let Some(r) = self.renderer.as_mut() {
+            for k in keys {
+                r.remove_page(k);
+            }
+        }
+        self.cards.clear(); // closes the browsers
+        let session = Session { history: std::mem::take(&mut self.history), closed: std::mem::take(&mut self.closed) };
+        self.sessions.insert(self.spaces.active, session);
+        self.scene = Scene::new();
+        self.camera = Camera::default();
+        self.camera_goal = None;
+        self.used.clear();
+        self.use_clock = 0;
+        self.focused = None;
+        self.keys_in_page = false;
+        self.selection.clear();
+        self.group.clear();
+        self.drag = Drag::None;
+        self.omnibox = None;
+        self.menu = None;
+        self.ime_page = None;
+        self.confirm_delete = false;
+        self.epoch += 1;
+        // Anything the old pages still had queued is for cards that are gone.
+        drop(web::drain_events());
+        self.dirty = false;
+    }
+
+    /// Show the active space (after `unload_space`).
+    fn load_space(&mut self) {
+        let s = self.sessions.remove(&self.spaces.active).unwrap_or_default();
+        self.history = s.history;
+        self.closed = s.closed;
+        self.load_board();
+        self.camera_moved();
+        self.dirty = false;
+        log::info!("space {} {:?}: {} cards", self.spaces.active.0, self.spaces.active_entry().name, self.scene.nodes().count());
+        self.toast(self.space_label());
+    }
+
+    fn switch_space(&mut self, to: SpaceId) {
+        if to == self.spaces.active {
+            self.toast(format!("{} is the only space · Ctrl+Shift+N makes another", self.spaces.active_entry().name));
+            return;
+        }
+        self.unload_space();
+        self.spaces.active = to;
+        self.save_index();
+        self.load_space();
+    }
+
+    fn new_space(&mut self) {
+        let id = self.spaces.add();
+        self.unload_space();
+        self.spaces.active = id;
+        self.save_index();
+        self.load_space();
+    }
+
+    fn rename_space(&mut self, name: &str) {
+        let id = self.spaces.active;
+        if self.spaces.rename(id, name) {
+            self.save_index();
+            self.toast(format!("Renamed to {}", self.spaces.active_entry().name));
+        }
+    }
+
+    fn cycle_background(&mut self) {
+        self.spaces.cycle_background(self.spaces.active);
+        self.save_index();
+        log::info!("space {} background {:?}", self.spaces.active.0, self.spaces.active_entry().background);
+    }
+
+    /// Ctrl+Shift+W: delete the space, asking first unless it is empty.
+    fn ask_delete_space(&mut self) {
+        let e = self.spaces.active_entry();
+        if self.spaces.spaces.len() < 2 {
+            self.toast(format!("{} is the only space; it can't be deleted", e.name));
+        } else if self.scene.is_empty() {
+            self.delete_space();
+        } else {
+            let n = self.scene.nodes().count();
+            let cards = if n == 1 { "1 card".to_string() } else { format!("{n} cards") };
+            self.confirm_delete = true;
+            self.toast(format!("Delete {} and its {cards}? Enter deletes · Esc keeps it", e.name));
+        }
+    }
+
+    fn delete_space(&mut self) {
+        self.confirm_delete = false;
+        let gone = self.spaces.active;
+        let name = self.spaces.active_entry().name.clone();
+        self.unload_space();
+        self.sessions.remove(&gone);
+        let Some(next) = self.spaces.remove(gone) else { return };
+        if self.persist
+            && let Err(e) = spaces::discard_space(&self.data_dir, gone)
+        {
+            log::error!("setting aside the board of deleted space {}: {e}", gone.0);
+        }
+        self.spaces.active = next;
+        self.save_index();
+        self.load_space();
+        self.toast(format!("Deleted {name} · now on {}", self.space_label()));
     }
 
     // ---------------------------------------------------------------- geometry
@@ -286,7 +495,7 @@ impl App {
         }
         let Some(n) = self.scene.node(id) else { return };
         let (url, r) = (n.url.clone(), n.rect);
-        match Page::new(id.0, &url, (r.w as i32, r.h as i32), self.page_scale, &self.spawn_beside) {
+        match Page::new(self.page_key(id), &url, (r.w as i32, r.h as i32), self.page_scale, &self.spawn_beside) {
             Some(page) => {
                 self.cards.insert(id, Card { page, loading: true, hidden: false, cursor: web::Cursor::Default });
             }
@@ -333,8 +542,9 @@ impl App {
         self.cards.remove(&id);
         self.used.remove(&id);
         self.selection.remove(id);
+        let key = self.page_key(id);
         if let Some(r) = self.renderer.as_mut() {
-            r.remove_page(id.0);
+            r.remove_page(key);
         }
         if self.focused == Some(id) {
             self.focused = None;
@@ -520,26 +730,26 @@ impl App {
         for ev in web::drain_events() {
             match ev {
                 WebEvent::OpenBeside { source, url } => {
-                    let src = NodeId(source);
+                    let Some(src) = self.node_of(source) else { continue };
                     if self.scene.node(src).is_some()
                         && let Some(id) = self.open_card(Rect::default(), &url, Some(src)) {
                             self.ensure_visible(id);
                         }
                 }
                 WebEvent::TitleChanged { page, title } => {
-                    if let Some(n) = self.scene.node_mut(NodeId(page)) {
+                    if let Some(n) = self.node_of(page).and_then(|id| self.scene.node_mut(id)) {
                         n.title = title;
                         self.dirty = true;
                     }
                 }
                 WebEvent::UrlChanged { page, url } => {
-                    if let Some(n) = self.scene.node_mut(NodeId(page)) {
+                    if let Some(n) = self.node_of(page).and_then(|id| self.scene.node_mut(id)) {
                         n.url = url;
                         self.dirty = true;
                     }
                 }
                 WebEvent::CursorChanged { page, cursor } => {
-                    let id = NodeId(page);
+                    let Some(id) = self.node_of(page) else { continue };
                     if let Some(c) = self.cards.get_mut(&id) {
                         c.cursor = cursor;
                     }
@@ -553,9 +763,13 @@ impl App {
                         self.set_cursor(cursor);
                     }
                 }
-                WebEvent::ContextMenu { page, x, y, context } => self.open_menu(NodeId(page), x, y, &context),
+                WebEvent::ContextMenu { page, x, y, context } => {
+                    if let Some(id) = self.node_of(page) {
+                        self.open_menu(id, x, y, &context);
+                    }
+                }
                 WebEvent::LoadingChanged { page, loading } => {
-                    if let Some(c) = self.cards.get_mut(&NodeId(page)) {
+                    if let Some(c) = self.node_of(page).and_then(|id| self.cards.get_mut(&id)) {
                         c.loading = loading;
                     }
                 }
@@ -592,6 +806,15 @@ impl App {
                 self.hints = false;
                 log::info!("hints hidden");
                 self.menu_pressed = true; // swallow the release too
+            }
+            return;
+        }
+        // A click while asking to delete the space keeps it, and does nothing else.
+        if self.confirm_delete {
+            if state == ElementState::Pressed {
+                self.confirm_delete = false;
+                self.toast(format!("Kept {}", self.spaces.active_entry().name));
+                self.menu_pressed = true;
             }
             return;
         }
@@ -845,6 +1068,18 @@ impl App {
             }
             return;
         }
+        if self.confirm_delete {
+            // Enter deletes the space; any other key (but a modifier) keeps it and is dropped.
+            if pressed && !matches!(ev.named, Some(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super)) {
+                if ev.named == Some(NamedKey::Enter) {
+                    self.delete_space();
+                } else {
+                    self.confirm_delete = false;
+                    self.toast(format!("Kept {}", self.spaces.active_entry().name));
+                }
+            }
+            return;
+        }
         if pressed && is_question && !ctrl && !alt && self.focused.is_none() && self.omnibox.is_none() && self.menu.is_none() {
             self.hints = true;
             log::info!("hints shown");
@@ -879,7 +1114,9 @@ impl App {
                 Some(NamedKey::Escape) => self.omnibox = None,
                 Some(NamedKey::Enter) => {
                     let ob = self.omnibox.take().expect("omnibox open");
-                    if let Some(url) = omnibox::resolve(&ob.text) {
+                    if ob.target == Target::RenameSpace {
+                        self.rename_space(&ob.text);
+                    } else if let Some(url) = omnibox::resolve(&ob.text) {
                         match (ob.target, self.focused_page()) {
                             (Target::Focused, Some(page)) => page.load(&url),
                             _ => {
@@ -926,6 +1163,29 @@ impl App {
         if pressed {
             // App shortcuts first.
             let handled = match code {
+                // Spaces.
+                Some(KeyCode::KeyN) if ctrl && shift && !alt => {
+                    self.new_space();
+                    true
+                }
+                Some(KeyCode::PageDown | KeyCode::PageUp) if ctrl && !shift && !alt => {
+                    let step = if code == Some(KeyCode::PageDown) { 1 } else { -1 };
+                    self.switch_space(self.spaces.neighbour(self.spaces.active, step));
+                    true
+                }
+                Some(KeyCode::F2) if !ctrl && !shift && !alt => {
+                    let name = self.spaces.active_entry().name.clone();
+                    self.omnibox = Some(Omnibox::new(&name, Target::RenameSpace));
+                    true
+                }
+                Some(KeyCode::KeyB) if ctrl && shift && !alt => {
+                    self.cycle_background();
+                    true
+                }
+                Some(KeyCode::KeyW) if ctrl && shift && !alt => {
+                    self.ask_delete_space();
+                    true
+                }
                 Some(KeyCode::KeyL) if ctrl => {
                     let url = self.focused.and_then(|id| self.scene.node(id)).map(|n| n.url.clone()).unwrap_or_default();
                     let target = if self.focused.is_some() { Target::Focused } else { Target::NewCard };
@@ -1050,18 +1310,21 @@ impl App {
         let k = self.camera.pixels_per_unit(scale);
 
         // Upload new page frames.
+        let epoch = self.epoch;
         if let Some(r) = self.renderer.as_mut() {
             for (id, card) in &self.cards {
                 let f = card.page.frame();
-                r.update_page(id.0, f.width, f.height, &f.pixels, f.serial);
+                r.update_page(page_key(epoch, *id), f.width, f.height, &f.pixels, f.serial);
             }
         }
 
         let origin = self.camera.world_to_screen(Vec2::default(), vp, scale);
         let spacing = 32.0 * k;
+        let [br, bgr, bb] = self.spaces.active_entry().background;
+        let lift = |c: u8| c.saturating_add(48);
         let bg = Background {
-            color: rgba(22, 22, 26, 1.0),
-            dot: rgba(70, 70, 80, (spacing / 24.0).clamp(0.0, 1.0)),
+            color: rgba(br, bgr, bb, 1.0),
+            dot: rgba(lift(br), lift(bgr), lift(bb).saturating_add(10), (spacing / 24.0).clamp(0.0, 1.0)),
             grid_origin: [origin.x, origin.y],
             grid_spacing: spacing,
             dot_radius: (1.1 * scale).max(0.8),
@@ -1138,7 +1401,8 @@ impl App {
                 color: if focused { rgba(46, 46, 54, 1.0) } else { rgba(36, 36, 42, 1.0) },
                 texture: None,
             });
-            let has_tex = self.renderer.as_ref().is_some_and(|r| r.has_page(n.id.0));
+            let key = page_key(epoch, n.id);
+            let has_tex = self.renderer.as_ref().is_some_and(|r| r.has_page(key));
             let asleep = card.is_none();
             l.quads.push(Quad {
                 // Round the bottom corners like the frame, so the page doesn't square them off.
@@ -1149,7 +1413,7 @@ impl App {
                     (false, false) => rgba(250, 250, 250, 1.0), // live, first paint pending
                     (false, true) => rgba(52, 52, 60, 1.0),     // asleep, never painted
                 },
-                texture: has_tex.then_some(n.id.0),
+                texture: has_tex.then_some(key),
             });
             if asleep && !has_tex {
                 let size = 15.0 * k;
@@ -1232,8 +1496,12 @@ impl App {
             let r = Rect::new((vp.x - w) / 2.0, 18.0 * scale, w, h);
             let size = 17.0 * scale;
             let pad = 16.0 * scale;
+            let placeholder = match ob.target {
+                Target::RenameSpace => "Space name",
+                _ => "Search or enter address",
+            };
             let (shown, color) = if ob.text.is_empty() {
-                ("Search or enter address".to_string(), rgba(130, 130, 140, 1.0))
+                (placeholder.to_string(), rgba(130, 130, 140, 1.0))
             } else {
                 (ob.text.clone(), rgba(240, 240, 245, 1.0))
             };
@@ -1291,6 +1559,27 @@ impl App {
             layers.push(menu_layer(m, scale, screen));
         }
 
+        // Space name in the top-left corner once there is more than one space.
+        if self.spaces.spaces.len() > 1 && self.omnibox.is_none() {
+            let label = self.space_label();
+            let color = self.spaces.active_entry().background;
+            layers.push(self.pill(&label, Vec2::new(12.0 * scale, 12.0 * scale), 13.0 * scale, Some(color), false));
+        }
+        if let Some((msg, at)) = &self.toast {
+            if self.confirm_delete || at.elapsed() < TOAST_FOR {
+                if self.omnibox.is_none() {
+                    let size = 15.0 * scale;
+                    let msg = msg.clone();
+                    let w = self.renderer.as_mut().map_or(300.0, |r| r.measure(&msg, size, false));
+                    let pos = Vec2::new((vp.x - w) / 2.0 - 16.0 * scale, 18.0 * scale);
+                    let warn = self.confirm_delete;
+                    layers.push(self.pill(&msg, pos, size, None, warn));
+                }
+            } else {
+                self.toast = None;
+            }
+        }
+
         if self.hints
             && let Some(r) = self.renderer.as_mut()
         {
@@ -1300,6 +1589,46 @@ impl App {
         if let Some(r) = self.renderer.as_mut() {
             r.render(bg, &layers);
         }
+    }
+
+    /// A rounded label with its top-left at `pos` (screen px). `swatch` draws a
+    /// colour dot before the text; `warn` uses a red outline.
+    fn pill(&mut self, text: &str, pos: Vec2, size: f32, swatch: Option<[u8; 3]>, warn: bool) -> Layer {
+        let scale = self.scale();
+        let pad = size * 1.05;
+        let h = size * 2.3;
+        let dot = if swatch.is_some() { size * 0.8 + size * 0.6 } else { 0.0 };
+        let w = self.renderer.as_mut().map_or(200.0, |r| r.measure(text, size, false)) + pad * 2.0 + dot;
+        let r = Rect::new(pos.x, pos.y, w, h);
+        let mut l = Layer::default();
+        l.quads.push(Quad {
+            shape: Shape::Shadow { rect: r.translate(Vec2::new(0.0, 4.0 * scale)), radius: h / 2.0, blur: 16.0 * scale },
+            color: [0.0, 0.0, 0.0, 0.5],
+            texture: None,
+        });
+        if warn {
+            l.quads.push(Quad { shape: Shape::Rect { rect: r.inflate(1.5 * scale), radius: h / 2.0 + 1.5 * scale }, color: rgba(230, 90, 80, 1.0), texture: None });
+        }
+        l.quads.push(Quad { shape: Shape::Rect { rect: r, radius: h / 2.0 }, color: rgba(44, 44, 52, 0.96), texture: None });
+        if let Some([cr, cg, cb]) = swatch {
+            let d = size * 0.8;
+            // The board colours are very dark; brighten them so the dot tells spaces apart.
+            let lift = |c: u8| c.saturating_mul(4);
+            l.quads.push(Quad {
+                shape: Shape::Rect { rect: Rect::new(r.x + pad, r.y + (h - d) / 2.0, d, d), radius: d / 2.0 },
+                color: rgba(lift(cr), lift(cg), lift(cb), 1.0),
+                texture: None,
+            });
+        }
+        l.texts.push(Text {
+            text: text.into(),
+            pos: [r.x + pad + dot, r.y + (h - size * 1.3) / 2.0],
+            size,
+            color: rgba(225, 225, 232, 1.0),
+            clip: r,
+            bold: false,
+        });
+        l
     }
 
     /// One iteration of app work outside winit callbacks.
@@ -1631,6 +1960,14 @@ impl App {
                     }
                     for e in self.scene.edges() {
                         log::info!("script edge {} -> {}", e.from.0, e.to.0);
+                    }
+                }
+                Cmd::Spaces => {
+                    for e in &self.spaces.spaces {
+                        log::info!(
+                            "script space {}: {:?} bg={:?}{}",
+                            e.id.0, e.name, e.background, if e.id == self.spaces.active { " active" } else { "" }
+                        );
                     }
                 }
                 Cmd::Open(url) => {

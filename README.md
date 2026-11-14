@@ -54,6 +54,7 @@ you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change th
 | Select cards | Shift+drag on the board, Shift+click title bars, Ctrl+A (Esc clears) |
 | Move / close selected cards | drag a selected title bar / Delete |
 | Fill the view with a card | double-click its title bar |
+| Read Mode (page fills the window) | Tab (Tab, Esc or double-click its bar to go back) |
 | Close card / reopen closed | × or Ctrl+W / Ctrl+Shift+T |
 | Undo / redo board edits | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y (after clicking the board or a title bar) |
 | Address bar / new card | Ctrl+L / Ctrl+T (or N with no page focused) |

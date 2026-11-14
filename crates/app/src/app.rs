@@ -20,6 +20,9 @@
 //! - Ctrl+C / Ctrl+X / Ctrl+V in a page go through the desktop clipboard (see `clipboard`).
 //! - IME (e.g. fcitx5) composition goes to the focused page or the address bar.
 //! - F1 (anywhere) or `?` (no card focused) shows the shortcuts; Ctrl+Q quits.
+//! - Tab (unless keys are going to a page) toggles Read Mode: the focused card, or
+//!   the one in the middle of the view, fills the window and its page lays out at
+//!   the window's size. Esc, Tab or a double-click on its bar returns to the board.
 //! - Looks follow Omarchy live (see `theme` and `desktop`): the theme's palette,
 //!   light or dark (pages too), Hyprland's rounding and the desktop text size.
 //! - Spaces: Ctrl+Shift+N new space, Ctrl+PageDown / Ctrl+PageUp next / previous,
@@ -36,7 +39,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use compositor::{Background, Layer, Quad, Renderer, Shape, Text};
-use scene::{liveness, placement, selection, Camera, Change, Edge, History, Node, NodeId, Rect, Scene, Selection, Vec2};
+use scene::{liveness, placement, read, selection, Camera, Change, Edge, History, Node, NodeId, Rect, Scene, Selection, Vec2};
 use storage::spaces::{self, SpaceId, SpaceIndex};
 use web::{MouseButton as WebButton, Page, SpawnBeside, WebEvent};
 use winit::application::ApplicationHandler;
@@ -63,6 +66,8 @@ const CARD_H: f32 = 720.0;
 const MIN_CARD: f32 = 240.0;
 const RESIZE_GRIP: f32 = 18.0;
 const CLOSE_W: f32 = 30.0;
+/// Height of the Read Mode title bar, in overlay px (scaled by `ui()`).
+const READ_BAR: f32 = 34.0;
 /// How long a toast stays on screen.
 const TOAST_FOR: Duration = Duration::from_millis(1800);
 /// Bits of a page key that hold the card id; the space epoch sits above them.
@@ -128,6 +133,8 @@ pub struct App {
     menu: Option<ContextMenu>,
     /// The shortcut sheet (`?`) is showing.
     hints: bool,
+    /// Read Mode: this card fills the window (see `scene::read`).
+    read: Option<NodeId>,
     /// The current mouse press started inside the context menu.
     menu_pressed: bool,
     clipboard: Clipboard,
@@ -193,6 +200,7 @@ impl App {
             omnibox: None,
             menu: None,
             hints: false,
+            read: None,
             menu_pressed: false,
             clipboard: Clipboard::new(),
             ime_allowed: false,
@@ -358,6 +366,7 @@ impl App {
         self.drag = Drag::None;
         self.omnibox = None;
         self.menu = None;
+        self.read = None;
         self.ime_page = None;
         self.confirm_delete = false;
         self.epoch += 1;
@@ -512,10 +521,32 @@ impl App {
         self.camera.rect_to_screen(r, self.viewport(), self.scale())
     }
 
-    fn page_point(&self, id: NodeId, screen: Vec2) -> Option<(i32, i32)> {
+    fn read_layout(&self) -> read::ReadLayout {
+        read::layout(self.viewport(), self.scale(), READ_BAR * self.ui())
+    }
+
+    /// Where card `id`'s page is drawn (screen px) and its size in CSS px.
+    fn page_view(&self, id: NodeId) -> Option<(Rect, Vec2)> {
+        if self.read == Some(id) {
+            let l = self.read_layout();
+            return Some((l.content, Vec2::new(l.css.0 as f32, l.css.1 as f32)));
+        }
         let n = self.scene.node(id)?;
-        let w = self.to_world(screen);
-        Some(((w.x - n.rect.x).round() as i32, (w.y - n.rect.y).round() as i32))
+        Some((self.to_screen_rect(n.rect), Vec2::new(n.rect.w, n.rect.h)))
+    }
+
+    /// Screen point → CSS px in card `id`'s page.
+    fn page_point(&self, id: NodeId, screen: Vec2) -> Option<(i32, i32)> {
+        let (r, css) = self.page_view(id)?;
+        let k = css.x / r.w.max(1e-3);
+        Some((((screen.x - r.x) * k).round() as i32, ((screen.y - r.y) * k).round() as i32))
+    }
+
+    /// A rect in card `id`'s page (CSS px) → screen px.
+    fn page_rect_to_screen(&self, id: NodeId, p: Rect) -> Option<Rect> {
+        let (r, css) = self.page_view(id)?;
+        let k = r.w / css.x.max(1e-3);
+        Some(Rect::new(r.x + p.x * k, r.y + p.y * k, p.w * k, p.h * k))
     }
 
     fn camera_moved(&mut self) {
@@ -606,6 +637,11 @@ impl App {
         if self.focused == Some(id) {
             self.focused = None;
         }
+        if self.read == Some(id) {
+            log::info!("read mode: card {} is gone; back to the board", id.0);
+            self.read = None;
+            self.camera_moved();
+        }
     }
 
     /// Ctrl+Shift+T: bring back the newest closed card that isn't already back (via undo).
@@ -672,6 +708,7 @@ impl App {
     // ---------------------------------------------------------------- camera
 
     fn fit_all(&mut self) {
+        self.leave_read();
         if let Some(b) = self.scene.bounds() {
             self.camera_goal = Some(Camera::fit(b, self.viewport(), self.scale(), 48.0 * self.scale()));
         }
@@ -685,8 +722,50 @@ impl App {
         }
     }
 
+    /// Read card `id`: it fills the window and gets focus. Keys stay with the
+    /// board (Tab returns) until the page is clicked; other keys reach the page.
+    fn read_card(&mut self, id: NodeId) {
+        if self.scene.node(id).is_none() {
+            return;
+        }
+        if self.read != Some(id) {
+            log::info!("read mode: card {}", id.0);
+        }
+        self.read = Some(id);
+        self.selection.clear();
+        self.menu = None;
+        self.camera_goal = None;
+        self.drag = Drag::None;
+        self.focus(Some(id));
+        self.keys_in_page = false;
+    }
+
+    /// Tab: read the focused card (or the one in the middle of the view), or go back to the board.
+    fn toggle_read(&mut self) {
+        if self.read.is_some() {
+            self.leave_read();
+        } else if let Some(id) = read::pick(&self.scene, self.focused, self.camera.center) {
+            self.read_card(id);
+        }
+    }
+
+    /// Back to the board as it was, with the card that was read focused and on screen.
+    fn leave_read(&mut self) {
+        let Some(id) = self.read.take() else { return };
+        log::info!("read mode: back to the board");
+        self.menu = None;
+        self.keys_in_page = false;
+        self.camera_moved(); // pages go back to the board's raster scale once settled
+        self.ensure_visible(id);
+    }
+
     /// Glide just enough to bring card `id` on screen (fitting it with the focused card if possible).
+    /// In Read Mode, bringing a card on screen means reading it.
     fn ensure_visible(&mut self, id: NodeId) {
+        if self.read.is_some() {
+            self.read_card(id);
+            return;
+        }
         let Some(frame) = self.scene.node(id).map(|n| n.frame()) else { return };
         let vp = self.viewport();
         let on_screen = self.to_screen_rect(frame);
@@ -722,10 +801,14 @@ impl App {
     /// Re-rasterize pages at a resolution matching the settled zoom, and hide
     /// pages that are off screen so they stop painting.
     fn sync_pages(&mut self) {
-        let settled = self.camera_changed.elapsed() > Duration::from_millis(250) && self.camera_goal.is_none();
+        // A read page is shown 1:1, so it rasterizes as if the zoom were 1.
+        let reading = self.read;
+        let settled =
+            reading.is_some() || (self.camera_changed.elapsed() > Duration::from_millis(250) && self.camera_goal.is_none());
         self.sync_liveness(settled && !matches!(self.drag, Drag::Pan { .. }));
         if settled {
-            let want = ((self.camera.zoom * self.scale()) * 4.0).round().clamp(2.0, 8.0) / 4.0;
+            let zoom = if reading.is_some() { 1.0 } else { self.camera.zoom };
+            let want = ((zoom * self.scale()) * 4.0).round().clamp(2.0, 8.0) / 4.0;
             if (want - self.page_scale).abs() > f32::EPSILON {
                 self.page_scale = want;
             }
@@ -734,9 +817,14 @@ impl App {
         let screen = Rect::new(0.0, 0.0, vp.x, vp.y);
         let page_scale = self.page_scale;
         let mut updates = Vec::new();
+        let read_css = self.read_layout().css;
         for n in self.scene.nodes() {
-            let on_screen = self.to_screen_rect(n.frame()).intersects(&screen);
-            updates.push((n.id, on_screen, (n.rect.w.round() as i32, n.rect.h.round() as i32)));
+            let (on_screen, size) = match reading {
+                Some(r) if r == n.id => (true, read_css),
+                Some(_) => (false, (n.rect.w.round() as i32, n.rect.h.round() as i32)),
+                None => (self.to_screen_rect(n.frame()).intersects(&screen), (n.rect.w.round() as i32, n.rect.h.round() as i32)),
+            };
+            updates.push((n.id, on_screen, size));
         }
         for (id, visible, size) in updates {
             if let Some(card) = self.cards.get_mut(&id) {
@@ -760,7 +848,10 @@ impl App {
             .map(|n| liveness::Candidate {
                 id: n.id,
                 live: self.cards.contains_key(&n.id),
-                visible: self.to_screen_rect(n.frame()).intersects(&screen),
+                visible: match self.read {
+                    Some(r) => r == n.id,
+                    None => self.to_screen_rect(n.frame()).intersects(&screen),
+                },
                 focused: self.focused == Some(n.id),
                 last_used: self.used.get(&n.id).copied().unwrap_or(0),
             })
@@ -837,6 +928,9 @@ impl App {
     // ---------------------------------------------------------------- input
 
     fn hit(&self, screen: Vec2) -> Hit {
+        if let Some(id) = self.read {
+            return if self.read_layout().content.contains(screen) { Hit::Content(id) } else { Hit::ReadBar(id) };
+        }
         let w = self.to_world(screen);
         let Some(id) = self.scene.topmost_at(w) else { return Hit::Board };
         let n = self.scene.node(id).expect("hit node exists");
@@ -922,7 +1016,9 @@ impl App {
                         return;
                     }
                 }
-                self.drag = Drag::Pan { last: p };
+                if self.read.is_none() {
+                    self.drag = Drag::Pan { last: p };
+                }
                 return;
             }
             let web_button = match button {
@@ -943,6 +1039,12 @@ impl App {
                     self.focus(None);
                     self.selection.clear();
                     self.drag = Drag::Pan { last: p };
+                }
+                Hit::ReadBar(_) => {
+                    self.keys_in_page = false;
+                    if self.click_count >= 2 && button == MouseButton::Left {
+                        self.leave_read();
+                    }
                 }
                 Hit::Close(id) => self.close_card(id),
                 Hit::Header(id) => {
@@ -1064,7 +1166,7 @@ impl App {
                     Hit::Grip(_) => web::Cursor::ResizeSE,
                     Hit::Close(_) => web::Cursor::Pointer,
                     Hit::Content(id) => self.cards.get(&id).map_or(web::Cursor::Default, |c| c.cursor),
-                    Hit::Board => web::Cursor::Default,
+                    Hit::Board | Hit::ReadBar(_) => web::Cursor::Default,
                 };
                 self.set_cursor(cursor);
             }
@@ -1090,6 +1192,9 @@ impl App {
         self.camera_goal = None;
         self.menu = None;
         if self.mods.control_key() {
+            if self.read.is_some() {
+                return; // the board isn't on screen
+            }
             let steps = if lines { dy } else { dy / 60.0 };
             self.camera.zoom_about(1.15f32.powf(steps), self.cursor, self.viewport(), self.scale());
             self.camera_moved();
@@ -1103,6 +1208,9 @@ impl App {
                 }
                 return;
             }
+        if self.read.is_some() {
+            return;
+        }
         let (px, py) = if lines { (dx * 60.0, dy * 60.0) } else { (dx, dy) };
         self.camera.pan_pixels(Vec2::new(px, py), self.scale());
         self.camera_moved();
@@ -1321,6 +1429,18 @@ impl App {
                     self.selection.select_all(&self.scene);
                     true
                 }
+                Some(KeyCode::Tab) if !ctrl && !alt && !shift && !(self.keys_in_page && self.focused_page().is_some()) => {
+                    self.toggle_read();
+                    true
+                }
+                Some(KeyCode::Escape) if self.read.is_some() && self.drag_is_idle() => {
+                    // The page sees Esc too (closes its menus); the card stays focused.
+                    if let Some(p) = self.focused_page() {
+                        p.send_key(&ev.to_web(self.mods));
+                    }
+                    self.leave_read();
+                    true
+                }
                 Some(KeyCode::Escape) if self.focused.is_none() && !self.selection.is_empty() => {
                     self.selection.clear();
                     true
@@ -1399,7 +1519,8 @@ impl App {
 
         // Trail edges under everything: a gentle S-curve from source's right edge to target's left edge.
         let mut edges = Layer::default();
-        for e in self.scene.edges() {
+        let board_edges = if self.read.is_some() { &[][..] } else { self.scene.edges() };
+        for e in board_edges {
             let (Some(a), Some(b)) = (self.scene.node(e.from), self.scene.node(e.to)) else { continue };
             let fa = self.to_screen_rect(a.frame());
             let fb = self.to_screen_rect(b.frame());
@@ -1429,7 +1550,8 @@ impl App {
         let screen = Rect::new(0.0, 0.0, vp.x, vp.y);
         let band = self.band();
         let in_band = band.map(|b| selection::in_band(&self.scene, b)).unwrap_or_default();
-        for n in self.scene.draw_order() {
+        let board_cards = if self.read.is_some() { Vec::new() } else { self.scene.draw_order() };
+        for n in board_cards {
             let frame = self.to_screen_rect(n.frame());
             if !frame.inflate(40.0).intersects(&screen) {
                 continue;
@@ -1538,6 +1660,11 @@ impl App {
             layers.push(l);
         }
 
+        if let Some(id) = self.read {
+            let l = self.read_layer(id);
+            layers.push(l);
+        }
+
         // Empty-board hint.
         if self.scene.is_empty() && self.omnibox.is_none() {
             let size = 16.0 * ui;
@@ -1630,7 +1757,7 @@ impl App {
         }
 
         // Space name in the top-left corner once there is more than one space.
-        if self.spaces.spaces.len() > 1 && self.omnibox.is_none() {
+        if self.spaces.spaces.len() > 1 && self.omnibox.is_none() && self.read.is_none() {
             let label = self.space_label();
             let color = th.swatch(tint.as_deref());
             layers.push(self.pill(&label, Vec2::new(12.0 * ui, 12.0 * ui), 13.0 * ui, Some(color), false));
@@ -1641,7 +1768,9 @@ impl App {
                     let size = 15.0 * ui;
                     let msg = msg.clone();
                     let w = self.renderer.as_mut().map_or(300.0, |r| r.measure(&msg, size, false));
-                    let pos = Vec2::new((vp.x - w) / 2.0 - 16.0 * ui, 18.0 * ui);
+                    // Below Read Mode's bar, so it doesn't cover the title.
+                    let top = if self.read.is_some() { READ_BAR * ui } else { 0.0 };
+                    let pos = Vec2::new((vp.x - w) / 2.0 - 16.0 * ui, top + 18.0 * ui);
                     let warn = self.confirm_delete;
                     layers.push(self.pill(&msg, pos, size, None, warn));
                 }
@@ -1659,6 +1788,55 @@ impl App {
         if let Some(r) = self.renderer.as_mut() {
             r.render(bg, &layers);
         }
+    }
+
+    /// Read Mode: card `id`'s page across the window under a title bar.
+    fn read_layer(&mut self, id: NodeId) -> Layer {
+        let th = self.theme.clone();
+        let ui = self.ui();
+        let scale = self.scale();
+        let lay = self.read_layout();
+        let key = self.page_key(id);
+        let has_tex = self.renderer.as_ref().is_some_and(|r| r.has_page(key));
+        let loading = self.cards.get(&id).is_some_and(|c| c.loading);
+        let title = self.scene.node(id).map_or(String::new(), |n| if n.title.is_empty() { n.url.clone() } else { n.title.clone() });
+        let mut l = Layer::default();
+        l.quads.push(Quad {
+            shape: Shape::Rect { rect: lay.content, radius: 0.0 },
+            color: if has_tex { [1.0; 4] } else { rgb(th.placeholder(), 1.0) },
+            texture: has_tex.then_some(key),
+        });
+        let bar = lay.bar;
+        l.quads.push(Quad { shape: Shape::Rect { rect: bar, radius: 0.0 }, color: rgb(th.card(true), 1.0), texture: None });
+        l.quads.push(Quad {
+            shape: Shape::Rect { rect: Rect::new(bar.x, bar.bottom() - scale.max(1.0), bar.w, scale.max(1.0)), radius: 0.0 },
+            color: rgb(th.divider(), 1.0),
+            texture: None,
+        });
+        if loading {
+            let t = (self.started.elapsed().as_secs_f32() * 0.8).fract();
+            let w = bar.w * 0.25;
+            l.quads.push(Quad {
+                shape: Shape::Rect { rect: Rect::new(bar.x + (bar.w - w) * t, bar.bottom() - 2.0 * scale.max(1.0), w, 2.0 * scale.max(1.0)), radius: 0.0 },
+                color: rgb(th.accent(), 1.0),
+                texture: None,
+            });
+        }
+        let size = 13.0 * ui;
+        let pad = 14.0 * ui;
+        let hint = "Tab · Esc  Board";
+        let hint_w = self.renderer.as_mut().map_or(120.0, |r| r.measure(hint, size, false));
+        let y = bar.y + (bar.h - size * 1.3) / 2.0;
+        l.texts.push(Text {
+            text: title,
+            pos: [bar.x + pad, y],
+            size,
+            color: rgb(th.foreground(), 1.0),
+            clip: Rect::new(bar.x + pad, bar.y, (bar.w - hint_w - pad * 3.0).max(1.0), bar.h),
+            bold: true,
+        });
+        l.texts.push(Text { text: hint.into(), pos: [bar.right() - pad - hint_w, y], size, color: rgb(th.dim_text(), 1.0), clip: bar, bold: false });
+        l
     }
 
     /// A rounded label with its top-left at `pos` (screen px). `swatch` draws a
@@ -1801,8 +1979,7 @@ impl App {
         } else if page_keys {
             self.focused.and_then(|id| {
                 let (x, y, w, h) = self.cards.get(&id)?.page.ime_caret()?;
-                let n = self.scene.node(id)?;
-                let r = self.to_screen_rect(Rect::new(n.rect.x + x, n.rect.y + y, w.max(1.0), h.max(1.0)));
+                let r = self.page_rect_to_screen(id, Rect::new(x, y, w.max(1.0), h.max(1.0)))?;
                 Some([r.x as i32, r.y as i32, r.w.ceil() as i32, r.h.ceil() as i32])
             })
         } else {
@@ -1826,8 +2003,8 @@ impl App {
     }
 
     fn open_menu(&mut self, id: NodeId, x: f32, y: f32, ctx: &web::menu::MenuContext) {
-        let Some(n) = self.scene.node(id) else { return };
-        let anchor = self.camera.world_to_screen(Vec2::new(n.rect.x + x, n.rect.y + y), self.viewport(), self.scale());
+        let Some(at) = self.page_rect_to_screen(id, Rect::new(x, y, 0.0, 0.0)) else { return };
+        let anchor = Vec2::new(at.x, at.y);
         let items = web::menu::items(ctx);
         let scale = self.ui();
         let label_w = match self.renderer.as_mut() {
@@ -1961,11 +2138,11 @@ impl App {
                     self.mods = saved;
                 }
                 Cmd::PageClick { id, x, y, right } => {
-                    let Some(n) = self.scene.node(NodeId(id)) else {
+                    let Some(at) = self.page_rect_to_screen(NodeId(id), Rect::new(x, y, 0.0, 0.0)) else {
                         log::warn!("script: no card {id}");
                         continue;
                     };
-                    let p = self.camera.world_to_screen(Vec2::new(n.rect.x + x, n.rect.y + y), self.viewport(), self.scale());
+                    let p = Vec2::new(at.x, at.y);
                     let button = if right { MouseButton::Right } else { MouseButton::Left };
                     self.cursor_moved(p);
                     self.mouse_input(ElementState::Pressed, button);
@@ -2037,6 +2214,12 @@ impl App {
                     for e in self.scene.edges() {
                         log::info!("script edge {} -> {}", e.from.0, e.to.0);
                     }
+                    let l = self.read_layout();
+                    log::info!(
+                        "script read: {:?} css={:?} page_scale={} focused={:?} keys_in_page={} camera=({:.0},{:.0} z{:.3})",
+                        self.read.map(|r| r.0), l.css, self.page_scale, self.focused.map(|f| f.0), self.keys_in_page,
+                        self.camera.center.x, self.camera.center.y, self.camera.zoom
+                    );
                 }
                 Cmd::Spaces => {
                     for e in &self.spaces.spaces {
@@ -2136,13 +2319,15 @@ enum Hit {
     Close(NodeId),
     Grip(NodeId),
     Content(NodeId),
+    /// Read Mode's title bar.
+    ReadBar(NodeId),
 }
 
 impl Hit {
     fn id(&self) -> Option<NodeId> {
         match *self {
             Hit::Board => None,
-            Hit::Header(id) | Hit::Close(id) | Hit::Grip(id) | Hit::Content(id) => Some(id),
+            Hit::Header(id) | Hit::Close(id) | Hit::Grip(id) | Hit::Content(id) | Hit::ReadBar(id) => Some(id),
         }
     }
 }

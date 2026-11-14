@@ -29,6 +29,7 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("Double-click title", "Fill the view"),
             ("× · Ctrl+W", "Close"),
             ("Esc", "Leave the page"),
+            ("Tab", "Read mode / back to the board"),
         ],
     ),
     (

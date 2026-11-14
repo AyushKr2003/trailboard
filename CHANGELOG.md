@@ -7,6 +7,12 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Read Mode**: Tab makes the focused card (or the one in the middle of the
+  view) fill the window, with its page laid out at the window's size under a
+  slim title bar. Tab, Esc or a double-click on the bar returns to the board as
+  it was. Links opened while reading are added beside on the board and read
+  next. After clicking inside a page, Tab goes to the page (form fields); Esc
+  still leaves. Script `cards` logs the Read Mode state.
 - **Omarchy look**: Trailboard follows the current Omarchy theme live, with its
   palette for the board, cards, address bar, menus, labels and the shortcut
   sheet, light themes as well as dark. Pages get the theme's light or dark

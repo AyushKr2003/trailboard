@@ -172,8 +172,25 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   upgrade is written back; unknown/newer versions are refused, not touched).
   Boards are still version 1; give them the same kind of step on their first change.
 
-### M5: Board tools ⬜
-- Read Mode: a card fills the window; Tab toggles board ↔ page.
+### M5: Board tools 🟡
+- ✅ Read Mode: a card fills the window; Tab toggles board ↔ page
+  (`scene::read`: `layout`, `pick`). Decisions (2026-11-14):
+  - The page *reflows* to the window (CSS size = window below a title bar,
+    rastered at the window scale, 1:1) instead of the camera zooming in, so text
+    reads at its natural size. The card's board rect and the camera are not
+    touched, so leaving shows the board as it was (gliding only if the card
+    isn't on screen). Read Mode is not saved; a restart opens the board.
+  - Which card: the focused one, else the topmost under the middle of the view,
+    else the nearest to it.
+  - Keys: Tab toggles unless keys are going to a page (after a click inside it),
+    so Tab still moves between form fields; Esc always leaves (the page sees it
+    too) and keeps the card focused; a double-click on the bar leaves. Other keys
+    (arrows, Space) reach the page, so it scrolls straight away.
+  - Anything that would bring a card on screen while reading (a link opened
+    beside, Ctrl+T, Ctrl+Shift+T, undo) reads that card instead; the trail edge
+    is still added on the board. Closing the read card, F/Ctrl+0 or a space
+    switch go back to the board. Ctrl+scroll does nothing while reading (page
+    zoom is M6).
 - Tidy (T): our own tree layout per trail (roots left, children in columns, no overlaps).
 - Fold (S): collapse a trail into a stack; peek/unfold; stack outline.
 - Next/Previous on Trail navigation; trail names and colours.
@@ -274,53 +291,45 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M4 Spaces, then the Omarchy look: live theme
-palette (light/dark, pages too), Hyprland rounding, desktop text size, theme
-tints for spaces (index v2 with a migration), F1 and Ctrl+Q.
-**Repo state:** on `master`, committed after 9dd03c6; working tree clean.
+**Last session:** 2026-11-14. M5 Read Mode.
+**Repo state:** on `master`, committed after 8de8c90; working tree clean.
 **Done this session:**
-- `storage::spaces`: `SpaceIndex` (add after active, neighbour with wrap,
-  rename, remove with the last space kept, cycle tint, repair), `open_spaces`
-  (migration from `board.json`, rebuild from `spaces/*.json`, v1→v2 upgrade via
-  `migrate`), `save_index`, `discard_space`, `space_board_path`.
-- App spaces: `unload_space` / `load_space` / `switch_space` / `new_space` /
-  `rename_space` / `cycle_tint` / `ask_delete_space` / `delete_space`;
-  `Target::RenameSpace`; `page_key(epoch, id)` / `node_of(key)`; `pill` for the
-  space label and toasts; script command `spaces`.
-- `app::theme` (palette parsing, derived colours, rounding/text-size parsers;
-  12 tests) and `app::desktop` (inotify + Hyprland socket thread → channel,
-  drained each frame; 2 tests with a fake theme dir, fake `hyprctl` and socket).
-  No `rgba(` literal is left in `app.rs`/`hints.rs`; all colours come from `Theme`.
-- `web::set_color_scheme` + `Page::apply_color_scheme` (DevTools
-  `Emulation.setEmulatedMedia`).
-- `compositor`: glyphon now uses `ColorMode::Web`. With `Accurate` every text
-  colour was gamma-decoded twice on our non-sRGB surface (mid-tones came out
-  much darker: #a9b1d6 drew as #6570ab).
-**Next up:** M5: Read Mode (a card fills the window; Tab toggles board and page),
-then Tidy (T). Small follow-up: `.desktop` entry and icon (M6).
+- `scene::read`: `layout` (bar, content rect, CSS size for a viewport and
+  scale) and `pick` (focused → topmost under the view centre → nearest); 3 tests.
+- App: `read: Option<NodeId>`, `read_card` / `toggle_read` / `leave_read`,
+  `Hit::ReadBar`, `read_layer` (page 1:1 under a title bar with title, loading
+  bar and a "Tab · Esc Board" hint). One `page_view` (screen rect + CSS size)
+  now backs `page_point` and `page_rect_to_screen`, used by input, the context
+  menu anchor, the IME caret and script `pclick`, so they all work in both modes.
+- `sync_pages`/`sync_liveness`: only the read card is visible; it is sized to
+  the window and the raster scale acts as zoom 1. `ensure_visible` reads the
+  card instead while in Read Mode. Toasts sit below the bar; the space label hides.
+- Shortcut sheet row "Tab · Read mode / back to the board"; README row.
+- Script `cards` also logs `script read: …` (read card, its CSS size, page
+  scale, focus, keys_in_page, camera).
+**Next up:** M5 Tidy (T): our own tree layout per trail (roots left, children in
+columns, no overlaps), pure in `scene` with tests, one undo step (`Edit::Batch`).
+Small follow-up: `.desktop` entry and icon (M6).
 **Notes for the next session:**
-- Omarchy look verified e2e (`~/.cache/trailboard-e2e-spaces`): real Tokyo Night
-  (dark, rounding 0, sharp corners); a fake Catppuccin Latte state dir (light,
-  fake `hyprctl` rounding 10) switched live to Gruvbox + base-size 16 by
-  replacing the theme directory: picked up at once, palette, corners and
-  overlay sizes followed. The test page reported `prefers-color-scheme` light,
-  then dark live, and dark after a reload. The v1 index from the spaces run was
-  upgraded to v2 (plum → `magenta`). Window class is `trailboard`.
-- Not verified: a real `omarchy theme set` / `hyprctl reload` on this desktop
-  (the user's desktop was left alone; the paths and socket protocol are the
-  same as the fakes), and right-to-left or translated UI (strings are English only).
-- Verified e2e (`~/.cache/trailboard-e2e-spaces`, three local file:// pages):
-  an old `board.json` with two cards became `spaces/1.json`; Ctrl+Shift+N made
-  an empty Space 2; F2 + typing renamed it "Research"; Ctrl+Shift+B changed its
-  colour; Ctrl+PageUp/PageDown switched back and forth with each board's
-  cards, camera and live pages; undo on Space 1 did nothing while undo/redo on
-  Research removed/restored its card; Ctrl+Shift+W asked, Esc kept, Enter
-  deleted and returned to Space 1; the board landed in `spaces/deleted/`; a
-  restart showed one space with its two cards. Screenshots checked: background
-  tint, corner label with colour dot, toast and the red-outlined delete prompt.
-- Not verified: real keyboard input for the new shortcuts (script keys only;
-  Hyprland could bind some combos), and the toast after a delete on screen
-  (it expired before the screenshot; the log shows it).
+- Read Mode verified e2e (`~/.cache/trailboard-e2e-read`, two local pages whose
+  title shows `innerWidth×innerHeight`): Tab read card 1 and its page reflowed
+  1024×720 → 1886×996 (the window), page scale 1.25 → 1; a link click while
+  reading opened card 2 beside (edge 1→2) and Read Mode followed it; Tab went
+  back with both pages at 1024×720 / scale 1.25 and the camera panned to card 2;
+  Tab then Esc left with card 2 still focused; after a click inside the page,
+  Tab went to the page (no Read Mode); Ctrl+W while reading went back to the
+  board. With the window tiled to half width, Read Mode reflowed to 941×996.
+  Screenshots checked: read bar + full-window page, board afterwards.
+- Screenshots in e2e runs: trigger `grim` when the log shows a `script log:`
+  marker instead of fixed sleeps; a fixed-sleep shot caught the moment after
+  leaving Read Mode, when the old full-window frame is briefly stretched into
+  the card until the card-size repaint lands (well under a second). Drawing a
+  stale frame at its own aspect (clipped) would hide that, and the same glitch
+  while resizing a card; not done.
+- Not verified: real keyboard Tab (script keys only), a window resize while
+  reading by dragging (the half-width tiling covered the reflow), HiDPI scale.
+- The live-browser cap still counts the read card as focused (never sleeps);
+  other cards are hidden while reading but keep their browsers.
 - A sleeping card's last frame is dropped on switch, so after switching back
   cards beyond the live cap show the plain "asleep" placeholder until woken.
 - Keep the sheet's rows in `hints::SECTIONS` in step with new shortcuts.

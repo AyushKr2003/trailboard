@@ -1,7 +1,9 @@
 //! Keyboard and mouse hint sheet, shown with `?` when no card is focused.
 
-use compositor::{rgba, Layer, Quad, Renderer, Shape, Text};
+use compositor::{Layer, Quad, Renderer, Shape, Text};
 use scene::{Rect, Vec2};
+
+use crate::theme::{rgb, Theme};
 
 /// Section title, then (keys, what they do) rows.
 pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
@@ -14,7 +16,8 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("N · T · Ctrl+T", "New card"),
             ("Ctrl+Z · Ctrl+Shift+Z", "Undo / redo board edits"),
             ("Ctrl+Shift+T", "Reopen closed card"),
-            ("?", "Show / hide these hints"),
+            ("? · F1", "Show / hide these hints"),
+            ("Ctrl+Q", "Quit"),
         ],
     ),
     (
@@ -45,7 +48,7 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl+Shift+N", "New space"),
             ("Ctrl+PgDn · Ctrl+PgUp", "Next / previous space"),
             ("F2", "Rename space"),
-            ("Ctrl+Shift+B", "Next background colour"),
+            ("Ctrl+Shift+B", "Next tint"),
             ("Ctrl+Shift+W", "Delete space"),
         ],
     ),
@@ -62,7 +65,9 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
 ];
 
 /// Draws the sheet centred in `screen`.
-pub fn layer(r: &mut Renderer, scale: f32, screen: Rect) -> Layer {
+/// `scale` is the window scale times the desktop text size; colours and corners follow `th`.
+pub fn layer(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme) -> Layer {
+    let radius = th.radius(scale / th.text_scale);
     let size = 14.0 * scale;
     let line = size * 1.75;
     let pad = 24.0 * scale;
@@ -91,21 +96,29 @@ pub fn layer(r: &mut Renderer, scale: f32, screen: Rect) -> Layer {
     } else {
         (w, h)
     };
+    // Still too tall (large desktop text in a small window): shrink to fit,
+    // since everything scales together. The floor keeps it legible.
+    let room = screen.h - 16.0 * scale;
+    if h > room && scale > 0.5 {
+        return layer(r, (scale * (room / h).min(0.98)).max(0.5), screen, th);
+    }
     let panel = Rect::new(screen.x + (screen.w - w) / 2.0, screen.y + ((screen.h - h) / 2.0).max(8.0), w, h);
 
     let mut l = Layer::default();
-    l.quads.push(Quad { shape: Shape::Rect { rect: screen, radius: 0.0 }, color: [0.0, 0.0, 0.0, 0.45], texture: None });
+    l.quads.push(Quad { shape: Shape::Rect { rect: screen, radius: 0.0 }, color: th.shadow(0.45), texture: None });
     l.quads.push(Quad {
-        shape: Shape::Shadow { rect: panel.translate(Vec2::new(0.0, 8.0 * scale)), radius: 14.0 * scale, blur: 28.0 * scale },
-        color: [0.0, 0.0, 0.0, 0.6],
+        shape: Shape::Shadow { rect: panel.translate(Vec2::new(0.0, 8.0 * scale)), radius, blur: 28.0 * scale },
+        color: th.shadow(0.6),
         texture: None,
     });
-    l.quads.push(Quad { shape: Shape::Rect { rect: panel, radius: 14.0 * scale }, color: rgba(36, 36, 44, 1.0), texture: None });
+    let outer = if radius > 0.0 { radius + 1.0 } else { 0.0 };
+    l.quads.push(Quad { shape: Shape::Rect { rect: panel.inflate(1.0), radius: outer }, color: rgb(th.divider(), 1.0), texture: None });
+    l.quads.push(Quad { shape: Shape::Rect { rect: panel, radius }, color: rgb(th.panel(), 1.0), texture: None });
     let text = |s: &str, x: f32, y: f32, size: f32, color, bold| Text { text: s.into(), pos: [x, y], size, color, clip: panel, bold };
-    l.texts.push(text("Keyboard shortcuts", panel.x + pad, panel.y + pad, title, rgba(240, 240, 245, 1.0), true));
-    let close = "Esc or ? to close";
+    l.texts.push(text("Keyboard shortcuts", panel.x + pad, panel.y + pad, title, rgb(th.foreground(), 1.0), true));
+    let close = "Esc, ? or F1 to close";
     let cw = r.measure(close, size * 0.9, false);
-    l.texts.push(text(close, panel.right() - pad - cw, panel.y + pad + (title - size * 0.9) * 0.6, size * 0.9, rgba(165, 165, 178, 1.0), false));
+    l.texts.push(text(close, panel.right() - pad - cw, panel.y + pad + (title - size * 0.9) * 0.6, size * 0.9, rgb(th.dim_text(), 1.0), false));
 
     let col_w = keys_w + gap + desc_w;
     let top = panel.y + pad + title * 1.8;
@@ -116,11 +129,11 @@ pub fn layer(r: &mut Renderer, scale: f32, screen: Rect) -> Layer {
         for (_, prev) in &SECTIONS[first..i] {
             y += (prev.len() + 1) as f32 * line + line * 0.5;
         }
-        l.texts.push(text(name, x, y, size, rgba(255, 190, 70, 1.0), true));
+        l.texts.push(text(name, x, y, size, rgb(th.accent(), 1.0), true));
         for (j, (keys, desc)) in rows.iter().enumerate() {
             let ry = y + (j + 1) as f32 * line;
-            l.texts.push(text(keys, x, ry, size, rgba(200, 210, 255, 1.0), true));
-            l.texts.push(text(desc, x + keys_w + gap, ry, size, rgba(210, 210, 218, 1.0), false));
+            l.texts.push(text(keys, x, ry, size, rgb(th.foreground(), 1.0), true));
+            l.texts.push(text(desc, x + keys_w + gap, ry, size, rgb(th.dim_text(), 1.0), false));
         }
     }
     l

@@ -150,7 +150,7 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     newer-version index is left alone and the app runs without saving.
   - Keys: Ctrl+Shift+N new (inserted after the current space), Ctrl+PageDown /
     Ctrl+PageUp next / previous (wrapping, like browser tabs), F2 rename (the
-    address bar becomes a name field), Ctrl+Shift+B next background colour,
+    address bar becomes a name field), Ctrl+Shift+B next tint,
     Ctrl+Shift+W delete. Ctrl+Alt combos were avoided because AltGr reports
     Ctrl+Alt on many layouts and would steal typed characters from pages.
   - Delete asks for Enter when the space has cards (any other key or a click
@@ -163,10 +163,14 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     (card ids restart in every space).
   - The current space shows as a label in the top-left corner when there is
     more than one; switches, renames and deletes show a short toast.
-- ✅ Per-space background colour (six dark tints; new spaces take an unused one).
-  Wallpaper images are in FUTURE.md.
-- ⬜ Schema migrations (`version` field present in both files). Deferred until
-  the first format change; old files are migrated by hand-written steps then.
+- ✅ Per-space background colour. Since 2026-11-14 (Omarchy look) a space has a
+  *tint*: none or a theme colour name (blue, green, magenta, orange, cyan, red)
+  mixed lightly into the theme's background, so it suits light and dark themes.
+  New spaces take an unused tint. Wallpaper images are in FUTURE.md.
+- 🟡 Schema migrations: `spaces.json` is upgraded step by step on read
+  (`storage::spaces::migrate`, v1 fixed sRGB `background` → v2 `tint`; the
+  upgrade is written back; unknown/newer versions are refused, not touched).
+  Boards are still version 1; give them the same kind of step on their first change.
 
 ### M5: Board tools ⬜
 - Read Mode: a card fills the window; Tab toggles board ↔ page.
@@ -184,6 +188,36 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
 - ✅ Keyboard-shortcut sheet: `?` with no card focused (`app::hints`). Decisions
   (2026-11-14): only when no card is focused, so `?` still types in pages; Esc,
   `?`, any other key or a click hides it, and that click/key does nothing else.
+- ✅ Omarchy look (`app::theme`, `app::desktop`), modelled on the conventions of
+  Omarchy's own apps. Decisions (2026-11-14):
+  - Palette: the whole of `~/.local/state/omarchy/current/theme/colors.toml`
+    (quoted, bare or commented values; old key aliases; `mode`, `light.mode` or
+    a light background decide light/dark). Without Omarchy: a dark palette with
+    Omarchy's `#FFD60A` accent. Surfaces are steps from background toward
+    foreground; focus ring, trail edges, caret, loading bar and section titles
+    use the accent; multi-select uses `yellow`; highlighted rows `selection`;
+    the delete prompt `red`; text on the accent uses black or white by luminance.
+  - Followed live by events, never polled: inotify on the theme files, re-armed
+    after every change (a theme switch replaces the directory) and on the
+    nearest existing ancestor; changes settle 80 ms before they are read.
+  - Corners follow Hyprland's `decoration:rounding` (0, sharp, on Omarchy's
+    default), asked of `hyprctl` at start and on every `configreloaded>>` from
+    Hyprland's event socket (reconnects with back-off). Cards scale it with the
+    zoom; small highlights cap it at 4 px; colour dots stay circles.
+  - Overlays (address bar, menu, sheet, labels) scale with the shell's
+    `[font] base-size` (`omarchy display text size`) over 12 px; card titles
+    keep following the zoom. The shortcut sheet shrinks to fit a small window.
+  - Pages follow light/dark through DevTools media emulation
+    (`prefers-color-scheme`) per page, because windowless (Alloy) browsers
+    ignore the request context's Chrome colour scheme. Form controls only
+    darken on pages that declare `color-scheme`, as in any browser.
+  - Keys: F1 (also inside pages) shows the sheet; Ctrl+Q quits (the board
+    autosaves, so nothing is lost). Wayland app id `trailboard`.
+  - Test hooks: `TRAILBOARD_OMARCHY_STATE` and `TRAILBOARD_OMARCHY_SHELL`
+    point at a fake theme and shell.toml; a `hyprctl` earlier on `PATH` fakes
+    the rounding.
+- ⬜ A `.desktop` entry and icon (`share/trailboard.desktop`, `share/trailboard.svg`)
+  so Trailboard shows in the Omarchy launcher; translations of the UI strings.
 - ⬜ Settings panel; download handling and a downloads list.
 - Loading/favicons in titles; hover card names when zoomed out.
 
@@ -240,24 +274,41 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M4 Spaces: several boards with their own camera,
-background, undo history and closed cards; `board.json` migrates into space 1.
-**Repo state:** on `master`, committed after 9c37f61; working tree clean.
+**Last session:** 2026-11-14. M4 Spaces, then the Omarchy look: live theme
+palette (light/dark, pages too), Hyprland rounding, desktop text size, theme
+tints for spaces (index v2 with a migration), F1 and Ctrl+Q.
+**Repo state:** on `master`, committed after 9dd03c6; working tree clean.
 **Done this session:**
 - `storage::spaces`: `SpaceIndex` (add after active, neighbour with wrap,
-  rename, remove with the last space kept, cycle background, repair),
-  `open_spaces` (migration from `board.json`, rebuild from `spaces/*.json`),
-  `save_index`, `discard_space`, `space_board_path`. 13 unit tests.
-  `storage::write_atomic` is shared by boards and the index.
-- App: `unload_space` / `load_space` / `switch_space` / `new_space` /
-  `rename_space` / `cycle_background` / `ask_delete_space` / `delete_space`;
-  `Target::RenameSpace` in the omnibox; `page_key(epoch, id)` / `node_of(key)`
-  for browser and texture keys; a `pill` helper draws the space label and toasts.
-- Script command `spaces` logs each space (id, name, background, active).
-- Shortcut sheet has a Spaces section.
+  rename, remove with the last space kept, cycle tint, repair), `open_spaces`
+  (migration from `board.json`, rebuild from `spaces/*.json`, v1→v2 upgrade via
+  `migrate`), `save_index`, `discard_space`, `space_board_path`.
+- App spaces: `unload_space` / `load_space` / `switch_space` / `new_space` /
+  `rename_space` / `cycle_tint` / `ask_delete_space` / `delete_space`;
+  `Target::RenameSpace`; `page_key(epoch, id)` / `node_of(key)`; `pill` for the
+  space label and toasts; script command `spaces`.
+- `app::theme` (palette parsing, derived colours, rounding/text-size parsers;
+  12 tests) and `app::desktop` (inotify + Hyprland socket thread → channel,
+  drained each frame; 2 tests with a fake theme dir, fake `hyprctl` and socket).
+  No `rgba(` literal is left in `app.rs`/`hints.rs`; all colours come from `Theme`.
+- `web::set_color_scheme` + `Page::apply_color_scheme` (DevTools
+  `Emulation.setEmulatedMedia`).
+- `compositor`: glyphon now uses `ColorMode::Web`. With `Accurate` every text
+  colour was gamma-decoded twice on our non-sRGB surface (mid-tones came out
+  much darker: #a9b1d6 drew as #6570ab).
 **Next up:** M5: Read Mode (a card fills the window; Tab toggles board and page),
-then Tidy (T). M4's schema-migration item waits for the first format change.
+then Tidy (T). Small follow-up: `.desktop` entry and icon (M6).
 **Notes for the next session:**
+- Omarchy look verified e2e (`~/.cache/trailboard-e2e-spaces`): real Tokyo Night
+  (dark, rounding 0, sharp corners); a fake Catppuccin Latte state dir (light,
+  fake `hyprctl` rounding 10) switched live to Gruvbox + base-size 16 by
+  replacing the theme directory: picked up at once, palette, corners and
+  overlay sizes followed. The test page reported `prefers-color-scheme` light,
+  then dark live, and dark after a reload. The v1 index from the spaces run was
+  upgraded to v2 (plum → `magenta`). Window class is `trailboard`.
+- Not verified: a real `omarchy theme set` / `hyprctl reload` on this desktop
+  (the user's desktop was left alone; the paths and socket protocol are the
+  same as the fakes), and right-to-left or translated UI (strings are English only).
 - Verified e2e (`~/.cache/trailboard-e2e-spaces`, three local file:// pages):
   an old `board.json` with two cards became `spaces/1.json`; Ctrl+Shift+N made
   an empty Space 2; F2 + typing renamed it "Research"; Ctrl+Shift+B changed its

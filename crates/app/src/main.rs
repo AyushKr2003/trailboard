@@ -3,11 +3,13 @@
 
 mod app;
 mod clipboard;
+mod desktop;
 mod hints;
 mod keymap;
 mod menu;
 mod omnibox;
 mod script;
+mod theme;
 
 use std::path::PathBuf;
 use std::process::ExitCode;

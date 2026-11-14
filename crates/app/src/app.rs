@@ -19,8 +19,11 @@
 //!   outside, scrolling or moving the board closes it.
 //! - Ctrl+C / Ctrl+X / Ctrl+V in a page go through the desktop clipboard (see `clipboard`).
 //! - IME (e.g. fcitx5) composition goes to the focused page or the address bar.
+//! - F1 (anywhere) or `?` (no card focused) shows the shortcuts; Ctrl+Q quits.
+//! - Looks follow Omarchy live (see `theme` and `desktop`): the theme's palette,
+//!   light or dark (pages too), Hyprland's rounding and the desktop text size.
 //! - Spaces: Ctrl+Shift+N new space, Ctrl+PageDown / Ctrl+PageUp next / previous,
-//!   F2 rename, Ctrl+Shift+B next background colour, Ctrl+Shift+W delete (asks
+//!   F2 rename, Ctrl+Shift+B next tint (a theme colour), Ctrl+Shift+W delete (asks
 //!   first when the space has cards). Each space keeps its own board, camera,
 //!   background, undo history and closed cards.
 //!
@@ -32,7 +35,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use compositor::{rgba, Background, Layer, Quad, Renderer, Shape, Text};
+use compositor::{Background, Layer, Quad, Renderer, Shape, Text};
 use scene::{liveness, placement, selection, Camera, Change, Edge, History, Node, NodeId, Rect, Scene, Selection, Vec2};
 use storage::spaces::{self, SpaceId, SpaceIndex};
 use web::{MouseButton as WebButton, Page, SpawnBeside, WebEvent};
@@ -43,9 +46,12 @@ use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, ModifiersState, NamedKey};
+use winit::platform::wayland::WindowAttributesExtWayland;
 use winit::window::{CursorIcon, Window, WindowId};
 
 use crate::clipboard::{Clipboard, Paste};
+use crate::desktop::Desktop;
+use crate::theme::{rgb, Theme};
 use crate::keymap::{self, KeyIn};
 use crate::menu::{self, ContextMenu};
 use crate::omnibox::{self, Omnibox, Target};
@@ -160,6 +166,11 @@ pub struct App {
     /// Board changed since the last save.
     dirty: bool,
     last_save: Instant,
+    /// The Omarchy look in effect, and what follows the desktop for changes.
+    theme: Theme,
+    desktop: Option<Desktop>,
+    /// Page colour scheme last sent to pages (dark).
+    page_scheme: Option<bool>,
 }
 
 impl App {
@@ -208,6 +219,9 @@ impl App {
             confirm_delete: false,
             dirty: false,
             last_save: Instant::now(),
+            theme: Theme::default(),
+            desktop: None,
+            page_scheme: None,
         }
     }
 
@@ -391,10 +405,53 @@ impl App {
         }
     }
 
-    fn cycle_background(&mut self) {
-        self.spaces.cycle_background(self.spaces.active);
+    fn cycle_tint(&mut self) {
+        self.spaces.cycle_tint(self.spaces.active);
         self.save_index();
-        log::info!("space {} background {:?}", self.spaces.active.0, self.spaces.active_entry().background);
+        log::info!("space {} tint {:?}", self.spaces.active.0, self.spaces.active_entry().tint);
+    }
+
+    // ---------------------------------------------------------------- look
+
+    /// Window scale times the desktop's text size: overlays are laid out in this.
+    fn ui(&self) -> f32 {
+        self.scale() * self.theme.text_scale
+    }
+
+    /// Start following the desktop's look (once the window exists).
+    fn start_desktop(&mut self) {
+        let d = Desktop::new(crate::theme::state_dir(), crate::theme::user_shell_toml(), true);
+        let t = d.read(self.theme.rounding);
+        self.desktop = Some(d);
+        self.set_theme(t);
+    }
+
+    fn set_theme(&mut self, t: Theme) {
+        log::info!(
+            "theme: {} accent={:?} background={:?} rounding={} text-scale={:.2}",
+            if t.light() { "light" } else { "dark" },
+            t.accent(),
+            t.background(),
+            t.rounding,
+            t.text_scale
+        );
+        self.theme = t;
+        let dark = !self.theme.light();
+        if self.page_scheme != Some(dark) {
+            web::set_color_scheme(dark);
+            for c in self.cards.values() {
+                c.page.apply_color_scheme();
+            }
+            self.page_scheme = Some(dark);
+        }
+        // The open menu was laid out at the old text size.
+        self.menu = None;
+    }
+
+    fn follow_desktop(&mut self) {
+        if let Some(t) = self.desktop.as_mut().and_then(|d| d.poll(&self.theme)) {
+            self.set_theme(t);
+        }
     }
 
     /// Ctrl+Shift+W: delete the space, asking first unless it is empty.
@@ -1080,7 +1137,9 @@ impl App {
             }
             return;
         }
-        if pressed && is_question && !ctrl && !alt && self.focused.is_none() && self.omnibox.is_none() && self.menu.is_none() {
+        let f1 = ev.named == Some(NamedKey::F1) && !ctrl && !alt;
+        if pressed && (f1 || (is_question && !ctrl && !alt && self.focused.is_none() && self.omnibox.is_none() && self.menu.is_none())) {
+            self.menu = None;
             self.hints = true;
             log::info!("hints shown");
             return;
@@ -1163,6 +1222,11 @@ impl App {
         if pressed {
             // App shortcuts first.
             let handled = match code {
+                Some(KeyCode::KeyQ) if ctrl && !shift && !alt => {
+                    log::info!("quit (Ctrl+Q)");
+                    self.quit = true;
+                    true
+                }
                 // Spaces.
                 Some(KeyCode::KeyN) if ctrl && shift && !alt => {
                     self.new_space();
@@ -1179,7 +1243,7 @@ impl App {
                     true
                 }
                 Some(KeyCode::KeyB) if ctrl && shift && !alt => {
-                    self.cycle_background();
+                    self.cycle_tint();
                     true
                 }
                 Some(KeyCode::KeyW) if ctrl && shift && !alt => {
@@ -1320,11 +1384,12 @@ impl App {
 
         let origin = self.camera.world_to_screen(Vec2::default(), vp, scale);
         let spacing = 32.0 * k;
-        let [br, bgr, bb] = self.spaces.active_entry().background;
-        let lift = |c: u8| c.saturating_add(48);
+        let th = self.theme.clone();
+        let ui = self.ui();
+        let tint = self.spaces.active_entry().tint.clone();
         let bg = Background {
-            color: rgba(br, bgr, bb, 1.0),
-            dot: rgba(lift(br), lift(bgr), lift(bb).saturating_add(10), (spacing / 24.0).clamp(0.0, 1.0)),
+            color: rgb(th.board(tint.as_deref()), 1.0),
+            dot: rgb(th.dots(), (spacing / 24.0).clamp(0.0, 1.0)),
             grid_origin: [origin.x, origin.y],
             grid_spacing: spacing,
             dot_radius: (1.1 * scale).max(0.8),
@@ -1353,7 +1418,7 @@ impl App {
                 let y = u * u * u * p0[1] + 3.0 * u * u * t * p1[1] + 3.0 * u * t * t * p2[1] + t * t * t * p3[1];
                 edges.quads.push(Quad {
                     shape: Shape::Segment { from: prev, to: [x, y], width: (2.0 * k).clamp(1.0, 4.0) },
-                    color: rgba(120, 140, 255, 0.75),
+                    color: rgb(th.accent(), 0.7),
                     texture: None,
                 });
                 prev = [x, y];
@@ -1371,34 +1436,36 @@ impl App {
             }
             let content = self.to_screen_rect(n.rect);
             let header = self.to_screen_rect(n.header());
-            let radius = (10.0 * k).min(14.0);
+            // Cards are windows on the board: Hyprland's rounding, scaled with the zoom.
+            let radius = (th.rounding * k).min(th.radius(scale));
+            let ring = |m: f32| if radius > 0.0 { radius + m } else { 0.0 };
             let focused = self.focused == Some(n.id);
             let card = self.cards.get(&n.id);
             let mut l = Layer::default();
             l.quads.push(Quad {
                 shape: Shape::Shadow { rect: frame.translate(Vec2::new(0.0, 6.0 * k)), radius, blur: (22.0 * k).max(2.0) },
-                color: [0.0, 0.0, 0.0, if focused { 0.55 } else { 0.4 }],
+                color: th.shadow(if focused { 0.55 } else { 0.4 }),
                 texture: None,
             });
             if self.selection.contains(n.id) || in_band.contains(&n.id) {
                 // Selection ring outside the focus ring, so both can show.
                 let m = if focused { 5.0 } else { 3.0 };
                 l.quads.push(Quad {
-                    shape: Shape::Rect { rect: frame.inflate(m * scale), radius: radius + m * scale },
-                    color: rgba(255, 190, 70, 1.0),
+                    shape: Shape::Rect { rect: frame.inflate(m * scale), radius: ring(m * scale) },
+                    color: rgb(th.marked(), 1.0),
                     texture: None,
                 });
             }
             if focused {
                 l.quads.push(Quad {
-                    shape: Shape::Rect { rect: frame.inflate(2.0), radius: radius + 2.0 },
-                    color: rgba(110, 130, 255, 1.0),
+                    shape: Shape::Rect { rect: frame.inflate(2.0 * scale.max(1.0)), radius: ring(2.0 * scale.max(1.0)) },
+                    color: rgb(th.accent(), 1.0),
                     texture: None,
                 });
             }
             l.quads.push(Quad {
                 shape: Shape::Rect { rect: frame, radius },
-                color: if focused { rgba(46, 46, 54, 1.0) } else { rgba(36, 36, 42, 1.0) },
+                color: rgb(th.card(focused), 1.0),
                 texture: None,
             });
             let key = page_key(epoch, n.id);
@@ -1410,8 +1477,7 @@ impl App {
                 color: match (has_tex, asleep) {
                     (true, false) => [1.0; 4],
                     (true, true) => [0.78, 0.78, 0.8, 1.0], // dimmed snapshot
-                    (false, false) => rgba(250, 250, 250, 1.0), // live, first paint pending
-                    (false, true) => rgba(52, 52, 60, 1.0),     // asleep, never painted
+                    (false, _) => rgb(th.placeholder(), 1.0), // first paint pending, or asleep and never painted
                 },
                 texture: has_tex.then_some(key),
             });
@@ -1424,7 +1490,7 @@ impl App {
                         text: msg.into(),
                         pos: [content.x + (content.w - w) / 2.0, content.y + (content.h - size * 1.3) / 2.0],
                         size,
-                        color: rgba(150, 150, 160, 1.0),
+                        color: rgb(th.dim_text(), 1.0),
                         clip: content,
                         bold: false,
                     });
@@ -1436,8 +1502,8 @@ impl App {
                 let w = header.w * 0.25;
                 let x = header.x + (header.w - w) * t;
                 l.quads.push(Quad {
-                    shape: Shape::Rect { rect: Rect::new(x, header.bottom() - 2.0, w, 2.0), radius: 1.0 },
-                    color: rgba(110, 130, 255, 1.0),
+                    shape: Shape::Rect { rect: Rect::new(x, header.bottom() - 2.0, w, 2.0), radius: th.small_radius(1.0).min(1.0) },
+                    color: rgb(th.accent(), 1.0),
                     texture: None,
                 });
             }
@@ -1452,9 +1518,9 @@ impl App {
                     pos: [header.x + pad, header.y + (header.h - font * 1.3) / 2.0],
                     size: font,
                     color: match (focused, asleep) {
-                        (true, _) => rgba(240, 240, 245, 1.0),
-                        (false, false) => rgba(190, 190, 200, 1.0),
-                        (false, true) => rgba(140, 140, 150, 1.0),
+                        (true, _) => rgb(th.foreground(), 1.0),
+                        (false, false) => rgb(crate::theme::mix(th.foreground(), th.dim_text(), 0.4), 1.0),
+                        (false, true) => rgb(th.dim_text(), 1.0),
                     },
                     clip,
                     bold: true,
@@ -1464,7 +1530,7 @@ impl App {
                     text: "×".into(),
                     pos: [header.right() - CLOSE_W * k + (CLOSE_W * k - close_size * 0.6) / 2.0, header.y + (header.h - close_size * 1.3) / 2.0],
                     size: close_size,
-                    color: rgba(170, 170, 180, 1.0),
+                    color: rgb(th.dim_text(), 1.0),
                     clip: header,
                     bold: false,
                 });
@@ -1474,7 +1540,7 @@ impl App {
 
         // Empty-board hint.
         if self.scene.is_empty() && self.omnibox.is_none() {
-            let size = 16.0 * scale;
+            let size = 16.0 * ui;
             let msg = "Press N or Ctrl+T to open a page · ? for shortcuts";
             let w = self.renderer.as_mut().map_or(300.0, |r| r.measure(msg, size, false));
             layers.push(Layer {
@@ -1483,7 +1549,7 @@ impl App {
                     text: msg.into(),
                     pos: [(vp.x - w) / 2.0, vp.y / 2.0 - size],
                     size,
-                    color: rgba(150, 150, 160, 1.0),
+                    color: rgb(th.dim_text(), 1.0),
                     clip: screen,
                     bold: false,
                 }],
@@ -1491,39 +1557,43 @@ impl App {
         }
 
         if let Some(ob) = &self.omnibox {
-            let w = (720.0 * scale).min(vp.x - 32.0 * scale);
-            let h = 48.0 * scale;
-            let r = Rect::new((vp.x - w) / 2.0, 18.0 * scale, w, h);
-            let size = 17.0 * scale;
-            let pad = 16.0 * scale;
+            let w = (720.0 * ui).min(vp.x - 32.0 * ui);
+            let h = 48.0 * ui;
+            let r = Rect::new((vp.x - w) / 2.0, 18.0 * ui, w, h);
+            let size = 17.0 * ui;
+            let pad = 16.0 * ui;
             let placeholder = match ob.target {
                 Target::RenameSpace => "Space name",
                 _ => "Search or enter address",
             };
+            let selected = ob.select_all && !ob.text.is_empty();
             let (shown, color) = if ob.text.is_empty() {
-                (placeholder.to_string(), rgba(130, 130, 140, 1.0))
+                (placeholder.to_string(), rgb(th.dim_text(), 1.0))
+            } else if selected {
+                // Drawn on the accent, so in the colour that reads on it.
+                (ob.text.clone(), rgb(th.accent_foreground(), 1.0))
             } else {
-                (ob.text.clone(), rgba(240, 240, 245, 1.0))
+                (ob.text.clone(), rgb(th.foreground(), 1.0))
             };
             let caret_x = self.renderer.as_mut().map_or(0.0, |rd| rd.measure(ob.before_caret(), size, false));
             let text_w = self.renderer.as_mut().map_or(0.0, |rd| rd.measure(&ob.text, size, false));
             let mut l = Layer::default();
             l.quads.push(Quad {
-                shape: Shape::Shadow { rect: r.translate(Vec2::new(0.0, 8.0 * scale)), radius: 12.0 * scale, blur: 28.0 * scale },
-                color: [0.0, 0.0, 0.0, 0.6],
+                shape: Shape::Shadow { rect: r.translate(Vec2::new(0.0, 8.0 * ui)), radius: th.radius(scale), blur: 28.0 * ui },
+                color: th.shadow(0.6),
                 texture: None,
             });
-            l.quads.push(Quad { shape: Shape::Rect { rect: r, radius: 12.0 * scale }, color: rgba(40, 40, 48, 1.0), texture: None });
-            if ob.select_all && !ob.text.is_empty() {
+            l.quads.push(Quad { shape: Shape::Rect { rect: r, radius: th.radius(scale) }, color: rgb(th.panel(), 1.0), texture: None });
+            if selected {
                 l.quads.push(Quad {
-                    shape: Shape::Rect { rect: Rect::new(r.x + pad, r.y + 12.0 * scale, text_w, h - 24.0 * scale), radius: 3.0 },
-                    color: rgba(80, 100, 220, 0.6),
+                    shape: Shape::Rect { rect: Rect::new(r.x + pad, r.y + 12.0 * ui, text_w, h - 24.0 * ui), radius: th.small_radius(scale) },
+                    color: rgb(th.accent(), 1.0),
                     texture: None,
                 });
             } else {
                 l.quads.push(Quad {
-                    shape: Shape::Rect { rect: Rect::new(r.x + pad + caret_x, r.y + 12.0 * scale, 2.0 * scale.max(1.0), h - 24.0 * scale), radius: 0.0 },
-                    color: rgba(150, 165, 255, 1.0),
+                    shape: Shape::Rect { rect: Rect::new(r.x + pad + caret_x, r.y + 12.0 * ui, 2.0 * scale.max(1.0), h - 24.0 * ui), radius: 0.0 },
+                    color: rgb(th.accent(), 1.0),
                     texture: None,
                 });
             }
@@ -1541,9 +1611,9 @@ impl App {
         if let Some(b) = band {
             let r = self.to_screen_rect(b);
             let t = scale.max(1.0);
-            let line = rgba(255, 190, 70, 0.9);
+            let line = rgb(th.marked(), 0.9);
             let mut l = Layer::default();
-            l.quads.push(Quad { shape: Shape::Rect { rect: r, radius: 0.0 }, color: rgba(255, 190, 70, 0.12), texture: None });
+            l.quads.push(Quad { shape: Shape::Rect { rect: r, radius: 0.0 }, color: rgb(th.marked(), 0.12), texture: None });
             for edge in [
                 Rect::new(r.x, r.y, r.w, t),
                 Rect::new(r.x, r.bottom() - t, r.w, t),
@@ -1556,22 +1626,22 @@ impl App {
         }
 
         if let Some(m) = &self.menu {
-            layers.push(menu_layer(m, scale, screen));
+            layers.push(menu_layer(m, ui, screen, &th));
         }
 
         // Space name in the top-left corner once there is more than one space.
         if self.spaces.spaces.len() > 1 && self.omnibox.is_none() {
             let label = self.space_label();
-            let color = self.spaces.active_entry().background;
-            layers.push(self.pill(&label, Vec2::new(12.0 * scale, 12.0 * scale), 13.0 * scale, Some(color), false));
+            let color = th.swatch(tint.as_deref());
+            layers.push(self.pill(&label, Vec2::new(12.0 * ui, 12.0 * ui), 13.0 * ui, Some(color), false));
         }
         if let Some((msg, at)) = &self.toast {
             if self.confirm_delete || at.elapsed() < TOAST_FOR {
                 if self.omnibox.is_none() {
-                    let size = 15.0 * scale;
+                    let size = 15.0 * ui;
                     let msg = msg.clone();
                     let w = self.renderer.as_mut().map_or(300.0, |r| r.measure(&msg, size, false));
-                    let pos = Vec2::new((vp.x - w) / 2.0 - 16.0 * scale, 18.0 * scale);
+                    let pos = Vec2::new((vp.x - w) / 2.0 - 16.0 * ui, 18.0 * ui);
                     let warn = self.confirm_delete;
                     layers.push(self.pill(&msg, pos, size, None, warn));
                 }
@@ -1583,7 +1653,7 @@ impl App {
         if self.hints
             && let Some(r) = self.renderer.as_mut()
         {
-            layers.push(crate::hints::layer(r, scale, screen));
+            layers.push(crate::hints::layer(r, ui, screen, &th));
         }
 
         if let Some(r) = self.renderer.as_mut() {
@@ -1594,7 +1664,9 @@ impl App {
     /// A rounded label with its top-left at `pos` (screen px). `swatch` draws a
     /// colour dot before the text; `warn` uses a red outline.
     fn pill(&mut self, text: &str, pos: Vec2, size: f32, swatch: Option<[u8; 3]>, warn: bool) -> Layer {
+        let th = &self.theme;
         let scale = self.scale();
+        let radius = th.radius(scale);
         let pad = size * 1.05;
         let h = size * 2.3;
         let dot = if swatch.is_some() { size * 0.8 + size * 0.6 } else { 0.0 };
@@ -1602,21 +1674,22 @@ impl App {
         let r = Rect::new(pos.x, pos.y, w, h);
         let mut l = Layer::default();
         l.quads.push(Quad {
-            shape: Shape::Shadow { rect: r.translate(Vec2::new(0.0, 4.0 * scale)), radius: h / 2.0, blur: 16.0 * scale },
-            color: [0.0, 0.0, 0.0, 0.5],
+            shape: Shape::Shadow { rect: r.translate(Vec2::new(0.0, 4.0 * scale)), radius, blur: 16.0 * scale },
+            color: th.shadow(0.5),
             texture: None,
         });
-        if warn {
-            l.quads.push(Quad { shape: Shape::Rect { rect: r.inflate(1.5 * scale), radius: h / 2.0 + 1.5 * scale }, color: rgba(230, 90, 80, 1.0), texture: None });
-        }
-        l.quads.push(Quad { shape: Shape::Rect { rect: r, radius: h / 2.0 }, color: rgba(44, 44, 52, 0.96), texture: None });
-        if let Some([cr, cg, cb]) = swatch {
+        // A border in the divider colour (danger for a question that loses data).
+        let border = if warn { th.danger() } else { th.divider() };
+        let bw = if warn { 1.5 } else { 1.0 } * scale.max(1.0);
+        let outer = if radius > 0.0 { radius + bw } else { 0.0 };
+        l.quads.push(Quad { shape: Shape::Rect { rect: r.inflate(bw), radius: outer }, color: rgb(border, 1.0), texture: None });
+        l.quads.push(Quad { shape: Shape::Rect { rect: r, radius }, color: rgb(th.panel(), 1.0), texture: None });
+        if let Some(c) = swatch {
+            // A true circle keeps its round shape whatever the rounding.
             let d = size * 0.8;
-            // The board colours are very dark; brighten them so the dot tells spaces apart.
-            let lift = |c: u8| c.saturating_mul(4);
             l.quads.push(Quad {
                 shape: Shape::Rect { rect: Rect::new(r.x + pad, r.y + (h - d) / 2.0, d, d), radius: d / 2.0 },
-                color: rgba(lift(cr), lift(cg), lift(cb), 1.0),
+                color: rgb(c, 1.0),
                 texture: None,
             });
         }
@@ -1624,7 +1697,7 @@ impl App {
             text: text.into(),
             pos: [r.x + pad + dot, r.y + (h - size * 1.3) / 2.0],
             size,
-            color: rgba(225, 225, 232, 1.0),
+            color: rgb(self.theme.foreground(), 1.0),
             clip: r,
             bold: false,
         });
@@ -1634,6 +1707,7 @@ impl App {
     /// One iteration of app work outside winit callbacks.
     pub fn tick(&mut self, dt: f32) {
         self.run_script();
+        self.follow_desktop();
         self.handle_web_events();
         self.autosave();
         self.step_camera(dt);
@@ -1721,7 +1795,7 @@ impl App {
             self.ime_page = None;
         }
         let area = if self.omnibox.is_some() {
-            let (vp, s) = (self.viewport(), self.scale());
+            let (vp, s) = (self.viewport(), self.ui());
             let w = (720.0 * s).min(vp.x - 32.0 * s);
             Some([((vp.x - w) / 2.0) as i32, (18.0 * s) as i32, w as i32, (48.0 * s) as i32])
         } else if page_keys {
@@ -1755,7 +1829,7 @@ impl App {
         let Some(n) = self.scene.node(id) else { return };
         let anchor = self.camera.world_to_screen(Vec2::new(n.rect.x + x, n.rect.y + y), self.viewport(), self.scale());
         let items = web::menu::items(ctx);
-        let scale = self.scale();
+        let scale = self.ui();
         let label_w = match self.renderer.as_mut() {
             Some(r) => items
                 .iter()
@@ -1826,15 +1900,17 @@ fn menu_labels(items: &[MenuItem]) -> Vec<&str> {
         .collect()
 }
 
-fn menu_layer(m: &ContextMenu, scale: f32, screen: Rect) -> Layer {
+fn menu_layer(m: &ContextMenu, scale: f32, screen: Rect, th: &Theme) -> Layer {
     let mut l = Layer::default();
-    let radius = 8.0 * scale;
+    let radius = th.radius(scale / th.text_scale);
     l.quads.push(Quad {
         shape: Shape::Shadow { rect: m.rect.translate(Vec2::new(0.0, 4.0 * scale)), radius, blur: 18.0 * scale },
-        color: [0.0, 0.0, 0.0, 0.55],
+        color: th.shadow(0.55),
         texture: None,
     });
-    l.quads.push(Quad { shape: Shape::Rect { rect: m.rect, radius }, color: rgba(44, 44, 52, 1.0), texture: None });
+    let outer = if radius > 0.0 { radius + 1.0 } else { 0.0 };
+    l.quads.push(Quad { shape: Shape::Rect { rect: m.rect.inflate(1.0), radius: outer }, color: rgb(th.divider(), 1.0), texture: None });
+    l.quads.push(Quad { shape: Shape::Rect { rect: m.rect, radius }, color: rgb(th.panel(), 1.0), texture: None });
     let size = menu::FONT * scale;
     for (i, (item, row)) in m.items.iter().zip(&m.rows).enumerate() {
         match item {
@@ -1842,19 +1918,19 @@ fn menu_layer(m: &ContextMenu, scale: f32, screen: Rect) -> Layer {
                 let y = row.y + row.h / 2.0;
                 l.quads.push(Quad {
                     shape: Shape::Rect { rect: Rect::new(row.x + 4.0 * scale, y, row.w - 8.0 * scale, scale.max(1.0)), radius: 0.0 },
-                    color: rgba(255, 255, 255, 0.1),
+                    color: rgb(th.divider(), 1.0),
                     texture: None,
                 });
             }
             MenuItem::Action { label, enabled, .. } => {
                 if m.hover == Some(i) {
-                    l.quads.push(Quad { shape: Shape::Rect { rect: *row, radius: 5.0 * scale }, color: rgba(80, 100, 220, 0.85), texture: None });
+                    l.quads.push(Quad { shape: Shape::Rect { rect: *row, radius: th.small_radius(scale / th.text_scale) }, color: rgb(th.selection(), 1.0), texture: None });
                 }
                 l.texts.push(Text {
                     text: label.clone(),
                     pos: [row.x + (menu::TEXT_PAD - menu::PAD) * scale, row.y + (row.h - size * 1.3) / 2.0],
                     size,
-                    color: if *enabled { rgba(235, 235, 240, 1.0) } else { rgba(150, 150, 160, 1.0) },
+                    color: rgb(if *enabled { th.foreground() } else { th.dim_text() }, 1.0),
                     clip: screen,
                     bold: false,
                 });
@@ -1965,8 +2041,8 @@ impl App {
                 Cmd::Spaces => {
                     for e in &self.spaces.spaces {
                         log::info!(
-                            "script space {}: {:?} bg={:?}{}",
-                            e.id.0, e.name, e.background, if e.id == self.spaces.active { " active" } else { "" }
+                            "script space {}: {:?} tint={:?} board={:?}{}",
+                            e.id.0, e.name, e.tint, self.theme.board(e.tint.as_deref()), if e.id == self.spaces.active { " active" } else { "" }
                         );
                     }
                 }
@@ -2078,6 +2154,7 @@ impl ApplicationHandler for App {
         }
         let attrs = Window::default_attributes()
             .with_title("Trailboard")
+            .with_name("trailboard", "trailboard")
             .with_inner_size(winit::dpi::LogicalSize::new(1440.0, 900.0));
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
         let display = Box::new(event_loop.owned_display_handle());
@@ -2090,6 +2167,7 @@ impl ApplicationHandler for App {
             }
         }
         self.page_scale = self.scale();
+        self.start_desktop();
         let restored = self.restore();
         let url = match self.initial_url.take() {
             Some(u) => Some(u),

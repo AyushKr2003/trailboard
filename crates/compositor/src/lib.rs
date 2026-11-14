@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use glyphon::{
-    Attrs, Buffer, Cache, Color as TextColor, Family, FontSystem, Metrics, Resolution, Shaping,
+    Attrs, Buffer, Cache, Color as TextColor, ColorMode, Family, FontSystem, Metrics, Resolution, Shaping,
     SwashCache, TextArea, TextAtlas, TextBounds, TextRenderer, Viewport, Weight,
 };
 use scene::Rect;
@@ -298,7 +298,9 @@ impl Renderer {
         let swash = SwashCache::new();
         let cache = Cache::new(&device);
         let text_viewport = Viewport::new(&device, &cache);
-        let atlas = TextAtlas::new(&device, &queue, &cache, FORMAT);
+        // The surface is a non-sRGB format holding sRGB values (like our quads), so text
+        // colours must not be converted to linear first (`Accurate` darkens mid-tones).
+        let atlas = TextAtlas::with_color_mode(&device, &queue, &cache, FORMAT, ColorMode::Web);
 
         Ok(Self {
             window,

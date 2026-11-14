@@ -8,7 +8,8 @@
 //!
 //! The pre-spaces `board.json` becomes space 1 the first time the index is
 //! opened. A missing or unreadable index is rebuilt from the board files, so
-//! no board is ever orphaned.
+//! no board is ever orphaned. Older index versions are upgraded step by step
+//! (`migrate`) when read.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,17 +18,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::write_atomic;
 
-pub const SPACES_VERSION: u32 = 1;
+/// 1: `background` was a fixed sRGB colour. 2: `tint` names a theme colour.
+pub const SPACES_VERSION: u32 = 2;
 
-/// Background colours new spaces take in turn (dark, so pages stand out).
-pub const BACKGROUNDS: [[u8; 3]; 6] = [
-    [22, 22, 26], // graphite
-    [17, 23, 34], // night blue
-    [17, 29, 25], // pine
-    [31, 21, 30], // plum
-    [33, 25, 18], // umber
-    [14, 27, 31], // teal
-];
+/// Board tints new spaces take in turn: none (the theme's background) or a
+/// colour of the desktop theme, mixed lightly into its background, so every
+/// tint suits light and dark themes alike.
+pub const TINTS: [Option<&str>; 7] = [None, Some("blue"), Some("green"), Some("magenta"), Some("orange"), Some("cyan"), Some("red")];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SpaceId(pub u64);
@@ -36,8 +33,9 @@ pub struct SpaceId(pub u64);
 pub struct SpaceEntry {
     pub id: SpaceId,
     pub name: String,
-    /// Board colour, sRGB.
-    pub background: [u8; 3],
+    /// Theme colour the board is tinted with (`None`: the theme's background).
+    #[serde(default)]
+    pub tint: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -62,8 +60,8 @@ impl SpaceIndex {
         for &id in ids {
             idx.next_id = idx.next_id.max(id);
             let name = idx.default_name();
-            let background = BACKGROUNDS[idx.spaces.len() % BACKGROUNDS.len()];
-            idx.spaces.push(SpaceEntry { id: SpaceId(id), name, background });
+            let tint = tint_name(TINTS[idx.spaces.len() % TINTS.len()]);
+            idx.spaces.push(SpaceEntry { id: SpaceId(id), name, tint });
         }
         idx
     }
@@ -94,19 +92,16 @@ impl SpaceIndex {
         self.next_id += 1;
         let id = SpaceId(self.next_id);
         let name = self.default_name();
-        let background = self.unused_background();
+        let tint = self.unused_tint();
         let at = self.position(self.active).map_or(self.spaces.len(), |p| p + 1);
-        self.spaces.insert(at, SpaceEntry { id, name, background });
+        self.spaces.insert(at, SpaceEntry { id, name, tint });
         id
     }
 
-    /// The first palette colour no space uses, or the next one in turn.
-    fn unused_background(&self) -> [u8; 3] {
-        BACKGROUNDS
-            .iter()
-            .find(|c| !self.spaces.iter().any(|s| &s.background == *c))
-            .copied()
-            .unwrap_or(BACKGROUNDS[self.spaces.len() % BACKGROUNDS.len()])
+    /// The first tint no space uses, or the next one in turn.
+    fn unused_tint(&self) -> Option<String> {
+        let unused = TINTS.iter().find(|t| !self.spaces.iter().any(|s| s.tint.as_deref() == **t));
+        tint_name(*unused.unwrap_or(&TINTS[self.spaces.len() % TINTS.len()]))
     }
 
     /// The space `step` places after `from`, wrapping around.
@@ -128,12 +123,12 @@ impl SpaceIndex {
         }
     }
 
-    /// Steps a space's background to the next palette colour and returns it.
-    pub fn cycle_background(&mut self, id: SpaceId) -> Option<[u8; 3]> {
+    /// Steps a space's tint to the next one and returns it.
+    pub fn cycle_tint(&mut self, id: SpaceId) -> Option<Option<String>> {
         let s = self.spaces.iter_mut().find(|s| s.id == id)?;
-        let i = BACKGROUNDS.iter().position(|c| *c == s.background).map_or(0, |i| i + 1);
-        s.background = BACKGROUNDS[i % BACKGROUNDS.len()];
-        Some(s.background)
+        let i = TINTS.iter().position(|t| *t == s.tint.as_deref()).map_or(0, |i| i + 1);
+        s.tint = tint_name(TINTS[i % TINTS.len()]);
+        Some(s.tint.clone())
     }
 
     /// Removes a space. Returns the space to show instead (the one before it,
@@ -163,6 +158,43 @@ impl SpaceIndex {
         self.next_id = self.spaces.iter().map(|s| s.id.0).fold(self.next_id, u64::max);
         if self.get(self.active).is_none() {
             self.active = self.spaces[0].id;
+        }
+    }
+}
+
+fn tint_name(t: Option<&str>) -> Option<String> {
+    t.map(str::to_string)
+}
+
+/// Upgrades an index read from disk to `SPACES_VERSION`, one version at a time.
+/// Returns `Err` for a version this build doesn't know (newer, or not a number).
+pub fn migrate(mut v: serde_json::Value) -> Result<serde_json::Value, String> {
+    loop {
+        let version = v.get("version").and_then(|n| n.as_u64()).ok_or("no version")? as u32;
+        if version == SPACES_VERSION {
+            return Ok(v);
+        }
+        match version {
+            1 => {
+                // Fixed sRGB backgrounds became theme tints. Each of the six old
+                // colours maps to the tint of the same hue; anything else to none.
+                const OLD: [([u8; 3], Option<&str>); 6] = [
+                    ([22, 22, 26], None),
+                    ([17, 23, 34], Some("blue")),
+                    ([17, 29, 25], Some("green")),
+                    ([31, 21, 30], Some("magenta")),
+                    ([33, 25, 18], Some("orange")),
+                    ([14, 27, 31], Some("cyan")),
+                ];
+                for space in v.get_mut("spaces").and_then(|s| s.as_array_mut()).into_iter().flatten() {
+                    let Some(obj) = space.as_object_mut() else { continue };
+                    let old: Option<[u8; 3]> = obj.remove("background").and_then(|b| serde_json::from_value(b).ok());
+                    let tint = old.and_then(|c| OLD.iter().find(|(o, _)| *o == c)).and_then(|(_, t)| *t);
+                    obj.insert("tint".into(), tint.into());
+                }
+                v["version"] = 2.into();
+            }
+            other => return Err(format!("spaces.json version {other} is newer than this build supports")),
         }
     }
 }
@@ -201,21 +233,31 @@ fn board_ids(data_dir: &Path) -> Vec<u64> {
 pub fn open_spaces(data_dir: &Path) -> std::io::Result<SpaceIndex> {
     let path = index_path(data_dir);
     match fs::read(&path) {
-        Ok(bytes) => match serde_json::from_slice::<SpaceIndex>(&bytes) {
-            Ok(mut idx) if idx.version <= SPACES_VERSION => {
-                idx.repair();
-                return Ok(idx);
-            }
-            Ok(idx) => {
+        Ok(bytes) => match serde_json::from_slice::<serde_json::Value>(&bytes) {
+            Ok(value) if value.get("version").and_then(|n| n.as_u64()).is_some() => {
+                let old = value.get("version").and_then(|n| n.as_u64());
                 // Written by a newer build: don't touch it, and don't write over it.
-                return Err(std::io::Error::other(format!(
-                    "spaces.json version {} is newer than this build supports",
-                    idx.version
-                )));
+                let value = migrate(value).map_err(std::io::Error::other)?;
+                match serde_json::from_value::<SpaceIndex>(value) {
+                    Ok(mut idx) => {
+                        idx.repair();
+                        if old != Some(SPACES_VERSION as u64) {
+                            log::info!("upgraded spaces.json from version {} to {SPACES_VERSION}", old.unwrap_or(0));
+                            save_index(data_dir, &idx)?;
+                        }
+                        return Ok(idx);
+                    }
+                    Err(e) => {
+                        let aside = path.with_extension(format!("unreadable-{}.json", std::process::id()));
+                        log::error!("spaces index is corrupt ({e}); moving it to {} and rebuilding", aside.display());
+                        fs::rename(&path, &aside)?;
+                    }
+                }
             }
-            Err(e) => {
+            other => {
+                let why = other.err().map_or("no version".to_string(), |e| e.to_string());
                 let aside = path.with_extension(format!("unreadable-{}.json", std::process::id()));
-                log::error!("spaces index is corrupt ({e}); moving it to {} and rebuilding", aside.display());
+                log::error!("spaces index is corrupt ({why}); moving it to {} and rebuilding", aside.display());
                 fs::rename(&path, &aside)?;
             }
         },
@@ -276,9 +318,11 @@ mod tests {
         assert_eq!(idx.spaces[1].id, c);
         assert_eq!(idx.spaces[2].id, b);
         assert_eq!(idx.active, SpaceId(1), "adding doesn't switch");
-        let mut colours: Vec<_> = idx.spaces.iter().map(|s| s.background).collect();
-        colours.dedup();
-        assert_eq!(colours.len(), 3);
+        let mut tints: Vec<_> = idx.spaces.iter().map(|s| s.tint.clone()).collect();
+        tints.sort();
+        tints.dedup();
+        assert_eq!(tints.len(), 3);
+        assert_eq!(idx.spaces[0].tint, None, "the first space uses the theme's own background");
     }
 
     #[test]
@@ -329,14 +373,40 @@ mod tests {
     }
 
     #[test]
-    fn cycle_background_walks_the_palette() {
+    fn cycle_tint_walks_the_tints_and_back_to_none() {
         let mut idx = SpaceIndex::default();
-        assert_eq!(idx.active_entry().background, BACKGROUNDS[0]);
-        assert_eq!(idx.cycle_background(SpaceId(1)), Some(BACKGROUNDS[1]));
-        for _ in 1..BACKGROUNDS.len() {
-            idx.cycle_background(SpaceId(1));
+        assert_eq!(idx.active_entry().tint, None);
+        assert_eq!(idx.cycle_tint(SpaceId(1)), Some(Some("blue".into())));
+        for _ in 1..TINTS.len() {
+            idx.cycle_tint(SpaceId(1));
         }
-        assert_eq!(idx.active_entry().background, BACKGROUNDS[0]);
+        assert_eq!(idx.active_entry().tint, None);
+        assert_eq!(idx.cycle_tint(SpaceId(9)), None);
+    }
+
+    #[test]
+    fn version_1_backgrounds_become_tints() {
+        let dir = tempfile::tempdir().unwrap();
+        let v1 = r#"{"version":1,"active":2,"spaces":[
+            {"id":1,"name":"Space 1","background":[22,22,26]},
+            {"id":2,"name":"Research","background":[17,29,25]},
+            {"id":3,"name":"Odd","background":[1,2,3]}],"next_id":3}"#;
+        fs::write(index_path(dir.path()), v1).unwrap();
+        let idx = open_spaces(dir.path()).unwrap();
+        let tints: Vec<_> = idx.spaces.iter().map(|s| s.tint.as_deref()).collect();
+        assert_eq!(tints, [None, Some("green"), None]);
+        assert_eq!(idx.active, SpaceId(2));
+        assert_eq!(idx.spaces[1].name, "Research");
+        // The upgrade is written back, so the file is now version 2.
+        let back: serde_json::Value = serde_json::from_slice(&fs::read(index_path(dir.path())).unwrap()).unwrap();
+        assert_eq!(back["version"], 2);
+        assert!(back["spaces"][0].get("background").is_none());
+    }
+
+    #[test]
+    fn migrate_refuses_unknown_versions() {
+        assert!(migrate(serde_json::json!({"version": 99})).is_err());
+        assert!(migrate(serde_json::json!({"spaces": []})).is_err());
     }
 
     #[test]

@@ -63,11 +63,17 @@ you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change th
 | Copy / cut / paste | Ctrl+C / Ctrl+X / Ctrl+V (shared with the desktop clipboard) |
 | Leave the page | Esc |
 | New space / next / previous | Ctrl+Shift+N / Ctrl+PageDown / Ctrl+PageUp |
-| Rename space / next background colour | F2 / Ctrl+Shift+B |
+| Rename space / next tint | F2 / Ctrl+Shift+B |
 | Delete space | Ctrl+Shift+W (asks first if it has cards) |
-| Show shortcuts | ? (with no page focused) |
+| Show shortcuts | ? (with no page focused) or F1 |
+| Quit | Ctrl+Q |
 
 Input methods (e.g. fcitx5) work in pages and in the address bar.
+
+On [Omarchy](https://omarchy.org/), Trailboard follows the current theme live
+(colours, light or dark, including the pages' `prefers-color-scheme`),
+Hyprland's window rounding and the desktop text size. Elsewhere it uses a dark
+palette with a yellow accent and square corners.
 
 ## Tests
 

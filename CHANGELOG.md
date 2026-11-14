@@ -7,14 +7,24 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Omarchy look**: Trailboard follows the current Omarchy theme live, with its
+  palette for the board, cards, address bar, menus, labels and the shortcut
+  sheet, light themes as well as dark. Pages get the theme's light or dark
+  `prefers-color-scheme`. Corners follow Hyprland's window rounding (asked
+  again whenever Hyprland reloads its config), and overlays follow the
+  desktop's text size (`omarchy display text size`). Without Omarchy it uses a
+  dark palette with Omarchy's yellow accent.
+- F1 shows the shortcut sheet from anywhere (also inside a page); Ctrl+Q quits.
+- The window's Wayland app id is `trailboard`.
 - **Spaces**: several boards, each with its own cards, camera and background
-  colour. Ctrl+Shift+N makes a space, Ctrl+PageDown / Ctrl+PageUp go to the
-  next / previous one, F2 renames it, Ctrl+Shift+B steps its background colour
+  tint. Ctrl+Shift+N makes a space, Ctrl+PageDown / Ctrl+PageUp go to the
+  next / previous one, F2 renames it, Ctrl+Shift+B steps its tint (a theme colour)
   and Ctrl+Shift+W deletes it (Enter confirms when it has cards; the last space
   can't be deleted). The current space shows in the top-left corner when there
   is more than one, and switching shows a short toast. Undo history and closed
   cards are kept per space while the app runs.
-- Spaces are stored as `spaces.json` plus `spaces/<id>.json`. The old
+- Spaces are stored as `spaces.json` (version 2; version 1 files are upgraded)
+  plus `spaces/<id>.json`. The old
   `board.json` becomes the first space; a missing or unreadable index is rebuilt
   from the board files; a deleted space's board is moved to `spaces/deleted/`.
 - Script command `spaces` logs every space and which one is active.
@@ -83,6 +93,8 @@ All notable changes to Trailboard. The format follows
   already brought back with undo.
 
 ### Fixed
+- Text was drawn darker than its colour (it was gamma-decoded twice); light
+  greys and theme colours now come out as specified.
 - Cards' bottom corners are rounded like the rest of the card; the page image
   used to square them off (new `Shape::RoundBottom` in the compositor).
 - Bold text (card titles) used a fallback serif face with wide gaps between

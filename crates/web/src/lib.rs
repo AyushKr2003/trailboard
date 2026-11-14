@@ -146,6 +146,21 @@ pub fn drain_events() -> Vec<WebEvent> {
     EVENTS.with_borrow_mut(std::mem::take)
 }
 
+thread_local! {
+    /// Colour scheme pages should report (`None`: leave Chromium's own choice).
+    static DARK: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+    static DEVTOOLS_ID: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+}
+
+/// Makes pages report a light or dark `prefers-color-scheme`, following the
+/// desktop theme. New pages take it when created; call `Page::apply_color_scheme`
+/// on live pages after changing it. Windowless (Alloy-style) browsers ignore
+/// the request context's Chrome colour scheme, so this goes through DevTools
+/// media emulation per page, which also survives navigation.
+pub fn set_color_scheme(dark: bool) {
+    DARK.set(Some(dark));
+}
+
 // ---------------------------------------------------------------------------
 // Process bootstrap
 // ---------------------------------------------------------------------------
@@ -777,7 +792,23 @@ impl Page {
         if let Some(h) = browser.host() {
             shared.apply_zoom(&h);
         }
-        Some(Page { browser, shared })
+        let page = Page { browser, shared };
+        page.apply_color_scheme();
+        Some(page)
+    }
+
+    /// Sends the colour scheme set with `set_color_scheme` to this page.
+    pub fn apply_color_scheme(&self) {
+        let (Some(dark), Some(host)) = (DARK.get(), self.browser.host()) else { return };
+        let id = DEVTOOLS_ID.get() + 1;
+        DEVTOOLS_ID.set(id);
+        let scheme = if dark { "dark" } else { "light" };
+        let msg = format!(
+            r#"{{"id":{id},"method":"Emulation.setEmulatedMedia","params":{{"features":[{{"name":"prefers-color-scheme","value":"{scheme}"}}]}}}}"#
+        );
+        if host.send_dev_tools_message(Some(msg.as_bytes())) == 0 {
+            log::warn!("page {}: couldn't set colour scheme", self.shared.key);
+        }
     }
 
     pub fn key(&self) -> u64 {

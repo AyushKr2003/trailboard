@@ -7,6 +7,13 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Save as Markdown**: Ctrl+S saves the focused note as a Markdown file, or,
+  with no note focused, the whole board: each trail as a nested list of links
+  under its name, notes in full, pages on no trail at the end. A note's
+  right-click menu has *Save as Markdown* too. Files go to
+  `Documents/Trailboard/` (from `XDG_DOCUMENTS_DIR` or `user-dirs.dirs`),
+  named after the note or space; a toast shows where. Saving again in the same
+  session updates that file; otherwise an existing file is never overwritten.
 - **Trail names and colours**: press R with no page focused to name the trail
   in the middle of the view (an empty name clears it), and C to give it the
   next colour of the desktop theme (back to the accent after red). The name

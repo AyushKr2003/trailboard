@@ -32,6 +32,8 @@ pub enum MenuAction {
     Search(String),
     /// Quote the selected text in a note, with a link back to the page.
     AddToNote(String),
+    /// Save the note as a Markdown file.
+    SaveMarkdown,
     Undo,
     Redo,
     Cut,
@@ -106,6 +108,9 @@ pub fn items(ctx: &MenuContext) -> Vec<MenuItem> {
     }
     if sections.is_empty() && ctx.note {
         sections.push(vec![MenuItem::new("Select all", MenuAction::SelectAll, true)]);
+    }
+    if ctx.note {
+        sections.push(vec![MenuItem::new("Save as Markdown", MenuAction::SaveMarkdown, true)]);
     }
     if sections.is_empty() {
         sections.push(vec![
@@ -185,11 +190,11 @@ mod tests {
     }
 
     #[test]
-    fn notes_offer_no_navigation_or_add_to_note() {
+    fn notes_offer_saving_but_no_navigation_or_add_to_note() {
         let ctx = MenuContext { note: true, ..Default::default() };
-        assert_eq!(labels(&items(&ctx)), ["Select all"]);
+        assert_eq!(labels(&items(&ctx)), ["Select all", "-", "Save as Markdown"]);
         let ctx = MenuContext { note: true, selection: "words".into(), ..Default::default() };
-        assert_eq!(labels(&items(&ctx)), ["Copy", "Search for “words”"]);
+        assert_eq!(labels(&items(&ctx)), ["Copy", "Search for “words”", "-", "Save as Markdown"]);
     }
 
     #[test]

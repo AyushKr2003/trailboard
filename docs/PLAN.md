@@ -319,8 +319,26 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   focused, edited or made in this space), or makes a new note beside the page
   with a trail edge when there is none. Toast "Added to Title". While reading,
   a new note is not read next.
-- Sticky notes (small coloured notes without a title bar) are not done.
-- Save note/board as Markdown.
+- ⬜ Sticky notes (small coloured notes without a title bar).
+- ✅ Save as Markdown (Ctrl+S, note menu; `scene::export`, `storage::export`). Decisions (2026-11-14):
+  - Ctrl+S saves the focused note, else the whole board of the space (also
+    with a web page focused, where Chromium has nothing on Ctrl+S). A note's
+    page menu has *Save as Markdown* (always, below its other items).
+  - No file dialog (no portal plumbing yet): files go to
+    `Documents/Trailboard/`, Documents from `$XDG_DOCUMENTS_DIR`, else
+    `user-dirs.dirs`, else `~/Documents`. Named after the note's title or the
+    space's name (path separators and control characters made spaces, cut at
+    80 characters); a taken name gets ` 2`, ` 3`, …, so nothing is ever
+    overwritten except the file the same note/space was saved to earlier in
+    this session (if its name still fits). A toast names the file (`~/…`).
+  - A note saves as written. A board saves as `# Space`, then per trail (in
+    the order its first card was made) `## Trail name` (or its first card's
+    title) and a nested list in reading order (`Scene::trail_tree`), pages as
+    `[Title](<url>)`, notes as `Note: Title` with their text indented under
+    the item. Folded cards are listed in place. A note on no trail gets its own
+    section (its first heading, or `## Title`); pages on no trail go under
+    `## Other pages`. Headings in notes move down a level outside code.
+  - Not done: a file chooser (xdg-desktop-portal), saving a web page's text.
 
 ### M6: Chrome UI 🟡
 - Trails sidebar: tree per root, pins/favourites, drag to reorder, collapse.
@@ -415,20 +433,34 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M5 Trail names and colours.
-**Repo state:** on `master`, committed after a500760; working tree clean.
+**Last session:** 2026-11-14. M5 Save as Markdown.
+**Repo state:** on `master`, committed after a07984b; working tree clean.
 **Done this session:**
-- `scene::mark`: `TrailMark` on `Node::trail`, `trail_mark`, `set_trail_mark`,
-  `name_trail`, `cycle_trail_colour`, `trail_labels`; new cards beside a card
-  inherit its mark; `Edit::SetMarks` / `History::marked`; board v4 (`storage`); tests.
-- `app`: R (name box, `Target::NameTrail`) and C (next colour) with no card
-  focused; tag above the trail's first visible card; coloured edges; trail
-  name in the step toast; `Theme::trail`, `theme::text_on`; script `cards`
-  logs marks and labels. Sheet and README rows.
-**Next up:** Save note/board as Markdown (M5).
-Small follow-ups: sticky notes; rename a trail from the page menu or a click
-on its tag; animate cards to their Tidy places; `.desktop` entry and icon (M6).
+- `scene::export`: `note_markdown`, `board_markdown` (trails as nested
+  lists, notes indented, lone notes as sections, `## Other pages`), `link`;
+  `Scene::trail_tree` (reading order with depths; `trail_of` uses it); tests.
+- `storage::export`: `export_dir` (`Documents/Trailboard`), `documents_dir`,
+  `file_stem`, `save_markdown` (free name or this session's earlier file);
+  `write_atomic` now names its temp file `<name>.tmp` for any extension; tests.
+- `web::menu`: *Save as Markdown* on notes (`MenuAction::SaveMarkdown`).
+- `app`: Ctrl+S (focused note, else board), `App::saved` per (space, note),
+  toast with a `~/` path; sheet and README rows.
+**Next up:** Sticky notes (last open M5 item), then M6 trails sidebar.
+Small follow-ups: a file chooser for saving (xdg-desktop-portal); rename a
+trail from the page menu or a click on its tag; animate cards to their Tidy
+places; `.desktop` entry and icon (M6).
 **Notes for the next session:**
+- Save as Markdown verified e2e (`~/.cache/trailboard-e2e-export`, `run.sh N
+  shot…` with `XDG_DOCUMENTS_DIR=$D/docs`; `DELAY=0.1` shoots sooner, for
+  toasts). Run 1 (marked-trail board + P5): R `Research`, N with
+  `# Trip ideas` / `- [ ] pack`, Esc, Ctrl+S wrote `Space 1.md` (trail
+  nested, note section, Other pages); right-click on the note → *Save as
+  Markdown* wrote `Trip ideas.md`; Esc, Ctrl+S overwrote `Space 1.md`. Run 2
+  (restart): Ctrl+S wrote `Space 1 2.md`, toast seen on screen. Screenshots
+  menu1, toast2 checked, dark theme only.
+- Not verified in the app: a note on a trail or a folded trail in the board
+  file (scene-tested only); the error toast for an unwritable Documents
+  folder (not tested at all).
 - Trail marks verified e2e (`~/.cache/trailboard-e2e-mark`, `run.sh N shot…`,
   seed in `data1.seed`, a v3 board so the migration ran). Run 1: R, typed
   `Research`, Enter, C twice (green) marked all four cards and labelled card 1;

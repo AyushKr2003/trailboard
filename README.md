@@ -60,6 +60,7 @@ you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change th
 | Address bar / new card | Ctrl+L / Ctrl+T |
 | New note (Markdown) | N (with no page focused); click a note to edit, Esc or click away to see it rendered |
 | Quote selected text in a note | right-click the selection → *Add to note* (the note last used, or a new one beside the page) |
+| Save as Markdown | Ctrl+S: the focused note, else the whole board (its trails as nested lists, notes in full); also *Save as Markdown* in a note's right-click menu. Files go to `Documents/Trailboard/` |
 | Fit everything | Ctrl+0 (or F with no page focused) |
 | Tidy: lay trails out left to right, no overlaps | T (with no page focused; Ctrl+Z undoes it) |
 | Fold the trail in the middle of the view into a stack / unfold it | S (with no page focused; Ctrl+Z undoes it) |
@@ -102,9 +103,9 @@ resize, close/reopen, multi-select and group move, undo/redo, omnibox, zoom-awar
 pages paused, live-browser cap, page context menu, desktop clipboard, IME input,
 board persistence, spaces (several boards with their own camera and background),
 Read Mode, Tidy, Fold, stack outline, next/previous on a trail, Markdown notes
-with *Add to note*, trail names and colours.
+with *Add to note*, trail names and colours, save a note or board as Markdown.
 
-Next: Save as Markdown, trails sidebar, Ctrl+K palette,
+Next: trails sidebar, Ctrl+K palette,
 history with full-text search, ad blocking, then optional semantic search and
 an LLM-backed "Explain" panel.
 

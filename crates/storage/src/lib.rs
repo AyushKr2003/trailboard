@@ -2,6 +2,7 @@
 //! the same directory, fsync, rename), so a crash never leaves a torn board.
 //! Each space has its own board; `spaces` holds the index of spaces.
 
+pub mod export;
 pub mod spaces;
 
 use std::fs;
@@ -95,7 +96,9 @@ pub fn save_board(path: &Path, board: &Board) -> std::io::Result<()> {
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
     fs::create_dir_all(dir)?;
-    let tmp = path.with_extension("json.tmp");
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
     {
         let mut f = fs::File::create(&tmp)?;
         f.write_all(bytes)?;

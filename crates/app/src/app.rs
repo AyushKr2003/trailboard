@@ -20,6 +20,9 @@
 //! - Ctrl+C / Ctrl+X / Ctrl+V in a page go through the desktop clipboard (see `clipboard`).
 //! - IME (e.g. fcitx5) composition goes to the focused page or the address bar.
 //! - F1 (anywhere) or `?` (no card focused) shows the shortcuts; Ctrl+Q quits.
+//! - Ctrl+S saves the focused note, or else the whole board, as Markdown in
+//!   `Documents/Trailboard` (`scene::export`, `storage::export`); a note's page
+//!   menu has *Save as Markdown* too.
 //! - Tab (unless keys are going to a page) toggles Read Mode: the focused card, or
 //!   the one in the middle of the view, fills the window and its page lays out at
 //!   the window's size. Esc, Tab or a double-click on its bar returns to the board.
@@ -180,6 +183,9 @@ pub struct App {
     page_scheme: Option<bool>,
     /// The note "Add to note" adds to: the one last focused, edited or made.
     note_target: Option<NodeId>,
+    /// Files saved as Markdown this session, per space and note (`None`: the
+    /// whole board), so saving again overwrites them.
+    saved: HashMap<(SpaceId, Option<NodeId>), std::path::PathBuf>,
 }
 
 impl App {
@@ -233,6 +239,7 @@ impl App {
             desktop: None,
             page_scheme: None,
             note_target: None,
+            saved: HashMap::new(),
         }
     }
 
@@ -616,6 +623,33 @@ impl App {
         self.keys_in_page = true;
         log::info!("new note {}", id.0);
         id
+    }
+
+    /// Ctrl+S or *Save as Markdown*: the note `note` as its own file, else
+    /// the whole board, in `Documents/Trailboard` (`storage::export`).
+    fn save_markdown(&mut self, note: Option<NodeId>) {
+        let space = self.spaces.active_entry().name.clone();
+        let (title, text, fallback) = match note.and_then(|id| self.scene.node(id)) {
+            Some(n) => {
+                let text = scene::export::note_markdown(n.note.as_deref().unwrap_or(""));
+                (n.title.clone(), text, scene::note::UNTITLED)
+            }
+            None => (space.clone(), scene::export::board_markdown(&self.scene, &space), "Board"),
+        };
+        let key = (self.spaces.active, note);
+        let dir = storage::export::export_dir();
+        let stem = storage::export::file_stem(&title, fallback);
+        match storage::export::save_markdown(&dir, &stem, &text, self.saved.get(&key).map(|p| p.as_path())) {
+            Ok(path) => {
+                log::info!("saved {} as Markdown to {}", if note.is_some() { "note" } else { "board" }, path.display());
+                self.toast(format!("Saved to {}", home_relative(&path)));
+                self.saved.insert(key, path);
+            }
+            Err(e) => {
+                log::error!("saving Markdown to {}: {e}", dir.display());
+                self.toast(format!("Could not save to {}: {e}", home_relative(&dir)));
+            }
+        }
     }
 
     /// "Add to note": quote `selection` from card `src` in the note last used,
@@ -1657,6 +1691,11 @@ impl App {
                     }
                     true
                 }
+                Some(KeyCode::KeyS) if ctrl && !shift && !alt => {
+                    let note = self.focused.filter(|&id| self.scene.node(id).is_some_and(Node::is_note));
+                    self.save_markdown(note);
+                    true
+                }
                 Some(KeyCode::KeyR) if ctrl => {
                     if let Some(p) = self.focused_page().filter(|p| p.kind() == web::PageKind::Web) {
                         p.reload();
@@ -2464,6 +2503,7 @@ impl App {
             MenuAction::OpenBeside(url) => open_beside(self, &url),
             MenuAction::Search(q) => open_beside(self, &omnibox::search_url(&q)),
             MenuAction::AddToNote(text) => self.add_to_note(id, &text),
+            MenuAction::SaveMarkdown => self.save_markdown(Some(id)),
             MenuAction::CopyText(t) => self.clipboard.set_text(&t),
             MenuAction::Copy => self.page_copy(false, None),
             MenuAction::Cut => self.page_copy(true, None),
@@ -2487,6 +2527,17 @@ impl App {
                 }
             }
         }
+    }
+}
+
+/// `path` with the home folder written as `~`.
+fn home_relative(path: &std::path::Path) -> String {
+    match std::env::var_os("HOME").map(std::path::PathBuf::from) {
+        Some(home) if home.as_os_str().len() > 1 => match path.strip_prefix(&home) {
+            Ok(rest) => format!("~/{}", rest.display()),
+            Err(_) => path.display().to_string(),
+        },
+        _ => path.display().to_string(),
     }
 }
 

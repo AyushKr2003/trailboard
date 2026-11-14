@@ -83,6 +83,13 @@ impl Scene {
     /// reading order: roots first, each followed by its links depth first.
     /// Just `[id]` for a lone card; empty if `id` doesn't exist.
     pub fn trail_of(&self, id: NodeId) -> Vec<NodeId> {
+        self.trail_tree(id).into_iter().map(|(n, _)| n).collect()
+    }
+
+    /// [`Scene::trail_of`] with each card's depth: 0 for a root (and for the
+    /// first card reached in a cycle), else one more than the card it was
+    /// opened from.
+    pub fn trail_tree(&self, id: NodeId) -> Vec<(NodeId, usize)> {
         if self.node(id).is_none() {
             return Vec::new();
         }
@@ -111,14 +118,14 @@ impl Scene {
         let starts: Vec<NodeId> =
             set.iter().copied().filter(|n| !has_parent.contains(n)).chain(set.iter().copied()).collect();
         for start in starts {
-            let mut todo = vec![start];
-            while let Some(n) = todo.pop() {
+            let mut todo = vec![(start, 0)];
+            while let Some((n, depth)) = todo.pop() {
                 if !seen.insert(n) {
                     continue;
                 }
-                order.push(n);
+                order.push((n, depth));
                 if let Some(kids) = children.get(&n) {
-                    todo.extend(kids.iter().rev());
+                    todo.extend(kids.iter().rev().map(|&k| (k, depth + 1)));
                 }
             }
         }

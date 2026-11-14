@@ -1,0 +1,15 @@
+[package]
+name = "trailboard"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+compositor = { version = "0.1.0", path = "../compositor" }
+env_logger = "0.11.11"
+log = "0.4.35"
+pollster = "1.0.1"
+scene = { version = "0.1.0", path = "../scene" }
+storage = { version = "0.1.0", path = "../storage" }
+web = { version = "0.1.0", path = "../web" }
+winit = "0.30"

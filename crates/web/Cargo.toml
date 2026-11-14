@@ -1,0 +1,9 @@
+[package]
+name = "web"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+cef = "156.4.0"
+log = "0.4.35"

@@ -105,7 +105,12 @@ pub fn resolve(input: &str) -> Option<String> {
     if looks_like_host {
         return Some(format!("https://{s}"));
     }
-    Some(format!("https://duckduckgo.com/?q={}", encode_query(s)))
+    Some(search_url(s))
+}
+
+/// Search engine results page for `query`.
+pub fn search_url(query: &str) -> String {
+    format!("https://duckduckgo.com/?q={}", encode_query(query.trim()))
 }
 
 fn encode_query(s: &str) -> String {

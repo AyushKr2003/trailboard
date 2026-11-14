@@ -107,7 +107,22 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   scale of the pixels actually painted, not the requested one. Page cursors arrive
   as `WebEvent::CursorChanged` (`web::Cursor`, no winit types) and show while the
   pointer is over that page's content; custom bitmap cursors fall back to default.
-- ⬜ IME / composition input; clipboard shortcuts verified; context menu.
+- ✅ IME / composition input; clipboard shortcuts verified; context menu.
+  Decisions (2026-11-14): off-screen Chromium can't reach the desktop clipboard
+  (no Wayland surface or input serial; with `--ozone-platform=x11` a copy even
+  empties the Wayland clipboard), so the app bridges it with `arboard`
+  (wlr data-control): Ctrl+C/X in a page still go to Chromium, and the page's
+  selection (`on_text_selection_changed`) is put on the desktop clipboard. Ctrl+V
+  sends desktop text through a synthetic `paste` event plus `insertText`
+  (`web::Page::paste_text`), unless the desktop still holds what we last copied
+  from a page, in which case Chromium pastes natively (keeps formatting). The
+  context menu is ours: CEF's model is cleared in `on_before_context_menu` and
+  `web::menu` builds items from the click (link, image, editable, selection,
+  else page navigation); the app draws it and runs actions (links open beside).
+  IME is enabled on the window while keys go to a page or the address bar;
+  compositions are forwarded with `ime_set_composition`/`ime_commit_text` and the
+  candidate window follows `on_ime_composition_range_changed`. The address bar
+  takes committed IME text only (no preedit shown).
 - ⬜ Card multi-select (rubber band) and group move.
 
 ### M4: Persistence and Spaces 🟡
@@ -187,34 +202,40 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. Fixed zoom-aware page resolution (M3).
-**Repo state:** on `master`, committed after 11794dd; working tree clean.
+**Last session:** 2026-11-14. IME input, desktop clipboard and page context menu (M3).
+**Repo state:** on `master`, committed after cd3b814; working tree clean.
 **Done this session:**
-- Live-browser cap (d2147c3) and popup widgets + page cursors (11794dd), see M3.
-- Zoom-aware resolution was broken: pages always painted at 1×. Experiments showed
-  CEF 156 OSR ignores the device scale (from `screen_info`, even fixed from
-  creation, and from `--force-device-scale-factor`). Now the view is `css × scale`
-  pixels with page zoom `scale` (`web::zoom_level_for`, re-applied on create,
-  scale change, address change and load state change); device scale is reported as 1.
-- `Page` maps CSS-px input to view px and scales wheel deltas; popup rects are view px.
-**Next up:** M3: IME/composition input, clipboard shortcuts verified, context
-menu → card multi-select (group move can record one `Edit` per card; add a batch edit then).
+- Key handling goes through `keymap::KeyIn` (from winit or from a script), so
+  scripts can press real combos: new script commands `key`, `type`, `pclick`,
+  `prclick`, `ime-preedit`, `ime-commit`, `menuclick`.
+- Clipboard: Ctrl+A/C/V/X/Z already worked inside pages, but nothing crossed to
+  the desktop. Now bridged through `app::clipboard` (see the M3 decision).
+- IME: `WindowEvent::Ime` → `Page::ime_set_composition`/`ime_commit`/`ime_cancel`;
+  the candidate window is placed at the page caret; the address bar takes commits.
+- Context menu: `web::menu` (items) + `app::menu` (layout, hit test, keyboard) +
+  `WebEvent::ContextMenu`. Esc, a click outside, scrolling or a camera move close it.
+**Next up:** M3: card multi-select (rubber band) and group move (group move can
+record one `Edit` per card; add a batch edit then).
 **Notes for the next session:**
-- Verified e2e (data: test pages reporting `innerWidth`, `devicePixelRatio` and a
-  `<select>` rect in the title): layout stays 1024×720 CSS while frames paint at
-  768×540 / 1792×1260 / 2048×1440 for scales 0.75 / 1.75 / 2; screenshot at 2×
-  shows crisp text; at 1.75 the opened list sits under the select (screenshot)
-  and a click picked the option under the pointer.
-- Not verified: navigating a card to a new origin while zoomed (zoom re-assert
-  path), and pages that react badly to `devicePixelRatio` ≠ 1.
+- Verified e2e with a local test page (two inputs, a paragraph and a link; the
+  title shows the input values): desktop → page paste, page → desktop copy and
+  cut (`wl-paste`), native paste, menu items for link / editable / selection /
+  plain page, Copy link address, Select all, Cut, Paste, Search (opened a card
+  beside with an edge), menu keyboard (↑ wraps, Enter, Esc), IME preedit
+  (screenshot shows the underlined composition), cancel and commit, address-bar
+  Ctrl+V and IME commit. Screenshot of the editable menu looked right.
+- While `TRAILBOARD_SCRIPT` runs, the window's IME stays off: a running fcitx5
+  otherwise sends its own empty preedit and cancels scripted compositions.
+- Not verified: typing with a real input method (fcitx5 Pinyin) by hand; pages
+  whose own copy handlers change what is copied (we copy the plain selection);
+  copy buttons using `navigator.clipboard` (they reach only Chromium's clipboard).
+- The desktop clipboard empties when Trailboard exits (we own the selection).
 - Card title text renders digits with wide gaps (e.g. "4 0 , 4 0"); likely a
   glyphon font fallback issue in `compositor`; pre-existing, not investigated.
-- Popup clamp path never triggered (Chromium fits popups into the view); the
-  window cursor change isn't visible in grim screenshots.
 - Live-browser cap: zooming can churn (sleep, then reload in view).
-- Real Ctrl+Z key routing and typing into pages haven't been tested by hand.
-- Keep test boards small (RAM). Use an isolated `XDG_DATA_HOME` under `~/.cache` for e2e runs.
+- Keep test boards small (RAM). Use a fresh `XDG_DATA_HOME` under `~/.cache` for
+  each e2e run (a saved board plus the URL argument gives two cards).
 - `hyprctl clients -j` can report a window off-screen right after it opens
-  (open animation); take the screenshot ~8 s later. A board's saved camera
-  carries over between e2e runs that share a data dir.
-- Script `open` with a data: URL: percent-encode spaces and `#` (`#` starts a script comment).
+  (open animation); take the screenshot ~5–8 s later.
+- Script `open` with a data: URL: percent-encode spaces and `#` (`#` starts a
+  script comment); a `file://` test page is easier.

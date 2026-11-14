@@ -3,7 +3,7 @@
 use web::flags;
 use web::keys::{vk, Key};
 use winit::event::{ElementState, KeyEvent};
-use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
+use winit::keyboard::{KeyCode, ModifiersState, NamedKey, PhysicalKey};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 use winit::platform::scancode::PhysicalKeyExtScancode;
 
@@ -98,26 +98,145 @@ fn named_code(n: winit::keyboard::NamedKey) -> Option<KeyCode> {
     })
 }
 
-pub fn to_web(ev: &KeyEvent, mods: ModifiersState) -> Key {
-    let code = shortcut_code(ev).unwrap_or(KeyCode::Fn);
-    let pressed = ev.state == ElementState::Pressed;
-    // Ctrl/Alt combos are shortcuts, not text (AltGr arrives without ctrl+alt both set on most layouts).
-    let text = if pressed && !(mods.control_key() || mods.alt_key()) {
-        ev.text
-            .as_ref()
-            .map(|t| t.chars().filter(|c| !c.is_control() || *c == '\r' || *c == '\t').collect::<String>())
-            .filter(|t| !t.is_empty())
-    } else {
-        None
-    };
-    Key {
-        pressed,
-        vk: vk_code(code),
-        // X11/XKB keycode = evdev scancode + 8.
-        native: ev.physical_key.to_scancode().map_or(0, |s| s as i32 + 8),
-        modifiers: modifiers(mods),
-        text,
+/// A key press or release, independent of where it came from (winit or a test script).
+#[derive(Debug, Clone)]
+pub struct KeyIn {
+    pub pressed: bool,
+    /// Layout-aware key for shortcuts (see [`shortcut_code`]).
+    pub code: Option<KeyCode>,
+    /// The logical key if it is a named key (Enter, Escape, arrows…).
+    pub named: Option<NamedKey>,
+    /// Text the key produces, as the platform reports it.
+    pub text: Option<String>,
+    /// X11/XKB keycode, 0 if unknown.
+    pub native: i32,
+}
+
+impl KeyIn {
+    pub fn from_winit(ev: &KeyEvent) -> KeyIn {
+        KeyIn {
+            pressed: ev.state == ElementState::Pressed,
+            code: shortcut_code(ev),
+            named: match &ev.logical_key {
+                winit::keyboard::Key::Named(n) => Some(*n),
+                _ => None,
+            },
+            text: ev.text.as_ref().map(|t| t.to_string()),
+            // X11/XKB keycode = evdev scancode + 8.
+            native: ev.physical_key.to_scancode().map_or(0, |s| s as i32 + 8),
+        }
     }
+
+    /// A US-layout key from a script: a single character (`a`, `7`, `/`), or a
+    /// name (`enter`, `esc`, `tab`, `backspace`, `delete`, `left`, `right`, `up`,
+    /// `down`, `home`, `end`, `space`, `f1`…). `shift` upper-cases letters.
+    pub fn from_name(name: &str, pressed: bool, shift: bool) -> Option<KeyIn> {
+        use winit::keyboard::NamedKey as N;
+        use KeyCode::*;
+        let lower = name.to_ascii_lowercase();
+        let named = |code: KeyCode, n: NamedKey, text: Option<&str>| (code, Some(n), text.map(str::to_string));
+        let (code, named, text) = match lower.as_str() {
+            "enter" | "return" => named(Enter, N::Enter, Some("\r")),
+            "esc" | "escape" => named(Escape, N::Escape, None),
+            "tab" => named(Tab, N::Tab, Some("\t")),
+            "backspace" => named(Backspace, N::Backspace, None),
+            "delete" | "del" => named(Delete, N::Delete, None),
+            "left" => named(ArrowLeft, N::ArrowLeft, None),
+            "right" => named(ArrowRight, N::ArrowRight, None),
+            "up" => named(ArrowUp, N::ArrowUp, None),
+            "down" => named(ArrowDown, N::ArrowDown, None),
+            "home" => named(Home, N::Home, None),
+            "end" => named(End, N::End, None),
+            "pageup" => named(PageUp, N::PageUp, None),
+            "pagedown" => named(PageDown, N::PageDown, None),
+            "space" => named(Space, N::Space, Some(" ")),
+            f if f.len() >= 2 && f.starts_with('f') && f[1..].parse::<u8>().is_ok_and(|n| (1..=12).contains(&n)) => {
+                const FS: [(KeyCode, NamedKey); 12] = [
+                    (F1, N::F1), (F2, N::F2), (F3, N::F3), (F4, N::F4), (F5, N::F5), (F6, N::F6),
+                    (F7, N::F7), (F8, N::F8), (F9, N::F9), (F10, N::F10), (F11, N::F11), (F12, N::F12),
+                ];
+                let (c, n) = FS[f[1..].parse::<usize>().unwrap() - 1];
+                named(c, n, None)
+            }
+            _ => {
+                let mut chars = name.chars();
+                let (Some(c), None) = (chars.next(), chars.next()) else { return None };
+                let code = char_code(c.to_ascii_lowercase())?;
+                let c = if shift { c.to_ascii_uppercase() } else { c };
+                (code, None, Some(c.to_string()))
+            }
+        };
+        Some(KeyIn {
+            pressed,
+            code: Some(code),
+            named,
+            text: if pressed { text } else { None },
+            native: PhysicalKey::Code(code).to_scancode().map_or(0, |s| s as i32 + 8),
+        })
+    }
+
+    /// The event Chromium gets for this key.
+    pub fn to_web(&self, mods: ModifiersState) -> Key {
+        // Ctrl/Alt combos are shortcuts, not text (AltGr arrives without ctrl+alt both set on most layouts).
+        let text = if self.pressed && !(mods.control_key() || mods.alt_key()) {
+            self.text
+                .as_ref()
+                .map(|t| t.chars().filter(|c| !c.is_control() || *c == '\r' || *c == '\t').collect::<String>())
+                .filter(|t| !t.is_empty())
+        } else {
+            None
+        };
+        Key {
+            pressed: self.pressed,
+            vk: vk_code(self.code.unwrap_or(KeyCode::Fn)),
+            native: self.native,
+            modifiers: modifiers(mods),
+            text,
+        }
+    }
+}
+
+/// Parse a script key combo like `ctrl+shift+z` into modifiers and the key name.
+pub fn parse_combo(combo: &str) -> Option<(ModifiersState, &str)> {
+    let mut mods = ModifiersState::empty();
+    let mut parts: Vec<&str> = combo.split('+').collect();
+    // "ctrl++" means Ctrl and the plus key.
+    if combo.ends_with("++") {
+        parts.truncate(parts.len() - 2);
+        parts.push("+");
+    }
+    let key = parts.pop().filter(|k| !k.is_empty())?;
+    for m in parts {
+        match m.to_ascii_lowercase().as_str() {
+            "ctrl" | "control" => mods |= ModifiersState::CONTROL,
+            "shift" => mods |= ModifiersState::SHIFT,
+            "alt" => mods |= ModifiersState::ALT,
+            _ => return None,
+        }
+    }
+    Some((mods, key))
+}
+
+/// US-layout `KeyCode` for a printable ASCII character (lowercase letters).
+fn char_code(c: char) -> Option<KeyCode> {
+    use KeyCode::*;
+    Some(match c {
+        'a'..='z' => letter_code(c),
+        '0'..='9' => digit_code(c),
+        ' ' => Space,
+        '-' => Minus,
+        '=' | '+' => Equal,
+        ',' => Comma,
+        '.' => Period,
+        '/' => Slash,
+        ';' => Semicolon,
+        '\'' => Quote,
+        '`' => Backquote,
+        '[' => BracketLeft,
+        ']' => BracketRight,
+        '\\' => Backslash,
+        _ => return None,
+    })
 }
 
 fn vk_code(c: KeyCode) -> i32 {
@@ -201,5 +320,35 @@ fn vk_code(c: KeyCode) -> i32 {
         BracketRight => vk::OEM_6,
         Quote => vk::OEM_7,
         _ => 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn combos_parse() {
+        assert_eq!(parse_combo("ctrl+shift+z"), Some((ModifiersState::CONTROL | ModifiersState::SHIFT, "z")));
+        assert_eq!(parse_combo("a"), Some((ModifiersState::empty(), "a")));
+        assert_eq!(parse_combo("ctrl++"), Some((ModifiersState::CONTROL, "+")));
+        assert_eq!(parse_combo("hyper+a"), None);
+        assert_eq!(parse_combo("ctrl+"), None);
+    }
+
+    #[test]
+    fn named_keys_map_to_vk() {
+        let k = KeyIn::from_name("c", true, false).unwrap();
+        let web = k.to_web(ModifiersState::CONTROL);
+        assert_eq!(web.vk, 0x43);
+        assert_eq!(web.text, None, "ctrl combos carry no text");
+        assert_eq!(web.native, 46 + 8, "evdev KEY_C + 8");
+        let k = KeyIn::from_name("q", true, true).unwrap();
+        assert_eq!(k.to_web(ModifiersState::SHIFT).text.as_deref(), Some("Q"));
+        let k = KeyIn::from_name("enter", true, false).unwrap();
+        assert_eq!(k.named, Some(NamedKey::Enter));
+        assert_eq!(k.to_web(ModifiersState::empty()).vk, vk::RETURN);
+        assert!(KeyIn::from_name("f13", true, false).is_none());
+        assert!(KeyIn::from_name("é", true, false).is_none());
     }
 }

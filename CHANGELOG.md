@@ -7,6 +7,17 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Page context menu**: right-click in a page for Open link beside, Copy link
+  address, Open/Copy image address, Undo/Redo/Cut/Copy/Paste/Select all in text
+  fields, Copy and Search for selected text, or Back/Forward/Reload. Arrow keys
+  and Enter work; Esc or a click outside closes it.
+- **Desktop clipboard**: Ctrl+C / Ctrl+X in a page now reach other apps, and
+  Ctrl+V pastes text copied elsewhere. The address bar supports Ctrl+V, and
+  Ctrl+C / Ctrl+X after Ctrl+A.
+- **Input methods**: IME composition (e.g. fcitx5 Pinyin) in pages, with the
+  candidate window at the text caret; committed text in the address bar.
+- Script commands `pclick`/`prclick` (click at page coordinates), `key`, `type`,
+  `ime-preedit`, `ime-commit` and `menuclick`.
 - **Dropdowns and popups in pages**: `<select>` lists and other popup widgets are
   drawn over the page and can be clicked.
 - **Page cursors**: the pointer shows the page's cursor (hand over links, text
@@ -59,8 +70,12 @@ All notable changes to Trailboard. The format follows
   being read as Escape).
 
 ### Known issues
+- Copying uses the page's plain selected text, so pages that change what is
+  copied, and "copy" buttons using `navigator.clipboard`, don't reach the desktop
+  clipboard. Desktop text is pasted as plain text.
+- Text copied from Trailboard leaves the clipboard when Trailboard quits.
 - Pages see `devicePixelRatio` equal to the board's raster scale (0.5–2), and a page may lay out once at a stale zoom right after navigating to a new site.
 - Digits in card titles render with wide gaps.
 - Custom image cursors (`cursor: url(…)`) show the default arrow.
 - A card that wakes from sleep reloads its page, losing scroll position and form input.
-- Manual keyboard typing into pages has not been verified by automated tests.
+- Typing is tested through scripted key events, not real keyboard input.

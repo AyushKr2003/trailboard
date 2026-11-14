@@ -4,6 +4,7 @@
 //! with `external_message_pump` + [`pump`], so plain `Rc`/`RefCell` are enough.
 
 pub mod keys;
+pub mod menu;
 pub mod popup;
 
 use cef::{args::Args, *};
@@ -23,6 +24,19 @@ pub enum WebEvent {
     LoadingChanged { page: u64, loading: bool },
     /// The mouse cursor the page wants while the pointer is over it.
     CursorChanged { page: u64, cursor: Cursor },
+    /// The user right-clicked at (`x`, `y`) CSS px in the page; the app shows its own menu.
+    ContextMenu { page: u64, x: f32, y: f32, context: menu::MenuContext },
+}
+
+/// Editing commands run on the page's focused frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditCommand {
+    Undo,
+    Redo,
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
 }
 
 /// Mouse cursor shapes a page can ask for (CSS `cursor`), independent of any windowing crate.
@@ -251,6 +265,10 @@ struct Shared {
     /// While a popup is open, the page's own pixels (so the popup can move or close cleanly).
     view: RefCell<Option<PaintFrame>>,
     popup: RefCell<PopupState>,
+    /// Text currently selected in the page (Chromium reports every change).
+    selection: RefCell<String>,
+    /// Bounds of the IME composition (or the caret), view px.
+    ime_caret: RefCell<Option<IRect>>,
     /// URL the page was created with; the first navigation to it is never redirected beside.
     initial_url: String,
 }
@@ -366,6 +384,31 @@ wrap_render_handler! {
                 }
                 None => 0,
             }
+        }
+
+        fn on_text_selection_changed(
+            &self,
+            _browser: Option<&mut Browser>,
+            selected_text: Option<&CefString>,
+            _selected_range: Option<&Range>,
+        ) {
+            let text = selected_text.map(|t| t.to_string()).unwrap_or_default();
+            log::trace!("page {} selection {} chars", self.shared.key, text.chars().count());
+            *self.shared.selection.borrow_mut() = text;
+        }
+
+        fn on_ime_composition_range_changed(
+            &self,
+            _browser: Option<&mut Browser>,
+            _selected_range: Option<&Range>,
+            character_bounds: Option<&[Rect]>,
+        ) {
+            let rects: Vec<IRect> = character_bounds
+                .unwrap_or_default()
+                .iter()
+                .map(|r| IRect { x: r.x, y: r.y, w: r.width, h: r.height })
+                .collect();
+            *self.shared.ime_caret.borrow_mut() = popup::bounding(&rects);
         }
 
         fn on_popup_show(&self, _browser: Option<&mut Browser>, show: ::std::os::raw::c_int) {
@@ -592,6 +635,55 @@ wrap_load_handler! {
     }
 }
 
+wrap_context_menu_handler! {
+    struct PageMenu {
+        shared: StdRc<Shared>,
+    }
+
+    impl ContextMenuHandler {
+        fn on_before_context_menu(
+            &self,
+            browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            params: Option<&mut ContextMenuParams>,
+            model: Option<&mut MenuModel>,
+        ) {
+            // An empty model makes CEF skip its own menu; the app draws one instead.
+            if let Some(m) = model {
+                m.clear();
+            }
+            let Some(p) = params else { return };
+            let edit = sys::cef_context_menu_edit_state_flags_t::from(p.edit_state_flags()).0;
+            let has = |f: sys::cef_context_menu_edit_state_flags_t| edit & f.0 != 0;
+            let non_empty = |s: String| Some(s).filter(|s| !s.is_empty());
+            let image = if p.media_type() == ContextMenuMediaType::IMAGE {
+                non_empty(CefString::from(&p.source_url()).to_string())
+            } else {
+                None
+            };
+            let context = menu::MenuContext {
+                link: non_empty(CefString::from(&p.link_url()).to_string()),
+                image,
+                selection: CefString::from(&p.selection_text()).to_string(),
+                editable: p.is_editable() != 0,
+                can_undo: has(sys::cef_context_menu_edit_state_flags_t::CM_EDITFLAG_CAN_UNDO),
+                can_redo: has(sys::cef_context_menu_edit_state_flags_t::CM_EDITFLAG_CAN_REDO),
+                can_cut: has(sys::cef_context_menu_edit_state_flags_t::CM_EDITFLAG_CAN_CUT),
+                can_copy: has(sys::cef_context_menu_edit_state_flags_t::CM_EDITFLAG_CAN_COPY),
+                can_paste: has(sys::cef_context_menu_edit_state_flags_t::CM_EDITFLAG_CAN_PASTE),
+                can_select_all: has(sys::cef_context_menu_edit_state_flags_t::CM_EDITFLAG_CAN_SELECT_ALL),
+                can_back: browser.as_ref().is_some_and(|b| b.can_go_back() != 0),
+                can_forward: browser.as_ref().is_some_and(|b| b.can_go_forward() != 0),
+            };
+            // Params are view px; the app works in CSS px.
+            let s = *self.shared.scale.borrow();
+            let (x, y) = (p.xcoord() as f32 / s, p.ycoord() as f32 / s);
+            log::debug!("page {} context menu at {x:.0},{y:.0}: {context:?}", self.shared.key);
+            emit(WebEvent::ContextMenu { page: self.shared.key, x, y, context });
+        }
+    }
+}
+
 wrap_client! {
     struct PageClient {
         render: RenderHandler,
@@ -599,6 +691,7 @@ wrap_client! {
         requests: RequestHandler,
         display: DisplayHandler,
         load: LoadHandler,
+        menu: ContextMenuHandler,
     }
 
     impl Client {
@@ -616,6 +709,9 @@ wrap_client! {
         }
         fn load_handler(&self) -> Option<LoadHandler> {
             Some(self.load.clone())
+        }
+        fn context_menu_handler(&self) -> Option<ContextMenuHandler> {
+            Some(self.menu.clone())
         }
     }
 }
@@ -652,6 +748,8 @@ impl Page {
             frame: RefCell::new(PaintFrame::default()),
             view: RefCell::new(None),
             popup: RefCell::new(PopupState::default()),
+            selection: RefCell::new(String::new()),
+            ime_caret: RefCell::new(None),
             initial_url: url.to_string(),
         });
         let mut client = PageClient::new(
@@ -660,6 +758,7 @@ impl Page {
             PageRequests::new(shared.clone(), spawn_beside.0.clone()),
             PageDisplay::new(shared.clone()),
             PageLoad::new(shared.clone()),
+            PageMenu::new(shared.clone()),
         );
         let window_info = WindowInfo { windowless_rendering_enabled: 1, ..Default::default() };
         let browser_settings = BrowserSettings {
@@ -768,6 +867,80 @@ impl Page {
         }
     }
 
+    /// Text selected in the page right now (empty if none).
+    pub fn selected_text(&self) -> String {
+        self.shared.selection.borrow().clone()
+    }
+
+    /// Show `text` as the IME's in-progress composition. `cursor` is the caret or
+    /// selection inside it as byte offsets, as winit reports them.
+    pub fn ime_set_composition(&self, text: &str, cursor: Option<(usize, usize)>) {
+        let Some(h) = self.host() else { return };
+        let len = utf16_len(text);
+        let underline = CompositionUnderline {
+            size: std::mem::size_of::<sys::cef_composition_underline_t>(),
+            range: Range { from: 0, to: len },
+            color: 0xff00_0000,
+            background_color: 0,
+            thick: 0,
+            ..Default::default()
+        };
+        let sel = match cursor {
+            Some((a, b)) => Range { from: utf16_len(&text[..a.min(text.len())]), to: utf16_len(&text[..b.min(text.len())]) },
+            None => Range { from: len, to: len },
+        };
+        h.ime_set_composition(Some(&CefString::from(text)), Some(&[underline]), Some(&INVALID_RANGE), Some(&sel));
+    }
+
+    /// Insert the IME's final text, replacing any composition.
+    pub fn ime_commit(&self, text: &str) {
+        if let Some(h) = self.host() {
+            h.ime_commit_text(Some(&CefString::from(text)), Some(&INVALID_RANGE), 0);
+        }
+    }
+
+    pub fn ime_cancel(&self) {
+        if let Some(h) = self.host() {
+            h.ime_cancel_composition();
+        }
+    }
+
+    /// Where the IME composition or caret is, in CSS px within the page.
+    pub fn ime_caret(&self) -> Option<(f32, f32, f32, f32)> {
+        let r = (*self.shared.ime_caret.borrow())?;
+        let s = *self.shared.scale.borrow();
+        Some((r.x as f32 / s, r.y as f32 / s, r.w as f32 / s, r.h as f32 / s))
+    }
+
+    fn edit_frame(&self) -> Option<Frame> {
+        self.browser.focused_frame().or_else(|| self.browser.main_frame())
+    }
+
+    pub fn edit(&self, cmd: EditCommand) {
+        let Some(f) = self.edit_frame() else { return };
+        match cmd {
+            EditCommand::Undo => f.undo(),
+            EditCommand::Redo => f.redo(),
+            EditCommand::Cut => f.cut(),
+            EditCommand::Copy => f.copy(),
+            EditCommand::Paste => f.paste(),
+            EditCommand::SelectAll => f.select_all(),
+        }
+    }
+
+    /// Paste `text` (from the system clipboard) into the focused field: the page
+    /// gets a `paste` event first and can handle it; otherwise the text is inserted.
+    pub fn paste_text(&self, text: &str) {
+        let Some(f) = self.edit_frame() else { return };
+        let script = format!(
+            "(function(t){{var e=document.activeElement||document.body;var d=new DataTransfer();\
+             d.setData('text/plain',t);var ev=new ClipboardEvent('paste',{{clipboardData:d,bubbles:true,\
+             cancelable:true,composed:true}});if(e.dispatchEvent(ev))document.execCommand('insertText',false,t);}})({})",
+            js_string(text)
+        );
+        f.execute_java_script(Some(&CefString::from(script.as_str())), None, 0);
+    }
+
     pub fn send_key(&self, ev: &keys::Key) {
         if let Some(h) = self.host() {
             for e in ev.to_cef() {
@@ -783,6 +956,34 @@ impl Drop for Page {
             h.close_browser(1);
         }
     }
+}
+
+/// CEF's "no range" value.
+const INVALID_RANGE: Range = Range { from: u32::MAX, to: u32::MAX };
+
+fn utf16_len(s: &str) -> u32 {
+    s.encode_utf16().count() as u32
+}
+
+/// `s` as a JavaScript string literal.
+fn js_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            // Line terminators that end a JS string, and anything that could close a <script>.
+            '\u{2028}' | '\u{2029}' | '<' | '>' => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -804,7 +1005,20 @@ pub mod flags {
 
 #[cfg(test)]
 mod tests {
-    use super::zoom_level_for;
+    use super::{js_string, utf16_len, zoom_level_for};
+
+    #[test]
+    fn js_strings_are_escaped() {
+        assert_eq!(js_string("a\"b\\c\nd"), r#""a\"b\\c\nd""#);
+        assert_eq!(js_string("</script>\u{2028}"), r#""\u003c/script\u003e\u2028""#);
+        assert_eq!(js_string("\u{1}é😀"), "\"\\u0001é😀\"");
+    }
+
+    #[test]
+    fn utf16_lengths() {
+        assert_eq!(utf16_len("aé"), 2);
+        assert_eq!(utf16_len("😀"), 2);
+    }
 
     #[test]
     fn zoom_level_matches_chromium_factor() {

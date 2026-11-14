@@ -10,6 +10,11 @@
 //! - Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y) undo/redo board edits (open, close, move,
 //!   resize). After clicking inside a page they go to the page instead (text undo).
 //!
+//! - Right-click in a page opens a context menu (drawn by the app); Esc, a click
+//!   outside, scrolling or moving the board closes it.
+//! - Ctrl+C / Ctrl+X / Ctrl+V in a page go through the desktop clipboard (see `clipboard`).
+//! - IME (e.g. fcitx5) composition goes to the focused page or the address bar.
+//!
 //! Live-browser cap: at most `TRAILBOARD_MAX_LIVE` (default 6) cards keep a live
 //! browser (see `scene::liveness`). The others sleep: their page is closed and the
 //! card shows its last frame, dimmed, until it is focused or scrolled into view.
@@ -22,12 +27,17 @@ use compositor::{rgba, Background, Layer, Quad, Renderer, Shape, Text};
 use scene::{liveness, placement, Camera, Change, Edge, History, Node, NodeId, Rect, Scene, Vec2};
 use web::{MouseButton as WebButton, Page, SpawnBeside, WebEvent};
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use web::menu::{MenuAction, MenuItem};
+use web::EditCommand;
+use winit::dpi::{PhysicalPosition, PhysicalSize};
+use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
-use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey};
+use winit::keyboard::{KeyCode, ModifiersState, NamedKey};
 use winit::window::{CursorIcon, Window, WindowId};
 
-use crate::keymap;
+use crate::clipboard::{Clipboard, Paste};
+use crate::keymap::{self, KeyIn};
+use crate::menu::{self, ContextMenu};
 use crate::omnibox::{self, Omnibox, Target};
 use crate::script::{Cmd, Script};
 
@@ -77,6 +87,16 @@ pub struct App {
     /// The last click landed inside the focused page, so its keys (incl. Ctrl+Z) go there.
     keys_in_page: bool,
     omnibox: Option<Omnibox>,
+    menu: Option<ContextMenu>,
+    /// The current mouse press started inside the context menu.
+    menu_pressed: bool,
+    clipboard: Clipboard,
+    /// IME input is enabled on the window.
+    ime_allowed: bool,
+    /// Page with an IME composition in progress.
+    ime_page: Option<NodeId>,
+    /// Last IME candidate-window area sent to the window (screen px).
+    ime_area: Option<[i32; 4]>,
     spawn_beside: SpawnBeside,
     drag: Drag,
     cursor: Vec2,
@@ -112,6 +132,12 @@ impl App {
             history: History::new(),
             keys_in_page: false,
             omnibox: None,
+            menu: None,
+            menu_pressed: false,
+            clipboard: Clipboard::new(),
+            ime_allowed: false,
+            ime_page: None,
+            ime_area: None,
             spawn_beside: SpawnBeside::new(true),
             drag: Drag::None,
             cursor: Vec2::default(),
@@ -213,6 +239,8 @@ impl App {
     fn camera_moved(&mut self) {
         self.camera_changed = Instant::now();
         self.dirty = true;
+        // The menu belongs to a spot on a page; it shouldn't float away from it.
+        self.menu = None;
     }
 
     // ---------------------------------------------------------------- cards
@@ -497,6 +525,7 @@ impl App {
                         self.set_cursor(cursor);
                     }
                 }
+                WebEvent::ContextMenu { page, x, y, context } => self.open_menu(NodeId(page), x, y, &context),
                 WebEvent::LoadingChanged { page, loading } => {
                     if let Some(c) = self.cards.get_mut(&NodeId(page)) {
                         c.loading = loading;
@@ -529,6 +558,28 @@ impl App {
     fn mouse_input(&mut self, state: ElementState, button: MouseButton) {
         let p = self.cursor;
         let mods = keymap::modifiers(self.mods);
+        // The context menu takes clicks first. A click outside closes it; a right
+        // click outside still goes through so it can open a new menu.
+        if let Some(m) = &self.menu {
+            if state == ElementState::Pressed {
+                if m.rect.contains(p) {
+                    self.menu_pressed = true;
+                    return;
+                }
+                self.menu = None;
+                if button != MouseButton::Right {
+                    return;
+                }
+            } else if std::mem::take(&mut self.menu_pressed) {
+                if let Some(i) = m.item_at(p) {
+                    self.activate_menu_item(i);
+                }
+                return;
+            }
+        }
+        if state == ElementState::Released && std::mem::take(&mut self.menu_pressed) {
+            return;
+        }
         log::debug!("mouse {state:?} {button:?} at {p:?} hit={:?}", self.hit(p));
         if state == ElementState::Pressed {
             // Track multi-clicks for the page and for double-click on title bars.
@@ -609,6 +660,18 @@ impl App {
     }
 
     fn cursor_moved(&mut self, p: Vec2) {
+        if let Some(m) = self.menu.as_mut()
+            && m.rect.contains(p)
+            && matches!(self.drag, Drag::None)
+        {
+            m.hover = m.item_at(p);
+            self.cursor = p;
+            self.set_cursor(web::Cursor::Default);
+            return;
+        }
+        if let Some(m) = self.menu.as_mut() {
+            m.hover = None;
+        }
         let prev = self.cursor;
         self.cursor = p;
         let mods = keymap::modifiers(self.mods);
@@ -684,6 +747,7 @@ impl App {
             MouseScrollDelta::PixelDelta(p) => (p.x as f32, p.y as f32, false),
         };
         self.camera_goal = None;
+        self.menu = None;
         if self.mods.control_key() {
             let steps = if lines { dy } else { dy / 60.0 };
             self.camera.zoom_about(1.15f32.powf(steps), self.cursor, self.viewport(), self.scale());
@@ -703,21 +767,41 @@ impl App {
         self.camera_moved();
     }
 
-    fn key(&mut self, ev: winit::event::KeyEvent) {
-        let pressed = ev.state == ElementState::Pressed;
+    fn key(&mut self, ev: KeyIn) {
+        let pressed = ev.pressed;
         let ctrl = self.mods.control_key();
         let shift = self.mods.shift_key();
         let alt = self.mods.alt_key();
         // Shortcuts follow the logical key (layout-aware), like browsers do.
-        let code = keymap::shortcut_code(&ev);
+        let code = ev.code;
+
+        if pressed && self.menu.is_some() {
+            match ev.named {
+                Some(NamedKey::Escape) => {
+                    self.menu = None;
+                    return;
+                }
+                Some(NamedKey::ArrowDown) => return self.menu.as_mut().expect("menu").step(1),
+                Some(NamedKey::ArrowUp) => return self.menu.as_mut().expect("menu").step(-1),
+                Some(NamedKey::Enter) => {
+                    if let Some(i) = self.menu.as_ref().and_then(|m| m.hover) {
+                        self.activate_menu_item(i);
+                    }
+                    return;
+                }
+                // Modifiers alone keep the menu (e.g. reaching for a shortcut).
+                Some(NamedKey::Shift | NamedKey::Control | NamedKey::Alt) => {}
+                _ => self.menu = None,
+            }
+        }
 
         if let Some(ob) = self.omnibox.as_mut() {
             if !pressed {
                 return;
             }
-            match &ev.logical_key {
-                Key::Named(NamedKey::Escape) => self.omnibox = None,
-                Key::Named(NamedKey::Enter) => {
+            match ev.named {
+                Some(NamedKey::Escape) => self.omnibox = None,
+                Some(NamedKey::Enter) => {
                     let ob = self.omnibox.take().expect("omnibox open");
                     if let Some(url) = omnibox::resolve(&ob.text) {
                         match (ob.target, self.focused_page()) {
@@ -728,13 +812,28 @@ impl App {
                         }
                     }
                 }
-                Key::Named(NamedKey::Backspace) => ob.backspace(),
-                Key::Named(NamedKey::Delete) => ob.delete(),
-                Key::Named(NamedKey::ArrowLeft) => ob.left(),
-                Key::Named(NamedKey::ArrowRight) => ob.right(),
-                Key::Named(NamedKey::Home) => ob.home(),
-                Key::Named(NamedKey::End) => ob.end(),
+                Some(NamedKey::Backspace) => ob.backspace(),
+                Some(NamedKey::Delete) => ob.delete(),
+                Some(NamedKey::ArrowLeft) => ob.left(),
+                Some(NamedKey::ArrowRight) => ob.right(),
+                Some(NamedKey::Home) => ob.home(),
+                Some(NamedKey::End) => ob.end(),
                 _ if ctrl && code == Some(KeyCode::KeyA) => ob.select_all = true,
+                _ if ctrl && matches!(code, Some(KeyCode::KeyC | KeyCode::KeyX)) => {
+                    if ob.select_all && !ob.text.is_empty() {
+                        let text = ob.text.clone();
+                        if code == Some(KeyCode::KeyX) {
+                            ob.insert("");
+                        }
+                        self.clipboard.set_text(&text);
+                    }
+                }
+                _ if ctrl && code == Some(KeyCode::KeyV) => {
+                    if let Some(t) = self.clipboard.text() {
+                        let line = t.split_whitespace().collect::<Vec<_>>().join(" ");
+                        self.omnibox.as_mut().expect("omnibox open").insert(&line);
+                    }
+                }
                 _ => {
                     if !ctrl && !alt
                         && let Some(t) = ev.text.as_ref() {
@@ -755,6 +854,15 @@ impl App {
                     let url = self.focused.and_then(|id| self.scene.node(id)).map(|n| n.url.clone()).unwrap_or_default();
                     let target = if self.focused.is_some() { Target::Focused } else { Target::NewCard };
                     self.omnibox = Some(Omnibox::new(&url, target));
+                    true
+                }
+                Some(KeyCode::KeyC | KeyCode::KeyX) if ctrl && !alt && self.focused_page().is_some() => {
+                    let cut = code == Some(KeyCode::KeyX);
+                    self.page_copy(cut, Some(&ev));
+                    true
+                }
+                Some(KeyCode::KeyV) if ctrl && !alt && self.focused_page().is_some() => {
+                    self.page_paste(Some(&ev));
                     true
                 }
                 Some(KeyCode::KeyZ) if ctrl && !self.keys_in_page => {
@@ -804,7 +912,7 @@ impl App {
                 Some(KeyCode::Escape) if self.focused.is_some() && self.drag_is_idle() => {
                     // Let the page see Esc too (closes its menus), then leave the page.
                     if let Some(p) = self.focused_page() {
-                        p.send_key(&keymap::to_web(&ev, self.mods));
+                        p.send_key(&ev.to_web(self.mods));
                     }
                     self.focus(None);
                     true
@@ -825,7 +933,7 @@ impl App {
             }
         }
         if let Some(p) = self.focused_page() {
-            p.send_key(&keymap::to_web(&ev, self.mods));
+            p.send_key(&ev.to_web(self.mods));
         }
     }
 
@@ -1049,6 +1157,10 @@ impl App {
             layers.push(l);
         }
 
+        if let Some(m) = &self.menu {
+            layers.push(menu_layer(m, scale, screen));
+        }
+
         if let Some(r) = self.renderer.as_mut() {
             r.render(bg, &layers);
         }
@@ -1061,10 +1173,230 @@ impl App {
         self.autosave();
         self.step_camera(dt);
         self.sync_pages();
+        self.sync_ime();
         if let Some(w) = self.window() {
             w.request_redraw();
         }
     }
+}
+
+// ------------------------------------------------------------ clipboard, IME, context menu
+
+impl App {
+    /// Ctrl+C / Ctrl+X (`key`) or the menu's Copy / Cut (`None`) in the focused page.
+    fn page_copy(&mut self, cut: bool, key: Option<&KeyIn>) {
+        let Some(page) = self.focused_page() else { return };
+        // Read the selection before a cut removes it.
+        let text = page.selected_text();
+        match key {
+            Some(k) => page.send_key(&k.to_web(self.mods)),
+            None => page.edit(if cut { EditCommand::Cut } else { EditCommand::Copy }),
+        }
+        log::debug!("copy from page: {} chars", text.chars().count());
+        self.clipboard.copied_from_page(text);
+    }
+
+    /// Ctrl+V (`key`) or the menu's Paste (`None`) in the focused page.
+    fn page_paste(&mut self, key: Option<&KeyIn>) {
+        let plan = self.clipboard.paste_plan();
+        let Some(page) = self.focused_page() else { return };
+        match plan {
+            Paste::Text(t) => {
+                log::debug!("paste desktop text: {} chars", t.chars().count());
+                page.paste_text(&t);
+            }
+            Paste::Native => match key {
+                Some(k) => page.send_key(&k.to_web(self.mods)),
+                None => page.edit(EditCommand::Paste),
+            },
+        }
+    }
+
+    fn ime(&mut self, ime: Ime) {
+        log::debug!("ime {ime:?}");
+        if let Some(ob) = self.omnibox.as_mut() {
+            // The address bar takes committed text only; it doesn't show compositions.
+            if let Ime::Commit(t) = ime {
+                ob.insert(&t);
+            }
+            return;
+        }
+        let Some(id) = self.focused else { return };
+        let Some(page) = self.cards.get(&id).map(|c| &c.page) else { return };
+        match ime {
+            Ime::Preedit(text, cursor) if !text.is_empty() => {
+                page.ime_set_composition(&text, cursor);
+                self.ime_page = Some(id);
+            }
+            Ime::Preedit(..) | Ime::Disabled => {
+                if self.ime_page.take().is_some() {
+                    page.ime_cancel();
+                }
+            }
+            Ime::Commit(text) => {
+                page.ime_commit(&text);
+                self.ime_page = None;
+            }
+            Ime::Enabled => {}
+        }
+    }
+
+    /// Enable IME while text can go somewhere, and keep the candidate window by the caret.
+    fn sync_ime(&mut self) {
+        let page_keys = self.keys_in_page && self.focused_page().is_some();
+        // A test script feeds IME events itself; keep a running input method out of it.
+        let allowed = (self.omnibox.is_some() || page_keys) && self.script.is_none();
+        // A composition left in a page that lost focus is dropped.
+        if let Some(id) = self.ime_page
+            && (Some(id) != self.focused || !page_keys)
+        {
+            if let Some(c) = self.cards.get(&id) {
+                c.page.ime_cancel();
+            }
+            self.ime_page = None;
+        }
+        let area = if self.omnibox.is_some() {
+            let (vp, s) = (self.viewport(), self.scale());
+            let w = (720.0 * s).min(vp.x - 32.0 * s);
+            Some([((vp.x - w) / 2.0) as i32, (18.0 * s) as i32, w as i32, (48.0 * s) as i32])
+        } else if page_keys {
+            self.focused.and_then(|id| {
+                let (x, y, w, h) = self.cards.get(&id)?.page.ime_caret()?;
+                let n = self.scene.node(id)?;
+                let r = self.to_screen_rect(Rect::new(n.rect.x + x, n.rect.y + y, w.max(1.0), h.max(1.0)));
+                Some([r.x as i32, r.y as i32, r.w.ceil() as i32, r.h.ceil() as i32])
+            })
+        } else {
+            None
+        };
+        let Some(w) = self.window().cloned() else { return };
+        if allowed != self.ime_allowed {
+            log::debug!("ime allowed={allowed}");
+            w.set_ime_allowed(allowed);
+            self.ime_allowed = allowed;
+            self.ime_area = None;
+        }
+        if allowed
+            && let Some(a) = area
+            && self.ime_area != Some(a)
+        {
+            log::debug!("ime area {a:?}");
+            w.set_ime_cursor_area(PhysicalPosition::new(a[0], a[1]), PhysicalSize::new(a[2].max(1) as u32, a[3].max(1) as u32));
+            self.ime_area = Some(a);
+        }
+    }
+
+    fn open_menu(&mut self, id: NodeId, x: f32, y: f32, ctx: &web::menu::MenuContext) {
+        let Some(n) = self.scene.node(id) else { return };
+        let anchor = self.camera.world_to_screen(Vec2::new(n.rect.x + x, n.rect.y + y), self.viewport(), self.scale());
+        let items = web::menu::items(ctx);
+        let scale = self.scale();
+        let label_w = match self.renderer.as_mut() {
+            Some(r) => items
+                .iter()
+                .map(|i| match i {
+                    MenuItem::Action { label, .. } => r.measure(label, menu::FONT * scale, false),
+                    MenuItem::Separator => 0.0,
+                })
+                .fold(0.0, f32::max),
+            None => 0.0,
+        };
+        let m = ContextMenu::new(id, items, anchor, label_w, self.viewport(), scale);
+        log::info!("context menu on card {}: {:?}", id.0, menu_labels(&m.items));
+        self.menu = Some(m);
+        self.menu_pressed = false;
+    }
+
+    fn activate_menu_item(&mut self, i: usize) {
+        let Some(m) = self.menu.take() else { return };
+        let Some(MenuItem::Action { action, enabled: true, label }) = m.items.get(i).cloned() else { return };
+        log::info!("menu: {label}");
+        let id = m.page;
+        // Edits act on the focused page; the right-click focused this card.
+        if self.focused != Some(id) {
+            self.focus(Some(id));
+        }
+        self.keys_in_page = true;
+        let open_beside = |app: &mut App, url: &str| {
+            if let Some(new) = app.open_card(Rect::default(), url, Some(id)) {
+                app.ensure_visible(new);
+            }
+        };
+        match action {
+            MenuAction::OpenBeside(url) => open_beside(self, &url),
+            MenuAction::Search(q) => open_beside(self, &omnibox::search_url(&q)),
+            MenuAction::CopyText(t) => self.clipboard.set_text(&t),
+            MenuAction::Copy => self.page_copy(false, None),
+            MenuAction::Cut => self.page_copy(true, None),
+            MenuAction::Paste => self.page_paste(None),
+            MenuAction::Undo | MenuAction::Redo | MenuAction::SelectAll => {
+                if let Some(p) = self.focused_page() {
+                    p.edit(match action {
+                        MenuAction::Undo => EditCommand::Undo,
+                        MenuAction::Redo => EditCommand::Redo,
+                        _ => EditCommand::SelectAll,
+                    });
+                }
+            }
+            MenuAction::Back | MenuAction::Forward | MenuAction::Reload => {
+                if let Some(p) = self.focused_page() {
+                    match action {
+                        MenuAction::Back => p.back(),
+                        MenuAction::Forward => p.forward(),
+                        _ => p.reload(),
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn menu_labels(items: &[MenuItem]) -> Vec<&str> {
+    items
+        .iter()
+        .map(|i| match i {
+            MenuItem::Action { label, .. } => label.as_str(),
+            MenuItem::Separator => "-",
+        })
+        .collect()
+}
+
+fn menu_layer(m: &ContextMenu, scale: f32, screen: Rect) -> Layer {
+    let mut l = Layer::default();
+    let radius = 8.0 * scale;
+    l.quads.push(Quad {
+        shape: Shape::Shadow { rect: m.rect.translate(Vec2::new(0.0, 4.0 * scale)), radius, blur: 18.0 * scale },
+        color: [0.0, 0.0, 0.0, 0.55],
+        texture: None,
+    });
+    l.quads.push(Quad { shape: Shape::Rect { rect: m.rect, radius }, color: rgba(44, 44, 52, 1.0), texture: None });
+    let size = menu::FONT * scale;
+    for (i, (item, row)) in m.items.iter().zip(&m.rows).enumerate() {
+        match item {
+            MenuItem::Separator => {
+                let y = row.y + row.h / 2.0;
+                l.quads.push(Quad {
+                    shape: Shape::Rect { rect: Rect::new(row.x + 4.0 * scale, y, row.w - 8.0 * scale, scale.max(1.0)), radius: 0.0 },
+                    color: rgba(255, 255, 255, 0.1),
+                    texture: None,
+                });
+            }
+            MenuItem::Action { label, enabled, .. } => {
+                if m.hover == Some(i) {
+                    l.quads.push(Quad { shape: Shape::Rect { rect: *row, radius: 5.0 * scale }, color: rgba(80, 100, 220, 0.85), texture: None });
+                }
+                l.texts.push(Text {
+                    text: label.clone(),
+                    pos: [row.x + (menu::TEXT_PAD - menu::PAD) * scale, row.y + (row.h - size * 1.3) / 2.0],
+                    size,
+                    color: if *enabled { rgba(235, 235, 240, 1.0) } else { rgba(150, 150, 160, 1.0) },
+                    clip: screen,
+                    bold: false,
+                });
+            }
+        }
+    }
+    l
 }
 
 impl App {
@@ -1082,6 +1414,17 @@ impl App {
                     self.mouse_input(ElementState::Pressed, MouseButton::Left);
                     self.mouse_input(ElementState::Released, MouseButton::Left);
                 }
+                Cmd::PageClick { id, x, y, right } => {
+                    let Some(n) = self.scene.node(NodeId(id)) else {
+                        log::warn!("script: no card {id}");
+                        continue;
+                    };
+                    let p = self.camera.world_to_screen(Vec2::new(n.rect.x + x, n.rect.y + y), self.viewport(), self.scale());
+                    let button = if right { MouseButton::Right } else { MouseButton::Left };
+                    self.cursor_moved(p);
+                    self.mouse_input(ElementState::Pressed, button);
+                    self.mouse_input(ElementState::Released, button);
+                }
                 Cmd::Wheel(x, y) => self.wheel(MouseScrollDelta::LineDelta(x, y)),
                 Cmd::CtrlWheel(y) => {
                     let saved = self.mods;
@@ -1090,6 +1433,36 @@ impl App {
                     self.mods = saved;
                 }
                 Cmd::Fit => self.fit_all(),
+                Cmd::ImePreedit(t) => {
+                    let n = t.len();
+                    self.ime(Ime::Preedit(t, Some((n, n))));
+                }
+                Cmd::ImeCommit(t) => self.ime(Ime::Commit(t)),
+                Cmd::MenuClick(label) => {
+                    let row = self.menu.as_ref().and_then(|m| {
+                        let i = menu_labels(&m.items).iter().position(|l| *l == label)?;
+                        Some(m.rows[i])
+                    });
+                    match row {
+                        Some(r) => {
+                            self.cursor_moved(r.center());
+                            self.mouse_input(ElementState::Pressed, MouseButton::Left);
+                            self.mouse_input(ElementState::Released, MouseButton::Left);
+                        }
+                        None => log::warn!("script: no open menu item {label:?}"),
+                    }
+                }
+                Cmd::Key(combo) => match keymap::parse_combo(&combo) {
+                    Some((mods, name)) => self.script_key(name, mods),
+                    None => log::warn!("script: bad key combo {combo:?}"),
+                },
+                Cmd::Type(text) => {
+                    for c in text.chars() {
+                        let shift = c.is_ascii_uppercase();
+                        let mods = if shift { ModifiersState::SHIFT } else { ModifiersState::empty() };
+                        self.script_key(&c.to_string(), mods);
+                    }
+                }
                 Cmd::Drag(x0, y0, x1, y1) => {
                     self.cursor_moved(Vec2::new(x0, y0));
                     self.mouse_input(ElementState::Pressed, MouseButton::Left);
@@ -1120,6 +1493,26 @@ impl App {
                 Cmd::Quit => self.quit = true,
             }
         }
+    }
+}
+
+impl App {
+    /// Press and release a named key with `mods` held, through the normal key path.
+    fn script_key(&mut self, name: &str, mods: ModifiersState) {
+        let shift = mods.shift_key();
+        let (Some(down), Some(up)) = (KeyIn::from_name(name, true, shift), KeyIn::from_name(name, false, shift)) else {
+            // Not on the US layout: deliver it as text only.
+            let text = KeyIn { pressed: true, code: None, named: None, text: Some(name.to_string()), native: 0 };
+            let saved = std::mem::replace(&mut self.mods, mods);
+            self.key(text.clone());
+            self.key(KeyIn { pressed: false, text: None, ..text });
+            self.mods = saved;
+            return;
+        };
+        let saved = std::mem::replace(&mut self.mods, mods);
+        self.key(down);
+        self.key(up);
+        self.mods = saved;
     }
 }
 
@@ -1248,7 +1641,8 @@ impl ApplicationHandler for App {
             }
             WindowEvent::MouseInput { state, button, .. } => self.mouse_input(state, button),
             WindowEvent::MouseWheel { delta, .. } => self.wheel(delta),
-            WindowEvent::KeyboardInput { event, is_synthetic: false, .. } => self.key(event),
+            WindowEvent::KeyboardInput { event, is_synthetic: false, .. } => self.key(KeyIn::from_winit(&event)),
+            WindowEvent::Ime(ime) => self.ime(ime),
             WindowEvent::Focused(false) => self.mods = ModifiersState::empty(),
             WindowEvent::RedrawRequested => self.draw(),
             _ => {}

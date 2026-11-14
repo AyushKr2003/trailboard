@@ -7,9 +7,16 @@
 //! wait 3000            # milliseconds
 //! move 400 300
 //! click 400 300        # left press + release
+//! pclick 1 20 40       # left-click card 1's page at CSS px (20, 40)
+//! prclick 1 20 40      # same, right button
 //! wheel 0 -3           # line deltas
 //! ctrlwheel 2
 //! drag 10 10 300 200   # left press, move in steps, release
+//! key ctrl+shift+z     # press + release a key combo (US layout names, see keymap::KeyIn::from_name)
+//! type hello world     # type text (each character as a key press)
+//! ime-preedit 你好       # IME composition text (empty cancels it)
+//! ime-commit 你好        # IME final text
+//! menuclick Copy       # click the open context menu's item with this label
 //! fit                  # same as Ctrl+0
 //! undo                 # same as Ctrl+Z on the board
 //! redo                 # same as Ctrl+Shift+Z
@@ -27,9 +34,16 @@ pub enum Cmd {
     Wait(u64),
     Move(f32, f32),
     Click(f32, f32),
+    /// Click inside card `id`'s page at CSS px; `right` uses the right button.
+    PageClick { id: u64, x: f32, y: f32, right: bool },
     Wheel(f32, f32),
     CtrlWheel(f32),
     Drag(f32, f32, f32, f32),
+    Key(String),
+    Type(String),
+    ImePreedit(String),
+    ImeCommit(String),
+    MenuClick(String),
     Fit,
     Undo,
     Redo,
@@ -78,9 +92,16 @@ fn parse(line: &str) -> Option<Cmd> {
         "wait" => Cmd::Wait(num(0) as u64),
         "move" => Cmd::Move(num(0), num(1)),
         "click" => Cmd::Click(num(0), num(1)),
+        "pclick" | "prclick" => Cmd::PageClick { id: num(0) as u64, x: num(1), y: num(2), right: word == "prclick" },
         "wheel" => Cmd::Wheel(num(0), num(1)),
         "ctrlwheel" => Cmd::CtrlWheel(num(0)),
         "drag" => Cmd::Drag(num(0), num(1), num(2), num(3)),
+        "key" => Cmd::Key(rest.trim().to_string()),
+        // Keep the text's own spacing; only the separator after the word is dropped.
+        "type" => Cmd::Type(rest.to_string()),
+        "ime-preedit" => Cmd::ImePreedit(rest.trim().to_string()),
+        "ime-commit" => Cmd::ImeCommit(rest.trim().to_string()),
+        "menuclick" => Cmd::MenuClick(rest.trim().to_string()),
         "fit" => Cmd::Fit,
         "undo" => Cmd::Undo,
         "redo" => Cmd::Redo,

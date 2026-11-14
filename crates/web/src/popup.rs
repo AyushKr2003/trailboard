@@ -25,6 +25,19 @@ impl IRect {
 /// Move a popup rect so it lies inside a `view_w`×`view_h` view where it can
 /// (Chromium places it as if the page had a whole screen below it; our card is
 /// smaller). A popup larger than the view keeps its top-left corner in view.
+/// Smallest rect holding every rect in `rects` (`None` if empty).
+pub fn bounding(rects: &[IRect]) -> Option<IRect> {
+    let first = rects.first()?;
+    let (mut x0, mut y0, mut x1, mut y1) = (first.x, first.y, first.x + first.w, first.y + first.h);
+    for r in &rects[1..] {
+        x0 = x0.min(r.x);
+        y0 = y0.min(r.y);
+        x1 = x1.max(r.x + r.w);
+        y1 = y1.max(r.y + r.h);
+    }
+    Some(IRect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
+}
+
 pub fn clamp_into_view(r: IRect, view_w: i32, view_h: i32) -> IRect {
     let mut out = r;
     if out.x + out.w > view_w {
@@ -81,6 +94,13 @@ mod tests {
     #[test]
     fn clamp_oversized_keeps_top_left() {
         assert_eq!(clamp_into_view(r(50, 50, 500, 400), 400, 300), r(0, 0, 500, 400));
+    }
+
+    #[test]
+    fn bounding_unions() {
+        assert_eq!(bounding(&[]), None);
+        assert_eq!(bounding(&[r(5, 5, 0, 10)]), Some(r(5, 5, 0, 10)));
+        assert_eq!(bounding(&[r(5, 5, 2, 10), r(20, 3, 4, 10)]), Some(r(5, 3, 19, 12)));
     }
 
     #[test]

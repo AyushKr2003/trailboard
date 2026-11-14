@@ -2,7 +2,9 @@
 //! board; links open beside the page they came from.
 
 mod app;
+mod clipboard;
 mod keymap;
+mod menu;
 mod omnibox;
 mod script;
 

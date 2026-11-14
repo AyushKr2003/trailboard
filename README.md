@@ -55,7 +55,11 @@ you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change th
 | Address bar / new card | Ctrl+L / Ctrl+T (or N with no page focused) |
 | Fit everything | Ctrl+0 (or F with no page focused) |
 | Back / forward / reload | Alt+← / Alt+→ / Ctrl+R |
+| Page context menu | right-click in a page (open link beside, copy link, edit, search selection) |
+| Copy / cut / paste | Ctrl+C / Ctrl+X / Ctrl+V (shared with the desktop clipboard) |
 | Leave the page | Esc |
+
+Input methods (e.g. fcitx5) work in pages and in the address bar.
 
 ## Tests
 
@@ -64,14 +68,16 @@ cargo test                       # scene, storage, omnibox unit tests
 TRAILBOARD_SCRIPT=path cargo run -p trailboard -- URL   # scripted end-to-end run
 ```
 
-`TRAILBOARD_SCRIPT` drives the real input handlers (`click x y`, `wheel`, `fit`,
+`TRAILBOARD_SCRIPT` drives the real input handlers (`click x y`, `pclick card x y`,
+`key ctrl+c`, `type text`, `ime-commit text`, `menuclick label`, `wheel`, `fit`,
 `open URL`, `wait ms`, `log`, `quit`); see `crates/app/src/script.rs`.
 
 ## Status
 
 Done: live page cards, open-links-beside with trail edges, pan/zoom, move,
-resize, close/reopen, omnibox, zoom-aware page resolution, off-screen pages
-paused, board persistence.
+resize, close/reopen, undo/redo, omnibox, zoom-aware page resolution, off-screen
+pages paused, live-browser cap, page context menu, desktop clipboard, IME input,
+board persistence.
 
 Next: Spaces, Tidy and Fold, Read Mode, notes, trails sidebar, Ctrl+K palette,
 history with full-text search, ad blocking, then optional semantic search and

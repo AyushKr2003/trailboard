@@ -905,6 +905,12 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   - Short enough to fit its 560×720 card without scrolling; the full list
     stays in the shortcut sheet (?), which the guide points to. English only
     until the translation item.
+  - *Welcome note* in Ctrl+K brings it back: it goes to an unedited welcome
+    note already on the board (unfolding its stack; `Scene::note_with_text`),
+    else adds a fresh copy in the middle of the view, current. An edited
+    guide counts as the user's own note, so a fresh copy is added. Typing
+    "welcome" ranks the guide card itself (open or recently closed) above
+    the command, which is fine: either way the guide comes back.
 - ⬜ Licence files (`LICENSE-MIT`, `LICENSE-APACHE`: the copyright line is the owner's call).
 
 ### M10: Optional extras ⬜
@@ -949,14 +955,14 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 - First start only (nothing saved in the data folder yet): a "Welcome to
   Trailboard" note left of the start page, the view fitted to both (see M9).
   `storage::spaces::is_first_run` and `scene::placement::left_of`, with tests.
+- *Welcome note* palette command: goes to the guide, or adds a fresh copy.
 - Fixed on the way: the first view's fit was overridden by the new page's
   `ensure_visible` goal; the startup fit now clears it.
 **Next up:** publishing to the AUR needs the owner's public repository URL
 and a release tag (then `url=`, `source`, `.SRCINFO`); the licence files
 need the owner's copyright line. Without those: M6's translations (needs a
 string table first; the guide note would become per-language) or M8 privacy
-(adblock engine). Small follow-ups: a palette command to bring the welcome
-note back; rename a trail from the
+(adblock engine). Small follow-ups: rename a trail from the
 sidebar; auto-scroll the sidebar while dragging; a downloads folder setting (needs a free-text row or a
 folder picker via xdg-desktop-portal); a progress mark on the board while
 downloads run; ask before quitting with downloads running; pause/resume;
@@ -986,6 +992,9 @@ toast or a palette command.
   no URL): Wikipedia's random page plus the guide. Not verified: the light
   theme, a HiDPI or very small window (the fit zooms out to show both), the
   installed package's first start.
+- Palette command verified (`script4`, `log4.txt`, `shot4.png`, a copy of
+  `data1`): "welcome note 2 already on the board", Ctrl+W closed it (cards=1),
+  the command again: "welcome note 3 added" in the view's middle, current.
 - Polish verified with screenshots (`~/.cache/trailboard-e2e-polish`,
   `run.sh N shot…`, `START=file://…/a.html`; `runlight.sh` adds a fake light
   theme from `light/`). `*1.png` are the before shots, `*2–4.png` after:

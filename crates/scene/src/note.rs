@@ -182,6 +182,12 @@ impl Scene {
         id
     }
 
+    /// The first note (folded away or not) whose text is exactly `text`: an
+    /// untouched copy of a note the app wrote, such as the welcome note.
+    pub fn note_with_text(&self, text: &str) -> Option<NodeId> {
+        self.all_nodes().find(|n| n.note.as_deref() == Some(text)).map(|n| n.id)
+    }
+
     /// Adds a note beside card `from`, joined to it by a trail edge, sized `w`×`h`.
     pub fn note_beside(&mut self, from: NodeId, text: impl Into<String>, w: f32, h: f32) -> Option<NodeId> {
         let src = self.nodes.get(&from)?.clone();
@@ -229,6 +235,18 @@ impl Scene {
 mod tests {
     use super::*;
     use crate::{HEADER_H, STICKY_GRIP_H, Vec2};
+
+    #[test]
+    fn note_with_text_finds_only_untouched_copies() {
+        let mut s = Scene::new();
+        s.add_page(Rect::new(0.0, 0.0, 10.0, 10.0), "https://a/");
+        let edited = s.add_note(Rect::new(100.0, 0.0, 10.0, 10.0), "# Hi\n\nmine");
+        assert_eq!(s.note_with_text("# Hi\n"), None);
+        let copy = s.add_note(Rect::new(200.0, 0.0, 10.0, 10.0), "# Hi\n");
+        s.add_note(Rect::new(300.0, 0.0, 10.0, 10.0), "# Hi\n");
+        assert_eq!(s.note_with_text("# Hi\n"), Some(copy), "the first copy");
+        assert_ne!(Some(edited), s.note_with_text("# Hi\n"));
+    }
 
     #[test]
     fn sticky_notes_have_a_strip_not_a_title_bar() {

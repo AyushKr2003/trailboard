@@ -1017,6 +1017,25 @@ impl App {
         id
     }
 
+    /// *Welcome note* (Ctrl+K): go to the welcome note if an unedited one is
+    /// on the board (unfolding it if needed), else add one in the middle of the view.
+    fn show_guide(&mut self) {
+        if let Some(id) = self.scene.note_with_text(crate::note::GUIDE) {
+            log::info!("welcome note {} already on the board", id.0);
+            self.go_to_card(id);
+            return;
+        }
+        let (w, h) = (crate::note::GUIDE_W, crate::note::GUIDE_H);
+        let rect = placement::free_near(&self.scene, self.camera.center, w, h);
+        let id = self.scene.add_note(rect, crate::note::GUIDE);
+        self.create_page(id);
+        self.history.opened(id);
+        self.dirty = true;
+        self.focus(Some(id));
+        self.ensure_visible(id);
+        log::info!("welcome note {} added", id.0);
+    }
+
     /// N: a new, empty note in the middle of the view, ready to type in.
     fn new_note_at_center(&mut self) -> NodeId {
         let rect = placement::free_near(&self.scene, self.camera.center, crate::note::W, crate::note::H);
@@ -2098,6 +2117,7 @@ impl App {
                 self.hints = true;
                 log::info!("hints shown");
             }
+            Command::Welcome => self.show_guide(),
             Command::Quit => {
                 log::info!("quit (palette)");
                 self.quit = true;

@@ -84,7 +84,8 @@ in the settings (Ctrl+,), or for one run with `TRAILBOARD_MAX_LIVE=N`.
 ## Using it
 
 The first start opens a short welcome note beside the first page; close it
-with Ctrl+W once you know your way around.
+with Ctrl+W once you know your way around, and bring it back with *Welcome
+note* in Ctrl+K.
 
 | Action | Input |
 |---|---|

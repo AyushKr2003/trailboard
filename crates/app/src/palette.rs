@@ -66,6 +66,7 @@ pub enum Command {
     Downloads,
     Settings,
     Shortcuts,
+    Welcome,
     Quit,
 }
 
@@ -122,6 +123,7 @@ pub const COMMANDS: &[CommandInfo] = &[
     c(Command::Downloads, "Downloads", "Ctrl+J", "files saved folder download list"),
     c(Command::Settings, "Settings", "Ctrl+,", "preferences options configure search engine history colours"),
     c(Command::Shortcuts, "Keyboard shortcuts", "?", "help keys hints sheet"),
+    c(Command::Welcome, "Welcome note", "", "guide help getting started tour introduction first"),
     c(Command::Quit, "Quit Trailboard", "Q", "exit close"),
 ];
 

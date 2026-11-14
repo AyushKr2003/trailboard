@@ -49,6 +49,11 @@ you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change th
 |---|---|
 | Pan | drag empty board, middle-drag, or scroll over the board |
 | Zoom | Ctrl + scroll |
+| Go to the next card left / down / up / right | h / j / k / l or the arrow keys (the card becomes current, with a thin ring) |
+| Type in the current card's page | Enter or Space, or click in the page (a thick ring shows it has the keys) |
+| Back to the board / let go of the card | Esc / Esc again |
+| Pan / zoom with the keyboard | Shift + h/j/k/l or Shift + arrows / + and - |
+| Close the current card / quit | Delete / Q (Ctrl+Q works everywhere) |
 | Focus a page | click it (keyboard and scroll then go to the page) |
 | Move / resize a card | drag its title bar / bottom-right corner |
 | Select cards | Shift+drag on the board, Shift+click title bars, Ctrl+A (Esc clears) |
@@ -58,16 +63,16 @@ you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change th
 | Close card / reopen closed | × or Ctrl+W / Ctrl+Shift+T |
 | Undo / redo board edits | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y (after clicking the board or a title bar) |
 | Address bar / new card | Ctrl+L / Ctrl+T |
-| New note (Markdown) | N (with no page focused); click a note to edit, Esc or click away to see it rendered |
+| New note (Markdown) | N (while no page has the keys); click a note to edit, Esc or click away to see it rendered |
 | Quote selected text in a note | right-click the selection → *Add to note* (the note last used, or a new one beside the page) |
 | Save as Markdown | Ctrl+S: the focused note, else the whole board (its trails as nested lists, notes in full); also *Save as Markdown* in a note's right-click menu. Files go to `Documents/Trailboard/` |
-| Fit everything | Ctrl+0 (or F with no page focused) |
-| Tidy: lay trails out left to right, no overlaps | T (with no page focused; Ctrl+Z undoes it) |
-| Fold the trail in the middle of the view into a stack / unfold it | S (with no page focused; Ctrl+Z undoes it) |
-| Peek at the previous / next card of a stack | [ / ] (with no page focused) |
-| List a stack's pages, bring one to the front or unfold | Click the count badge, or O (with no page focused) |
+| Fit everything | Ctrl+0 (or F while no page has the keys) |
+| Tidy: lay trails out left to right, no overlaps | T (while no page has the keys; Ctrl+Z undoes it) |
+| Fold the current trail (or the one in the middle of the view) into a stack / unfold it | S (while no page has the keys; Ctrl+Z undoes it) |
+| Peek at the previous / next card of a stack | [ / ] (while no page has the keys) |
+| List a stack's pages, bring one to the front or unfold | Click the count badge, or O (while no page has the keys) |
 | Go to the next / previous card on the trail (folded or not) | Alt+PgDn / Alt+PgUp |
-| Name the trail in the middle of the view / give it the next colour | R / C (with no page focused; Ctrl+Z undoes it) |
+| Name the current trail / give it the next colour | R / C (while no page has the keys; Ctrl+Z undoes it) |
 | Back / forward / reload | Alt+← / Alt+→ / Ctrl+R |
 | Page context menu | right-click in a page (open link beside, copy link, edit, search selection) |
 | Copy / cut / paste | Ctrl+C / Ctrl+X / Ctrl+V (shared with the desktop clipboard) |
@@ -75,7 +80,7 @@ you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change th
 | New space / next / previous | Ctrl+Shift+N / Ctrl+PageDown / Ctrl+PageUp |
 | Rename space / next tint | F2 / Ctrl+Shift+B |
 | Delete space | Ctrl+Shift+W (asks first if it has cards) |
-| Show shortcuts | ? (with no page focused) or F1 |
+| Show shortcuts | ? (while no page has the keys) or F1 |
 | Quit | Ctrl+Q |
 
 Input methods (e.g. fcitx5) work in pages and in the address bar.

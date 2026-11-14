@@ -207,7 +207,7 @@ function render(t) {
 
 function show() {
   document.body.classList.remove("editing");
-  view.innerHTML = text.trim() ? render(text) : '<p class="empty">Empty note. Click to write.</p>';
+  view.innerHTML = text.trim() ? render(text) : '<p class="empty">Empty note. Click or press Enter to write.</p>';
 }
 
 function edit(line) {
@@ -244,6 +244,9 @@ view.addEventListener("click", e => {
   const block = e.target.closest("[data-line]");
   edit(block ? +block.dataset.line : undefined);
 });
+
+// Enter on the board opens the note for writing, at its end.
+window.tbEdit = () => { if (!document.body.classList.contains("editing")) edit(); };
 
 src.addEventListener("input", () => { text = src.value; send(); });
 src.addEventListener("blur", show);

@@ -8,6 +8,18 @@ use crate::theme::{rgb, Theme};
 /// Section title, then (keys, what they do) rows.
 pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
     (
+        "Keyboard",
+        &[
+            ("h j k l · Arrows", "Go to the next card that way"),
+            ("Enter · Space", "Type in the card's page"),
+            ("Esc", "Back to the board, then let go"),
+            ("Shift + h j k l", "Pan"),
+            ("+ · -", "Zoom in / out"),
+            ("Delete", "Close the card"),
+            ("Q · Ctrl+Q", "Quit"),
+        ],
+    ),
+    (
         "Board",
         &[
             ("Drag board · Scroll", "Pan"),
@@ -25,7 +37,6 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl+Z · Ctrl+Shift+Z", "Undo / redo board edits"),
             ("Ctrl+Shift+T", "Reopen closed card"),
             ("? · F1", "Show / hide these hints"),
-            ("Ctrl+Q", "Quit"),
         ],
     ),
     (
@@ -36,7 +47,6 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("Drag corner", "Resize"),
             ("Double-click title", "Fill the view"),
             ("× · Ctrl+W", "Close"),
-            ("Esc", "Leave the page"),
             ("Tab", "Read mode / back to the board"),
         ],
     ),

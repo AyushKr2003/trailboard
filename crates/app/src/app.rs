@@ -2,9 +2,15 @@
 //!
 //! Input model
 //! - Drag empty board / middle-drag anywhere: pan. Wheel over board: pan. Ctrl+wheel: zoom.
-//! - Click a card: focus it (keyboard and wheel go to the page). Drag its title bar to move,
-//!   its bottom-right corner to resize; × closes; double-click the title bar to fill the view.
-//! - Esc (with no omnibox) unfocuses the card. With no card focused: F fits all, N/T new card.
+//! - Click a card's page: focus it and give it the keys (and the wheel). Drag its title
+//!   bar to move, its bottom-right corner to resize; × closes; double-click the title bar
+//!   to fill the view. A title-bar click makes the card current without the keys.
+//! - Keyboard first (Omarchy's app convention): keys are board keys unless a page has
+//!   them (`App::typing`). h/j/k/l or arrows go to the nearest card that way
+//!   (`scene::nav`), Shift with them pans, +/- zoom, Enter/Space give the current card
+//!   the keys, Esc takes them back (the card stays current) and a second Esc lets go
+//!   of the card, Delete closes it, Q quits. Board keys (F, N, T, S, O, R, C, [, ])
+//!   act on the current card, else the one in the middle of the view.
 //! - Ctrl+L address bar, Ctrl+T new card, Ctrl+W close, Ctrl+Shift+T reopen,
 //!   Ctrl+R reload, Alt+←/→ back/forward, Ctrl+0 fit all.
 //! - Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y) undo/redo board edits (open, close, move,
@@ -42,6 +48,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use compositor::{Background, Layer, Quad, Renderer, Shape, Text};
+use scene::nav::{self, Dir};
 use scene::{liveness, placement, read, selection, tidy, Camera, Change, Edge, History, Node, NodeId, Rect, Scene, Selection, TrailStep, Vec2};
 use storage::spaces::{self, SpaceId, SpaceIndex};
 use web::{MouseButton as WebButton, Page, SpawnBeside, WebEvent};
@@ -803,6 +810,85 @@ impl App {
         self.focused.and_then(|id| self.cards.get(&id)).map(|c| &c.page)
     }
 
+    /// Keys go to the focused page (after a click in it, Enter, or in Read
+    /// Mode); otherwise they are board keys and the focused card is just the
+    /// current one.
+    fn typing(&self) -> bool {
+        self.focused_page().is_some() && (self.keys_in_page || self.read.is_some())
+    }
+
+    /// The card board keys act on: the current one, else the one in the
+    /// middle of the view.
+    fn current(&self) -> Option<NodeId> {
+        read::pick(&self.scene, self.focused, self.camera.center)
+    }
+
+    /// h/j/k/l or arrows: make the nearest card that way current and bring it
+    /// on screen. With no current card, the one in the middle of the view
+    /// becomes current first.
+    fn move_current(&mut self, dir: Dir) {
+        let to = match self.focused.filter(|&id| self.scene.node(id).is_some()) {
+            Some(from) => nav::neighbour(&self.scene, from, dir),
+            None => self.current(),
+        };
+        let Some(to) = to else { return };
+        self.selection.clear();
+        self.focus(Some(to));
+        self.ensure_visible(to);
+    }
+
+    /// Shift+h/j/k/l or Shift+arrows: pan a quarter of the window.
+    fn pan_by_key(&mut self, dir: Dir) {
+        if self.read.is_some() {
+            return;
+        }
+        let vp = self.viewport();
+        let (dx, dy) = match dir {
+            Dir::Left => (vp.x / 4.0, 0.0),
+            Dir::Right => (-vp.x / 4.0, 0.0),
+            Dir::Up => (0.0, vp.y / 4.0),
+            Dir::Down => (0.0, -vp.y / 4.0),
+        };
+        self.camera_goal = None;
+        self.camera.pan_pixels(Vec2::new(dx, dy), self.scale());
+        self.camera_moved();
+    }
+
+    /// + / -: zoom about the middle of the window, as one Ctrl+scroll notch does.
+    fn zoom_by_key(&mut self, zoom_in: bool) {
+        let factor = if zoom_in { 1.25 } else { 1.0 / 1.25 };
+        self.camera_goal = None;
+        let vp = self.viewport();
+        self.camera.zoom_about(factor, vp * 0.5, vp, self.scale());
+        self.camera_moved();
+    }
+
+    /// Enter or Space: give the keys to the current card's page (a note opens
+    /// for writing).
+    fn enter_current(&mut self) {
+        let Some(id) = self.current() else { return };
+        self.selection.clear();
+        self.focus(Some(id));
+        self.ensure_visible(id);
+        self.keys_in_page = true;
+        if let Some(c) = self.cards.get(&id) {
+            c.page.set_focus(true);
+            if self.scene.node(id).is_some_and(Node::is_note) {
+                c.page.run_script(crate::note::EDIT_SCRIPT);
+            }
+        }
+        log::info!("entered card {}", id.0);
+    }
+
+    /// Esc in a page: keys go back to the board, the card stays current.
+    fn leave_page(&mut self) {
+        self.keys_in_page = false;
+        if let Some(p) = self.focused_page() {
+            p.set_focus(false);
+        }
+        log::info!("left the page of card {:?}", self.focused.map(|f| f.0));
+    }
+
     // ---------------------------------------------------------------- camera
 
     fn fit_all(&mut self) {
@@ -816,7 +902,7 @@ impl App {
     /// (`scene::tidy`), as one undo step. The card in the middle of the view
     /// keeps its place on screen, so the board doesn't jump away.
     fn tidy_board(&mut self) {
-        let anchor = read::pick(&self.scene, None, self.camera.center)
+        let anchor = read::pick(&self.scene, self.focused, self.camera.center)
             .and_then(|id| self.scene.node(id).map(|n| (id, n.rect)));
         let mut before = Vec::new();
         for (id, rect) in tidy::tidy(&self.scene) {
@@ -846,7 +932,7 @@ impl App {
     /// S: fold the trail of the card in the middle of the view into a stack
     /// with that card in front, or unfold it if it is a stack. One undo step.
     fn toggle_fold(&mut self) {
-        let Some(id) = read::pick(&self.scene, None, self.camera.center) else { return };
+        let Some(id) = read::pick(&self.scene, self.focused, self.camera.center) else { return };
         if self.scene.stack_of(id).is_some() {
             return self.unfold_stack(id);
         } else if let Some(f) = self.scene.fold(id) {
@@ -872,7 +958,7 @@ impl App {
 
     /// O: the outline of the stack in the middle of the view.
     fn outline_in_view(&mut self) {
-        match read::pick(&self.scene, None, self.camera.center) {
+        match read::pick(&self.scene, self.focused, self.camera.center) {
             Some(id) if self.scene.stack_of(id).is_some() => self.open_outline(id),
             _ => self.toast("No stack here · S folds a trail"),
         }
@@ -880,7 +966,7 @@ impl App {
 
     /// [ / ]: show the previous / next card of the stack in the middle of the view.
     fn peek_stack(&mut self, step: isize) {
-        let Some(id) = read::pick(&self.scene, None, self.camera.center) else { return };
+        let Some(id) = read::pick(&self.scene, self.focused, self.camera.center) else { return };
         let Some(front) = self.scene.peek(id, step) else { return };
         let stack = self.scene.stack_of(front).expect("peeked a stack");
         log::info!("peek: card {} ({} of {})", front.0, stack.front_index() + 1, stack.members.len());
@@ -1534,7 +1620,7 @@ impl App {
             return;
         }
         let f1 = ev.named == Some(NamedKey::F1) && !ctrl && !alt;
-        if pressed && (f1 || (is_question && !ctrl && !alt && self.focused.is_none() && self.omnibox.is_none() && self.menu.is_none())) {
+        if pressed && (f1 || (is_question && !ctrl && !alt && !self.typing() && self.omnibox.is_none() && self.menu.is_none())) {
             self.menu = None;
             self.hints = true;
             log::info!("hints shown");
@@ -1577,7 +1663,10 @@ impl App {
                         match (ob.target, self.focused_page()) {
                             (Target::Focused, Some(page)) => page.load(&url),
                             _ => {
-                                self.new_card_at_center(&url);
+                                // Typed an address: the new page is what you use next.
+                                if self.new_card_at_center(&url).is_some() {
+                                    self.keys_in_page = true;
+                                }
                             }
                         }
                     }
@@ -1669,11 +1758,11 @@ impl App {
                     self.page_paste(Some(&ev));
                     true
                 }
-                Some(KeyCode::KeyZ) if ctrl && !self.keys_in_page => {
+                Some(KeyCode::KeyZ) if ctrl && !self.typing() => {
                     self.undo(shift);
                     true
                 }
-                Some(KeyCode::KeyY) if ctrl && !self.keys_in_page => {
+                Some(KeyCode::KeyY) if ctrl && !self.typing() => {
                     self.undo(true);
                     true
                 }
@@ -1719,14 +1808,14 @@ impl App {
                     true
                 }
                 Some(KeyCode::Delete | KeyCode::Backspace)
-                    if !self.selection.is_empty() && !self.keys_in_page && !ctrl && !alt && self.drag_is_idle() =>
+                    if !self.selection.is_empty() && !self.typing() && !ctrl && !alt && self.drag_is_idle() =>
                 {
                     let ids = self.selection.ids();
                     log::info!("closing {} selected card(s)", ids.len());
                     self.close_cards(&ids);
                     true
                 }
-                Some(KeyCode::KeyA) if ctrl && !shift && self.focused.is_none() => {
+                Some(KeyCode::KeyA) if ctrl && !shift && !self.typing() => {
                     self.selection.select_all(&self.scene);
                     true
                 }
@@ -1734,16 +1823,16 @@ impl App {
                     self.toggle_read();
                     true
                 }
-                Some(KeyCode::KeyS) if self.focused.is_none() && !ctrl && !alt && self.drag_is_idle() => {
+                Some(KeyCode::KeyS) if !self.typing() && !ctrl && !alt && self.drag_is_idle() => {
                     self.toggle_fold();
                     true
                 }
-                Some(KeyCode::KeyO) if self.focused.is_none() && !ctrl && !alt && !shift && self.drag_is_idle() => {
+                Some(KeyCode::KeyO) if !self.typing() && !ctrl && !alt && !shift && self.drag_is_idle() => {
                     self.outline_in_view();
                     true
                 }
                 Some(KeyCode::BracketLeft | KeyCode::BracketRight)
-                    if self.focused.is_none() && !ctrl && !alt && self.drag_is_idle() =>
+                    if !self.typing() && !ctrl && !alt && self.drag_is_idle() =>
                 {
                     self.peek_stack(if code == Some(KeyCode::BracketLeft) { -1 } else { 1 });
                     true
@@ -1760,33 +1849,82 @@ impl App {
                     self.selection.clear();
                     true
                 }
-                Some(KeyCode::Escape) if self.focused.is_some() && self.drag_is_idle() => {
-                    self.selection.clear();
-                    // Let the page see Esc too (closes its menus), then leave the page.
+                Some(KeyCode::Escape) if self.typing() && self.drag_is_idle() => {
+                    // Let the page see Esc too (closes its menus), then give the
+                    // keys back to the board; the card stays the current one.
                     if let Some(p) = self.focused_page() {
                         p.send_key(&ev.to_web(self.mods));
                     }
+                    self.leave_page();
+                    true
+                }
+                Some(KeyCode::Escape) if self.focused.is_some() && self.drag_is_idle() => {
+                    self.selection.clear();
                     self.focus(None);
                     true
                 }
-                // Board shortcuts when no page has focus.
-                Some(KeyCode::KeyF) if self.focused.is_none() && !ctrl => {
+                // Board shortcuts while no page has the keys.
+                Some(
+                    KeyCode::KeyH
+                    | KeyCode::KeyJ
+                    | KeyCode::KeyK
+                    | KeyCode::KeyL
+                    | KeyCode::ArrowLeft
+                    | KeyCode::ArrowDown
+                    | KeyCode::ArrowUp
+                    | KeyCode::ArrowRight,
+                ) if !self.typing() && !ctrl && !alt && self.drag_is_idle() => {
+                    let dir = match code {
+                        Some(KeyCode::KeyH | KeyCode::ArrowLeft) => Dir::Left,
+                        Some(KeyCode::KeyJ | KeyCode::ArrowDown) => Dir::Down,
+                        Some(KeyCode::KeyK | KeyCode::ArrowUp) => Dir::Up,
+                        _ => Dir::Right,
+                    };
+                    if shift { self.pan_by_key(dir) } else { self.move_current(dir) }
+                    true
+                }
+                Some(KeyCode::Equal | KeyCode::NumpadAdd | KeyCode::Minus | KeyCode::NumpadSubtract)
+                    if !self.typing() && !ctrl && !alt && self.read.is_none() =>
+                {
+                    let zoom_in = matches!(code, Some(KeyCode::Equal | KeyCode::NumpadAdd));
+                    self.zoom_by_key(zoom_in);
+                    true
+                }
+                Some(KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space)
+                    if !self.typing() && !ctrl && !alt && self.drag_is_idle() =>
+                {
+                    self.enter_current();
+                    true
+                }
+                Some(KeyCode::Delete | KeyCode::Backspace)
+                    if !self.typing() && self.focused.is_some() && !ctrl && !alt && self.drag_is_idle() =>
+                {
+                    let id = self.focused.expect("checked");
+                    self.close_card(id);
+                    true
+                }
+                Some(KeyCode::KeyQ) if !self.typing() && !ctrl && !alt && !shift => {
+                    log::info!("quit (Q)");
+                    self.quit = true;
+                    true
+                }
+                Some(KeyCode::KeyF) if !self.typing() && !ctrl => {
                     self.fit_all();
                     true
                 }
-                Some(KeyCode::KeyT) if self.focused.is_none() && !ctrl && !alt && self.drag_is_idle() => {
+                Some(KeyCode::KeyT) if !self.typing() && !ctrl && !alt && self.drag_is_idle() => {
                     self.tidy_board();
                     true
                 }
-                Some(KeyCode::KeyN) if self.focused.is_none() && !ctrl && !alt && self.drag_is_idle() => {
+                Some(KeyCode::KeyN) if !self.typing() && !ctrl && !alt && self.drag_is_idle() => {
                     self.new_note_at_center();
                     true
                 }
-                Some(KeyCode::KeyR) if self.focused.is_none() && !ctrl && !alt && !shift && self.drag_is_idle() => {
+                Some(KeyCode::KeyR) if !self.typing() && !ctrl && !alt && !shift && self.drag_is_idle() => {
                     self.ask_trail_name();
                     true
                 }
-                Some(KeyCode::KeyC) if self.focused.is_none() && !ctrl && !alt && !shift && self.drag_is_idle() => {
+                Some(KeyCode::KeyC) if !self.typing() && !ctrl && !alt && !shift && self.drag_is_idle() => {
                     self.cycle_trail_colour();
                     true
                 }
@@ -1796,7 +1934,9 @@ impl App {
                 return;
             }
         }
-        if let Some(p) = self.focused_page() {
+        if self.typing()
+            && let Some(p) = self.focused_page()
+        {
             p.send_key(&ev.to_web(self.mods));
         }
     }
@@ -1885,6 +2025,7 @@ impl App {
         let screen = Rect::new(0.0, 0.0, vp.x, vp.y);
         let band = self.band();
         let in_band = band.map(|b| selection::in_band(&self.scene, b)).unwrap_or_default();
+        let typing = self.typing();
         let board_cards = if self.read.is_some() { Vec::new() } else { self.scene.draw_order() };
         for n in board_cards {
             let frame = self.to_screen_rect(n.frame());
@@ -1930,7 +2071,7 @@ impl App {
             });
             if self.selection.contains(n.id) || in_band.contains(&n.id) {
                 // Selection ring outside the focus ring, so both can show.
-                let m = if focused { 5.0 } else { 3.0 };
+                let m = if focused { 6.0 } else { 3.0 };
                 l.quads.push(Quad {
                     shape: Shape::Rect { rect: frame.inflate(m * scale), radius: ring(m * scale) },
                     color: rgb(th.marked(), 1.0),
@@ -1938,9 +2079,14 @@ impl App {
                 });
             }
             if focused {
+                // The page with the keys gets a heavier ring than a card that is only current.
+                // The page with the keys gets a heavy, solid ring; a card that is
+                // only current (board keys) a thin, softer one.
+                let (w, alpha) = if typing { (3.5, 1.0) } else { (2.0, 0.6) };
+                let w = w * scale.max(1.0);
                 l.quads.push(Quad {
-                    shape: Shape::Rect { rect: frame.inflate(2.0 * scale.max(1.0)), radius: ring(2.0 * scale.max(1.0)) },
-                    color: rgb(th.accent(), 1.0),
+                    shape: Shape::Rect { rect: frame.inflate(w), radius: ring(w) },
+                    color: rgb(th.accent(), alpha),
                     texture: None,
                 });
             }

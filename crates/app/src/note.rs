@@ -44,6 +44,9 @@ pub fn theme_script(th: &Theme) -> String {
     format!("window.tbTheme&&tbTheme({})", colors(th))
 }
 
+/// Script that opens a live note editor for writing (Enter on the board).
+pub const EDIT_SCRIPT: &str = "window.tbEdit&&tbEdit()";
+
 /// Script that replaces a live note editor's text.
 pub fn set_text_script(text: &str) -> String {
     format!("window.tbSetText&&tbSetText({})", web::js_string(text))

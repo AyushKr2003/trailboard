@@ -7,6 +7,14 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Keyboard-driven board**, the way Omarchy's apps work: h/j/k/l or the
+  arrow keys go to the nearest card in that direction, which becomes the
+  current card (thin accent ring). Enter or Space gives its page the keys
+  (thick ring; a note opens for writing), Esc gives them back to the board
+  with the card still current, and Esc again lets go of it. Shift with
+  h/j/k/l or the arrows pans, + and - zoom, Delete closes the current card and
+  Q quits. The shortcut sheet has a Keyboard section.
+
 - **Save as Markdown**: Ctrl+S saves the focused note as a Markdown file, or,
   with no note focused, the whole board: each trail as a nested list of links
   under its name, notes in full, pages on no trail at the end. A note's
@@ -148,6 +156,11 @@ All notable changes to Trailboard. The format follows
 - README, plan (`docs/PLAN.md`), future plans (`docs/FUTURE.md`) and `CLAUDE.md`.
 
 ### Changed
+- Board keys (F, N, T, S, O, R, C, `[`, `]`, `?`, Ctrl+A, Ctrl+Z) now work
+  whenever no page has the keys, also with a card current, and act on the
+  current card before the one in the middle of the view. A title-bar click
+  or Alt+PgDn makes a card current without sending it your keys; clicking in
+  the page, Enter, or a new card from the address bar does.
 - N makes a note instead of opening the address bar for a new card (Ctrl+T
   still does that). Ctrl+L on a note opens the address bar for a new card.
 - T on the board now tidies it; Ctrl+T still opens a new card.

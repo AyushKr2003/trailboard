@@ -8,6 +8,7 @@ pub mod geom;
 pub mod history;
 pub mod liveness;
 pub mod mark;
+pub mod nav;
 pub mod note;
 pub mod placement;
 pub mod read;

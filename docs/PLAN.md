@@ -344,6 +344,31 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
 - Trails sidebar: tree per root, pins/favourites, drag to reorder, collapse.
 - Ctrl+K palette: fuzzy search over open cards, history and commands.
 - Find in page (Ctrl+F) bar; per-page zoom (Ctrl +/−/0 inside a page).
+- ✅ Keyboard-driven board (`scene::nav`, `App::typing`). Decisions (2026-11-14),
+  following Omarchy's app conventions (the `omarchy-app` skill: keyboard
+  first, `?` sheet, Q quits, Space the main action, bare keys never taken
+  from a text field):
+  - Two modes instead of "focused = keys to the page": a card can be
+    *current* (thin, softer accent ring; board keys) or *have the keys* (heavy solid ring,
+    every key but app shortcuts goes to the page). Clicking in a page, Enter
+    or Space on the current card, a new note and a card opened from the
+    address bar give the keys; a title-bar click, Alt+PgDn and h/j/k/l make a
+    card current only. Read Mode always gives the read card the keys.
+  - Esc takes the keys back (the card stays current, its page is blurred so
+    no caret blinks); Esc on a current card lets go of it.
+  - h/j/k/l and arrows: nearest card whose centre lies that way; cost = gap
+    ahead + 3 × sideways gap between the cards' ranges (0 when side by side),
+    so a card in line wins over a nearer one off to the side. Folded cards are
+    skipped. With no current card the first press picks the middle one.
+  - Shift+h/j/k/l pans a quarter window; + / - zoom ×1.25 about the middle
+    (Ctrl +/- stay free for per-page zoom). Delete closes the current card
+    (one undo step), Q quits (the board is saved continuously, so no question).
+  - Board keys (F, N, T, S, O, R, C, `[`, `]`, `?`, Ctrl+A, Ctrl+Z/Y) work
+    whenever no page has the keys and act on the current card first.
+  - Enter on a note opens its editor at the end (`tbEdit`).
+  - Not done: link hints (`f` to follow a link by keyboard), moving and
+    resizing cards by keyboard, the Menu key / Shift+F10 for the page menu,
+    keyboard selection of several cards.
 - ✅ Keyboard-shortcut sheet: `?` with no card focused (`app::hints`). Decisions
   (2026-11-14): only when no card is focused, so `?` still types in pages; Esc,
   `?`, any other key or a click hides it, and that click/key does nothing else.
@@ -433,23 +458,37 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M5 Save as Markdown.
-**Repo state:** on `master`, committed after a07984b; working tree clean.
+**Last session:** 2026-11-14. M6 Keyboard-driven board (Omarchy app conventions).
+**Repo state:** on `master`, committed after e076443; working tree clean.
 **Done this session:**
-- `scene::export`: `note_markdown`, `board_markdown` (trails as nested
-  lists, notes indented, lone notes as sections, `## Other pages`), `link`;
-  `Scene::trail_tree` (reading order with depths; `trail_of` uses it); tests.
-- `storage::export`: `export_dir` (`Documents/Trailboard`), `documents_dir`,
-  `file_stem`, `save_markdown` (free name or this session's earlier file);
-  `write_atomic` now names its temp file `<name>.tmp` for any extension; tests.
-- `web::menu`: *Save as Markdown* on notes (`MenuAction::SaveMarkdown`).
-- `app`: Ctrl+S (focused note, else board), `App::saved` per (space, note),
-  toast with a `~/` path; sheet and README rows.
-**Next up:** Sticky notes (last open M5 item), then M6 trails sidebar.
-Small follow-ups: a file chooser for saving (xdg-desktop-portal); rename a
-trail from the page menu or a click on its tag; animate cards to their Tidy
-places; `.desktop` entry and icon (M6).
+- Save as Markdown (e076443; see M5 and the notes below).
+- `scene::nav`: `Dir`, `neighbour` (directional card search); tests.
+- `app`: board mode vs page mode (`typing`, `current`, `move_current`,
+  `pan_by_key`, `zoom_by_key`, `enter_current`, `leave_page`); h/j/k/l and
+  arrows, Shift to pan, +/-, Enter/Space, Esc twice, Delete, Q; board keys act
+  on the current card; ring width shows which mode; Keyboard section in the
+  sheet; `note.html` `tbEdit` (`note::EDIT_SCRIPT`). README table.
+**Next up:** link hints (`f`: label the links of the current page and follow
+one by typing its label, opening beside), then keyboard move/resize of cards.
+These finish the keyboard story; then sticky notes (M5) and the trails
+sidebar (M6).
+Small follow-ups: Omarchy app conventions still missing: a `.desktop` entry
+and icon, xdg-desktop-portal file chooser for Save as Markdown, following the
+Omarchy language (i18n). Also: rename a trail from the page menu or its tag;
+animate cards to their Tidy places.
 **Notes for the next session:**
+- Keyboard verified e2e (`~/.cache/trailboard-e2e-keys`, same `run.sh`;
+  seed = the export run's seed). Run 1: after Fit, j made card 3 current, l
+  → 4, h → 3; N + `abc`, Esc (keys back, note 6 still current), Enter, ` def`
+  → note text `abc def` (editor reopened at its end); k moved to 4, Esc let
+  go; Shift+L panned, = = zoomed (0.414 → 0.647); F, l (picked 3), Delete
+  closed it, undo brought it back; F1 sheet; Q quit. Screenshots current1
+  (thin ring on P3) and sheet1 checked, dark theme only.
+- Not verified: a real keyboard (script keys only), non-US layouts for
+  h/j/k/l and +/- (physical keys; `+` is Shift+= on US), light themes for
+  the rings, arrow keys in Read Mode still reaching the page. Run 2: j then
+  Enter on P3; `both2.png` compares the rings (current: 2 px accent at 60%;
+  with the keys: 3.5 px solid).
 - Save as Markdown verified e2e (`~/.cache/trailboard-e2e-export`, `run.sh N
   shot…` with `XDG_DOCUMENTS_DIR=$D/docs`; `DELAY=0.1` shoots sooner, for
   toasts). Run 1 (marked-trail board + P5): R `Research`, N with

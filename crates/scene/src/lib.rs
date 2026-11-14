@@ -6,6 +6,7 @@ pub mod fold;
 pub mod geom;
 pub mod history;
 pub mod liveness;
+pub mod note;
 pub mod placement;
 pub mod read;
 pub mod selection;
@@ -36,6 +37,9 @@ pub struct Node {
     pub title: String,
     /// Stacking order; larger draws on top.
     pub z: u64,
+    /// Markdown text of a note card (`note`); `None` for a web page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 impl Node {
@@ -79,7 +83,7 @@ impl Scene {
         let url = url.into();
         self.nodes.insert(
             id,
-            Node { id, rect, title: url.clone(), url, z: self.next_z },
+            Node { id, rect, title: url.clone(), url, z: self.next_z, note: None },
         );
         id
     }

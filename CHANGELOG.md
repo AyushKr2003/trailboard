@@ -7,6 +7,18 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Notes**: press N with no page focused for a note card. Notes are written
+  in Markdown: type in the note, then Esc or click away to see it rendered
+  (headings, emphasis, links, lists, task lists, quotes, code). Click it to edit
+  again, at the line you clicked; tick a task's box without editing. Enter
+  continues a list. Links in a note open beside it. Notes follow the theme,
+  are saved with the board, and take their title from their first line.
+- **Add to note**: right-click selected text in a page and choose *Add to
+  note* to quote it, with a link back to the page, at the end of the note you
+  used last; with no note yet, a new note opens beside the page on its trail.
+- Board files are now version 3 (adds notes); version 1 and 2 boards are
+  upgraded when read.
+- Script `cards` logs each note's text; `type` lines may contain `#`.
 - **Next/Previous on Trail**: Alt+PgDn / Alt+PgUp go to the next / previous
   page of the trail you are on, in reading order, and focus it (also from
   inside a page and in Read Mode, where the page reached is read). Pages
@@ -118,7 +130,9 @@ All notable changes to Trailboard. The format follows
 - README, plan (`docs/PLAN.md`), future plans (`docs/FUTURE.md`) and `CLAUDE.md`.
 
 ### Changed
-- T on the board now tidies it; N and Ctrl+T still open a new card.
+- N makes a note instead of opening the address bar for a new card (Ctrl+T
+  still does that). Ctrl+L on a note opens the address bar for a new card.
+- T on the board now tidies it; Ctrl+T still opens a new card.
 - Ctrl+Shift+T now restores the closed card's trail edges and skips cards
   already brought back with undo.
 

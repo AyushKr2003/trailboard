@@ -9,7 +9,12 @@ pub const GAP: f32 = 60.0;
 
 /// Content rect for a new card opened from `src`.
 pub fn beside(scene: &Scene, src: &Node) -> Rect {
-    let size = (src.rect.w, src.rect.h);
+    beside_sized(scene, src, src.rect.w, src.rect.h)
+}
+
+/// Content rect of size `w`×`h` for a new card opened from `src`.
+pub fn beside_sized(scene: &Scene, src: &Node, w: f32, h: f32) -> Rect {
+    let size = (w, h);
     let x = src.rect.right() + GAP;
     let mut y = src.rect.y;
     // Walk down in steps until the candidate frame is free.

@@ -1,0 +1,105 @@
+//! The note editor page: our own HTML (`note.html`) with the note's text and
+//! the theme's colours filled in, loaded into a note card as a `data:` URL.
+
+use crate::theme::{Rgb, Theme};
+
+/// Size of a new note's content, world units.
+pub const W: f32 = 560.0;
+pub const H: f32 = 420.0;
+
+const EDITOR: &str = include_str!("note.html");
+
+fn hex(c: Rgb) -> String {
+    format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
+}
+
+/// The theme's colours as the editor's CSS variables, a JSON object.
+fn colors(th: &Theme) -> String {
+    let vars = [
+        ("bg", th.placeholder()),
+        ("fg", th.foreground()),
+        ("dim", th.dim_text()),
+        ("accent", th.accent()),
+        ("sel", th.selection()),
+        ("code", th.card(false)),
+        ("rule", th.divider()),
+    ];
+    let body: Vec<String> = vars.iter().map(|(k, c)| format!("\"{k}\":\"{}\"", hex(*c))).collect();
+    format!("{{{}}}", body.join(","))
+}
+
+/// The editor page for a note holding `text`.
+pub fn page_url(text: &str, th: &Theme) -> String {
+    // The text goes in last, so nothing in it is taken for a placeholder.
+    let html = EDITOR
+        .replacen("__PREFIX__", &web::js_string(web::NOTE_MESSAGE), 1)
+        .replacen("__OPEN__", &web::js_string(web::NOTE_OPEN), 1)
+        .replacen("__THEME__", &colors(th), 1)
+        .replacen("__TEXT__", &web::js_string(text), 1);
+    format!("data:text/html;charset=utf-8,{}", percent_encode(&html))
+}
+
+/// Script that recolours a live note editor.
+pub fn theme_script(th: &Theme) -> String {
+    format!("window.tbTheme&&tbTheme({})", colors(th))
+}
+
+/// Script that replaces a live note editor's text.
+pub fn set_text_script(text: &str) -> String {
+    format!("window.tbSetText&&tbSetText({})", web::js_string(text))
+}
+
+/// Every byte but ASCII letters, digits and `-._~` as `%XX`, so the URL is
+/// already in the form Chromium keeps (it is compared with the URL loaded).
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 2);
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn decode(s: &str) -> String {
+        let b = s.as_bytes();
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < b.len() {
+            if b[i] == b'%' {
+                out.push(u8::from_str_radix(&s[i + 1..i + 3], 16).unwrap());
+                i += 3;
+            } else {
+                out.push(b[i]);
+                i += 1;
+            }
+        }
+        String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn page_holds_the_text_and_theme() {
+        let th = Theme::default();
+        let url = page_url("# Hi </script> __THEME__ é", &th);
+        let body = url.strip_prefix("data:text/html;charset=utf-8,").unwrap();
+        assert!(body.bytes().all(|b| b.is_ascii_alphanumeric() || b"-._~%".contains(&b)));
+        let html = decode(body);
+        assert!(html.contains(r##"let text = "# Hi \u003c/script\u003e __THEME__ é";"##));
+        assert!(html.contains(&format!("window.tbTheme({});", colors(&th))));
+        assert!(!html.contains("__PREFIX__") && !html.contains("__OPEN__") && !html.contains("__TEXT__"));
+        assert!(html.contains(r#"const PREFIX = "\u0001trailboard-note\u0001", OPEN = "\u0001trailboard-open\u0001";"#));
+    }
+
+    #[test]
+    fn colors_are_css_hex() {
+        let c = colors(&Theme::default());
+        assert!(c.starts_with("{\"bg\":\"#") && c.ends_with("\"}"));
+        assert_eq!(c.matches('#').count(), 7);
+    }
+}

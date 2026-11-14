@@ -7,6 +7,7 @@ mod desktop;
 mod hints;
 mod keymap;
 mod menu;
+mod note;
 mod omnibox;
 mod script;
 mod theme;

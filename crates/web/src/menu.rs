@@ -21,6 +21,8 @@ pub struct MenuContext {
     pub can_select_all: bool,
     pub can_back: bool,
     pub can_forward: bool,
+    /// The page is a note: no navigation, and nothing to add to a note.
+    pub note: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +30,8 @@ pub enum MenuAction {
     OpenBeside(String),
     CopyText(String),
     Search(String),
+    /// Quote the selected text in a note, with a link back to the page.
+    AddToNote(String),
     Undo,
     Redo,
     Cut,
@@ -92,6 +96,16 @@ pub fn items(ctx: &MenuContext) -> Vec<MenuItem> {
             MenuItem::new("Copy", MenuAction::Copy, true),
             MenuItem::new(format!("Search for “{}”", quote(selection)), MenuAction::Search(selection.to_string()), true),
         ]);
+        if !ctx.note {
+            sections.last_mut().expect("just pushed").push(MenuItem::new(
+                "Add to note",
+                MenuAction::AddToNote(ctx.selection.clone()),
+                true,
+            ));
+        }
+    }
+    if sections.is_empty() && ctx.note {
+        sections.push(vec![MenuItem::new("Select all", MenuAction::SelectAll, true)]);
     }
     if sections.is_empty() {
         sections.push(vec![
@@ -154,7 +168,7 @@ mod tests {
         let items = items(&ctx);
         assert_eq!(
             labels(&items),
-            ["Open link beside", "Copy link address", "-", "Copy", "Search for “some selected text that…”"]
+            ["Open link beside", "Copy link address", "-", "Copy", "Search for “some selected text that…”", "Add to note"]
         );
         assert_eq!(items[1], MenuItem::new("Copy link address", MenuAction::CopyText("https://a.example/".into()), true));
         let MenuItem::Action { action, .. } = &items[4] else { panic!() };
@@ -168,6 +182,14 @@ mod tests {
         assert_eq!(labels(&items), ["Undo", "Redo", "-", "Cut", "Copy", "Paste", "Select all"]);
         let enabled: Vec<bool> = items.iter().map(MenuItem::is_enabled).collect();
         assert_eq!(enabled, [false, false, false, false, false, true, true]);
+    }
+
+    #[test]
+    fn notes_offer_no_navigation_or_add_to_note() {
+        let ctx = MenuContext { note: true, ..Default::default() };
+        assert_eq!(labels(&items(&ctx)), ["Select all"]);
+        let ctx = MenuContext { note: true, selection: "words".into(), ..Default::default() };
+        assert_eq!(labels(&items(&ctx)), ["Copy", "Search for “words”"]);
     }
 
     #[test]

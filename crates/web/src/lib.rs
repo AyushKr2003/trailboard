@@ -26,7 +26,28 @@ pub enum WebEvent {
     CursorChanged { page: u64, cursor: Cursor },
     /// The user right-clicked at (`x`, `y`) CSS px in the page; the app shows its own menu.
     ContextMenu { page: u64, x: f32, y: f32, context: menu::MenuContext },
+    /// The text of note page `page` changed (sent by the note editor, see [`PageKind::Note`]).
+    NoteText { page: u64, text: String },
 }
+
+/// What a page is: a web page, or one of the app's own note editors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PageKind {
+    #[default]
+    Web,
+    /// The app's note editor. It never navigates away (links open beside), its
+    /// title and address are not reported, and it sends its text as a console
+    /// message starting with [`NOTE_MESSAGE`], which becomes [`WebEvent::NoteText`].
+    Note,
+}
+
+/// Prefix of the console message a note editor sends with its whole text.
+pub const NOTE_MESSAGE: &str = "\u{1}trailboard-note\u{1}";
+
+/// Prefix of the console message a note editor sends with a link that was
+/// clicked: it opens beside the note. (A `data:` page may not open `file:`
+/// links itself, and this needs no popup permission.)
+pub const NOTE_OPEN: &str = "\u{1}trailboard-open\u{1}";
 
 /// Editing commands run on the page's focused frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -286,6 +307,7 @@ struct Shared {
     ime_caret: RefCell<Option<IRect>>,
     /// URL the page was created with; the first navigation to it is never redirected beside.
     initial_url: String,
+    kind: PageKind,
 }
 
 #[derive(Default)]
@@ -555,8 +577,20 @@ wrap_request_handler! {
                 user_gesture,
                 is_redirect,
                 request.as_ref().map(|r| r.transition_type().get_raw()),
-                request.as_ref().map(|r| CefString::from(&r.url()).to_string())
+                request.as_ref().map(|r| CefString::from(&r.url()).to_string().chars().take(200).collect::<String>())
             );
+            if self.shared.kind == PageKind::Note {
+                // A note stays a note: only its own page loads in it; a link
+                // the user follows opens beside, anything else is dropped.
+                let url = request.as_ref().map(|r| CefString::from(&r.url()).to_string()).unwrap_or_default();
+                if url == self.shared.initial_url {
+                    return 0;
+                }
+                if user_gesture != 0 && !url.is_empty() && !url.starts_with("javascript:") {
+                    emit(WebEvent::OpenBeside { source: self.shared.key, url });
+                }
+                return 1;
+            }
             if !*self.spawn_beside.borrow() || user_gesture == 0 || is_redirect != 0 {
                 return 0;
             }
@@ -602,6 +636,7 @@ wrap_display_handler! {
     impl DisplayHandler {
         fn on_address_change(&self, browser: Option<&mut Browser>, frame: Option<&mut Frame>, url: Option<&CefString>) {
             if frame.is_some_and(|f| f.is_main() != 0)
+                && self.shared.kind == PageKind::Web
                 && let Some(url) = url {
                     if let Some(h) = browser.and_then(|b| b.host()) {
                         self.shared.apply_zoom(&h);
@@ -622,9 +657,33 @@ wrap_display_handler! {
         }
 
         fn on_title_change(&self, _browser: Option<&mut Browser>, title: Option<&CefString>) {
-            if let Some(title) = title {
-                emit(WebEvent::TitleChanged { page: self.shared.key, title: title.to_string() });
+            if self.shared.kind == PageKind::Web
+                && let Some(title) = title {
+                    emit(WebEvent::TitleChanged { page: self.shared.key, title: title.to_string() });
+                }
+        }
+
+        fn on_console_message(
+            &self,
+            _browser: Option<&mut Browser>,
+            _level: LogSeverity,
+            message: Option<&CefString>,
+            _source: Option<&CefString>,
+            _line: ::std::os::raw::c_int,
+        ) -> ::std::os::raw::c_int {
+            if self.shared.kind != PageKind::Note {
+                return 0;
             }
+            let Some(message) = message.map(|m| m.to_string()) else { return 0 };
+            if let Some(text) = message.strip_prefix(NOTE_MESSAGE) {
+                emit(WebEvent::NoteText { page: self.shared.key, text: text.to_string() });
+                return 1; // not worth logging every keystroke
+            }
+            if let Some(url) = message.strip_prefix(NOTE_OPEN).filter(|u| !u.is_empty()) {
+                emit(WebEvent::OpenBeside { source: self.shared.key, url: url.to_string() });
+                return 1;
+            }
+            0
         }
     }
 }
@@ -689,6 +748,7 @@ wrap_context_menu_handler! {
                 can_select_all: has(sys::cef_context_menu_edit_state_flags_t::CM_EDITFLAG_CAN_SELECT_ALL),
                 can_back: browser.as_ref().is_some_and(|b| b.can_go_back() != 0),
                 can_forward: browser.as_ref().is_some_and(|b| b.can_go_forward() != 0),
+                note: self.shared.kind == PageKind::Note,
             };
             // Params are view px; the app works in CSS px.
             let s = *self.shared.scale.borrow();
@@ -755,7 +815,7 @@ impl SpawnBeside {
 
 impl Page {
     /// Creates a page identified by `key` (the app's card id) at `size` CSS pixels.
-    pub fn new(key: u64, url: &str, size: (i32, i32), scale: f32, spawn_beside: &SpawnBeside) -> Option<Page> {
+    pub fn new(key: u64, url: &str, kind: PageKind, size: (i32, i32), scale: f32, spawn_beside: &SpawnBeside) -> Option<Page> {
         let shared = StdRc::new(Shared {
             key,
             size: RefCell::new(size),
@@ -766,6 +826,7 @@ impl Page {
             selection: RefCell::new(String::new()),
             ime_caret: RefCell::new(None),
             initial_url: url.to_string(),
+            kind,
         });
         let mut client = PageClient::new(
             PageRender::new(shared.clone()),
@@ -972,6 +1033,17 @@ impl Page {
         f.execute_java_script(Some(&CefString::from(script.as_str())), None, 0);
     }
 
+    /// Runs `script` in the page's main frame.
+    pub fn run_script(&self, script: &str) {
+        if let Some(f) = self.browser.main_frame() {
+            f.execute_java_script(Some(&CefString::from(script)), None, 0);
+        }
+    }
+
+    pub fn kind(&self) -> PageKind {
+        self.shared.kind
+    }
+
     pub fn send_key(&self, ev: &keys::Key) {
         if let Some(h) = self.host() {
             for e in ev.to_cef() {
@@ -997,7 +1069,8 @@ fn utf16_len(s: &str) -> u32 {
 }
 
 /// `s` as a JavaScript string literal.
-fn js_string(s: &str) -> String {
+/// `s` as a JavaScript string literal, safe inside a `<script>` element.
+pub fn js_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
     for c in s.chars() {

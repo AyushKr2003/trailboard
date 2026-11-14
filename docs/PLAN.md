@@ -171,7 +171,7 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   (`storage::spaces::migrate`, v1 fixed sRGB `background` → v2 `tint`; the
   upgrade is written back; unknown/newer versions are refused, not touched).
   Boards the same way (`storage::migrate_board`): v1 → v2 adds `scene.stacks`
-  (Fold), written back on the next save.
+  (Fold), v2 → v3 adds `node.note` (Notes), written back on the next save.
 
 ### M5: Board tools 🟡
 - ✅ Read Mode: a card fills the window; Tab toggles board ↔ page
@@ -263,8 +263,41 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     Read Mode too), on any layout, and sit beside Ctrl+PgDn/PgUp for spaces.
     Chromium binds nothing to them.
 - Trail names and colours.
-- Notes (N): native Markdown note cards; sticky notes; "Add to note" quotes the
-  selected text with a link back to its source card.
+- ✅ Notes (N): Markdown note cards (`scene::note`, `app::note`). Decisions (2026-11-14):
+  - A note is a card (`Node::note: Some(text)`, `url` = `trailboard:note`), so
+    it moves, resizes, folds, tidies, sleeps, closes and undoes like any card.
+    Board v3 (v2 → v3 adds nothing to old files; v2 builds refuse v3 boards so
+    they can't drop note text on save). The title is the first line with text,
+    Markdown markers stripped, cut at 80 characters; "Note" when empty.
+  - The editor is our own page (`crates/app/src/note.html`) in the card's
+    browser, loaded as a `data:` URL with the text and theme colours filled in
+    (`PageKind::Note`). This gives IME, selection, clipboard, undo and Read
+    Mode for free; Marble also hosts its notes in CEF. Cost: a note is a
+    renderer like any card (it sleeps under the live cap like one).
+  - Source and rendered views instead of WYSIWYG: a monospace textarea while
+    editing; on Esc or blur our own small Markdown renderer (headings,
+    emphasis, code, links, autolinks, lists, task lists, quotes, rules, fenced
+    code; HTML is escaped; only http(s)/mailto/file links). A click on the view
+    edits at that line; a task box toggles without editing; Enter continues a
+    list (and ends it on an empty item); Tab inserts two spaces.
+  - Page → app: the editor sends its whole text on every input as a console
+    message with a private prefix (`web::NOTE_MESSAGE`), accepted only from
+    note pages; a 64 KB note round-trips. Clicked links go the same way
+    (`NOTE_OPEN`), because a `data:` page may not open `file:` URLs, and open
+    beside the note. A note page never navigates (all other navigations are
+    cancelled) and reports no title or URL. App → page: `tbTheme` on theme
+    changes, `tbSetText` when a quote is added.
+  - Keys: N with no page focused (was "new card"; Ctrl+T remains). A new note
+    is focused with keys going to it. Ctrl+L on a note opens the bar for a new
+    card; Ctrl+R does nothing on a note (it would reload the text it opened
+    with); the note menu has no Back/Forward/Reload.
+  - Text edits are not board undo steps (the textarea has its own undo).
+- ✅ Add to note: the page menu on selected text offers *Add to note*, which
+  appends `> quote` + `— [Title](<url>)` to the *note target* (the note last
+  focused, edited or made in this space), or makes a new note beside the page
+  with a trail edge when there is none. Toast "Added to Title". While reading,
+  a new note is not read next.
+- Sticky notes (small coloured notes without a title bar) are not done.
 - Save note/board as Markdown.
 
 ### M6: Chrome UI 🟡
@@ -360,29 +393,41 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M5 Next/Previous on Trail.
-**Repo state:** on `master`, committed after 4843b62; working tree clean.
+**Last session:** 2026-11-14. M5 Notes and Add to note.
+**Repo state:** on `master`, committed after ee46ac4; working tree clean.
 **Done this session:**
-- `scene::trail`: `Scene::step_trail(id, step) -> TrailStep` (`Moved`, `End`,
-  `Lone`); shows a folded-away card at its stack's front; 3 tests.
-- App: `step_trail` on Alt+PgDn / Alt+PgUp (focus, glide or read, toast
-  `n/len · Title`); `menu::cut` shared by the outline and the toast. Sheet row,
-  README row.
-**Next up:** M5 Notes (N): native Markdown note cards. Or trail names and
-colours (M5). Small follow-ups: animate cards to their Tidy places;
+- `scene::note`: `Node::note`, `add_note`, `note_beside`, `set_note`, `title`,
+  `quote`, `append`; `placement::beside_sized`; board v3 (`storage`); tests.
+- `web`: `PageKind::Note` (locked navigation, no title/URL events, console
+  channel → `WebEvent::NoteText` / `OpenBeside`), `Page::run_script`,
+  `MenuAction::AddToNote`, `MenuContext::note`.
+- `app::note` + `note.html`: the editor page and its Markdown renderer. N
+  makes a note; *Add to note*; theme follows live. Script `type` keeps `#`;
+  `cards` logs note text. Sheet and README rows.
+**Next up:** M5 trail names and colours, or Save note/board as Markdown (M5).
+Small follow-ups: sticky notes; animate cards to their Tidy places;
 `.desktop` entry and icon (M6).
 **Notes for the next session:**
-- Trail steps verified e2e (`~/.cache/trailboard-e2e-trail`, `run.sh N shot…`
-  runs `scriptN` with `dataN`; seed 1 is the fold test's trail 1→2, 1→3, 3→4
-  spread out plus lone 5, seed 2 the same trail folded behind 3). Run 1:
-  Alt+PgUp on 1 toasted "Start", Alt+PgDn went 2, 3, 4 (camera glided to 4),
-  then "End"; after a click inside page 4, Alt+PgUp still went to 3; in Read
-  Mode Alt+PgDn read 4, Esc returned with 4 on screen. Run 2: Alt+PgDn showed
-  4 at the stack's front, focused; three Alt+PgUp went 3, 2, 1, then "Start".
-  Screenshots (step4, read4, stack4) checked.
-- Not verified: a real keyboard Alt+PgDn (script keys only; a compositor
-  binding on Alt+PgDn would swallow it), the lone-card toast in the app
-  (scene-tested only).
+- Notes verified e2e (`~/.cache/trailboard-e2e-note`, `run.sh N shot…` runs
+  `scriptN` with `dataN`, `rund.sh` adds `web=debug`; `page.html` selects its
+  first paragraph on load). Run 1: N, typed `# Trip ideas` / `- [ ] pack` /
+  Enter continued the list; Esc rendered it; *Add to note* on the page
+  appended the quote to it. Run 2 (copy of run 1's data): note restored and
+  rendered after restart. Run 3: *Add to note* with no note made note 3 beside
+  page 2 (edge 2 → 3); its `file:` link opened card 4 beside it (edge 3 → 4);
+  a click on a task box saved `- [x] pack`. Run 4: https and file links in a
+  typed note both open beside. Run 5: a 63,807-character note saved whole
+  after an edit. Screenshots (edit1, view1, quoted1, reload2, beside3, task3)
+  checked, dark theme only.
+- Not verified: light themes in the editor, a live theme switch recolouring
+  an open note, real keyboard/IME typing into a note (script keys only),
+  *Add to note* while in Read Mode, a note in a stack's outline.
+- Without a board and without a URL the app opens a random Wikipedia page as
+  card 1 (network); seed a board when that matters.
+- A note's last keystroke can be lost if its card is closed or put to sleep
+  within the same frame (the text is sent on every input, not on close).
+- Trail steps verified e2e (`~/.cache/trailboard-e2e-trail`). Not verified: a
+  real keyboard Alt+PgDn, the lone-card toast in the app (scene-tested only).
 - Outline verified e2e (`~/.cache/trailboard-e2e-outline`); not verified there:
   a real mouse click on the badge, press-drag-release onto a row, light themes.
 - Fold verified e2e (`~/.cache/trailboard-e2e-fold`). Not verified: real

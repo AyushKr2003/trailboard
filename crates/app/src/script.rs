@@ -15,7 +15,7 @@
 //! sdrag 10 10 300 200  # same with Shift held (selection band on the board)
 //! sclick 400 300       # Shift+click (add/remove a card from the selection)
 //! key ctrl+shift+z     # press + release a key combo (US layout names, see keymap::KeyIn::from_name)
-//! type hello world     # type text (each character as a key press)
+//! type hello world     (no comment: the rest of the line is typed, `#` included, one key press per character)
 //! ime-preedit 你好       # IME composition text (empty cancels it)
 //! ime-commit 你好        # IME final text
 //! menuclick Copy       # click the open context menu's item with this label
@@ -91,6 +91,10 @@ impl Script {
 }
 
 fn parse(line: &str) -> Option<Cmd> {
+    // `type` takes the rest of the line as is, `#` included.
+    if let Some(text) = line.trim_start().strip_prefix("type ") {
+        return Some(Cmd::Type(text.to_string()));
+    }
     let line = line.split('#').next()?.trim();
     let (word, rest) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
     let nums: Vec<f32> = rest.split_whitespace().filter_map(|n| n.parse().ok()).collect();

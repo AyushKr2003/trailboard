@@ -12,7 +12,9 @@ use scene::{Camera, Scene};
 use serde::{Deserialize, Serialize};
 
 /// 1: cards, edges, camera. 2: adds folded trails (`scene.stacks`).
-pub const BOARD_VERSION: u32 = 2;
+/// 3: adds note cards (`node.note`), so builds without notes refuse the file
+/// rather than load notes as broken pages and save them without their text.
+pub const BOARD_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Board {
@@ -74,6 +76,8 @@ pub fn migrate_board(mut v: serde_json::Value) -> Result<serde_json::Value, Load
             BOARD_VERSION => return Ok(v),
             // Version 2 only adds `scene.stacks`, which defaults to none.
             1 => v["version"] = 2.into(),
+            // Version 3 only adds `note` on cards, which defaults to none.
+            2 => v["version"] = 3.into(),
             other => return Err(LoadError::UnsupportedVersion(other)),
         }
     }
@@ -161,6 +165,34 @@ mod tests {
         v["version"] = 99.into();
         fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
         assert!(matches!(load_board(&path), Err(LoadError::UnsupportedVersion(99))));
+    }
+
+    #[test]
+    fn notes_are_saved_and_version_2_boards_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = board_path(dir.path());
+        let mut scene = Scene::new();
+        let page = scene.add_page(Rect::new(0.0, 0.0, 10.0, 10.0), "https://a");
+        let note = scene.add_note(Rect::new(50.0, 0.0, 10.0, 10.0), "# Plan\n\n- [ ] one");
+        save_board(&path, &Board::new(scene, Camera::default())).unwrap();
+        let back = load_board(&path).unwrap().scene;
+        assert_eq!(back.node(note).unwrap().note.as_deref(), Some("# Plan\n\n- [ ] one"));
+        assert_eq!(back.node(note).unwrap().title, "Plan");
+        assert_eq!(back.node(page).unwrap().note, None);
+        // Pages carry no `note` key at all.
+        let raw: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let nodes = raw["scene"]["nodes"].as_object().unwrap();
+        assert_eq!(nodes.values().filter(|n| n.get("note").is_some()).count(), 1);
+
+        let mut v = raw.clone();
+        v["version"] = 2.into();
+        for n in v["scene"]["nodes"].as_object_mut().unwrap().values_mut() {
+            n.as_object_mut().unwrap().remove("note");
+        }
+        fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
+        let b = load_board(&path).unwrap();
+        assert_eq!(b.version, BOARD_VERSION);
+        assert!(b.scene.all_nodes().all(|n| n.note.is_none()));
     }
 
     #[test]

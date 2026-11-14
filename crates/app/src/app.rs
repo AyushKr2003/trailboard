@@ -178,6 +178,8 @@ pub struct App {
     desktop: Option<Desktop>,
     /// Page colour scheme last sent to pages (dark).
     page_scheme: Option<bool>,
+    /// The note "Add to note" adds to: the one last focused, edited or made.
+    note_target: Option<NodeId>,
 }
 
 impl App {
@@ -230,6 +232,7 @@ impl App {
             theme: Theme::default(),
             desktop: None,
             page_scheme: None,
+            note_target: None,
         }
     }
 
@@ -360,6 +363,7 @@ impl App {
         self.used.clear();
         self.use_clock = 0;
         self.focused = None;
+        self.note_target = None;
         self.keys_in_page = false;
         self.selection.clear();
         self.group.clear();
@@ -452,6 +456,10 @@ impl App {
                 c.page.apply_color_scheme();
             }
             self.page_scheme = Some(dark);
+        }
+        let recolour = crate::note::theme_script(&self.theme);
+        for c in self.cards.values().filter(|c| c.page.kind() == web::PageKind::Note) {
+            c.page.run_script(&recolour);
         }
         // The open menu was laid out at the old text size.
         self.menu = None;
@@ -582,13 +590,66 @@ impl App {
             return;
         }
         let Some(n) = self.scene.node(id) else { return };
-        let (url, r) = (n.url.clone(), n.rect);
-        match Page::new(self.page_key(id), &url, (r.w as i32, r.h as i32), self.page_scale, &self.spawn_beside) {
+        let r = n.rect;
+        let (url, kind) = match &n.note {
+            Some(text) => (crate::note::page_url(text, &self.theme), web::PageKind::Note),
+            None => (n.url.clone(), web::PageKind::Web),
+        };
+        match Page::new(self.page_key(id), &url, kind, (r.w as i32, r.h as i32), self.page_scale, &self.spawn_beside) {
             Some(page) => {
                 self.cards.insert(id, Card { page, loading: true, hidden: false, cursor: web::Cursor::Default });
             }
-            None => log::error!("failed to create browser for {url}"),
+            None => log::error!("failed to create browser for card {}", id.0),
         }
+    }
+
+    /// N: a new, empty note in the middle of the view, ready to type in.
+    fn new_note_at_center(&mut self) -> NodeId {
+        let rect = placement::free_near(&self.scene, self.camera.center, crate::note::W, crate::note::H);
+        let id = self.scene.add_note(rect, "");
+        self.create_page(id);
+        self.history.opened(id);
+        self.dirty = true;
+        self.note_target = Some(id);
+        self.focus(Some(id));
+        self.ensure_visible(id);
+        self.keys_in_page = true;
+        log::info!("new note {}", id.0);
+        id
+    }
+
+    /// "Add to note": quote `selection` from card `src` in the note last used,
+    /// or in a new note beside `src` when there is none.
+    fn add_to_note(&mut self, src: NodeId, selection: &str) {
+        let Some(n) = self.scene.node(src) else { return };
+        let Some(quote) = scene::note::quote(selection, &n.title, &n.url) else { return };
+        let target = self.note_target.filter(|&t| t != src && self.scene.node(t).is_some_and(Node::is_note));
+        let id = match target {
+            Some(t) => {
+                let old = self.scene.node(t).and_then(|n| n.note.clone()).unwrap_or_default();
+                let text = scene::note::append(&old, &quote);
+                self.scene.set_note(t, text.clone());
+                if let Some(c) = self.cards.get(&t) {
+                    c.page.run_script(&crate::note::set_text_script(&text));
+                }
+                t
+            }
+            None => {
+                let Some(t) = self.scene.note_beside(src, quote, crate::note::W, crate::note::H) else { return };
+                self.create_page(t);
+                self.history.opened(t);
+                // While reading, the new note waits on the board (not read next).
+                if self.read.is_none() {
+                    self.ensure_visible(t);
+                }
+                t
+            }
+        };
+        self.dirty = true;
+        self.note_target = Some(id);
+        let title = self.scene.node(id).map(|n| n.title.clone()).unwrap_or_default();
+        log::info!("added a quote from card {} to note {}", src.0, id.0);
+        self.toast(format!("Added to {}", menu::cut(&title, menu::OUTLINE_CHARS)));
     }
 
     fn new_card_at_center(&mut self, url: &str) -> Option<NodeId> {
@@ -689,6 +750,9 @@ impl App {
         }
         self.focused = id;
         if let Some(id) = id {
+            if self.scene.node(id).is_some_and(Node::is_note) {
+                self.note_target = Some(id);
+            }
             self.scene.bring_to_front(id);
             self.dirty = true;
             if !self.cards.contains_key(&id) {
@@ -1034,6 +1098,15 @@ impl App {
                 WebEvent::ContextMenu { page, x, y, context } => {
                     if let Some(id) = self.node_of(page) {
                         self.open_menu(id, x, y, &context);
+                    }
+                }
+                WebEvent::NoteText { page, text } => {
+                    if let Some(id) = self.node_of(page)
+                        && self.scene.node(id).is_some_and(|n| n.note.as_deref() != Some(text.as_str()))
+                        && self.scene.set_note(id, text)
+                    {
+                        self.note_target = Some(id);
+                        self.dirty = true;
                     }
                 }
                 WebEvent::LoadingChanged { page, loading } => {
@@ -1504,8 +1577,10 @@ impl App {
                     true
                 }
                 Some(KeyCode::KeyL) if ctrl => {
-                    let url = self.focused.and_then(|id| self.scene.node(id)).map(|n| n.url.clone()).unwrap_or_default();
-                    let target = if self.focused.is_some() { Target::Focused } else { Target::NewCard };
+                    // A note has no address: the bar opens a new card instead.
+                    let page = self.focused.and_then(|id| self.scene.node(id)).filter(|n| !n.is_note());
+                    let url = page.map(|n| n.url.clone()).unwrap_or_default();
+                    let target = if page.is_some() { Target::Focused } else { Target::NewCard };
                     self.omnibox = Some(Omnibox::new(&url, target));
                     true
                 }
@@ -1541,7 +1616,7 @@ impl App {
                     true
                 }
                 Some(KeyCode::KeyR) if ctrl => {
-                    if let Some(p) = self.focused_page() {
+                    if let Some(p) = self.focused_page().filter(|p| p.kind() == web::PageKind::Web) {
                         p.reload();
                     }
                     true
@@ -1622,8 +1697,8 @@ impl App {
                     self.tidy_board();
                     true
                 }
-                Some(KeyCode::KeyN) if self.focused.is_none() && !ctrl => {
-                    self.omnibox = Some(Omnibox::new("", Target::NewCard));
+                Some(KeyCode::KeyN) if self.focused.is_none() && !ctrl && !alt && self.drag_is_idle() => {
+                    self.new_note_at_center();
                     true
                 }
                 _ => false,
@@ -2303,6 +2378,7 @@ impl App {
         match action {
             MenuAction::OpenBeside(url) => open_beside(self, &url),
             MenuAction::Search(q) => open_beside(self, &omnibox::search_url(&q)),
+            MenuAction::AddToNote(text) => self.add_to_note(id, &text),
             MenuAction::CopyText(t) => self.clipboard.set_text(&t),
             MenuAction::Copy => self.page_copy(false, None),
             MenuAction::Cut => self.page_copy(true, None),
@@ -2477,6 +2553,9 @@ impl App {
                             n.id.0, r.x, r.y, r.w, r.h, f.x, f.y, f.w, f.h, self.cards.contains_key(&n.id),
                             self.selection.contains(n.id), self.scene.is_hidden(n.id), n.title, n.url
                         );
+                        if let Some(text) = &n.note {
+                            log::info!("script note {}: {:?}", n.id.0, text);
+                        }
                     }
                     for st in self.scene.stacks() {
                         log::info!(

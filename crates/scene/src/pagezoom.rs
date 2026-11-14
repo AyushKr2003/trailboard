@@ -42,12 +42,17 @@ pub fn site_of(url: &str) -> String {
 /// Zoom per site. Sites at 100% are not kept.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SiteZooms {
+    /// The zooms that are saved.
     pub sites: BTreeMap<String, f64>,
+    /// While a private space is shown: its own zooms, over `sites`. Changes
+    /// go here (100% too, to override a saved zoom) and are never saved.
+    pub private: Option<BTreeMap<String, f64>>,
 }
 
 impl SiteZooms {
     pub fn get(&self, url: &str) -> f64 {
-        self.sites.get(&site_of(url)).copied().unwrap_or(1.0)
+        let site = site_of(url);
+        self.private.as_ref().and_then(|p| p.get(&site)).or_else(|| self.sites.get(&site)).copied().unwrap_or(1.0)
     }
 
     /// Sets the zoom of `url`'s site; returns whether it changed.
@@ -57,7 +62,9 @@ impl SiteZooms {
         if (self.get(url) - factor).abs() < 1e-6 {
             return false;
         }
-        if (factor - 1.0).abs() < 1e-6 {
+        if let Some(p) = self.private.as_mut() {
+            p.insert(site, factor);
+        } else if (factor - 1.0).abs() < 1e-6 {
             self.sites.remove(&site);
         } else {
             self.sites.insert(site, factor);
@@ -107,5 +114,22 @@ mod tests {
         assert!(z.sites.is_empty());
         z.set("https://a.com/", 99.0);
         assert_eq!(z.get("https://a.com/"), 5.0);
+    }
+
+    #[test]
+    fn private_zooms_cover_saved_ones_and_are_not_saved() {
+        let mut z = SiteZooms::default();
+        z.set("https://a.com/", 1.25);
+        z.private = Some(BTreeMap::new());
+        assert_eq!(z.get("https://a.com/"), 1.25, "saved zooms still apply");
+        assert!(z.set("https://a.com/", 1.0));
+        assert!(z.set("https://b.com/", 1.5));
+        assert_eq!(z.get("https://a.com/"), 1.0);
+        assert_eq!(z.get("https://b.com/"), 1.5);
+        assert_eq!(z.sites.len(), 1, "nothing new to save");
+        assert_eq!(z.sites["a.com"], 1.25);
+        z.private = None;
+        assert_eq!(z.get("https://a.com/"), 1.25);
+        assert_eq!(z.get("https://b.com/"), 1.0);
     }
 }

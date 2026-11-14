@@ -93,6 +93,7 @@ you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change th
 | New space / next / previous | Ctrl+Shift+N / Ctrl+PageDown / Ctrl+PageUp |
 | Rename space / next tint | F2 / Ctrl+Shift+B |
 | Delete space | Ctrl+Shift+W (asks first if it has cards) |
+| Private space on / off | Ctrl+Shift+P: pages there aren't kept in history, their site icons and zoom aren't saved, and cookies live in memory until you quit (the board itself is still saved) |
 | Show shortcuts | ? (while no page has the keys) or F1 |
 | Quit | Ctrl+Q |
 

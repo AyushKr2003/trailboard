@@ -78,6 +78,7 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl+PgDn · Ctrl+PgUp", "Next / previous space"),
             ("F2", "Rename space"),
             ("Ctrl+Shift+B", "Next tint"),
+            ("Ctrl+Shift+P", "Private space on / off"),
             ("Ctrl+Shift+W", "Delete space"),
         ],
     ),

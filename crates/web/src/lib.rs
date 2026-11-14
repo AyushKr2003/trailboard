@@ -967,9 +967,32 @@ impl SpawnBeside {
     }
 }
 
+/// A cookie jar and cache of their own, kept in memory only, for the pages of
+/// a private space: nothing they store reaches the profile on disk, and it is
+/// gone when the last page using it and this handle are dropped.
+#[derive(Clone)]
+pub struct Jar(RequestContext);
+
+impl Jar {
+    pub fn in_memory() -> Option<Jar> {
+        // An empty cache path makes an "incognito" context.
+        let settings = RequestContextSettings { persist_session_cookies: 0, ..Default::default() };
+        request_context_create_context(Some(&settings), None).map(Jar)
+    }
+}
+
 impl Page {
-    /// Creates a page identified by `key` (the app's card id) at `size` CSS pixels.
-    pub fn new(key: u64, url: &str, kind: PageKind, size: (i32, i32), scale: f32, spawn_beside: &SpawnBeside) -> Option<Page> {
+    /// Creates a page identified by `key` (the app's card id) at `size` CSS
+    /// pixels. With a `jar`, it keeps cookies and cache there instead of the profile.
+    pub fn new(
+        key: u64,
+        url: &str,
+        kind: PageKind,
+        size: (i32, i32),
+        scale: f32,
+        spawn_beside: &SpawnBeside,
+        jar: Option<&Jar>,
+    ) -> Option<Page> {
         let shared = StdRc::new(Shared {
             key,
             size: RefCell::new(size),
@@ -1005,7 +1028,7 @@ impl Page {
             Some(&CefString::from(url)),
             Some(&browser_settings),
             None,
-            None,
+            jar.map(|j| j.0.clone()).as_mut(),
         )?;
         if let Some(h) = browser.host() {
             shared.apply_zoom(&h);

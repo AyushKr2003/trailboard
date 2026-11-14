@@ -168,7 +168,8 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   mixed lightly into the theme's background, so it suits light and dark themes.
   New spaces take an unused tint. Wallpaper images are in FUTURE.md.
 - ✅ Schema migrations: `spaces.json` is upgraded step by step on read
-  (`storage::spaces::migrate`, v1 fixed sRGB `background` → v2 `tint`; the
+  (`storage::spaces::migrate`, v1 fixed sRGB `background` → v2 `tint` → v3
+  `private`; the
   upgrade is written back; unknown/newer versions are refused, not touched).
   Boards the same way (`storage::migrate_board`): v1 → v2 adds `scene.stacks`
   (Fold), v2 → v3 adds `node.note` (Notes), written back on the next save.
@@ -632,7 +633,29 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     `optimize` after a forget, `VACUUM` after a clear, then a WAL
     checkpoint (TRUNCATE). Unit- and e2e-checked by grepping the files.
   - A page an open card shows is recorded again on its next load or retitle.
-- ⬜ Per-space or private (unrecorded) spaces.
+- ✅ Private (unrecorded) spaces (`SpaceEntry::private`, `web::Jar`,
+  `SiteZooms::private`, `App::toggle_private`). Decisions (2026-11-14):
+  - Private is a flag on a space, not a separate kind of window: Ctrl+Shift+P
+    (or *Private space on or off* in the palette) turns it on or off for the
+    current space; *New private space* (palette, no key) makes one. Per-space
+    history (a history per space) was not done: one shared history, and
+    private spaces add nothing to it.
+  - In a private space: no page text is read (so nothing reaches
+    `page-text.db`), site icons are shown but not written to `icons/`, and
+    page zoom changes live in an overlay over the saved zooms that is never
+    saved (kept per space for the session, dropped when private is turned off).
+  - Cookies, storage and cache: one in-memory CEF request context per private
+    space (`web::Jar`, empty cache path), shared by its cards and kept for the
+    app's session, so switching away and back keeps you signed in; quitting
+    or turning private off forgets it. Toggling reopens the space's pages so
+    they move into or out of the jar.
+  - The board itself (cards, addresses, notes) is still saved: a private space
+    is unrecorded browsing on a kept board. Pages already in history stay
+    there (forget them in Ctrl+H). History is still searchable from a private
+    space.
+  - The corner label shows "· Private" (and appears even with one space).
+  - `spaces.json` v3 so an older build refuses the index instead of opening a
+    private space and recording it.
 - ⬜ Recently closed cards as palette results.
 
 ### M8: Privacy ⬜
@@ -681,16 +704,18 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M7 history view (Ctrl+H), forgetting a page, *Clear history*.
-**Repo state:** on `master`, committed after fe55189; working tree clean.
+**Last session:** 2026-11-14. M7 private (unrecorded) spaces.
+**Repo state:** on `master`, committed after dba4cf6; working tree clean.
 **Done this session:**
-- Ctrl+H lists history newest first with when each page was seen; typing
-  filters by words; Enter / click opens (or goes to the card showing it);
-  Shift+Delete forgets the highlighted page (in Ctrl+K too); *Clear history*
-  asks, then forgets all, leaving no text on disk. See M7 for the decisions.
-**Next up:** M7's thumbnails or private spaces, or M6's remaining ⬜
-(`.desktop` entry and icon, settings, downloads).
-Small follow-ups: undo for forgetting a page; a pause-history toggle; site
+- Ctrl+Shift+P / *Private space on or off* / *New private space*: a private
+  space records no history, saves no site icons or page zoom, and its pages
+  share an in-memory cookie jar (`web::Jar`) until the app quits. The label
+  says "· Private". `spaces.json` is v3. See M7 for the decisions.
+**Next up:** M7's thumbnails or recently closed cards as palette results, or
+M6's remaining ⬜ (`.desktop` entry and icon, settings, downloads).
+Small follow-ups: a private space could look different beyond its label
+(an icon, a hatched board); downloads in a private space (none yet anyway);
+undo for forgetting a page; a pause-history toggle; site
 icons on history rows; prune `icons/` of sites no card uses; a letter tile for
 sites without an icon; the name label for a stack could list its size; a zoom
 badge on a zoomed card's title bar; Ctrl+scroll inside a page to zoom it;
@@ -700,6 +725,23 @@ several cards; link hints inside iframes; xdg-desktop-portal file chooser for
 Save as Markdown; i18n; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out.
 **Notes for the next session:**
+- Private spaces verified e2e (`~/.cache/trailboard-e2e-private`, `run.sh N
+  shot…`; serve `site/` on :8721 (`cookie.html` shows the cookie it found,
+  then sets one) and `priv/` on :8722 (`index.html`, "marmalade" text, a red
+  icon) with `python3 -m http.server`). Run 1: cookie page recorded in space
+  1; in a new space it saw `seen=1` (shared profile); Ctrl+Shift+P reopened it
+  as "Cookie none" (fresh jar), a second private card saw `seen=1` (same jar);
+  the :8722 page, its icon and a Ctrl+= zoom left no trace: not in history,
+  no `icons/`, no `zoom.json`, no "marmalade" in any data file but the
+  board. Run 2 (copy of run 1, `NOURL=1`): restored still private with a new
+  jar; Ctrl+Shift+P off → label lost "· Private", the marmalade page was then
+  recorded and its icon saved (first version skipped the save because the
+  in-memory icon matched; `SiteIcon::saved` fixes that). Screenshots
+  private1, restored2, off2 checked, dark theme only.
+- Not verified: real sign-ins (only a script cookie; localStorage/IndexedDB
+  in the jar assumed from CEF's incognito behaviour), popups opened by a
+  private page (they become cards via `Page::new`, so they get the jar, but
+  untested), the jar-creation failure path, light themes.
 - History view verified e2e (same harness, `~/.cache/trailboard-e2e-history`,
   server on :8711; data3/data4 are copies of data2). Run 3 (`NOURL=1`): Ctrl+H
   listed 4 pages newest first ("On the board" on the 2 open cards, times

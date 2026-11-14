@@ -19,7 +19,9 @@ use serde::{Deserialize, Serialize};
 use crate::write_atomic;
 
 /// 1: `background` was a fixed sRGB colour. 2: `tint` names a theme colour.
-pub const SPACES_VERSION: u32 = 2;
+/// 3: `private` (a build that doesn't know it must not open the space and
+/// record its pages, so older builds refuse a v3 index).
+pub const SPACES_VERSION: u32 = 3;
 
 /// Board tints new spaces take in turn: none (the theme's background) or a
 /// colour of the desktop theme, mixed lightly into its background, so every
@@ -36,6 +38,10 @@ pub struct SpaceEntry {
     /// Theme colour the board is tinted with (`None`: the theme's background).
     #[serde(default)]
     pub tint: Option<String>,
+    /// Pages here are not recorded (history, site icons, page zoom) and use a
+    /// cookie jar and cache in memory only, dropped when the app quits.
+    #[serde(default)]
+    pub private: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -61,7 +67,7 @@ impl SpaceIndex {
             idx.next_id = idx.next_id.max(id);
             let name = idx.default_name();
             let tint = tint_name(TINTS[idx.spaces.len() % TINTS.len()]);
-            idx.spaces.push(SpaceEntry { id: SpaceId(id), name, tint });
+            idx.spaces.push(SpaceEntry { id: SpaceId(id), name, tint, private: false });
         }
         idx
     }
@@ -94,7 +100,7 @@ impl SpaceIndex {
         let name = self.default_name();
         let tint = self.unused_tint();
         let at = self.position(self.active).map_or(self.spaces.len(), |p| p + 1);
-        self.spaces.insert(at, SpaceEntry { id, name, tint });
+        self.spaces.insert(at, SpaceEntry { id, name, tint, private: false });
         id
     }
 
@@ -129,6 +135,17 @@ impl SpaceIndex {
         let i = TINTS.iter().position(|t| *t == s.tint.as_deref()).map_or(0, |i| i + 1);
         s.tint = tint_name(TINTS[i % TINTS.len()]);
         Some(s.tint.clone())
+    }
+
+    /// Makes a space private or not. Returns false if it is not listed.
+    pub fn set_private(&mut self, id: SpaceId, private: bool) -> bool {
+        match self.spaces.iter_mut().find(|s| s.id == id) {
+            Some(s) => {
+                s.private = private;
+                true
+            }
+            None => false,
+        }
     }
 
     /// Removes a space. Returns the space to show instead (the one before it,
@@ -193,6 +210,15 @@ pub fn migrate(mut v: serde_json::Value) -> Result<serde_json::Value, String> {
                     obj.insert("tint".into(), tint.into());
                 }
                 v["version"] = 2.into();
+            }
+            2 => {
+                // Spaces became private or not; every existing space is not.
+                for space in v.get_mut("spaces").and_then(|s| s.as_array_mut()).into_iter().flatten() {
+                    if let Some(obj) = space.as_object_mut() {
+                        obj.insert("private".into(), false.into());
+                    }
+                }
+                v["version"] = 3.into();
             }
             other => return Err(format!("spaces.json version {other} is newer than this build supports")),
         }
@@ -397,10 +423,36 @@ mod tests {
         assert_eq!(tints, [None, Some("green"), None]);
         assert_eq!(idx.active, SpaceId(2));
         assert_eq!(idx.spaces[1].name, "Research");
-        // The upgrade is written back, so the file is now version 2.
+        // The upgrade is written back, so the file is now the current version.
         let back: serde_json::Value = serde_json::from_slice(&fs::read(index_path(dir.path())).unwrap()).unwrap();
-        assert_eq!(back["version"], 2);
+        assert_eq!(back["version"], SPACES_VERSION);
         assert!(back["spaces"][0].get("background").is_none());
+        assert!(idx.spaces.iter().all(|s| !s.private));
+    }
+
+    #[test]
+    fn version_2_spaces_are_not_private_and_private_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let v2 = r#"{"version":2,"active":1,"spaces":[
+            {"id":1,"name":"Space 1","tint":null},
+            {"id":2,"name":"Work","tint":"blue"}],"next_id":2}"#;
+        fs::write(index_path(dir.path()), v2).unwrap();
+        let mut idx = open_spaces(dir.path()).unwrap();
+        assert!(idx.spaces.iter().all(|s| !s.private));
+        let back: serde_json::Value = serde_json::from_slice(&fs::read(index_path(dir.path())).unwrap()).unwrap();
+        assert_eq!(back["version"], 3);
+        assert_eq!(back["spaces"][1]["private"], false);
+
+        assert!(idx.set_private(SpaceId(2), true));
+        assert!(!idx.set_private(SpaceId(9), true));
+        save_index(dir.path(), &idx).unwrap();
+        let again = open_spaces(dir.path()).unwrap();
+        assert!(!again.spaces[0].private);
+        assert!(again.spaces[1].private);
+        // New spaces start recorded, even next to a private one.
+        idx.active = SpaceId(2);
+        let id = idx.add();
+        assert!(!idx.get(id).unwrap().private);
     }
 
     #[test]

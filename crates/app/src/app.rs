@@ -62,8 +62,10 @@
 //!   light or dark (pages too), Hyprland's rounding and the desktop text size.
 //! - Spaces: Ctrl+Shift+N new space, Ctrl+PageDown / Ctrl+PageUp next / previous,
 //!   F2 rename, Ctrl+Shift+B next tint (a theme colour), Ctrl+Shift+W delete (asks
-//!   first when the space has cards). Each space keeps its own board, camera,
-//!   background, undo history and closed cards.
+//!   first when the space has cards), Ctrl+Shift+P private on / off. Each space
+//!   keeps its own board, camera, background, undo history and closed cards. A
+//!   private space's pages are not recorded (history, icons, zoom on disk) and
+//!   share a cookie jar in memory (`web::Jar`) that lasts until the app quits.
 //!
 //! Live-browser cap: at most `TRAILBOARD_MAX_LIVE` (default 6) cards keep a live
 //! browser (see `scene::liveness`). The others sleep: their page is closed and the
@@ -131,6 +133,8 @@ struct SiteIcon {
     key: u64,
     serial: u64,
     icon: storage::icons::Icon,
+    /// Written under `icons/` (not when only a private space has seen it).
+    saved: bool,
 }
 
 /// Browser and texture key for card `id` while `epoch` is current.
@@ -143,6 +147,9 @@ fn page_key(epoch: u64, id: NodeId) -> u64 {
 struct Session {
     history: History,
     closed: Vec<(Node, Vec<Edge>)>,
+    /// A private space's cookie jar and page zooms, kept while the app runs.
+    jar: Option<web::Jar>,
+    zooms: Option<std::collections::BTreeMap<String, f64>>,
 }
 /// Default number of cards that keep a live browser.
 const DEFAULT_MAX_LIVE: usize = 6;
@@ -247,6 +254,8 @@ pub struct App {
     epoch: u64,
     /// Undo history and closed cards of spaces not on screen (this session only).
     sessions: HashMap<SpaceId, Session>,
+    /// The cookie jar of the active space when it is private.
+    jar: Option<web::Jar>,
     /// Short message at the top of the window, until it expires.
     toast: Option<(String, Instant)>,
     /// Waiting for Enter to do something that can't be undone.
@@ -345,7 +354,7 @@ impl App {
         let icons = storage::icons::load_icons(&data_dir)
             .into_iter()
             .enumerate()
-            .map(|(i, (site, icon))| (site, SiteIcon { key: ICON_KEY | i as u64, serial: 1, icon }))
+            .map(|(i, (site, icon))| (site, SiteIcon { key: ICON_KEY | i as u64, serial: 1, icon, saved: true }))
             .collect();
         let page_index = match storage::pagetext::PageIndex::open(&data_dir) {
             Ok(i) => Some(i),
@@ -402,6 +411,7 @@ impl App {
             persist: true,
             epoch: 0,
             sessions: HashMap::new(),
+            jar: None,
             toast: None,
             confirm: None,
             dirty: false,
@@ -478,7 +488,29 @@ impl App {
             self.spaces.position(self.spaces.active).unwrap_or(0) + 1,
             self.spaces.spaces.len()
         );
+        self.enter_privacy(None, None);
         self.load_board()
+    }
+
+    fn is_private(&self) -> bool {
+        self.spaces.active_entry().private
+    }
+
+    /// Before the active space's pages open: a private space gets its cookie
+    /// jar (the one it had this session, or a new one) and its page zooms.
+    fn enter_privacy(&mut self, jar: Option<web::Jar>, zooms: Option<std::collections::BTreeMap<String, f64>>) {
+        if !self.is_private() {
+            self.jar = None;
+            self.zooms.borrow_mut().private = None;
+            return;
+        }
+        self.jar = jar.or_else(web::Jar::in_memory);
+        if self.jar.is_none() {
+            // Pages would share the profile's cookies; history etc. still stay off.
+            log::error!("private space: couldn't make a cookie jar in memory");
+        }
+        self.zooms.borrow_mut().private = Some(zooms.unwrap_or_default());
+        log::info!("private space: jar={}", self.jar.is_some());
     }
 
     /// Load the active space's board into the (empty) scene. Returns false when it has no cards.
@@ -526,11 +558,17 @@ impl App {
         self.toast = Some((msg, Instant::now()));
     }
 
-    /// "Name (2 of 3)" for the active space.
+    /// "Name (2 of 3)" for the active space, "Name · Private" or
+    /// "Name (2 of 3) · Private" when it is private.
     fn space_label(&self) -> String {
         let e = self.spaces.active_entry();
         let i = self.spaces.position(e.id).unwrap_or(0) + 1;
-        format!("{} ({i} of {})", e.name, self.spaces.spaces.len())
+        let n = self.spaces.spaces.len();
+        let mut label = if n > 1 { format!("{} ({i} of {n})", e.name) } else { e.name.clone() };
+        if e.private {
+            label.push_str(" · Private");
+        }
+        label
     }
 
     /// Save the current space and close its pages; keep its undo history for later.
@@ -544,7 +582,12 @@ impl App {
             }
         }
         self.cards.clear(); // closes the browsers
-        let session = Session { history: std::mem::take(&mut self.history), closed: std::mem::take(&mut self.closed) };
+        let session = Session {
+            history: std::mem::take(&mut self.history),
+            closed: std::mem::take(&mut self.closed),
+            jar: self.jar.take(),
+            zooms: self.zooms.borrow_mut().private.take(),
+        };
         self.sessions.insert(self.spaces.active, session);
         self.scene = Scene::new();
         self.camera = Camera::default();
@@ -579,6 +622,7 @@ impl App {
         let s = self.sessions.remove(&self.spaces.active).unwrap_or_default();
         self.history = s.history;
         self.closed = s.closed;
+        self.enter_privacy(s.jar, s.zooms);
         self.load_board();
         self.camera_moved();
         self.dirty = false;
@@ -598,9 +642,10 @@ impl App {
         self.load_space();
     }
 
-    fn new_space(&mut self) {
+    fn new_space(&mut self, private: bool) {
         self.link_hints = None;
         let id = self.spaces.add();
+        self.spaces.set_private(id, private);
         self.unload_space();
         self.spaces.active = id;
         self.save_index();
@@ -613,6 +658,29 @@ impl App {
             self.save_index();
             self.toast(format!("Renamed to {}", self.spaces.active_entry().name));
         }
+    }
+
+    /// Ctrl+Shift+P: make the active space private, or recorded again. Its
+    /// pages reopen, so they move to (or out of) the private cookie jar.
+    fn toggle_private(&mut self) {
+        self.link_hints = None;
+        let id = self.spaces.active;
+        let on = !self.is_private();
+        self.unload_space();
+        self.spaces.set_private(id, on);
+        self.save_index();
+        if !on && let Some(s) = self.sessions.get_mut(&id) {
+            // Leaving private: its cookies and zooms are forgotten now.
+            s.jar = None;
+            s.zooms = None;
+        }
+        self.load_space();
+        log::info!("space {} private={on}", id.0);
+        self.toast(if on {
+            format!("{} is private · its pages aren't kept in history, cookies last until you quit", self.spaces.active_entry().name)
+        } else {
+            format!("{} is no longer private · its pages are kept in history", self.spaces.active_entry().name)
+        });
     }
 
     fn cycle_tint(&mut self) {
@@ -792,7 +860,8 @@ impl App {
             Some(text) => (crate::note::page_url(text, &self.theme, n.sticky.as_deref()), web::PageKind::Note),
             None => (n.url.clone(), web::PageKind::Web),
         };
-        match Page::new(self.page_key(id), &url, kind, (r.w as i32, r.h as i32), self.page_scale, &self.spawn_beside) {
+        let jar = self.jar.as_ref();
+        match Page::new(self.page_key(id), &url, kind, (r.w as i32, r.h as i32), self.page_scale, &self.spawn_beside, jar) {
             Some(page) => {
                 self.cards.insert(id, Card { page, loading: true, hidden: false, cursor: web::Cursor::Default });
             }
@@ -1328,6 +1397,7 @@ impl App {
                 c.page.refresh_zoom();
             }
             if self.persist
+                && !self.is_private()
                 && let Err(e) = storage::zoom::save_zooms(&self.data_dir, &self.zooms.borrow())
             {
                 log::error!("saving page zoom: {e}");
@@ -1510,7 +1580,9 @@ impl App {
             Command::ZoomOut => self.zoom_page(-1),
             Command::ZoomReset => self.zoom_page(0),
             Command::SelectAll => self.selection.select_all(&self.scene),
-            Command::NewSpace => self.new_space(),
+            Command::NewSpace => self.new_space(false),
+            Command::NewPrivateSpace => self.new_space(true),
+            Command::PrivateSpace => self.toggle_private(),
             Command::NextSpace | Command::PreviousSpace => {
                 let step = if c == Command::NextSpace { 1 } else { -1 };
                 self.switch_space(self.spaces.neighbour(self.spaces.active, step));
@@ -2302,6 +2374,10 @@ impl App {
         if self.text_due.is_empty() {
             return;
         }
+        if self.is_private() {
+            self.text_due.clear();
+            return;
+        }
         let now = Instant::now();
         let due: Vec<NodeId> = self.text_due.iter().filter(|(_, t)| **t <= now).map(|(id, _)| *id).collect();
         for id in due {
@@ -2317,6 +2393,9 @@ impl App {
 
     /// Keeps a page's text in the history index.
     fn record_visit(&mut self, url: &str, title: &str, text: &str) {
+        if self.is_private() {
+            return;
+        }
         let Some(index) = self.page_index.as_mut() else { return };
         match index.record(url, title, text, now_ms()) {
             Ok(true) => {
@@ -2335,16 +2414,33 @@ impl App {
             log::warn!("icon for {site}: unusable size {width}x{height}");
             return;
         };
-        if self.icons.get(&site).is_some_and(|s| s.icon == icon) {
+        let private = self.is_private();
+        let known = self.icons.get(&site).filter(|s| s.icon == icon);
+        if known.is_some_and(|s| s.saved || private) {
             return;
         }
-        if let Err(e) = storage::icons::save_icon(&self.data_dir, &site, &icon) {
+        // A private space's sites are shown this session but not written down.
+        let saved = if private {
+            log::info!("icon for {site}: not saved (private space)");
+            false
+        } else if let Err(e) = storage::icons::save_icon(&self.data_dir, &site, &icon) {
             log::warn!("saving the icon for {site}: {e}");
+            false
+        } else {
+            true
+        };
+        if known.is_some() {
+            // Seen before only privately: now it is on disk too, the texture is the same.
+            if let Some(s) = self.icons.get_mut(&site) {
+                s.saved = saved;
+            }
+            return;
         }
         log::info!("icon for {site}: {width}x{height}");
         let next = ICON_KEY | self.icons.len() as u64;
-        let entry = self.icons.entry(site).or_insert(SiteIcon { key: next, serial: 0, icon: icon.clone() });
+        let entry = self.icons.entry(site).or_insert(SiteIcon { key: next, serial: 0, icon: icon.clone(), saved });
         entry.icon = icon;
+        entry.saved = saved;
         entry.serial += 1;
     }
 
@@ -3019,7 +3115,7 @@ impl App {
                 }
                 // Spaces.
                 Some(KeyCode::KeyN) if ctrl && shift && !alt => {
-                    self.new_space();
+                    self.new_space(false);
                     true
                 }
                 Some(KeyCode::PageDown | KeyCode::PageUp) if alt && !ctrl && !shift && self.drag_is_idle() => {
@@ -3038,6 +3134,10 @@ impl App {
                 }
                 Some(KeyCode::KeyB) if ctrl && shift && !alt => {
                     self.cycle_tint();
+                    true
+                }
+                Some(KeyCode::KeyP) if ctrl && shift && !alt => {
+                    self.toggle_private();
                     true
                 }
                 Some(KeyCode::KeyW) if ctrl && shift && !alt => {
@@ -3765,7 +3865,7 @@ impl App {
         }
 
         // Space name in the top-left corner once there is more than one space.
-        if self.spaces.spaces.len() > 1 && self.omnibox.is_none() && self.read.is_none() {
+        if (self.spaces.spaces.len() > 1 || self.is_private()) && self.omnibox.is_none() && self.read.is_none() {
             let label = self.space_label();
             let color = th.swatch(tint.as_deref());
             layers.push(self.pill(&label, Vec2::new(sidebar_w + 12.0 * ui, 12.0 * ui), 13.0 * ui, Some(color), false));
@@ -4338,8 +4438,9 @@ impl App {
                 Cmd::Spaces => {
                     for e in &self.spaces.spaces {
                         log::info!(
-                            "script space {}: {:?} tint={:?} board={:?}{}",
-                            e.id.0, e.name, e.tint, self.theme.board(e.tint.as_deref()), if e.id == self.spaces.active { " active" } else { "" }
+                            "script space {}: {:?} tint={:?} board={:?} private={}{}",
+                            e.id.0, e.name, e.tint, self.theme.board(e.tint.as_deref()), e.private,
+                            if e.id == self.spaces.active { " active" } else { "" }
                         );
                     }
                 }

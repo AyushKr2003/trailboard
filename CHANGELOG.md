@@ -7,6 +7,13 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Private spaces**: Ctrl+Shift+P (or *Private space on or off* in the
+  palette) makes the current space private; *New private space* makes a new
+  one. Pages in a private space are not kept in history, their site icons and
+  page zoom are not saved, and their cookies, site data and cache stay in
+  memory, shared by the space's cards until you quit. The board itself is
+  still saved. The space's label says "· Private". `spaces.json` is now
+  version 3 (older files are upgraded; older builds refuse the new file).
 - **History view**: Ctrl+H (or *History* in the palette) lists the pages
   you opened, newest first, with when you saw each ("Today 14:32",
   "Yesterday", a weekday, a date). Type to keep the pages with those words;

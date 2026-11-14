@@ -30,7 +30,7 @@ pub fn load_zooms(data_dir: &Path) -> SiteZooms {
     match serde_json::from_slice::<ZoomFile>(&bytes) {
         Ok(f) if f.version <= ZOOM_VERSION => {
             let sites = f.sites.into_iter().filter(|(_, z)| z.is_finite() && *z > 0.0).collect();
-            SiteZooms { sites }
+            SiteZooms { sites, private: None }
         }
         Ok(f) => {
             log::warn!("{}: version {} is newer than this build supports", path.display(), f.version);

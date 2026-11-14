@@ -15,6 +15,7 @@ pub mod note;
 pub mod placement;
 pub mod read;
 pub mod selection;
+pub mod sidebar;
 pub mod tidy;
 pub mod trail;
 

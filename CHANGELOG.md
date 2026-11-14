@@ -7,6 +7,13 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Trails sidebar**: press B with no page having the keys for a list of
+  everything on the board down the left edge: each trail with its name,
+  colour and size, its cards as a tree in reading order, then the cards on no
+  trail. j/k (or the arrows) go to the card on that row, even one folded
+  away in a stack; h/l collapse and expand a trail; Enter types in the card's
+  page; Esc or B closes it. Clicking a row does the same, and the wheel
+  scrolls it. Script `sidebar` logs its rows.
 - **Sticky notes**: press Shift+N with no page having the keys for a small
   coloured note without a title bar, ready to type in (Markdown, like any
   note). Drag its coloured strip to move it; C gives it the next colour

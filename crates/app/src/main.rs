@@ -10,6 +10,7 @@ mod menu;
 mod note;
 mod omnibox;
 mod script;
+mod sidebar;
 mod theme;
 
 use std::path::PathBuf;

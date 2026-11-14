@@ -361,7 +361,32 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   - Not done: a file chooser (xdg-desktop-portal), saving a web page's text.
 
 ### M6: Chrome UI 🟡
-- Trails sidebar: tree per root, pins/favourites, drag to reorder, collapse.
+- 🟡 Trails sidebar (B; `scene::sidebar`, `app::sidebar`). Decisions (2026-11-14):
+  - A panel over the left edge of the board (300 px, at most 45% of the
+    window, full height), not a resized board: the board, Read Mode and Fit
+    stay as they are. Hidden in Read Mode. The space pill moves right of it.
+  - Rows: one group per trail (two or more cards, or a name, as in Save as
+    Markdown), in the order its first card was made: a header (▾/▸, a dot in
+    the trail's colour, its name or else its first card's title, the number
+    of cards), then its cards as a tree in reading order (`trail_tree`),
+    indented by depth. Cards on no trail last, under *Other cards*. Folded
+    cards stay listed in their place, dimmed. A sticky note shows its colour.
+  - B opens it with the keys and the current card's row highlighted (selection
+    colour); B or Esc closes it. A click elsewhere takes the keys back and
+    the panel stays open (the current card keeps an accent bar on its row);
+    B then gives the keys back. Keys while it has them: j/k or arrows,
+    PgUp/PgDn, Home/End move the highlight, and landing on a card goes to it
+    (current, shown at its stack's front if folded, brought on screen clear
+    of the panel; like peeking, not an edit). h/l or ←/→ collapse / expand a
+    group, Enter or Space on a card gives its page the keys (panel stays),
+    on a header toggles it. Other keys (S, N, T, Delete…) stay board keys.
+  - Mouse: a click on a card row goes to it, on a header toggles the group;
+    the wheel scrolls the list; the pointer over the panel never reaches pages.
+  - Collapsed groups are keyed by the trail's first card and live for the
+    session only (reset on a space switch); not in the board file.
+  - Not done: pins/favourites, drag to reorder (both need a stored order, a
+    board format change), rename from the sidebar, a minimum pixel step for
+    touchpad scrolling (small pixel deltas round to no scroll).
 - Ctrl+K palette: fuzzy search over open cards, history and commands.
 - Find in page (Ctrl+F) bar; per-page zoom (Ctrl +/−/0 inside a page).
 - ✅ Keyboard-driven board (`scene::nav`, `App::typing`). Decisions (2026-11-14),
@@ -513,26 +538,42 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M5 Sticky notes.
-**Repo state:** on `master`, committed after 2796a53; working tree clean.
+**Last session:** 2026-11-14. M6 Trails sidebar (first cut).
+**Repo state:** on `master`, committed after 931c2e9; working tree clean.
 **Done this session:**
-- `scene`: `Node::sticky`, `header_h()`, `STICKY_GRIP_H`; `note::STICKY_COLOURS`,
-  `next_sticky_colour`, `add_sticky`, `set_sticky`, `cycle_sticky_colour`;
-  `Edit::SetSticky` / `Change::Restyled`; Tidy places by each card's own
-  header height. `storage`: board v5. Tests for all of it.
-- `app`: Shift+N, C on a sticky note, sticky strip drawing and hit test,
-  note editor colours for sticky paper (`theme::sticky_paper/ink/strip`),
-  recolour on undo and theme change; `web::menu` *Make sticky note* /
-  *Make note card*. Sheet, README, CHANGELOG updated.
-**Next up:** the trails sidebar (M6).
-Small follow-ups: the Menu key / Shift+F10 for the page menu; keyboard
-selection of several cards; link hints inside iframes and for buttons/inputs
-(click or focus by label); Omarchy app conventions still missing: a `.desktop`
-entry and icon, xdg-desktop-portal file chooser for Save as Markdown,
-following the Omarchy language (i18n). Also: rename a trail from the page menu
-or its tag; animate cards to their Tidy places; a sticky note's strip is hard
-to hit when zoomed far out (consider a minimum hit height in screen px).
+- `scene::sidebar`: `groups`, `Row`/`RowKey`/`Group`, `Sidebar` (rows with
+  collapse, highlight by key, step with fallback for a removed row,
+  collapse/expand/toggle, scroll_to/scroll_by). Unit tests for all of it.
+- `app::sidebar`: `Panel` layout and hit testing (tested), `layer` drawing.
+  `App`: B toggles, sidebar keys before board keys, clicks, hover, wheel,
+  `ensure_visible` keeps a card clear of the panel, state reset on a space
+  switch. Script command `sidebar` logs rows and where to click them.
+  Sheet, README, CHANGELOG updated.
+**Next up:** the Ctrl+K palette (M6): fuzzy search over open cards and
+commands (history needs M7; leave that part for later).
+Small follow-ups: sidebar pins/favourites and drag to reorder (need a stored
+order, board v6); rename a trail from the sidebar or its tag; the Menu key /
+Shift+F10 for the page menu; keyboard selection of several cards; link hints
+inside iframes and for buttons/inputs; Omarchy app conventions still missing:
+a `.desktop` entry and icon, xdg-desktop-portal file chooser for Save as
+Markdown, i18n. Also: animate cards to their Tidy places; a sticky note's
+strip is hard to hit when zoomed far out.
 **Notes for the next session:**
+- Sidebar verified e2e (`~/.cache/trailboard-e2e-sidebar`, `run.sh N shot…`,
+  seed in `seed/`: trail Reading 1→2, 1→3, 3→4 (green), P5, note 6, green
+  sticky 7). Run 1: B with nothing focused highlighted card 7 (the middle of
+  the view); h collapsed Other cards, l expanded; End → 7; k×4 → card 4
+  with the camera putting it at x 385 (panel ends at 300); S (passed through
+  to the board) folded the trail, rows 1–3 dimmed; Esc closed, B reopened on
+  4, Esc closed. Run 2 (clicks): row P3 → card 3, S folded with 3 in front;
+  click on folded P1 → stack front = 1; header click collapsed, again
+  expanded; click on the board → keys=false, panel open; B → keys, B →
+  closed. Run 3: j from P3 onto folded P4 → front 4; Enter → keys_in_page,
+  j then went to the page. Screenshots open1, folded1, enter3 checked, dark
+  theme only, 941 px wide window.
+- Not verified: the wheel over the panel and a list longer than the window
+  (scroll bar; unit-tested only), light themes, a real keyboard or mouse,
+  hover rows with a real pointer, HiDPI scale.
 - Sticky notes verified e2e (`~/.cache/trailboard-e2e-sticky`, `run.sh N
   shot…`, seed = the arrange run's seed in `seed/`). Run 1: Shift+N made
   sticky 7 (yellow), typed `# Buy *milk*` / `- [ ] eggs` (title "Buy milk");

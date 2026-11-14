@@ -11,6 +11,11 @@
 //!   the keys, Esc takes them back (the card stays current) and a second Esc lets go
 //!   of the card, Delete closes it, Q quits. Board keys (f, N, T, S, O, R, C, [, ])
 //!   act on the current card, else the one in the middle of the view.
+//! - B opens the trails sidebar (`scene::sidebar`, `sidebar`) with the keys:
+//!   j/k move its highlight and go to that card, h/l collapse / expand a trail,
+//!   Enter gives a card's page the keys (or toggles a trail), Esc or B closes it.
+//!   Clicks on a row do the same; a click elsewhere takes the keys back, the
+//!   panel stays open.
 //! - f labels the links on the current card's page (`scene::hint`, `web::links`);
 //!   typing a label opens that link beside the card, which becomes current. Esc,
 //!   another key, a click or a scroll ends the labels. Shift+F fits everything.
@@ -77,6 +82,7 @@ use crate::keymap::{self, KeyIn};
 use crate::menu::{self, ContextMenu, Entry};
 use crate::omnibox::{self, Omnibox, Target};
 use crate::script::{Cmd, Script};
+use crate::sidebar::Panel;
 
 const START_URL: &str = "https://en.wikipedia.org/wiki/Special:Random";
 const CARD_W: f32 = 1024.0;
@@ -170,6 +176,15 @@ pub struct App {
     arrange: Option<Arrange>,
     /// Read Mode: this card fills the window (see `scene::read`).
     read: Option<NodeId>,
+    /// The trails sidebar (B): collapsed groups, highlight and scroll.
+    sidebar: scene::sidebar::Sidebar,
+    sidebar_open: bool,
+    /// The sidebar has the keys (j/k move its highlight).
+    sidebar_keys: bool,
+    /// Index of the sidebar's highlight when last seen, for a row that goes away.
+    sidebar_at: Option<usize>,
+    /// Sidebar row under the pointer.
+    sidebar_hover: Option<usize>,
     /// The current mouse press started inside the context menu.
     menu_pressed: bool,
     clipboard: Clipboard,
@@ -243,6 +258,11 @@ impl App {
             link_hints: None,
             arrange: None,
             read: None,
+            sidebar: Default::default(),
+            sidebar_open: false,
+            sidebar_keys: false,
+            sidebar_at: None,
+            sidebar_hover: None,
             menu_pressed: false,
             clipboard: Clipboard::new(),
             ime_allowed: false,
@@ -413,6 +433,11 @@ impl App {
         self.omnibox = None;
         self.menu = None;
         self.read = None;
+        // Collapsed trails and the highlight are this space's; the panel stays open.
+        self.sidebar = Default::default();
+        self.sidebar_keys = false;
+        self.sidebar_at = None;
+        self.sidebar_hover = None;
         self.ime_page = None;
         self.confirm_delete = false;
         self.epoch += 1;
@@ -977,6 +1002,154 @@ impl App {
         log::info!("left the page of card {:?}", self.focused.map(|f| f.0));
     }
 
+    // ---------------------------------------------------------------- sidebar
+
+    fn sidebar_panel(&self) -> Panel {
+        Panel::new(self.viewport(), self.ui())
+    }
+
+    /// The sidebar is on screen (not in Read Mode, which covers the window).
+    fn sidebar_shown(&self) -> bool {
+        self.sidebar_open && self.read.is_none()
+    }
+
+    /// The sidebar takes board keys: open, given the keys, and no page has them.
+    fn sidebar_has_keys(&self) -> bool {
+        self.sidebar_shown() && self.sidebar_keys && !self.typing()
+    }
+
+    /// B: opens the sidebar with the keys on the current card's row; closes
+    /// it when it has the keys; gives it the keys when it is open without.
+    fn toggle_sidebar(&mut self) {
+        if self.read.is_some() {
+            return;
+        }
+        if self.sidebar_open && self.sidebar_keys {
+            self.close_sidebar();
+            return;
+        }
+        self.sidebar_open = true;
+        self.take_sidebar_keys();
+        log::info!("sidebar open, highlight {:?}", self.sidebar.sel);
+    }
+
+    fn close_sidebar(&mut self) {
+        self.sidebar_open = false;
+        self.sidebar_keys = false;
+        self.sidebar_hover = None;
+        log::info!("sidebar closed");
+    }
+
+    /// The sidebar takes the keys, highlighting the current card's row.
+    fn take_sidebar_keys(&mut self) {
+        if self.typing() {
+            self.leave_page();
+        }
+        self.sidebar_keys = true;
+        let current = self.focused.or_else(|| self.current());
+        if !current.is_some_and(|id| self.sidebar.select_card(&self.scene, id)) && self.sidebar.sel.is_none() {
+            let rows = self.sidebar.rows(&self.scene);
+            self.sidebar.step(&rows, 1, None);
+        }
+        self.sidebar_scroll_to_sel();
+    }
+
+    fn sidebar_scroll_to_sel(&mut self) {
+        let rows = self.sidebar.rows(&self.scene);
+        let i = self.sidebar.index(&rows);
+        if i.is_some() {
+            self.sidebar_at = i;
+        }
+        let shown = self.sidebar_panel().shown;
+        self.sidebar.scroll_to(i, rows.len(), shown);
+    }
+
+    /// Keys while the sidebar has them. False for keys it leaves to the board.
+    fn sidebar_key(&mut self, code: Option<KeyCode>) -> bool {
+        use scene::sidebar::{Row, RowKey};
+        let rows = self.sidebar.rows(&self.scene);
+        let shown = self.sidebar_panel().shown as isize;
+        let step = match code {
+            Some(KeyCode::KeyJ | KeyCode::ArrowDown) => Some(1),
+            Some(KeyCode::KeyK | KeyCode::ArrowUp) => Some(-1),
+            Some(KeyCode::PageDown) => Some(shown),
+            Some(KeyCode::PageUp) => Some(-shown),
+            Some(KeyCode::Home) => Some(-(rows.len() as isize)),
+            Some(KeyCode::End) => Some(rows.len() as isize),
+            _ => None,
+        };
+        if let Some(step) = step {
+            // Moving onto a card goes to it on the board (it becomes current).
+            if let Some(RowKey::Card(id)) = self.sidebar.step(&rows, step, self.sidebar_at) {
+                self.sidebar_go(id);
+            }
+            self.sidebar_scroll_to_sel();
+            return true;
+        }
+        match code {
+            Some(KeyCode::KeyH | KeyCode::ArrowLeft) => {
+                self.sidebar.collapse(&rows);
+            }
+            Some(KeyCode::KeyL | KeyCode::ArrowRight) => {
+                self.sidebar.expand(&rows);
+            }
+            Some(KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space) => {
+                match self.sidebar.index(&rows).map(|i| &rows[i]) {
+                    Some(Row::Header { group, .. }) => self.sidebar.toggle(*group),
+                    Some(&Row::Card { id, .. }) => {
+                        // The card's page gets the keys; the panel stays open.
+                        self.sidebar_go(id);
+                        self.sidebar_keys = false;
+                        self.enter_current();
+                    }
+                    None => {}
+                }
+            }
+            Some(KeyCode::Escape | KeyCode::KeyB) => self.close_sidebar(),
+            _ => return false,
+        }
+        self.sidebar_scroll_to_sel();
+        true
+    }
+
+    /// Goes to card `id` from the sidebar: it is shown at its stack's front if
+    /// folded away, becomes current and comes on screen (clear of the panel).
+    fn sidebar_go(&mut self, id: NodeId) {
+        if self.scene.node(id).is_none() {
+            return;
+        }
+        if self.scene.is_hidden(id) && self.scene.show(id) {
+            self.after_fold();
+            self.dirty = true;
+        }
+        self.selection.clear();
+        self.focus(Some(id));
+        self.ensure_visible(id);
+        log::info!("sidebar: card {}", id.0);
+    }
+
+    /// A press on the sidebar: a header collapses or expands its trail, a card
+    /// row goes to that card. Either gives the sidebar the keys.
+    fn sidebar_click(&mut self, p: Vec2, button: MouseButton) {
+        use scene::sidebar::Row;
+        if button != MouseButton::Left {
+            return;
+        }
+        let rows = self.sidebar.rows(&self.scene);
+        let panel = self.sidebar_panel();
+        if self.typing() {
+            self.leave_page();
+        }
+        self.sidebar_keys = true;
+        let Some(i) = panel.row_at(p, self.sidebar.scroll, rows.len()) else { return };
+        self.sidebar.sel = Some(rows[i].key());
+        self.sidebar_at = Some(i);
+        match rows[i] {
+            Row::Header { group, .. } => self.sidebar.toggle(group),
+            Row::Card { id, .. } => self.sidebar_go(id),
+        }
+    }
+
     // ---------------------------------------------------------------- arrange
 
     /// M: move and resize the current card (else the one in the middle of the
@@ -1416,16 +1589,20 @@ impl App {
         }
         let Some(frame) = self.scene.node(id).map(|n| n.frame()) else { return };
         let vp = self.viewport();
+        // The open sidebar covers the left of the window: fit the card in the rest.
+        let left = if self.sidebar_shown() { self.sidebar_panel().rect.right() } else { 0.0 };
         let on_screen = self.to_screen_rect(frame);
-        if on_screen.x >= 0.0 && on_screen.y >= 0.0 && on_screen.right() <= vp.x && on_screen.bottom() <= vp.y {
+        if on_screen.x >= left && on_screen.y >= 0.0 && on_screen.right() <= vp.x && on_screen.bottom() <= vp.y {
             return;
         }
         let mut goal = self.camera;
-        let need = Camera::fit(frame, vp, self.scale(), 32.0 * self.scale());
+        let scale = self.scale();
+        let need = Camera::fit(frame, Vec2::new(vp.x - left, vp.y), scale, 32.0 * scale);
         if need.zoom < goal.zoom {
             goal.zoom = need.zoom;
         }
         goal.center = frame.center();
+        goal.center.x -= left / 2.0 / goal.pixels_per_unit(scale);
         self.camera_goal = Some(goal);
     }
 
@@ -1686,6 +1863,16 @@ impl App {
         if state == ElementState::Released && std::mem::take(&mut self.menu_pressed) {
             return;
         }
+        // The sidebar covers the board's left edge and takes its clicks; a
+        // press anywhere else takes the keys from it (it stays open).
+        if state == ElementState::Pressed && self.sidebar_shown() {
+            if self.sidebar_panel().rect.contains(p) {
+                self.sidebar_click(p, button);
+                self.menu_pressed = true; // swallow the release
+                return;
+            }
+            self.sidebar_keys = false;
+        }
         log::debug!("mouse {state:?} {button:?} at {p:?} hit={:?}", self.hit(p));
         if state == ElementState::Pressed {
             // Track multi-clicks for the page and for double-click on title bars.
@@ -1815,6 +2002,17 @@ impl App {
         if let Some(m) = self.menu.as_mut() {
             m.hover = None;
         }
+        self.sidebar_hover = None;
+        if self.sidebar_shown() && matches!(self.drag, Drag::None) {
+            let panel = self.sidebar_panel();
+            if panel.rect.contains(p) {
+                let len = self.sidebar.rows(&self.scene).len();
+                self.sidebar_hover = panel.row_at(p, self.sidebar.scroll, len);
+                self.cursor = p;
+                self.set_cursor(web::Cursor::Default);
+                return;
+            }
+        }
         let prev = self.cursor;
         self.cursor = p;
         let mods = keymap::modifiers(self.mods);
@@ -1893,6 +2091,13 @@ impl App {
         self.camera_goal = None;
         self.menu = None;
         self.link_hints = None; // scrolling a page moves its links
+        if self.sidebar_shown() && self.sidebar_panel().rect.contains(self.cursor) {
+            let panel = self.sidebar_panel();
+            let len = self.sidebar.rows(&self.scene).len();
+            let rows = if lines { -dy * 3.0 } else { -dy / panel.row_h };
+            self.sidebar.scroll_by(rows.round() as isize, len, panel.shown);
+            return;
+        }
         if self.mods.control_key() {
             if self.read.is_some() {
                 return; // the board isn't on screen
@@ -2046,6 +2251,12 @@ impl App {
                         }
                 }
             }
+            return;
+        }
+
+        // The trails sidebar, when it has the keys, takes its own (j/k, h/l,
+        // Enter, Esc, B); the rest are board keys as usual.
+        if pressed && !ctrl && !alt && !shift && self.drag_is_idle() && self.sidebar_has_keys() && self.sidebar_key(code) {
             return;
         }
 
@@ -2273,6 +2484,10 @@ impl App {
                 }
                 Some(KeyCode::KeyN) if !self.typing() && !ctrl && !alt && self.drag_is_idle() => {
                     self.new_note_at_center();
+                    true
+                }
+                Some(KeyCode::KeyB) if !self.typing() && !ctrl && !alt && !shift && self.drag_is_idle() => {
+                    self.toggle_sidebar();
                     true
                 }
                 Some(KeyCode::KeyR) if !self.typing() && !ctrl && !alt && !shift && self.drag_is_idle() => {
@@ -2604,6 +2819,25 @@ impl App {
             layers.push(l);
         }
 
+        let sidebar_w = if self.sidebar_shown() {
+            let panel = self.sidebar_panel();
+            let rows = self.sidebar.rows(&self.scene);
+            self.sidebar.scroll_to(None, rows.len(), panel.shown);
+            let keys = self.sidebar_has_keys();
+            let marks = crate::sidebar::View {
+                scroll: self.sidebar.scroll,
+                sel: if keys { self.sidebar.index(&rows) } else { None },
+                hover: self.sidebar_hover,
+                current: self.focused,
+            };
+            if let Some(r) = self.renderer.as_mut() {
+                layers.push(crate::sidebar::layer(r, &panel, &rows, &marks, &self.scene, &th, ui));
+            }
+            panel.rect.w
+        } else {
+            0.0
+        };
+
         if let Some(ob) = &self.omnibox {
             let w = (720.0 * ui).min(vp.x - 32.0 * ui);
             let h = 48.0 * ui;
@@ -2682,7 +2916,7 @@ impl App {
         if self.spaces.spaces.len() > 1 && self.omnibox.is_none() && self.read.is_none() {
             let label = self.space_label();
             let color = th.swatch(tint.as_deref());
-            layers.push(self.pill(&label, Vec2::new(12.0 * ui, 12.0 * ui), 13.0 * ui, Some(color), false));
+            layers.push(self.pill(&label, Vec2::new(sidebar_w + 12.0 * ui, 12.0 * ui), 13.0 * ui, Some(color), false));
         }
         // While arranging by keyboard, the keys stay on screen at the bottom.
         if self.arrange.is_some() && self.omnibox.is_none() {
@@ -3246,6 +3480,29 @@ impl App {
                             "script space {}: {:?} tint={:?} board={:?}{}",
                             e.id.0, e.name, e.tint, self.theme.board(e.tint.as_deref()), if e.id == self.spaces.active { " active" } else { "" }
                         );
+                    }
+                }
+                Cmd::Sidebar => {
+                    let panel = self.sidebar_panel();
+                    let rows = self.sidebar.rows(&self.scene);
+                    log::info!(
+                        "script sidebar: open={} keys={} sel={:?} scroll={} shown={} width={:.0} rows={}",
+                        self.sidebar_open, self.sidebar_has_keys(), self.sidebar.index(&rows), self.sidebar.scroll,
+                        panel.shown, panel.rect.w, rows.len()
+                    );
+                    for (i, row) in rows.iter().enumerate() {
+                        let at = panel.row_rect(i, self.sidebar.scroll).map(|r| r.center());
+                        let at = at.map_or_else(|| "off".to_string(), |c| format!("({:.0},{:.0})", c.x, c.y));
+                        let what = match row {
+                            scene::sidebar::Row::Header { label, count, collapsed, .. } => {
+                                format!("header {label:?} count={count}{}", if *collapsed { " collapsed" } else { "" })
+                            }
+                            scene::sidebar::Row::Card { id, depth, folded, .. } => {
+                                let title = self.scene.node(*id).map(|n| n.title.clone()).unwrap_or_default();
+                                format!("card {} depth={depth}{} {title:?}", id.0, if *folded { " folded" } else { "" })
+                            }
+                        };
+                        log::info!("script sidebar row {i} at {at}: {what}");
                     }
                 }
                 Cmd::Open(url) => {

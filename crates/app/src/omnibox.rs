@@ -15,6 +15,15 @@ pub enum Target {
     Palette,
     /// Find in this card's page (Ctrl+F): the text is searched as you type.
     Find(scene::NodeId),
+    /// The history view (Ctrl+H): the text filters visited pages (`palette::history_rows`).
+    History,
+}
+
+impl Target {
+    /// The field has a list of results under it (the palette or history).
+    pub fn is_list(&self) -> bool {
+        matches!(self, Target::Palette | Target::History)
+    }
 }
 
 #[derive(Debug)]

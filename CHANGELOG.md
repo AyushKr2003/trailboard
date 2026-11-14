@@ -7,6 +7,16 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **History view**: Ctrl+H (or *History* in the palette) lists the pages
+  you opened, newest first, with when you saw each ("Today 14:32",
+  "Yesterday", a weekday, a date). Type to keep the pages with those words;
+  Enter or a click opens one in a new card, or goes to the card already
+  showing it. Ctrl+H or Esc closes it.
+- **Forget a page**: Shift+Delete on a page in the history view, or on a
+  history result in the Ctrl+K palette, removes it and its text from history.
+- **Clear history**: a palette command that forgets every page, after asking
+  (Enter clears, Esc keeps them). Forgotten text is wiped from the file, not
+  just hidden.
 - **History search**: every page you open is remembered with its title and
   text (in `page-text.db` in the data folder, newest 5000 pages, for all
   spaces). The Ctrl+K palette now finds pages by the words in them: an open

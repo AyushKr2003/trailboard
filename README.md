@@ -84,6 +84,7 @@ you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change th
 | Fill the view with the current card | z |
 | Scroll the current page without entering it | d / u |
 | Page menu by keyboard | Menu key or Shift+F10; j/k or ↑/↓, Enter, Esc |
+| History: pages you opened, newest first | Ctrl+H, type to filter by words in them, Enter opens, Shift+Delete forgets the page; *Clear history* in Ctrl+K forgets all |
 | Find in the current page | Ctrl+F, type (matches show as you type); Enter / Shift+Enter next / previous; Esc closes |
 | Zoom the current page in / out / back to 100% | Ctrl++ / Ctrl+- / Ctrl+0: every card on that site follows, and the zoom is remembered per site |
 | Page context menu | right-click in a page (open link beside, copy link, edit, search selection) |
@@ -104,8 +105,11 @@ card under the pointer (or else the current card) shows its icon and title in
 a label below it.
 
 Pages you open are remembered with their text in `page-text.db` in the data
-folder (the newest 5000), so Ctrl+K can find them by any word on them. To
-forget them all for now, quit and delete that file.
+folder (the newest 5000), so Ctrl+K can find them by any word on them.
+Ctrl+H lists them newest first, with when you saw each; type to keep the
+pages with those words, Enter opens one (or goes to the card showing it), and
+Shift+Delete forgets the highlighted page (in the Ctrl+K palette too). The
+palette command *Clear history* forgets every page after asking.
 
 On [Omarchy](https://omarchy.org/), Trailboard follows the current theme live
 (colours, light or dark, including the pages' `prefers-color-scheme`),

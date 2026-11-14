@@ -30,6 +30,9 @@
 //! - Ctrl+K palette (`palette`, `scene::palette`): fuzzy search over every card
 //!   (folded ones too), the other spaces and the board commands; Up/Down pick,
 //!   Enter goes there or runs it, the last row searches the web or opens an address.
+//! - Ctrl+H history view (`palette::history_rows`): visited pages newest first,
+//!   filtered by words; Shift+Delete forgets one (in Ctrl+K too); *Clear history*
+//!   asks first (`Confirm`).
 //! - Ctrl+L address bar, Ctrl+T new card, Ctrl+W close, Ctrl+Shift+T reopen,
 //!   Ctrl+R reload, Alt+←/→ back/forward.
 //! - Ctrl+F find in the current card's page (the bar is an `omnibox::Target::Find`;
@@ -246,8 +249,8 @@ pub struct App {
     sessions: HashMap<SpaceId, Session>,
     /// Short message at the top of the window, until it expires.
     toast: Option<(String, Instant)>,
-    /// Waiting for Enter to delete the current space.
-    confirm_delete: bool,
+    /// Waiting for Enter to do something that can't be undone.
+    confirm: Option<Confirm>,
     /// Board changed since the last save.
     dirty: bool,
     last_save: Instant,
@@ -284,28 +287,54 @@ pub struct App {
     visits_cache: RefCell<VisitsCache>,
 }
 
-/// Last history search (query, results).
-type VisitsCache = Option<(String, Vec<storage::pagetext::Visit>)>;
+/// Last history search (history view or palette, query, results).
+type VisitsCache = Option<(bool, String, Vec<storage::pagetext::Visit>)>;
 
-/// History pages matching `query`, for the palette (cached per query).
+/// History pages matching `query`, cached per query: for the history view
+/// (`browse`, newest first) or the palette (best first).
 fn visits_for(
-index: &Option<storage::pagetext::PageIndex>,
-cache: &RefCell<VisitsCache>,
-query: &str,
+    index: &Option<storage::pagetext::PageIndex>,
+    cache: &RefCell<VisitsCache>,
+    query: &str,
+    browse: bool,
 ) -> Vec<storage::pagetext::Visit> {
     let Some(index) = index else { return Vec::new() };
-    if let Some((q, v)) = &*cache.borrow()
+    if let Some((b, q, v)) = &*cache.borrow()
+        && *b == browse
         && q == query
     {
         return v.clone();
     }
-    // More than shown, as pages open in cards are left out.
-    let v = index.search(query, palette::MAX_HISTORY * 3).unwrap_or_else(|e| {
+    let found = if browse {
+        index.browse(query, palette::HISTORY_LIST)
+    } else {
+        // More than shown, as pages open in cards are left out.
+        index.search(query, palette::MAX_HISTORY * 3)
+    };
+    let v = found.unwrap_or_else(|e| {
         log::warn!("history: searching {query:?}: {e}");
         Vec::new()
     });
-    cache.replace(Some((query.to_string(), v.clone())));
+    cache.replace(Some((browse, query.to_string(), v.clone())));
     v
+}
+
+/// Something that waits for Enter, as it can't be undone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Confirm {
+    DeleteSpace,
+    ClearHistory,
+}
+
+/// Local time in ms for a UTC time in ms (the zone's offset then).
+fn local_ms(utc_ms: i64) -> i64 {
+    use chrono::{Local, Offset, TimeZone};
+    let offset = Local.timestamp_millis_opt(utc_ms).single().map_or(0, |d| d.offset().fix().local_minus_utc());
+    utc_ms + i64::from(offset) * 1000
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
 }
 
 impl App {
@@ -374,7 +403,7 @@ impl App {
             epoch: 0,
             sessions: HashMap::new(),
             toast: None,
-            confirm_delete: false,
+            confirm: None,
             dirty: false,
             last_save: Instant::now(),
             theme: Theme::default(),
@@ -537,7 +566,7 @@ impl App {
         self.sidebar_at = None;
         self.sidebar_hover = None;
         self.ime_page = None;
-        self.confirm_delete = false;
+        self.confirm = None;
         self.epoch += 1;
         self.text_due.clear();
         // Anything the old pages still had queued is for cards that are gone.
@@ -649,13 +678,13 @@ impl App {
         } else {
             let n = self.scene.nodes().count();
             let cards = if n == 1 { "1 card".to_string() } else { format!("{n} cards") };
-            self.confirm_delete = true;
+            self.confirm = Some(Confirm::DeleteSpace);
             self.toast(format!("Delete {} and its {cards}? Enter deletes · Esc keeps it", e.name));
         }
     }
 
     fn delete_space(&mut self) {
-        self.confirm_delete = false;
+        self.confirm = None;
         let gone = self.spaces.active;
         let name = self.spaces.active_entry().name.clone();
         self.unload_space();
@@ -1346,6 +1375,90 @@ impl App {
         }
     }
 
+    /// The rows under a list field: the palette's or the history view's.
+    fn list_rows(&self, ob: &Omnibox) -> Vec<palette::Row> {
+        if ob.target == Target::History {
+            let visits = visits_for(&self.page_index, &self.visits_cache, &ob.text, true);
+            return palette::history_rows(&ob.text, &self.scene, &visits, local_ms(now_ms()), local_ms);
+        }
+        let visits = visits_for(&self.page_index, &self.visits_cache, &ob.text, false);
+        palette::rows(&ob.text, &self.scene, &self.used, &self.spaces, &visits)
+    }
+
+    /// Ctrl+H: the history view, every page kept, newest first.
+    fn open_history(&mut self) {
+        self.menu = None;
+        self.link_hints = None;
+        self.finish_arrange(true);
+        self.omnibox = Some(Omnibox::new("", Target::History));
+        log::info!("history open");
+    }
+
+    /// Shift+Delete in the palette or the history view: forgets the
+    /// highlighted row's page.
+    fn forget_selected(&mut self) {
+        let Some(ob) = self.omnibox.as_ref() else { return };
+        let Some(url) = self.list_rows(ob).into_iter().nth(ob.sel).and_then(|r| r.history) else { return };
+        let Some(index) = self.page_index.as_mut() else { return };
+        match index.forget(&url) {
+            Ok(true) => {
+                log::info!("history: forgot {url}");
+                // The row going away says it; a toast would wait under the list.
+                self.visits_cache.replace(None);
+            }
+            Ok(false) => {}
+            Err(e) => log::warn!("history: forgetting {url}: {e}"),
+        }
+        // Keep the highlight on the row that took its place.
+        let (vp, ui) = (self.viewport(), self.ui());
+        let len = self.omnibox.as_ref().map_or(0, |ob| self.list_rows(ob).len());
+        if let Some(ob) = self.omnibox.as_mut() {
+            ob.sel = ob.sel.min(len.saturating_sub(1));
+            ob.scroll = scene::palette::keep_visible(ob.sel, ob.scroll, palette::Panel::new(vp, ui, len).shown, len);
+        }
+    }
+
+    /// *Clear history*: asks first, as it can't be undone.
+    fn ask_clear_history(&mut self) {
+        let n = match &self.page_index {
+            None => return self.toast("History is off"),
+            Some(index) => index.len().unwrap_or(0),
+        };
+        if n == 0 {
+            return self.toast("History is empty");
+        }
+        let pages = if n == 1 { "1 page".to_string() } else { format!("{n} pages") };
+        self.omnibox = None;
+        self.confirm = Some(Confirm::ClearHistory);
+        self.toast(format!("Forget all {pages} in history? Enter clears · Esc keeps them"));
+    }
+
+    fn clear_history(&mut self) {
+        self.confirm = None;
+        let Some(index) = self.page_index.as_mut() else { return };
+        // Pages already asked for their text would be kept again.
+        self.text_due.clear();
+        match index.clear() {
+            Ok(n) => {
+                log::info!("history: cleared {n} pages");
+                self.visits_cache.replace(None);
+                self.toast("History cleared");
+            }
+            Err(e) => {
+                log::warn!("history: clearing: {e}");
+                self.toast("Couldn't clear history");
+            }
+        }
+    }
+
+    /// The toast when a question was answered no.
+    fn kept(&self, confirm: Confirm) -> String {
+        match confirm {
+            Confirm::DeleteSpace => format!("Kept {}", self.spaces.active_entry().name),
+            Confirm::ClearHistory => "Kept history".to_string(),
+        }
+    }
+
     fn run_command(&mut self, c: Command) {
         match c {
             Command::NewCard => self.omnibox = Some(Omnibox::new("", Target::NewCard)),
@@ -1408,6 +1521,8 @@ impl App {
             }
             Command::NextTint => self.cycle_tint(),
             Command::DeleteSpace => self.ask_delete_space(),
+            Command::History => self.open_history(),
+            Command::ClearHistory => self.ask_clear_history(),
             Command::Shortcuts => {
                 self.hints = true;
                 log::info!("hints shown");
@@ -2203,10 +2318,7 @@ impl App {
     /// Keeps a page's text in the history index.
     fn record_visit(&mut self, url: &str, title: &str, text: &str) {
         let Some(index) = self.page_index.as_mut() else { return };
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_millis() as i64);
-        match index.record(url, title, text, now_ms) {
+        match index.record(url, title, text, now_ms()) {
             Ok(true) => {
                 log::info!("history: {url} {title:?} ({} chars)", text.chars().count());
                 self.visits_cache.replace(None);
@@ -2354,10 +2466,10 @@ impl App {
             return;
         }
         // A click while asking to delete the space keeps it, and does nothing else.
-        if self.confirm_delete {
+        if let Some(confirm) = self.confirm {
             if state == ElementState::Pressed {
-                self.confirm_delete = false;
-                self.toast(format!("Kept {}", self.spaces.active_entry().name));
+                self.confirm = None;
+                self.toast(self.kept(confirm));
                 self.menu_pressed = true;
             }
             return;
@@ -2395,9 +2507,9 @@ impl App {
         // The palette: a click on a result runs it, a click in the field or
         // the list keeps it open, a click elsewhere closes it and goes through.
         if state == ElementState::Pressed
-            && let Some(ob) = self.omnibox.as_ref().filter(|ob| ob.target == Target::Palette)
+            && let Some(ob) = self.omnibox.as_ref().filter(|ob| ob.target.is_list())
         {
-            let rows = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces, &visits_for(&self.page_index, &self.visits_cache, &ob.text));
+            let rows = self.list_rows(ob);
             let panel = palette::Panel::new(self.viewport(), self.ui(), rows.len());
             let scroll = ob.scroll.min(rows.len().saturating_sub(panel.shown));
             if let Some(i) = panel.row_at(p, scroll, rows.len()) {
@@ -2554,8 +2666,8 @@ impl App {
             m.hover = None;
         }
         let (vp, ui) = (self.viewport(), self.ui());
-        if let Some(ob) = self.omnibox.as_mut().filter(|ob| ob.target == Target::Palette) {
-            let len = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces, &visits_for(&self.page_index, &self.visits_cache, &ob.text)).len();
+        let list_len = self.omnibox.as_ref().filter(|ob| ob.target.is_list()).map(|ob| self.list_rows(ob).len());
+        if let (Some(len), Some(ob)) = (list_len, self.omnibox.as_mut()) {
             let panel = palette::Panel::new(vp, ui, len);
             if panel.contains(p) {
                 if let Some(i) = panel.row_at(p, ob.scroll.min(len.saturating_sub(panel.shown)), len) {
@@ -2655,8 +2767,8 @@ impl App {
         self.camera_goal = None;
         self.menu = None;
         self.link_hints = None; // scrolling a page moves its links
-        if let Some(ob) = self.omnibox.as_ref().filter(|ob| ob.target == Target::Palette) {
-            let len = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces, &visits_for(&self.page_index, &self.visits_cache, &ob.text)).len();
+        if let Some(ob) = self.omnibox.as_ref().filter(|ob| ob.target.is_list()) {
+            let len = self.list_rows(ob).len();
             let panel = palette::Panel::new(self.viewport(), self.ui(), len);
             if panel.rect.contains(self.cursor) {
                 let rows = if lines { -dy * 3.0 } else { -dy / panel.row_h };
@@ -2715,14 +2827,14 @@ impl App {
             }
             return;
         }
-        if self.confirm_delete {
+        if let Some(confirm) = self.confirm {
             // Enter deletes the space; any other key (but a modifier) keeps it and is dropped.
             if pressed && !matches!(ev.named, Some(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super)) {
-                if ev.named == Some(NamedKey::Enter) {
-                    self.delete_space();
-                } else {
-                    self.confirm_delete = false;
-                    self.toast(format!("Kept {}", self.spaces.active_entry().name));
+                self.confirm = None;
+                match (ev.named, confirm) {
+                    (Some(NamedKey::Enter), Confirm::DeleteSpace) => self.delete_space(),
+                    (Some(NamedKey::Enter), Confirm::ClearHistory) => self.clear_history(),
+                    _ => self.toast(self.kept(confirm)),
                 }
             }
             return;
@@ -2773,8 +2885,8 @@ impl App {
         }
 
         // The palette's list: its length and how many rows fit, for the keys below.
-        let palette_len = self.omnibox.as_ref().filter(|ob| ob.target == Target::Palette).map(|ob| {
-            let len = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces, &visits_for(&self.page_index, &self.visits_cache, &ob.text)).len();
+        let palette_len = self.omnibox.as_ref().filter(|ob| ob.target.is_list()).map(|ob| {
+            let len = self.list_rows(ob).len();
             (len, palette::Panel::new(self.viewport(), self.ui(), len).shown)
         });
         if let Some(ob) = self.omnibox.as_mut() {
@@ -2810,9 +2922,11 @@ impl App {
                         c.page.find(&ob.text, !shift, true);
                     }
                 }
-                Some(NamedKey::Enter) if ob.target == Target::Palette => {
+                _ if ctrl && code == Some(KeyCode::KeyH) && ob.target == Target::History => self.omnibox = None,
+                Some(NamedKey::Delete) if shift && ob.target.is_list() => self.forget_selected(),
+                Some(NamedKey::Enter) if ob.target.is_list() => {
                     let ob = self.omnibox.take().expect("palette open");
-                    let rows = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces, &visits_for(&self.page_index, &self.visits_cache, &ob.text));
+                    let rows = self.list_rows(&ob);
                     if let Some(row) = rows.into_iter().nth(ob.sel) {
                         self.run_palette(row);
                     }
@@ -2880,7 +2994,7 @@ impl App {
             }
             // New text, new results: back to the best one.
             if let Some(ob) = self.omnibox.as_mut()
-                && ob.target == Target::Palette
+                && ob.target.is_list()
                 && ob.text != before
             {
                 ob.sel = 0;
@@ -2932,6 +3046,10 @@ impl App {
                 }
                 Some(KeyCode::KeyK) if ctrl && !shift && !alt => {
                     self.open_palette();
+                    true
+                }
+                Some(KeyCode::KeyH) if ctrl && !shift && !alt => {
+                    self.open_history();
                     true
                 }
                 Some(KeyCode::KeyL) if ctrl => {
@@ -3546,6 +3664,7 @@ impl App {
                 Target::NameTrail(_) => "Trail name (empty to clear)",
                 Target::Palette => "Find a card, space or command",
                 Target::Find(_) => "Find in page",
+                Target::History => "Search history",
                 _ => "Search or enter address",
             };
             let selected = ob.select_all && !ob.text.is_empty();
@@ -3609,12 +3728,17 @@ impl App {
                 });
             }
             layers.push(l);
-            if ob.target == Target::Palette {
-                let rows = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces, &visits_for(&self.page_index, &self.visits_cache, &ob.text));
+            if ob.target.is_list() {
+                let rows = self.list_rows(ob);
                 let panel = palette::Panel::new(vp, ui, rows.len());
                 let scroll = ob.scroll.min(rows.len().saturating_sub(panel.shown));
+                let empty = match (&ob.target, ob.text.trim().is_empty(), &self.page_index) {
+                    (Target::History, _, None) => "History is off",
+                    (Target::History, true, _) => "No pages in history",
+                    _ => "Nothing found",
+                };
                 if let Some(rd) = self.renderer.as_mut() {
-                    layers.push(palette::layer(rd, &panel, &rows, ob.sel, scroll, &th, ui));
+                    layers.push(palette::layer(rd, &panel, &rows, ob.sel, scroll, empty, &th, ui));
                 }
             }
         }
@@ -3655,7 +3779,7 @@ impl App {
             layers.push(self.pill(msg, pos, size, None, false));
         }
         if let Some((msg, at)) = &self.toast {
-            if self.confirm_delete || at.elapsed() < TOAST_FOR {
+            if self.confirm.is_some() || at.elapsed() < TOAST_FOR {
                 if self.omnibox.is_none() {
                     let size = 15.0 * ui;
                     let msg = msg.clone();
@@ -3663,7 +3787,7 @@ impl App {
                     // Below Read Mode's bar, so it doesn't cover the title.
                     let top = if self.read.is_some() { READ_BAR * ui } else { 0.0 };
                     let pos = Vec2::new((vp.x - w) / 2.0 - 16.0 * ui, top + 18.0 * ui);
-                    let warn = self.confirm_delete;
+                    let warn = self.confirm.is_some();
                     layers.push(self.pill(&msg, pos, size, None, warn));
                 }
             } else {
@@ -4282,10 +4406,10 @@ impl App {
                     None => log::info!("script find: closed"),
                     Some(ob) => log::info!("script find: {:?} on {:?} found={:?}", ob.text, ob.target, self.found),
                 },
-                Cmd::Palette => match self.omnibox.as_ref().filter(|ob| ob.target == Target::Palette) {
+                Cmd::Palette => match self.omnibox.as_ref().filter(|ob| ob.target.is_list()) {
                     None => log::info!("script palette: closed"),
                     Some(ob) => {
-                        let rows = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces, &visits_for(&self.page_index, &self.visits_cache, &ob.text));
+                        let rows = self.list_rows(ob);
                         let panel = palette::Panel::new(self.viewport(), self.ui(), rows.len());
                         let scroll = ob.scroll.min(rows.len().saturating_sub(panel.shown));
                         log::info!(

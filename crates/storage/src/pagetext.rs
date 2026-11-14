@@ -80,6 +80,8 @@ impl PageIndex {
     }
 
     fn init(db: Connection) -> Result<PageIndex, Error> {
+        // Forgotten pages are overwritten on disk, not just unlinked.
+        db.pragma_update(None, "secure_delete", "ON")?;
         let version: i32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
         if version > PAGETEXT_VERSION {
             return Err(Error::Newer(version));
@@ -166,6 +168,60 @@ impl PageIndex {
         let mut st = self.db.prepare_cached("SELECT url, title, seen_ms FROM pages ORDER BY seen_ms DESC, id DESC LIMIT ?1")?;
         let rows = st.query_map([limit as i64], |r| Ok(Visit { url: r.get(0)?, title: r.get(1)?, seen_ms: r.get(2)? }))?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The history view's list: pages containing every word of `query`
+    /// (all pages when it has none), newest first.
+    pub fn browse(&self, query: &str, limit: usize) -> Result<Vec<Visit>, Error> {
+        let Some(q) = pagetext::fts_query(query) else { return self.recent(limit) };
+        let mut st = self.db.prepare_cached(
+            "SELECT p.url, p.title, p.seen_ms FROM pages_text t JOIN pages p ON p.id = t.rowid
+             WHERE pages_text MATCH ?1
+             ORDER BY p.seen_ms DESC, p.id DESC
+             LIMIT ?2",
+        )?;
+        let rows = st.query_map(params![q, limit as i64], |r| {
+            Ok(Visit { url: r.get(0)?, title: r.get(1)?, seen_ms: r.get(2)? })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Forgets the page at `url`, its text too: the full-text index is merged
+    /// so no copy of its words is left behind. Returns whether it was kept.
+    pub fn forget(&mut self, url: &str) -> Result<bool, Error> {
+        let tx = self.db.transaction()?;
+        let id: Option<i64> = tx
+            .query_row("DELETE FROM pages WHERE url = ?1 RETURNING id", [url], |r| r.get(0))
+            .map(Some)
+            .or_else(|e| if e == rusqlite::Error::QueryReturnedNoRows { Ok(None) } else { Err(e) })?;
+        let Some(id) = id else { return Ok(false) };
+        tx.execute("DELETE FROM pages_text WHERE rowid = ?1", [id])?;
+        // A deleted FTS5 row stays in old segments until they are merged.
+        tx.execute("INSERT INTO pages_text(pages_text) VALUES ('optimize')", [])?;
+        tx.commit()?;
+        self.checkpoint();
+        Ok(true)
+    }
+
+    /// Forgets every page. Returns how many there were.
+    pub fn clear(&mut self) -> Result<usize, Error> {
+        let tx = self.db.transaction()?;
+        let n = tx.execute("DELETE FROM pages", [])?;
+        tx.execute("DELETE FROM pages_text", [])?;
+        tx.execute("INSERT INTO pages_text(pages_text) VALUES ('optimize')", [])?;
+        tx.commit()?;
+        // Rebuild the file so freed pages don't linger in it.
+        self.db.execute_batch("VACUUM")?;
+        self.checkpoint();
+        Ok(n)
+    }
+
+    /// Writes the log back into the file and empties it, so forgotten pages
+    /// are not left in `page-text.db-wal` either.
+    fn checkpoint(&self) {
+        if let Err(e) = self.db.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())) {
+            log::warn!("history: checkpoint: {e}");
+        }
     }
 
     pub fn len(&self) -> Result<usize, Error> {
@@ -266,6 +322,48 @@ mod tests {
         assert_eq!(i.len().unwrap(), 1);
         assert_eq!(i.search("word", 5).unwrap().len(), 1);
         assert!(i.search("tailword", 5).unwrap().is_empty());
+    }
+
+    #[test]
+    fn browse_lists_newest_first_and_filters_by_words() {
+        let mut i = idx();
+        i.record("https://a.test/", "Rust", "borrow", 1).unwrap();
+        i.record("https://b.test/", "Rust and more rust", "", 3).unwrap();
+        i.record("https://c.test/", "Bread", "", 2).unwrap();
+        assert_eq!(urls(&i.browse("", 10).unwrap()), ["https://b.test/", "https://c.test/", "https://a.test/"]);
+        // Newest first, not best first.
+        assert_eq!(urls(&i.browse("rust", 10).unwrap()), ["https://b.test/", "https://a.test/"]);
+        assert_eq!(urls(&i.browse("bor", 10).unwrap()), ["https://a.test/"]);
+        assert_eq!(i.browse("", 1).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn forget_and_clear_remove_pages_and_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut i = PageIndex::open(dir.path()).unwrap();
+        i.record("https://a.test/", "Alpha", "secretword", 1).unwrap();
+        i.record("https://b.test/", "Beta", "otherword", 2).unwrap();
+        assert!(i.forget("https://a.test/").unwrap());
+        assert!(!i.forget("https://a.test/").unwrap());
+        assert!(i.search("secretword", 5).unwrap().is_empty());
+        assert_eq!(urls(&i.recent(5).unwrap()), ["https://b.test/"]);
+        // Recording it again works after forgetting.
+        i.record("https://a.test/", "Alpha", "newword", 3).unwrap();
+        assert_eq!(i.len().unwrap(), 2);
+        assert_eq!(i.clear().unwrap(), 2);
+        assert!(i.is_empty().unwrap());
+        assert!(i.search("otherword", 5).unwrap().is_empty());
+        drop(i);
+        // Nothing of the forgotten words is left in the file or its log.
+        let mut bytes = std::fs::read(pagetext_path(dir.path())).unwrap();
+        if let Ok(wal) = std::fs::read(dir.path().join("page-text.db-wal")) {
+            bytes.extend(wal);
+        }
+        for w in [&b"secretword"[..], b"otherword", b"newword"] {
+            assert!(!bytes.windows(w.len()).any(|x| x == w), "{} left on disk", String::from_utf8_lossy(w));
+        }
+        let i = PageIndex::open(dir.path()).unwrap();
+        assert!(i.is_empty().unwrap());
     }
 
     #[test]

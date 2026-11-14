@@ -56,6 +56,8 @@ pub enum Command {
     RenameSpace,
     NextTint,
     DeleteSpace,
+    History,
+    ClearHistory,
     Shortcuts,
     Quit,
 }
@@ -106,6 +108,8 @@ pub const COMMANDS: &[CommandInfo] = &[
     c(Command::RenameSpace, "Rename space", "F2", "board workspace name"),
     c(Command::NextTint, "Next space tint", "Ctrl+Shift+B", "background colour color"),
     c(Command::DeleteSpace, "Delete space", "Ctrl+Shift+W", "board workspace remove"),
+    c(Command::History, "History", "Ctrl+H", "visited pages browse past recent"),
+    c(Command::ClearHistory, "Clear history", "", "forget delete erase visited pages privacy"),
     c(Command::Shortcuts, "Keyboard shortcuts", "?", "help keys hints sheet"),
     c(Command::Quit, "Quit Trailboard", "Q", "exit close"),
 ];
@@ -130,6 +134,8 @@ pub struct Row {
     pub positions: Vec<usize>,
     /// A colour dot before the label: a trail's colour, or a sticky note's.
     pub dot: Option<Dot>,
+    /// The page in history this row came from: Shift+Delete forgets it.
+    pub history: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -181,11 +187,11 @@ pub fn rows(query: &str, scene: &Scene, used: &HashMap<NodeId, u64>, spaces: &Sp
             (None, Some(c)) => Some(Dot::Trail(c.clone())),
             _ => None,
         };
-        items.push(Row { item: Item::Card(n.id), label, detail, positions: Vec::new(), dot });
+        items.push(Row { item: Item::Card(n.id), label, detail, positions: Vec::new(), dot, history: None });
         alts.push(alt);
     }
     for s in spaces.spaces.iter().filter(|s| s.id != spaces.active) {
-        items.push(Row { item: Item::Space(s.id), label: s.name.clone(), detail: "Space".into(), positions: Vec::new(), dot: None });
+        items.push(Row { item: Item::Space(s.id), label: s.name.clone(), detail: "Space".into(), positions: Vec::new(), dot: None, history: None });
         alts.push("go to switch space".into());
     }
     let many = spaces.spaces.len() > 1;
@@ -199,6 +205,7 @@ pub fn rows(query: &str, scene: &Scene, used: &HashMap<NodeId, u64>, spaces: &Sp
             detail: info.keys.into(),
             positions: Vec::new(),
             dot: None,
+            history: None,
         });
         alts.push(info.words.into());
     }
@@ -231,11 +238,12 @@ pub fn rows(query: &str, scene: &Scene, used: &HashMap<NodeId, u64>, spaces: &Sp
                 None => {
                     let label = if v.title.trim().is_empty() { v.url.clone() } else { v.title.clone() };
                     let detail = format!("History · {}", host(&v.url));
-                    Row { item: Item::Open(v.url.clone()), label, detail, positions: Vec::new(), dot: None }
+                    Row { item: Item::Open(v.url.clone()), label, detail, positions: Vec::new(), dot: None, history: None }
                 }
             };
             if seen.insert(row.item.clone()) {
-                out.push(Row { positions: pagetext::highlight(query, &row.label), ..row });
+                let positions = pagetext::highlight(query, &row.label);
+                out.push(Row { positions, history: Some(v.url.clone()), ..row });
                 added += 1;
             }
         }
@@ -245,10 +253,37 @@ pub fn rows(query: &str, scene: &Scene, used: &HashMap<NodeId, u64>, spaces: &Sp
         let q = query.trim();
         let search = url == omnibox::search_url(q);
         let label = if search { format!("Search the web for “{q}”") } else { format!("Open {q}") };
-        let row = Row { item: Item::Open(url), label, detail: "New card".into(), positions: Vec::new(), dot: None };
+        let row = Row { item: Item::Open(url), label, detail: "New card".into(), positions: Vec::new(), dot: None, history: None };
         if search { out.push(row) } else { out.insert(0, row) }
     }
     out
+}
+
+/// Pages the history view lists at most.
+pub const HISTORY_LIST: usize = 500;
+
+/// The history view's rows (Ctrl+H): `visits` as given (newest first), each
+/// saying when it was seen. A page a card shows goes to that card; others
+/// open in a new card. `local` turns a UTC time in ms into local ms, and
+/// `now` is local ms.
+pub fn history_rows(query: &str, scene: &Scene, visits: &[Visit], now: i64, local: impl Fn(i64) -> i64) -> Vec<Row> {
+    let mut cards: HashMap<&str, NodeId> = HashMap::new();
+    for n in scene.all_nodes().filter(|n| !n.is_note()) {
+        cards.entry(n.url.as_str()).or_insert(n.id);
+    }
+    visits
+        .iter()
+        .map(|v| {
+            let label = if v.title.trim().is_empty() { v.url.clone() } else { v.title.clone() };
+            let when = scene::when::label(local(v.seen_ms), now);
+            let (item, detail) = match cards.get(v.url.as_str()) {
+                Some(&id) => (Item::Card(id), format!("On the board · {} · {when}", host(&v.url))),
+                None => (Item::Open(v.url.clone()), format!("{} · {when}", host(&v.url))),
+            };
+            let positions = pagetext::highlight(query, &label);
+            Row { item, label, detail, positions, dot: None, history: Some(v.url.clone()) }
+        })
+        .collect()
 }
 
 /// Sizes in logical px; multiplied by the UI scale.
@@ -313,7 +348,9 @@ impl Panel {
 }
 
 /// The result list (the field is drawn with the address bar's code).
-pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], sel: usize, scroll: usize, th: &Theme, ui: f32) -> Layer {
+/// `empty` is what an empty list says.
+#[allow(clippy::too_many_arguments)]
+pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], sel: usize, scroll: usize, empty: &str, th: &Theme, ui: f32) -> Layer {
     let mut l = Layer::default();
     let p = panel.rect;
     let radius = th.radius(ui);
@@ -330,7 +367,7 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], sel: usize, scroll: 
     if rows.is_empty() {
         let row = Rect::new(p.x, p.y, p.w, p.h);
         l.texts.push(Text {
-            text: "Nothing found".into(),
+            text: empty.into(),
             pos: [p.x + pad, row.y + (row.h - size * 1.3) / 2.0],
             size,
             color: rgb(th.dim_text(), 1.0),
@@ -506,6 +543,30 @@ mod tests {
         // Nothing typed: no history.
         let r = rows("", &board(), &HashMap::new(), &SpaceIndex::default(), &visits);
         assert!(!r.iter().any(|r| r.detail.starts_with("History")));
+    }
+
+    #[test]
+    fn history_view_rows() {
+        let v = |url: &str, title: &str, seen_ms| Visit { url: url.into(), title: title.into(), seen_ms };
+        let day = 86_400_000;
+        let visits = [
+            v("https://www.rust-lang.org/learn", "Learn Rust", 10 * day + 3_600_000), // a card shows it
+            v("https://doc.rust-lang.org/book/", "The Rust Book", 9 * day),
+            v("https://example.org/x", " ", 2 * day),
+        ];
+        let s = board();
+        // Local time is UTC + 1 h here.
+        let r = history_rows("rust", &s, &visits, 10 * day + 7_200_000, |ms| ms + 3_600_000);
+        assert_eq!(r.len(), 3);
+        assert!(matches!(r[0].item, Item::Card(_)));
+        assert_eq!(r[0].detail, "On the board · rust-lang.org · Today 02:00");
+        assert_eq!(r[0].positions, vec![6, 7, 8, 9]);
+        assert_eq!(r[1].item, Item::Open("https://doc.rust-lang.org/book/".into()));
+        assert_eq!(r[1].detail, "doc.rust-lang.org · Yesterday 01:00");
+        assert_eq!(r[2].label, "https://example.org/x");
+        assert_eq!(r[2].detail, "example.org · 3 Jan");
+        assert!(r.iter().all(|r| r.history.is_some()));
+        assert_eq!(r[1].history.as_deref(), Some("https://doc.rust-lang.org/book/"));
     }
 
     #[test]

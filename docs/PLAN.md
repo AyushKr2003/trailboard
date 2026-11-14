@@ -610,8 +610,29 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     host" opens it in a new card. Words starting with a query word are
     highlighted. Results are cached per query.
 - ⬜ Thumbnails (`thumbs` table, a small JPEG per page).
-- ⬜ History view (browse by day, open, forget a page); *Clear history*
-  command; per-space or private (unrecorded) spaces.
+- ✅ History view and forgetting (`Target::History`, `palette::history_rows`,
+  `scene::when`, `PageIndex::{browse, forget, clear}`). Decisions (2026-11-14):
+  - Ctrl+H opens it in the palette's field and list (one list UI, same keys
+    and mouse), not a separate panel or a page. Newest first, up to 500
+    pages; typing keeps the pages with all the words (as the palette's
+    history search) but stays newest first, as here you look for *when*.
+  - Days are not headings (the list has one row height); each row's detail
+    says when: "Today 14:32", "Yesterday 09:05", a weekday within the week,
+    then "10 Nov", or "10 Nov 2025" in another year. Local time via `chrono`
+    (zone offset only; the calendar maths is ours, in `scene::when`).
+  - A page a card shows says "On the board" and Enter goes to that card;
+    other pages open in a new card. Ctrl+H or Esc closes.
+  - Shift+Delete forgets the highlighted page, here and on history rows in
+    the Ctrl+K palette (as browsers' address bars do). No toast (the toast
+    would wait under the list); the row goes away. Not undoable.
+  - *Clear history* (palette command, no key) asks first like deleting a
+    space (`Confirm` generalises the old `confirm_delete`): Enter clears, any
+    other key or a click keeps it. It also drops pending text reads.
+  - Forgetting really removes the words: `secure_delete` on, FTS5
+    `optimize` after a forget, `VACUUM` after a clear, then a WAL
+    checkpoint (TRUNCATE). Unit- and e2e-checked by grepping the files.
+  - A page an open card shows is recorded again on its next load or retitle.
+- ⬜ Per-space or private (unrecorded) spaces.
 - ⬜ Recently closed cards as palette results.
 
 ### M8: Privacy ⬜
@@ -660,18 +681,17 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M7 history index (`page-text.db`) and history in the palette.
-**Repo state:** on `master`, committed after e1f5bbf; working tree clean.
+**Last session:** 2026-11-14. M7 history view (Ctrl+H), forgetting a page, *Clear history*.
+**Repo state:** on `master`, committed after fe55189; working tree clean.
 **Done this session:**
-- Every page shown in a card is kept with its title and text in
-  `page-text.db` (SQLite FTS5); the Ctrl+K palette finds pages by the words
-  in them: open cards by their text, other pages as "History" rows that
-  reopen them. Script command `history WORDS`. See M7 for the decisions.
-**Next up:** the rest of M7: a history view (browse, open, forget a page) and
-a *Clear history* command (there is no way to forget a page yet other than
-deleting `page-text.db`); thumbnails; or M6's remaining ⬜ (`.desktop` entry
-and icon, settings, downloads).
-Small follow-ups: site icons on history rows; prune `icons/` of sites no card uses; a letter tile for
+- Ctrl+H lists history newest first with when each page was seen; typing
+  filters by words; Enter / click opens (or goes to the card showing it);
+  Shift+Delete forgets the highlighted page (in Ctrl+K too); *Clear history*
+  asks, then forgets all, leaving no text on disk. See M7 for the decisions.
+**Next up:** M7's thumbnails or private spaces, or M6's remaining ⬜
+(`.desktop` entry and icon, settings, downloads).
+Small follow-ups: undo for forgetting a page; a pause-history toggle; site
+icons on history rows; prune `icons/` of sites no card uses; a letter tile for
 sites without an icon; the name label for a stack could list its size; a zoom
 badge on a zoomed card's title bar; Ctrl+scroll inside a page to zoom it;
 Shift+Enter in the palette to open beside; sidebar pins and drag to reorder
@@ -680,6 +700,18 @@ several cards; link hints inside iframes; xdg-desktop-portal file chooser for
 Save as Markdown; i18n; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out.
 **Notes for the next session:**
+- History view verified e2e (same harness, `~/.cache/trailboard-e2e-history`,
+  server on :8711; data3/data4 are copies of data2). Run 3 (`NOURL=1`): Ctrl+H
+  listed 4 pages newest first ("On the board" on the 2 open cards, times
+  local); "glac" → Glacier View, Shift+Delete forgot it; *Clear history* asked,
+  Esc kept 3 pages, then Enter cleared them; the view said "No pages in
+  history"; the db file then held none of the pages' words. Run 4: Enter on a
+  history row opened it in a new card; a click on an "On the board" row went
+  to that card; Shift+Delete in Ctrl+K on a text-only match forgot it.
+  Screenshots hist3, confirm3, empty3 checked, dark theme only.
+- Not verified: a big history (500 rows, scrolling, speed of `browse` on the
+  main thread), light themes, DST edges of the local time (chrono handles the
+  offset per page), the `History is off` state.
 - History verified e2e (`~/.cache/trailboard-e2e-history`, `run.sh N shot…`;
   serve `site/` with `python3 -m http.server 8711 --bind 127.0.0.1`: `a.html`
   gardening, `b.html` ocean, `c.html` retitles itself and pushes `#view`

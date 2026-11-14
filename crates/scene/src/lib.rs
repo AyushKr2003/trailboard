@@ -22,6 +22,7 @@ pub mod selection;
 pub mod sidebar;
 pub mod tidy;
 pub mod trail;
+pub mod when;
 
 use std::collections::BTreeMap;
 

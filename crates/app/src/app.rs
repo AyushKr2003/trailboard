@@ -16,9 +16,14 @@
 //!   Enter gives a card's page the keys (or toggles a trail), Esc or B closes it.
 //!   Clicks on a row do the same; a click elsewhere takes the keys back, the
 //!   panel stays open.
-//! - f labels the links on the current card's page (`scene::hint`, `web::links`);
-//!   typing a label opens that link beside the card, which becomes current. Esc,
-//!   another key, a click or a scroll ends the labels. Shift+F fits everything.
+//! - f labels the links and controls on the current card's page (`scene::hint`,
+//!   `web::links`); typing a label opens a link beside the card, which becomes
+//!   current, or clicks a control (a field also gets the keys). Esc, another
+//!   key, a click or a scroll ends the labels. Shift+F fits everything.
+//! - Mouse-only actions have keys too: v selects / deselects the current card
+//!   (h/j/k/l keep the selection), z fills the view with it, d/u scroll its
+//!   page, and the Menu key or Shift+F10 opens its page menu (Chromium picks
+//!   the spot and context; j/k, Enter, Esc in menus).
 //! - M arranges the current card (`scene::arrange`): h/j/k/l move it (the
 //!   selection with it), Shift resizes, Ctrl takes fine steps; Enter/M keep the
 //!   result as one undo step, Esc puts it back, any other key or a click keeps it.
@@ -144,7 +149,7 @@ enum Drag {
 /// px) and their labels, `None` until the page has answered.
 struct LinkHints {
     id: NodeId,
-    links: Vec<(Rect, String)>,
+    links: Vec<(Rect, web::links::Action)>,
     hints: Option<hint::Hints>,
 }
 
@@ -252,6 +257,9 @@ pub struct App {
     found: Option<(i32, i32)>,
     /// What find in page last looked for; the bar opens with it.
     last_find: String,
+    /// When the Menu key (or Shift+F10) asked a page for its menu: the menu
+    /// that answers opens with its first item highlighted.
+    menu_by_key: Option<Instant>,
 }
 
 impl App {
@@ -320,6 +328,7 @@ impl App {
             finding: None,
             found: None,
             last_find: String::new(),
+            menu_by_key: None,
         }
     }
 
@@ -971,7 +980,7 @@ impl App {
             None => self.current(),
         };
         let Some(to) = to else { return };
-        self.selection.clear();
+        // The selection stays: v adds cards to it as you go.
         self.focus(Some(to));
         self.ensure_visible(to);
     }
@@ -1314,6 +1323,12 @@ impl App {
                 None => self.toast("No page to reload"),
             },
             Command::FindInPage => self.open_find(),
+            Command::MarkCard => self.toggle_mark(),
+            Command::FillView => self.fill_current(),
+            Command::PageMenu => {
+                let ev = KeyIn::from_name("menu", true, false).expect("menu key");
+                self.page_menu_by_key(&ev);
+            }
             Command::ZoomIn => self.zoom_page(1),
             Command::ZoomOut => self.zoom_page(-1),
             Command::ZoomReset => self.zoom_page(0),
@@ -1472,13 +1487,13 @@ impl App {
         let k = css.x / width.max(1.0);
         lh.links = links
             .into_iter()
-            .map(|l| (Rect::new(l.rect[0] * k, l.rect[1] * k, l.rect[2] * k, l.rect[3] * k), l.url))
+            .map(|l| (Rect::new(l.rect[0] * k, l.rect[1] * k, l.rect[2] * k, l.rect[3] * k), l.action))
             .collect();
         if lh.links.is_empty() {
             self.link_hints = None;
             let loading = self.cards.get(&id).is_some_and(|c| c.loading);
             log::info!("link hints on card {}: no links in view", id.0);
-            self.toast(if loading { "No links yet · the page is still loading" } else { "No links in view" });
+            self.toast(if loading { "Nothing to click yet · the page is still loading" } else { "Nothing to click in view" });
             return;
         }
         let h = hint::Hints::new(lh.links.len());
@@ -1486,7 +1501,17 @@ impl App {
             "link hints on card {}: {} links, {}",
             id.0,
             lh.links.len(),
-            h.labels.iter().zip(&lh.links).take(6).map(|(l, (_, u))| format!("{l}={u}")).collect::<Vec<_>>().join(" ")
+            h.labels
+                .iter()
+                .zip(&lh.links)
+                .take(8)
+                .map(|(l, (_, a))| match a {
+                    web::links::Action::Open(u) => format!("{l}={u}"),
+                    web::links::Action::Click => format!("{l}=click"),
+                    web::links::Action::Type => format!("{l}=type"),
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
         );
         lh.hints = Some(h);
     }
@@ -1504,9 +1529,13 @@ impl App {
             }
             (_, Some(c), Some(h)) if !chord => match h.type_char(c) {
                 hint::Typed::Follow(i) => {
-                    let (id, url) = (lh.id, lh.links[i].1.clone());
+                    let (id, (rect, action)) = (lh.id, lh.links[i].clone());
                     self.link_hints = None;
-                    self.follow_link(id, &url);
+                    match action {
+                        web::links::Action::Open(url) => self.follow_link(id, &url),
+                        web::links::Action::Click => self.click_target(id, rect, false),
+                        web::links::Action::Type => self.click_target(id, rect, true),
+                    }
                 }
                 hint::Typed::Narrowed => {}
                 hint::Typed::NoMatch => log::debug!("no link hint starts with {c:?}"),
@@ -1518,6 +1547,79 @@ impl App {
                 log::info!("link hints cancelled");
             }
         }
+    }
+
+    /// A hint on a button, field or other control: click its middle, as the
+    /// mouse would. A field (`typing`) gets the keys, so you can type in it at once.
+    fn click_target(&mut self, id: NodeId, rect: Rect, typing: bool) {
+        if typing {
+            self.focus(Some(id));
+            self.keys_in_page = true;
+        }
+        let Some(card) = self.cards.get(&id) else { return };
+        if typing {
+            card.page.set_focus(true);
+        }
+        let c = rect.center();
+        let (x, y) = (c.x.round() as i32, c.y.round() as i32);
+        card.page.mouse_move(x, y, 0, false);
+        card.page.mouse_button(x, y, 0, WebButton::Left, false, 1);
+        card.page.mouse_button(x, y, 0, WebButton::Left, true, 1);
+        log::info!("clicked a hint on card {} at {x},{y}{}", id.0, if typing { ", keys to the page" } else { "" });
+    }
+
+    /// v: add the current card to the selection, or take it out. Going to
+    /// another card keeps the selection, so several can be picked by keyboard.
+    fn toggle_mark(&mut self) {
+        let Some(id) = self.current() else { return };
+        self.focus(Some(id));
+        self.ensure_visible(id);
+        self.selection.toggle(id);
+        let n = self.selection.ids().len();
+        log::info!("selection: {n} card(s)");
+        self.toast(match n {
+            0 => "Selection cleared".to_string(),
+            1 => "1 card selected".to_string(),
+            n => format!("{n} cards selected"),
+        });
+    }
+
+    /// z: the current card fills the view, as a double-click on its title bar does.
+    fn fill_current(&mut self) {
+        if let Some(id) = self.current() {
+            self.focus(Some(id));
+            self.fill_view(id);
+        }
+    }
+
+    /// d / u: scroll the current card's page half its height, as the wheel
+    /// would over its middle, without giving it the keys.
+    fn scroll_current(&mut self, down: bool) {
+        let Some(id) = self.current() else { return };
+        self.focus(Some(id));
+        self.ensure_visible(id);
+        let Some((_, css)) = self.page_view(id) else { return };
+        let Some(card) = self.cards.get(&id) else { return };
+        let half = (css.y / 2.0).round() as i32;
+        let (x, y) = ((css.x / 2.0) as i32, (css.y / 2.0) as i32);
+        card.page.mouse_wheel(x, y, 0, 0, if down { -half } else { half });
+        self.link_hints = None; // scrolling moves the targets
+    }
+
+    /// Menu key or Shift+F10: the page's own menu, as a right-click gives, at
+    /// the page's selection or focused field. Chromium works out where and
+    /// what (link, selection, field) and asks for our menu as usual.
+    fn page_menu_by_key(&mut self, ev: &KeyIn) {
+        let Some(id) = self.current() else {
+            self.toast("No page here for a menu");
+            return;
+        };
+        self.focus(Some(id));
+        self.ensure_visible(id);
+        let Some(card) = self.cards.get(&id) else { return };
+        card.page.send_key(&ev.to_web(self.mods));
+        self.menu_by_key = Some(Instant::now());
+        log::info!("page menu asked of card {} by key", id.0);
     }
 
     /// Open `url` beside card `from`, as a click on the link would, and make
@@ -2448,6 +2550,8 @@ impl App {
                     return;
                 }
                 Some(NamedKey::ArrowDown) => return self.menu.as_mut().expect("menu").step(1),
+                _ if !ctrl && !alt && code == Some(KeyCode::KeyJ) => return self.menu.as_mut().expect("menu").step(1),
+                _ if !ctrl && !alt && code == Some(KeyCode::KeyK) => return self.menu.as_mut().expect("menu").step(-1),
                 Some(NamedKey::ArrowUp) => return self.menu.as_mut().expect("menu").step(-1),
                 Some(NamedKey::Enter) => {
                     if let Some(i) = self.menu.as_ref().and_then(|m| m.hover) {
@@ -2677,6 +2781,14 @@ impl App {
                     self.open_find();
                     true
                 }
+                Some(KeyCode::ContextMenu) if !ctrl && !alt => {
+                    self.page_menu_by_key(&ev);
+                    true
+                }
+                Some(KeyCode::F10) if shift && !ctrl && !alt => {
+                    self.page_menu_by_key(&ev);
+                    true
+                }
                 Some(
                     KeyCode::Equal
                     | KeyCode::NumpadAdd
@@ -2832,6 +2944,18 @@ impl App {
                 }
                 Some(KeyCode::KeyB) if !self.typing() && !ctrl && !alt && !shift && self.drag_is_idle() => {
                     self.toggle_sidebar();
+                    true
+                }
+                Some(KeyCode::KeyV) if !self.typing() && !ctrl && !alt && !shift && self.drag_is_idle() => {
+                    self.toggle_mark();
+                    true
+                }
+                Some(KeyCode::KeyZ) if !self.typing() && !ctrl && !alt && !shift && self.drag_is_idle() && self.read.is_none() => {
+                    self.fill_current();
+                    true
+                }
+                Some(KeyCode::KeyD | KeyCode::KeyU) if !self.typing() && !ctrl && !alt && !shift => {
+                    self.scroll_current(code == Some(KeyCode::KeyD));
                     true
                 }
                 Some(KeyCode::KeyR) if !self.typing() && !ctrl && !alt && !shift && self.drag_is_idle() => {
@@ -3552,6 +3676,11 @@ impl App {
         log::info!("context menu on card {}: {:?}", id.0, menu_labels(&m.items));
         self.menu = Some(m);
         self.menu_pressed = false;
+        if self.menu_by_key.take().is_some_and(|t| t.elapsed() < Duration::from_secs(2))
+            && let Some(m) = self.menu.as_mut()
+        {
+            m.step(1);
+        }
     }
 
     fn layout_menu(&mut self, id: NodeId, items: Vec<Entry>, anchor: Vec2) -> ContextMenu {

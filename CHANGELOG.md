@@ -7,6 +7,18 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Everything by keyboard**: every mouse action now has a key too.
+  - f labels buttons, checkboxes, text fields, selects and other controls as
+    well as links: typing a label clicks it, and a field gets the keys so you
+    can type in it (a note's task boxes can be ticked this way).
+  - v selects or deselects the current card; moving with h/j/k/l keeps the
+    selection, so several cards can be picked, then moved (M) or closed.
+  - z fills the view with the current card.
+  - d / u scroll the current card's page down / up half a page.
+  - The Menu key or Shift+F10 opens the page menu (as a right-click does) at
+    the selection or the focused field; menus take j/k as well as the arrows.
+  - Palette commands *Select or deselect card*, *Fill the view with card*,
+    *Page menu*.
 - **Find in page**: Ctrl+F opens a find bar for the current card's page.
   Matches are highlighted as you type; Enter and Shift+Enter step to the next
   and previous one, and the bar shows how many there are ("3 of 17", "No
@@ -52,6 +64,7 @@ All notable changes to Trailboard. The format follows
   takes a letter back; Esc, another key, a click or a scroll cancels.
 
 ### Changed
+- h/j/k/l and the arrows no longer clear the selection.
 - Ctrl+0 now resets the current page's zoom; it fits everything only when no
   card is current. Shift+F always fits everything.
 - Fit everything moved from F to Shift+F (Ctrl+0 still works), because f

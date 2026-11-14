@@ -94,6 +94,7 @@ fn named_code(n: winit::keyboard::NamedKey) -> Option<KeyCode> {
         N::F10 => F10,
         N::F11 => F11,
         N::F12 => F12,
+        N::ContextMenu => ContextMenu,
         _ => return None,
     })
 }
@@ -150,6 +151,7 @@ impl KeyIn {
             "pageup" => named(PageUp, N::PageUp, None),
             "pagedown" => named(PageDown, N::PageDown, None),
             "space" => named(Space, N::Space, Some(" ")),
+            "menu" => named(ContextMenu, N::ContextMenu, None),
             f if f.len() >= 2 && f.starts_with('f') && f[1..].parse::<u8>().is_ok_and(|n| (1..=12).contains(&n)) => {
                 const FS: [(KeyCode, NamedKey); 12] = [
                     (F1, N::F1), (F2, N::F2), (F3, N::F3), (F4, N::F4), (F5, N::F5), (F6, N::F6),
@@ -308,6 +310,7 @@ fn vk_code(c: KeyCode) -> i32 {
         F10 => vk::F1 + 9,
         F11 => vk::F1 + 10,
         F12 => vk::F1 + 11,
+        ContextMenu => 0x5D, // VK_APPS
         Semicolon => vk::OEM_1,
         Equal => vk::OEM_PLUS,
         Comma => vk::OEM_COMMA,

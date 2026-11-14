@@ -79,6 +79,11 @@ you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change th
 | Go to the next / previous card on the trail (folded or not) | Alt+PgDn / Alt+PgUp |
 | Name the current trail / give it the next colour | R / C (while no page has the keys; Ctrl+Z undoes it) |
 | Back / forward / reload | Alt+← / Alt+→ / Ctrl+R |
+| Click a link, button, checkbox or field by keyboard | f, then type its label (links open beside; a field gets the keys) |
+| Select / deselect the current card | v (h/j/k/l keep the selection) |
+| Fill the view with the current card | z |
+| Scroll the current page without entering it | d / u |
+| Page menu by keyboard | Menu key or Shift+F10; j/k or ↑/↓, Enter, Esc |
 | Find in the current page | Ctrl+F, type (matches show as you type); Enter / Shift+Enter next / previous; Esc closes |
 | Zoom the current page in / out / back to 100% | Ctrl++ / Ctrl+- / Ctrl+0: every card on that site follows, and the zoom is remembered per site |
 | Page context menu | right-click in a page (open link beside, copy link, edit, search selection) |

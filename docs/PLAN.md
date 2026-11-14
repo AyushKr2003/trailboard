@@ -479,6 +479,33 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     and the key then does what it always does (so Ctrl+Z undoes the whole move).
   - The card gets the heavy ring while arranged, the camera follows it, and a
     pill at the bottom lists the keys for as long as the mode lasts.
+- ✅ Everything by keyboard (2026-11-14): every mouse action has a key, as
+  Omarchy's apps do. Audit of the mouse paths (`App::mouse_input`, `hit`):
+  pan (Shift+h/j/k/l), zoom (+/-), move/resize (M), close (Delete), badge
+  (O), sidebar and palette rows, Read Mode bar (Tab/Esc), sticky strip (M)
+  were covered. Added:
+  - v selects / deselects the current card (Shift+click a title). h/j/k/l no
+    longer clear the selection, so v marks several cards as you go, like a
+    file manager; Esc clears it, Delete and M act on it. (Band select stays
+    mouse only; v + Ctrl+A cover it.)
+  - z: the current card fills the view (double-click its title bar).
+  - Menu key / Shift+F10: the page menu (right-click). The key is sent to the
+    page, so Chromium places it at the selection or focused field and fills in
+    the context (link, selection, field), then asks for our menu as a click
+    does; a menu opened that way starts with its first item highlighted.
+    Menus take j/k besides the arrows.
+  - f labels controls too (buttons, inputs, selects, text areas, summary,
+    editable content, `[onclick]`, focusable and ARIA-role elements; not
+    disabled or `aria-hidden`; a control inside a labelled link is the
+    link's). Links with an openable URL open beside as before; other targets
+    get a synthesized left click at their middle; fields (text-like inputs,
+    text areas, selects, editable, textbox/combobox roles) also get the keys.
+    This also ticks a rendered note's task boxes by keyboard.
+  - d / u scroll the current page half its height (a wheel event at its
+    middle) without giving it the keys.
+  - Still mouse only: selecting text in a page's body (fields take
+    Shift+arrows; Chromium's caret browsing isn't wired), drawing a band,
+    hover cursors.
 - ✅ Link hints (`f`; `scene::hint`, `web::links`, `App::link_hints`). Decisions (2026-11-14):
   - f (no page has the keys) acts on the current card, else the one in the
     middle of the view, which becomes current. Fit moves to Shift+F (Ctrl+0
@@ -590,19 +617,14 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M6 find in page and page zoom.
-**Repo state:** on `master`, committed after e24c526; working tree clean.
+**Last session:** 2026-11-14. M6 find in page and page zoom, then everything by keyboard.
+**Repo state:** on `master`, committed after 0973d99; working tree clean.
 **Done this session:**
-- `scene::pagezoom`: zoom steps, `site_of`, `SiteZooms` (100% not kept). Unit tests.
-- `storage::zoom`: `$DATA/zoom.json` v1 load/save (bad or newer files give
-  none). Unit test.
-- `web`: `set_page_zoom` lookup (the page's URL → factor), applied as
-  `scale × zoom` on every navigation; `Page::refresh_zoom`, `zoom_factor`;
-  `Page::find`/`stop_finding` and a `FindHandler` → `WebEvent::FindResult`.
-- `App`: Ctrl+F (`open_find`, `sync_find`, Enter/Shift+Enter, count in the
-  field), Ctrl +/−/0 (`zoom_page`), palette commands *Find in page*, *Zoom
-  page in/out*, *Reset page zoom*; script `zooms` and `find`. Sheet, README,
-  CHANGELOG updated.
+- Find in page (Ctrl+F) and per-site page zoom (Ctrl +/−/0): see M6.
+- Everything by keyboard (see M6): `v` select, `z` fill view, `d`/`u`
+  scroll, Menu / Shift+F10 page menu (`KeyCode::ContextMenu` → VK_APPS),
+  j/k in menus, `f` hints on controls (`web::links::Action`: Open, Click,
+  Type; `App::click_target`). Palette commands, sheet, README, CHANGELOG.
 **Next up:** M6's remaining 🟡: loading/favicons in titles and hover card
 names when zoomed out; or the M7 history store (palette history follows).
 Small follow-ups: a zoom badge on a zoomed card's title bar; Ctrl+scroll
@@ -615,6 +637,23 @@ a `.desktop` entry and icon, xdg-desktop-portal file chooser for Save as
 Markdown, i18n. Also: animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out.
 **Notes for the next session:**
+- Keyboard parity verified e2e (`~/.cache/trailboard-e2e-kbd`, `run.sh N
+  shot…` opens `controls.html`: a link, a button, a checkbox, a text field, a
+  select, a `javascript:` link, a disabled button, each setting the title).
+  Run 1: f labelled 6 (A link, S button, D checkbox, F field, G select, H
+  script link; none on the disabled one). Run 2: H → title "js link"; F →
+  keys to the page, `hello` typed; Menu → Undo/Redo/Cut/Copy/Paste/Select
+  all at the field, Undo highlighted; d → "scroll 360", u → "scroll 0"; A
+  opened card 2 beside; h v l v → both selected; z filled the view with 2;
+  Shift+F10 with the board's keys → Back/Forward/Reload/Select all, k Enter
+  ran Select all (which gives the page the keys, so the run's final q went to
+  the page). Run 3: S → "count 1", D → "checked true", G then Down Enter →
+  "picked two". Screenshots hints1, menu2 checked, dark theme only.
+- `run.sh`'s `grim` region caught the neighbouring tiled window too; the
+  Trailboard part was correct. Use the client's own geometry when it's tiled.
+- Not verified: hints on a note's task boxes, contenteditable and ARIA-role
+  targets (in the script, untested), Menu on a selection in the page body or
+  on a focused link, a real keyboard's Menu key, light themes.
 - Find and zoom verified e2e (`~/.cache/trailboard-e2e-findzoom`, `run.sh N
   shot…` opens `find.html`: "apple" ×4 incl. "Apple" and "pineapple", two
   links, its layout width). Run 1: Ctrl+F, `apple` → 4 matches highlighted;

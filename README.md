@@ -83,6 +83,9 @@ in the settings (Ctrl+,), or for one run with `TRAILBOARD_MAX_LIVE=N`.
 
 ## Using it
 
+The first start opens a short welcome note beside the first page; close it
+with Ctrl+W once you know your way around.
+
 | Action | Input |
 |---|---|
 | Pan | drag empty board, middle-drag, or scroll over the board |

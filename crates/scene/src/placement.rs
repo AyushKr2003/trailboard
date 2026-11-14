@@ -41,3 +41,42 @@ pub fn free_near(scene: &Scene, center: crate::Vec2, w: f32, h: f32) -> Rect {
     }
     r
 }
+
+/// Content rect of size `w`×`h` to the left of `src`, tops aligned (a guide
+/// beside the first page). Falls back to [`free_near`] when that spot is taken.
+pub fn left_of(scene: &Scene, src: &Node, w: f32, h: f32) -> Rect {
+    let r = Rect::new(src.rect.x - GAP - w, src.rect.y, w, h);
+    let frame = Rect::new(r.x, r.y - HEADER_H, r.w, r.h + HEADER_H);
+    if scene.nodes().any(|n| n.frame().inflate(GAP / 2.0 - 1.0).intersects(&frame)) {
+        free_near(scene, src.rect.center(), w, h)
+    } else {
+        r
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn left_of_aligns_tops_with_a_gap() {
+        let mut s = Scene::new();
+        let page = s.add_page(Rect::new(0.0, 0.0, 1024.0, 720.0), "https://a/");
+        let src = s.node(page).unwrap().clone();
+        let r = left_of(&s, &src, 480.0, 720.0);
+        assert_eq!(r, Rect::new(-GAP - 480.0, 0.0, 480.0, 720.0));
+    }
+
+    #[test]
+    fn left_of_avoids_a_card_already_there() {
+        let mut s = Scene::new();
+        let page = s.add_page(Rect::new(0.0, 0.0, 1024.0, 720.0), "https://a/");
+        let other = s.add_page(Rect::new(-700.0, 100.0, 400.0, 300.0), "https://b/");
+        let src = s.node(page).unwrap().clone();
+        let r = left_of(&s, &src, 480.0, 720.0);
+        let frame = Rect::new(r.x, r.y - HEADER_H, r.w, r.h + HEADER_H);
+        for id in [page, other] {
+            assert!(!s.node(id).unwrap().frame().intersects(&frame), "overlaps card {}", id.0);
+        }
+    }
+}

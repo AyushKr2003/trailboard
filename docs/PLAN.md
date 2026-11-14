@@ -888,7 +888,23 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     `vulkan-icd-loader`) and `ttf-font`; `xdg-utils` and `xdg-user-dirs`
     optional. No licence file of our own yet (see the licence item below).
 - ⬜ Chromium's sandbox (`chrome-sandbox` setuid or user namespaces) instead of `no_sandbox`.
-- ⬜ First-run defaults (a start page or a short guide card on an empty board).
+- ✅ First-run defaults: the very first start adds a welcome note (Markdown,
+  `crates/app/src/guide.md`) to the left of the first page, and the view fits
+  both. Decisions (2026-11-14):
+  - "First run" means nothing was ever saved in the data folder: no
+    `spaces.json`, no space boards, no old `board.json`
+    (`storage::spaces::is_first_run`, asked before `open_spaces` writes the
+    index). An emptied board or a new space doesn't get the guide again, and
+    neither does a run whose saving failed (it would come back every start).
+  - It is an ordinary note, not a special card or page: no extra Chromium
+    page type, the user can edit, keep, export or close it (Ctrl+W), and it
+    is saved with the board. Not focused, so the page keeps the keys.
+  - The start page stays (Wikipedia's random article, or the URLs given on
+    the command line); the guide goes beside it with
+    `placement::left_of` (tops aligned, `free_near` when taken).
+  - Short enough to fit its 560×720 card without scrolling; the full list
+    stays in the shortcut sheet (?), which the guide points to. English only
+    until the translation item.
 - ⬜ Licence files (`LICENSE-MIT`, `LICENSE-APACHE`: the copyright line is the owner's call).
 
 ### M10: Optional extras ⬜
@@ -927,24 +943,20 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M9 Arch `PKGBUILD`, then an M6 visual polish pass.
+**Last session:** 2026-11-14. M9 first-run defaults (a welcome note).
 **Repo state:** on `master`, committed; working tree clean.
 **Done this session:**
-- `packaging/arch/PKGBUILD` (see M9): builds the checkout's last commit with
-  its own pinned CEF, installs to `/usr/lib/trailboard`.
-- Visual polish (`app::chrome`, see M6): layered shadows, hairline edges and
-  sheen on every overlay; the palette as one sheet over a dimmed board, with
-  keycaps and an accent bar; 150 ms ease-in for overlays; card glow,
-  shadows and title-bar detail; board vignette; a keycap empty-board hint.
-- Fixed: the compositor's text cache was cleared in the middle of a frame
-  once it passed 512 entries, panicking ("no entry found for key") when a
-  text-heavy overlay (the shortcut sheet after the palette) opened. It is
-  now trimmed between frames only.
+- First start only (nothing saved in the data folder yet): a "Welcome to
+  Trailboard" note left of the start page, the view fitted to both (see M9).
+  `storage::spaces::is_first_run` and `scene::placement::left_of`, with tests.
+- Fixed on the way: the first view's fit was overridden by the new page's
+  `ensure_visible` goal; the startup fit now clears it.
 **Next up:** publishing to the AUR needs the owner's public repository URL
-and a release tag (then `url=`, `source`, `.SRCINFO`). Without that: M9's
-first-run defaults (a guide card on an empty board) or the licence files
-(owner's copyright line), M6's translations (needs a string table first), or
-M8 privacy (adblock engine). Small follow-ups: rename a trail from the
+and a release tag (then `url=`, `source`, `.SRCINFO`); the licence files
+need the owner's copyright line. Without those: M6's translations (needs a
+string table first; the guide note would become per-language) or M8 privacy
+(adblock engine). Small follow-ups: a palette command to bring the welcome
+note back; rename a trail from the
 sidebar; auto-scroll the sidebar while dragging; a downloads folder setting (needs a free-text row or a
 folder picker via xdg-desktop-portal); a progress mark on the board while
 downloads run; ask before quitting with downloads running; pause/resume;
@@ -965,6 +977,15 @@ Save as Markdown; i18n; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out; open `crash.log` from the crash
 toast or a palette command.
 **Notes for the next session:**
+- Welcome note verified e2e (`~/.cache/trailboard-e2e-guide`, `run.sh N
+  shot…`): run 1, fresh `data1` with a `file://` page: "first run: welcome
+  note 2", cards at world (-1132,-360 560×720) and (-512,-360 1024×720),
+  both on screen; `shot1.png` shows the guide fits without a scrollbar
+  (dark theme, a 941 px wide tiled window). Run 2 (a copy of `data1`, same
+  URL): 2 cards restored, no second guide, the URL as card 3. Run 3 (fresh,
+  no URL): Wikipedia's random page plus the guide. Not verified: the light
+  theme, a HiDPI or very small window (the fit zooms out to show both), the
+  installed package's first start.
 - Polish verified with screenshots (`~/.cache/trailboard-e2e-polish`,
   `run.sh N shot…`, `START=file://…/a.html`; `runlight.sh` adds a fake light
   theme from `light/`). `*1.png` are the before shots, `*2–4.png` after:

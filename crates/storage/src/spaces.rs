@@ -253,6 +253,13 @@ fn board_ids(data_dir: &Path) -> Vec<u64> {
     ids
 }
 
+/// True before Trailboard has ever saved anything here: no space index, no
+/// space boards and no single `board.json` from earlier versions. Ask before
+/// [`open_spaces`], which writes the index.
+pub fn is_first_run(data_dir: &Path) -> bool {
+    !index_path(data_dir).exists() && !crate::board_path(data_dir).exists() && board_ids(data_dir).is_empty()
+}
+
 /// Reads the space index, creating it on first use. Moves the old single
 /// `board.json` into space 1, and rebuilds a missing or unreadable index from
 /// the board files on disk (an unreadable index is set aside, not overwritten).
@@ -459,6 +466,25 @@ mod tests {
     fn migrate_refuses_unknown_versions() {
         assert!(migrate(serde_json::json!({"version": 99})).is_err());
         assert!(migrate(serde_json::json!({"spaces": []})).is_err());
+    }
+
+    #[test]
+    fn first_run_only_while_nothing_was_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(is_first_run(dir.path()), "missing data folder");
+        fs::create_dir_all(dir.path().join("spaces")).unwrap();
+        fs::write(dir.path().join("history.json"), "{}").unwrap();
+        assert!(is_first_run(dir.path()), "other files don't count");
+        open_spaces(dir.path()).unwrap();
+        assert!(!is_first_run(dir.path()), "the index was written");
+
+        let old = tempfile::tempdir().unwrap();
+        save_board(&crate::board_path(old.path()), &board_with(&["https://a/"])).unwrap();
+        assert!(!is_first_run(old.path()), "a board from an earlier version");
+
+        let lost = tempfile::tempdir().unwrap();
+        save_board(&space_board_path(lost.path(), SpaceId(2)), &board_with(&["https://a/"])).unwrap();
+        assert!(!is_first_run(lost.path()), "boards without an index");
     }
 
     #[test]

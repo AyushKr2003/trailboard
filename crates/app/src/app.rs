@@ -1002,6 +1002,21 @@ impl App {
         }
     }
 
+    /// First start: the welcome note, left of the first page (`beside`).
+    /// Not focused, so the page keeps the keys.
+    fn add_guide(&mut self, beside: Option<NodeId>) -> NodeId {
+        let (w, h) = (crate::note::GUIDE_W, crate::note::GUIDE_H);
+        let rect = match beside.and_then(|id| self.scene.node(id)) {
+            Some(src) => placement::left_of(&self.scene, src, w, h),
+            None => placement::free_near(&self.scene, self.camera.center, w, h),
+        };
+        let id = self.scene.add_note(rect, crate::note::GUIDE);
+        self.create_page(id);
+        self.dirty = true;
+        log::info!("first run: welcome note {}", id.0);
+        id
+    }
+
     /// N: a new, empty note in the middle of the view, ready to type in.
     fn new_note_at_center(&mut self) -> NodeId {
         let rect = placement::free_near(&self.scene, self.camera.center, crate::note::W, crate::note::H);
@@ -5547,6 +5562,7 @@ impl ApplicationHandler for App {
         }
         self.page_scale = self.scale();
         self.start_desktop();
+        let first_run = spaces::is_first_run(&self.data_dir);
         let restored = self.restore();
         let mut urls = std::mem::take(&mut self.initial_urls);
         if urls.is_empty() && !restored {
@@ -5556,13 +5572,17 @@ impl ApplicationHandler for App {
         for url in &urls {
             last = self.new_card_at_center(url).or(last);
         }
-        if let Some(id) = last
-            && !restored {
-                self.fill_view(id);
-                if let Some(goal) = self.camera_goal.take() {
-                    self.camera = goal;
-                }
+        let guide = (first_run && self.persist).then(|| self.add_guide(last));
+        if !restored {
+            let shown = [last, guide].into_iter().flatten().filter_map(|id| self.scene.node(id)).map(|n| n.frame()).reduce(|a, b| a.union(&b));
+            if let Some(r) = shown {
+                let mut goal = Camera::fit(r, self.viewport(), self.scale(), 8.0 * self.scale());
+                goal.zoom = goal.zoom.min(2.0);
+                self.camera = goal;
+                // `ensure_visible` on the new page left a goal of its own.
+                self.camera_goal = None;
             }
+        }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {

@@ -22,6 +22,9 @@ All notable changes to Trailboard. The format follows
   use could crash Trailboard.
 
 ### Added
+- **A welcome note on the first start**: a new board begins with a short
+  guide to getting around beside the first page. It's an ordinary note, so it
+  can be edited, kept or closed with Ctrl+W, and it doesn't come back.
 - **An Arch Linux package**: `cd packaging/arch && makepkg -si` builds
   Trailboard with its own copy of the Chromium runtime and installs it to
   `/usr/lib/trailboard`, with `trailboard` on the `PATH` and the launcher

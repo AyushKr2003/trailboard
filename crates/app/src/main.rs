@@ -9,6 +9,7 @@ mod keymap;
 mod menu;
 mod note;
 mod omnibox;
+mod palette;
 mod script;
 mod sidebar;
 mod theme;

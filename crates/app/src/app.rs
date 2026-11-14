@@ -22,6 +22,9 @@
 //! - M arranges the current card (`scene::arrange`): h/j/k/l move it (the
 //!   selection with it), Shift resizes, Ctrl takes fine steps; Enter/M keep the
 //!   result as one undo step, Esc puts it back, any other key or a click keeps it.
+//! - Ctrl+K palette (`palette`, `scene::palette`): fuzzy search over every card
+//!   (folded ones too), the other spaces and the board commands; Up/Down pick,
+//!   Enter goes there or runs it, the last row searches the web or opens an address.
 //! - Ctrl+L address bar, Ctrl+T new card, Ctrl+W close, Ctrl+Shift+T reopen,
 //!   Ctrl+R reload, Alt+←/→ back/forward, Ctrl+0 fit all.
 //! - Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y) undo/redo board edits (open, close, move,
@@ -81,6 +84,7 @@ use crate::theme::{rgb, text_on, Theme};
 use crate::keymap::{self, KeyIn};
 use crate::menu::{self, ContextMenu, Entry};
 use crate::omnibox::{self, Omnibox, Target};
+use crate::palette::{self, Command, Item};
 use crate::script::{Cmd, Script};
 use crate::sidebar::Panel;
 
@@ -1115,6 +1119,13 @@ impl App {
     /// Goes to card `id` from the sidebar: it is shown at its stack's front if
     /// folded away, becomes current and comes on screen (clear of the panel).
     fn sidebar_go(&mut self, id: NodeId) {
+        self.go_to_card(id);
+        log::info!("sidebar: card {}", id.0);
+    }
+
+    /// Goes to card `id`: shown at its stack's front if folded away, made
+    /// current and brought on screen (clear of the sidebar).
+    fn go_to_card(&mut self, id: NodeId) {
         if self.scene.node(id).is_none() {
             return;
         }
@@ -1125,7 +1136,100 @@ impl App {
         self.selection.clear();
         self.focus(Some(id));
         self.ensure_visible(id);
-        log::info!("sidebar: card {}", id.0);
+    }
+
+    // ---------------------------------------------------------------- palette
+
+    /// Ctrl+K: the palette, over everything but Read Mode's page.
+    fn open_palette(&mut self) {
+        self.menu = None;
+        self.link_hints = None;
+        self.finish_arrange(true);
+        self.omnibox = Some(Omnibox::new("", Target::Palette));
+        log::info!("palette open");
+    }
+
+    /// Runs a palette row (the palette is already closed).
+    fn run_palette(&mut self, row: palette::Row) {
+        log::info!("palette: {:?} {:?}", row.item, row.label);
+        match row.item {
+            Item::Card(id) => {
+                if self.read.is_some() {
+                    self.leave_read();
+                }
+                self.go_to_card(id);
+            }
+            Item::Space(id) => self.switch_space(id),
+            Item::Open(url) => {
+                if self.new_card_at_center(&url).is_some() {
+                    self.keys_in_page = true;
+                }
+            }
+            Item::Command(c) => self.run_command(c),
+        }
+    }
+
+    fn run_command(&mut self, c: Command) {
+        match c {
+            Command::NewCard => self.omnibox = Some(Omnibox::new("", Target::NewCard)),
+            Command::NewNote => {
+                self.new_note_at_center();
+            }
+            Command::NewSticky => {
+                self.new_sticky_at_center();
+            }
+            Command::Tidy => self.tidy_board(),
+            Command::Fit => self.fit_all(),
+            Command::Fold => self.toggle_fold(),
+            Command::Outline => self.outline_in_view(),
+            Command::NameTrail => self.ask_trail_name(),
+            Command::ColourTrail => self.cycle_trail_colour(),
+            Command::Sidebar => self.toggle_sidebar(),
+            Command::Read => self.toggle_read(),
+            Command::LinkHints => self.show_link_hints(),
+            Command::Arrange => self.start_arrange(),
+            Command::SaveMarkdown => {
+                let note = self.focused.filter(|&id| self.scene.node(id).is_some_and(Node::is_note));
+                self.save_markdown(note);
+            }
+            Command::Undo => self.undo(false),
+            Command::Redo => self.undo(true),
+            Command::Reopen => self.reopen_closed(),
+            Command::CloseCard => {
+                if !self.selection.is_empty() {
+                    let ids = self.selection.ids();
+                    self.close_cards(&ids);
+                } else if let Some(id) = self.focused {
+                    self.close_card(id);
+                } else {
+                    self.toast("No card to close");
+                }
+            }
+            Command::Reload => match self.focused_page().filter(|p| p.kind() == web::PageKind::Web) {
+                Some(p) => p.reload(),
+                None => self.toast("No page to reload"),
+            },
+            Command::SelectAll => self.selection.select_all(&self.scene),
+            Command::NewSpace => self.new_space(),
+            Command::NextSpace | Command::PreviousSpace => {
+                let step = if c == Command::NextSpace { 1 } else { -1 };
+                self.switch_space(self.spaces.neighbour(self.spaces.active, step));
+            }
+            Command::RenameSpace => {
+                let name = self.spaces.active_entry().name.clone();
+                self.omnibox = Some(Omnibox::new(&name, Target::RenameSpace));
+            }
+            Command::NextTint => self.cycle_tint(),
+            Command::DeleteSpace => self.ask_delete_space(),
+            Command::Shortcuts => {
+                self.hints = true;
+                log::info!("hints shown");
+            }
+            Command::Quit => {
+                log::info!("quit (palette)");
+                self.quit = true;
+            }
+        }
     }
 
     /// A press on the sidebar: a header collapses or expands its trail, a card
@@ -1863,6 +1967,27 @@ impl App {
         if state == ElementState::Released && std::mem::take(&mut self.menu_pressed) {
             return;
         }
+        // The palette: a click on a result runs it, a click in the field or
+        // the list keeps it open, a click elsewhere closes it and goes through.
+        if state == ElementState::Pressed
+            && let Some(ob) = self.omnibox.as_ref().filter(|ob| ob.target == Target::Palette)
+        {
+            let rows = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces);
+            let panel = palette::Panel::new(self.viewport(), self.ui(), rows.len());
+            let scroll = ob.scroll.min(rows.len().saturating_sub(panel.shown));
+            if let Some(i) = panel.row_at(p, scroll, rows.len()) {
+                self.omnibox = None;
+                self.menu_pressed = true; // swallow the release
+                if button == MouseButton::Left {
+                    self.run_palette(rows[i].clone());
+                }
+                return;
+            }
+            if panel.contains(p) {
+                self.menu_pressed = true;
+                return;
+            }
+        }
         // The sidebar covers the board's left edge and takes its clicks; a
         // press anywhere else takes the keys from it (it stays open).
         if state == ElementState::Pressed && self.sidebar_shown() {
@@ -2002,6 +2127,19 @@ impl App {
         if let Some(m) = self.menu.as_mut() {
             m.hover = None;
         }
+        let (vp, ui) = (self.viewport(), self.ui());
+        if let Some(ob) = self.omnibox.as_mut().filter(|ob| ob.target == Target::Palette) {
+            let len = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces).len();
+            let panel = palette::Panel::new(vp, ui, len);
+            if panel.contains(p) {
+                if let Some(i) = panel.row_at(p, ob.scroll.min(len.saturating_sub(panel.shown)), len) {
+                    ob.sel = i;
+                }
+                self.cursor = p;
+                self.set_cursor(web::Cursor::Default);
+                return;
+            }
+        }
         self.sidebar_hover = None;
         if self.sidebar_shown() && matches!(self.drag, Drag::None) {
             let panel = self.sidebar_panel();
@@ -2091,6 +2229,17 @@ impl App {
         self.camera_goal = None;
         self.menu = None;
         self.link_hints = None; // scrolling a page moves its links
+        if let Some(ob) = self.omnibox.as_ref().filter(|ob| ob.target == Target::Palette) {
+            let len = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces).len();
+            let panel = palette::Panel::new(self.viewport(), self.ui(), len);
+            if panel.rect.contains(self.cursor) {
+                let rows = if lines { -dy * 3.0 } else { -dy / panel.row_h };
+                let max = len.saturating_sub(panel.shown) as isize;
+                let ob = self.omnibox.as_mut().expect("palette open");
+                ob.scroll = (ob.scroll.min(max as usize) as isize + rows.round() as isize).clamp(0, max) as usize;
+                return;
+            }
+        }
         if self.sidebar_shown() && self.sidebar_panel().rect.contains(self.cursor) {
             let panel = self.sidebar_panel();
             let len = self.sidebar.rows(&self.scene).len();
@@ -2195,12 +2344,43 @@ impl App {
             }
         }
 
+        // The palette's list: its length and how many rows fit, for the keys below.
+        let palette_len = self.omnibox.as_ref().filter(|ob| ob.target == Target::Palette).map(|ob| {
+            let len = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces).len();
+            (len, palette::Panel::new(self.viewport(), self.ui(), len).shown)
+        });
         if let Some(ob) = self.omnibox.as_mut() {
             if !pressed {
                 return;
             }
+            let before = ob.text.clone();
+            // Palette: Up/Down (Ctrl+K/J, Ctrl+P/N), PgUp/PgDn move the highlight.
+            let step = palette_len.and_then(|(_, shown)| match ev.named {
+                Some(NamedKey::ArrowDown) => Some(1),
+                Some(NamedKey::ArrowUp) => Some(-1),
+                Some(NamedKey::PageDown) => Some(shown as isize),
+                Some(NamedKey::PageUp) => Some(-(shown as isize)),
+                _ if ctrl && matches!(code, Some(KeyCode::KeyJ | KeyCode::KeyN)) => Some(1),
+                _ if ctrl && code == Some(KeyCode::KeyP) => Some(-1),
+                _ => None,
+            });
+            if let (Some(step), Some((len, shown))) = (step, palette_len) {
+                if len > 0 {
+                    ob.sel = (ob.sel as isize + step).clamp(0, len as isize - 1) as usize;
+                    ob.scroll = scene::palette::keep_visible(ob.sel, ob.scroll, shown, len);
+                }
+                return;
+            }
             match ev.named {
                 Some(NamedKey::Escape) => self.omnibox = None,
+                _ if ctrl && code == Some(KeyCode::KeyK) && ob.target == Target::Palette => self.omnibox = None,
+                Some(NamedKey::Enter) if ob.target == Target::Palette => {
+                    let ob = self.omnibox.take().expect("palette open");
+                    let rows = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces);
+                    if let Some(row) = rows.into_iter().nth(ob.sel) {
+                        self.run_palette(row);
+                    }
+                }
                 Some(NamedKey::Enter) => {
                     let ob = self.omnibox.take().expect("omnibox open");
                     if ob.target == Target::RenameSpace {
@@ -2251,6 +2431,14 @@ impl App {
                         }
                 }
             }
+            // New text, new results: back to the best one.
+            if let Some(ob) = self.omnibox.as_mut()
+                && ob.target == Target::Palette
+                && ob.text != before
+            {
+                ob.sel = 0;
+                ob.scroll = 0;
+            }
             return;
         }
 
@@ -2293,6 +2481,10 @@ impl App {
                 }
                 Some(KeyCode::KeyW) if ctrl && shift && !alt => {
                     self.ask_delete_space();
+                    true
+                }
+                Some(KeyCode::KeyK) if ctrl && !shift && !alt => {
+                    self.open_palette();
                     true
                 }
                 Some(KeyCode::KeyL) if ctrl => {
@@ -2839,14 +3031,14 @@ impl App {
         };
 
         if let Some(ob) = &self.omnibox {
-            let w = (720.0 * ui).min(vp.x - 32.0 * ui);
-            let h = 48.0 * ui;
-            let r = Rect::new((vp.x - w) / 2.0, 18.0 * ui, w, h);
+            let r = palette::field_rect(vp, ui);
+            let h = r.h;
             let size = 17.0 * ui;
             let pad = 16.0 * ui;
             let placeholder = match ob.target {
                 Target::RenameSpace => "Space name",
                 Target::NameTrail(_) => "Trail name (empty to clear)",
+                Target::Palette => "Find a card, space or command",
                 _ => "Search or enter address",
             };
             let selected = ob.select_all && !ob.text.is_empty();
@@ -2889,6 +3081,14 @@ impl App {
                 bold: false,
             });
             layers.push(l);
+            if ob.target == Target::Palette {
+                let rows = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces);
+                let panel = palette::Panel::new(vp, ui, rows.len());
+                let scroll = ob.scroll.min(rows.len().saturating_sub(panel.shown));
+                if let Some(rd) = self.renderer.as_mut() {
+                    layers.push(palette::layer(rd, &panel, &rows, ob.sel, scroll, &th, ui));
+                }
+            }
         }
 
         if let Some(b) = band {
@@ -3099,6 +3299,8 @@ impl App {
             // The address bar takes committed text only; it doesn't show compositions.
             if let Ime::Commit(t) = ime {
                 ob.insert(&t);
+                ob.sel = 0;
+                ob.scroll = 0;
             }
             return;
         }
@@ -3505,6 +3707,26 @@ impl App {
                         log::info!("script sidebar row {i} at {at}: {what}");
                     }
                 }
+                Cmd::Palette => match self.omnibox.as_ref().filter(|ob| ob.target == Target::Palette) {
+                    None => log::info!("script palette: closed"),
+                    Some(ob) => {
+                        let rows = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces);
+                        let panel = palette::Panel::new(self.viewport(), self.ui(), rows.len());
+                        let scroll = ob.scroll.min(rows.len().saturating_sub(panel.shown));
+                        log::info!(
+                            "script palette: query={:?} sel={} scroll={} shown={} rows={}",
+                            ob.text, ob.sel, scroll, panel.shown, rows.len()
+                        );
+                        for (i, row) in rows.iter().enumerate() {
+                            let at = panel.row_rect(i, scroll).map(|r| r.center());
+                            let at = at.map_or_else(|| "off".to_string(), |c| format!("({:.0},{:.0})", c.x, c.y));
+                            log::info!(
+                                "script palette row {i} at {at}: {:?} {:?} detail={:?} marks={:?}",
+                                row.item, row.label, row.detail, row.positions
+                            );
+                        }
+                    }
+                },
                 Cmd::Open(url) => {
                     self.new_card_at_center(&url);
                 }

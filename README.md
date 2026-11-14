@@ -65,6 +65,7 @@ you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change th
 | Close card / reopen closed | × or Ctrl+W / Ctrl+Shift+T |
 | Undo / redo board edits | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y (after clicking the board or a title bar) |
 | Address bar / new card | Ctrl+L / Ctrl+T |
+| Palette: find a card (folded ones too), another space or a command | Ctrl+K, type a few letters, ↑/↓ (or Ctrl+N/P) and Enter, or click a row; the last row searches the web or opens what you typed |
 | New note (Markdown) | N (while no page has the keys); click a note to edit, Esc or click away to see it rendered |
 | New sticky note / its next colour | Shift+N / C on it (while no page has the keys); drag its coloured strip to move it; *Make sticky note* / *Make note card* in a note's right-click menu |
 | Quote selected text in a note | right-click the selection → *Add to note* (the note last used, or a new one beside the page) |

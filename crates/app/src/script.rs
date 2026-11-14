@@ -26,6 +26,7 @@
 //! cards                # log every card (id, rect, live page, selected, title, url), edge and trail label
 //! spaces               # log every space (id, name, background) and which is active
 //! sidebar              # log the trails sidebar: open/keys, highlight, scroll, each row and where to click it
+//! palette              # log the Ctrl+K palette: query, highlight, each result row and where to click it
 //! open https://…       # same as Ctrl+T + Enter
 //! log some note        # print to the log (marks screenshot moments)
 //! quit
@@ -58,6 +59,7 @@ pub enum Cmd {
     Cards,
     Spaces,
     Sidebar,
+    Palette,
     Open(String),
     Log(String),
     Quit,
@@ -123,6 +125,7 @@ fn parse(line: &str) -> Option<Cmd> {
         "cards" => Cmd::Cards,
         "spaces" => Cmd::Spaces,
         "sidebar" => Cmd::Sidebar,
+        "palette" => Cmd::Palette,
         "open" => Cmd::Open(rest.trim().to_string()),
         "log" => Cmd::Log(rest.trim().to_string()),
         "quit" => Cmd::Quit,

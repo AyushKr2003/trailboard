@@ -7,6 +7,14 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Ctrl+K palette**: one box to find any card on the board (folded ones
+  too, by title, address or a note's text), switch to another space, or run
+  a board command by name (with its shortcut shown beside it). Letters can be
+  skipped ("rcc" finds *Reopen closed card*); matched letters are
+  highlighted. With nothing typed it lists the cards, most recently used
+  first. ↑/↓, Ctrl+N/P or PgUp/PgDn pick, Enter or a click goes there or runs
+  it, Esc or Ctrl+K closes. The last row searches the web for what you typed
+  (or opens it first, if it is an address). Script `palette` logs its rows.
 - **Trails sidebar**: press B with no page having the keys for a list of
   everything on the board down the left edge: each trail with its name,
   colour and size, its cards as a tree in reading order, then the cards on no

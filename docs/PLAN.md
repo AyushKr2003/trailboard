@@ -387,7 +387,33 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   - Not done: pins/favourites, drag to reorder (both need a stored order, a
     board format change), rename from the sidebar, a minimum pixel step for
     touchpad scrolling (small pixel deltas round to no scroll).
-- Ctrl+K palette: fuzzy search over open cards, history and commands.
+- ✅ Ctrl+K palette (`scene::palette`, `app::palette`). Decisions (2026-11-14):
+  - Ctrl+K anywhere, inside pages too (like Ctrl+L; a page's own Ctrl+K
+    palette loses out). It is the address bar's field (`Target::Palette`, so
+    IME, Ctrl+A/C/X/V and clicks work the same) with a result list under it.
+    Ctrl+K again or Esc closes; a click outside closes and goes through.
+  - Results, ranked together: every card (folded ones too: going there shows
+    it at its stack's front), the other spaces, and the board commands (each
+    with its keys on the right). A last row opens the text in a new card,
+    as a web search, or first if it looks like an address. History joins when
+    M7 has an index.
+  - Empty query: cards by last use this session, then stacking order; then
+    spaces and commands in a fixed order.
+  - Matching (own design): query letters in order, case and spaces ignored;
+    DP for the best placement: +1 per letter, +5 at a word start (+3 more at
+    the text's start), +4 for following the previous match, −3 per gap, a
+    small cost for a late start; texts cut at 200 chars. Ties keep the
+    caller's order (cards first). Each item also has a hidden second text (a
+    page's URL, a note's body, other words for a command: "exit" finds Quit),
+    ranked 8 lower and only when its letters lie nearly together (span ≤ 2×
+    the query), so scattered letters in long URLs don't match.
+  - Running: a card is gone to like from the sidebar (current, on screen),
+    leaving Read Mode first; commands call the same code as their keys and act
+    on the current card. The page keeps the keys if it had them.
+  - Mouse: hover highlights, a click runs the row, the wheel scrolls the list
+    (up to 9 rows, fewer in a short window, with a scroll bar).
+  - Not done: history (M7), opening a card *beside* the current one from
+    the palette (Shift+Enter?), recently closed cards as results.
 - Find in page (Ctrl+F) bar; per-page zoom (Ctrl +/−/0 inside a page).
 - ✅ Keyboard-driven board (`scene::nav`, `App::typing`). Decisions (2026-11-14),
   following Omarchy's app conventions (the `omarchy-app` skill: keyboard
@@ -538,20 +564,23 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M6 Trails sidebar (first cut).
-**Repo state:** on `master`, committed after 931c2e9; working tree clean.
+**Last session:** 2026-11-14. M6 Ctrl+K palette.
+**Repo state:** on `master`, committed after 2f691af; working tree clean.
 **Done this session:**
-- `scene::sidebar`: `groups`, `Row`/`RowKey`/`Group`, `Sidebar` (rows with
-  collapse, highlight by key, step with fallback for a removed row,
-  collapse/expand/toggle, scroll_to/scroll_by). Unit tests for all of it.
-- `app::sidebar`: `Panel` layout and hit testing (tested), `layer` drawing.
-  `App`: B toggles, sidebar keys before board keys, clicks, hover, wheel,
-  `ensure_visible` keeps a card clear of the panel, state reset on a space
-  switch. Script command `sidebar` logs rows and where to click them.
-  Sheet, README, CHANGELOG updated.
-**Next up:** the Ctrl+K palette (M6): fuzzy search over open cards and
-commands (history needs M7; leave that part for later).
-Small follow-ups: sidebar pins/favourites and drag to reorder (need a stored
+- `scene::palette`: `fuzzy` (DP best placement, positions for highlight),
+  `rank` (title or hidden alt text, ties in caller order), `keep_visible`.
+  Unit tests.
+- `app::palette`: commands table, `rows` (cards by recency, folded ones too,
+  other spaces, commands, open/search row), `Panel` layout and hit testing,
+  `layer` drawing (dots in trail/sticky colour, matched letters in accent,
+  scroll bar). Unit tests. `omnibox::Target::Palette` with `sel`/`scroll`.
+- `App`: Ctrl+K, keys in the field (↑/↓, Ctrl+N/P/J, PgUp/PgDn), Enter,
+  click/hover/wheel, `run_palette`/`run_command`, `go_to_card` (shared with
+  the sidebar). Script command `palette`. Sheet, README, CHANGELOG updated.
+**Next up:** Find in page (Ctrl+F) bar and per-page zoom (Ctrl +/−/0 inside a
+page), M6.
+Small follow-ups: palette history once M7 exists; Shift+Enter in the palette
+to open beside; sidebar pins/favourites and drag to reorder (need a stored
 order, board v6); rename a trail from the sidebar or its tag; the Menu key /
 Shift+F10 for the page menu; keyboard selection of several cards; link hints
 inside iframes and for buttons/inputs; Omarchy app conventions still missing:
@@ -559,6 +588,23 @@ a `.desktop` entry and icon, xdg-desktop-portal file chooser for Save as
 Markdown, i18n. Also: animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out.
 **Notes for the next session:**
+- Palette verified e2e (`~/.cache/trailboard-e2e-palette`, `run.sh N shot…`,
+  seed = the sidebar run's seed in `seed/`). Run 1: Ctrl+K listed 7 cards then
+  commands; `milk` → the sticky (letters highlighted), Enter went to it;
+  `p3`, ↓↓↑ kept row 0, Enter → card 3; `tidy` Enter tidied; `fold` Enter
+  folded the trail; `p2` found the folded card, Enter showed it at the
+  front; `example.com` → *Open example.com* first; Ctrl+K again closed;
+  `new space` Enter made Space 2; `space 1` found it, Enter switched back;
+  keys in P5's page, Ctrl+K opened, Esc closed with the keys still in the
+  page; `help` Enter showed the sheet. Run 2: `help` no longer matches file
+  URLs; wheel scrolled 3 rows, hover moved the highlight, a click on a row
+  went to P1; Ctrl+N N P → row 1; a click outside closed it; in Read Mode,
+  `p1` Enter left it and went to P1. Screenshots empty1, milk1, folded1,
+  wheel2, read2 checked, dark theme only.
+- Not verified: light themes for the list, a real keyboard or mouse, IME
+  typing into the palette (shared with the address bar's path), HiDPI scale,
+  a board with hundreds of cards (rows are rebuilt on every key, draw, hover
+  and wheel event; fine for small boards).
 - Sidebar verified e2e (`~/.cache/trailboard-e2e-sidebar`, `run.sh N shot…`,
   seed in `seed/`: trail Reading 1→2, 1→3, 3→4 (green), P5, note 6, green
   sticky 7). Run 1: B with nothing focused highlighted card 7 (the middle of

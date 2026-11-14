@@ -11,6 +11,8 @@ pub enum Target {
     RenameSpace,
     /// Name the trail through this card (a name too).
     NameTrail(scene::NodeId),
+    /// The Ctrl+K palette: the text searches cards, spaces and commands (`palette`).
+    Palette,
 }
 
 #[derive(Debug)]
@@ -21,11 +23,14 @@ pub struct Omnibox {
     pub target: Target,
     /// All text selected (typing replaces it), as after Ctrl+L.
     pub select_all: bool,
+    /// Palette only: the highlighted result row and the first row shown.
+    pub sel: usize,
+    pub scroll: usize,
 }
 
 impl Omnibox {
     pub fn new(initial: &str, target: Target) -> Self {
-        Self { caret: initial.chars().count(), text: initial.to_string(), target, select_all: !initial.is_empty() }
+        Self { caret: initial.chars().count(), text: initial.to_string(), target, select_all: !initial.is_empty(), sel: 0, scroll: 0 }
     }
 
     fn byte_at(&self, char_idx: usize) -> usize {

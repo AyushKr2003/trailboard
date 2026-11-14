@@ -656,7 +656,22 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   - The corner label shows "· Private" (and appears even with one space).
   - `spaces.json` v3 so an older build refuses the index instead of opening a
     private space and recording it.
-- ⬜ Recently closed cards as palette results.
+- ✅ Recently closed cards as palette results (`palette::Item::Closed`,
+  `App::reopen_closed_card`). Decisions (2026-11-14):
+  - The palette offers the space's Ctrl+Shift+T stack (this session only, as
+    before; not saved), newest first, each card once, minus any back on the
+    board through undo. Up to 10 take part in the ranking when something is
+    typed; with nothing typed the newest 3 are listed right after the open
+    cards. Detail "Closed · host" (or "Closed · Note"), with the trail or
+    sticky colour dot it had.
+  - Found by title and address (a note by its text), like open cards. A
+    history page that a closed card showed is that card's row, so words on
+    a closed page find the card itself, not a new card.
+  - Enter brings that card back where it was, with its trail links, as one
+    undo step (as Ctrl+Shift+T does), and takes it off the stack (older
+    entries for the same card too).
+  - A card removed by *undoing* its opening is not "closed" (redo brings it
+    back), so it is not offered; same as Ctrl+Shift+T.
 
 ### M8: Privacy ⬜
 - Brave `adblock` engine with EasyList/EasyPrivacy in a resource request handler.
@@ -704,16 +719,17 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M7 private (unrecorded) spaces.
-**Repo state:** on `master`, committed after dba4cf6; working tree clean.
+**Last session:** 2026-11-14. M7 recently closed cards in the palette.
+**Repo state:** on `master`, committed after 52dea2e; working tree clean.
 **Done this session:**
-- Ctrl+Shift+P / *Private space on or off* / *New private space*: a private
-  space records no history, saves no site icons or page zoom, and its pages
-  share an in-memory cookie jar (`web::Jar`) until the app quits. The label
-  says "· Private". `spaces.json` is v3. See M7 for the decisions.
-**Next up:** M7's thumbnails or recently closed cards as palette results, or
-M6's remaining ⬜ (`.desktop` entry and icon, settings, downloads).
-Small follow-ups: a private space could look different beyond its label
+- Ctrl+K finds cards closed this session in the current space ("Closed ·
+  host"), the newest 3 listed with nothing typed; Enter brings one back where
+  it was. History pages a closed card showed resolve to that card. See M7.
+**Next up:** M7's thumbnails (the last M7 ⬜), or M6's remaining ⬜
+(`.desktop` entry and icon, settings, downloads).
+Small follow-ups: Shift+Delete on a closed row could drop it from the stack;
+keep closed cards across restarts (board v6?); a private space could look
+different beyond its label
 (an icon, a hatched board); downloads in a private space (none yet anyway);
 undo for forgetting a page; a pause-history toggle; site
 icons on history rows; prune `icons/` of sites no card uses; a letter tile for
@@ -725,6 +741,16 @@ several cards; link hints inside iframes; xdg-desktop-portal file chooser for
 Save as Markdown; i18n; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out.
 **Notes for the next session:**
+- Closed cards verified e2e (`~/.cache/trailboard-e2e-closed`, `run.sh 1
+  empty1 ocean1 end1`; serve its `site/` on :8731). Opened b and c beside a,
+  closed both by the *Close card* command: the empty palette listed Glacier
+  View then Ocean Facts as "Closed · 127.0.0.1:8731" after the open card;
+  "ocean" ranked the closed card first; "whale" (only in the page text) found
+  the closed card, not a History row; Enter reopened card 2 at its old rect;
+  Ctrl+Shift+T then reopened card 3, not 2 again; nothing closed was left.
+  Screenshots empty1 and ocean1 checked, dark theme only. Not verified: a
+  closed note or sticky (unit-tested only), a click on a closed row, other
+  spaces' stacks (per-space `Session.closed`, unchanged).
 - Private spaces verified e2e (`~/.cache/trailboard-e2e-private`, `run.sh N
   shot…`; serve `site/` on :8721 (`cookie.html` shows the cookie it found,
   then sets one) and `priv/` on :8722 (`index.html`, "marmalade" text, a red

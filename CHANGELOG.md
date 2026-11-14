@@ -7,6 +7,11 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Closed cards in the palette**: Ctrl+K also finds the cards you closed in
+  this space since starting Trailboard, by title, address, a note's text or
+  the words on the page ("Closed · example.com"). With nothing typed the
+  three most recent are listed after the open cards. Enter brings the card
+  back where it was, in its trail, as Ctrl+Shift+T does (and can be undone).
 - **Private spaces**: Ctrl+Shift+P (or *Private space on or off* in the
   palette) makes the current space private; *New private space* makes a new
   one. Pages in a private space are not kept in history, their site icons and

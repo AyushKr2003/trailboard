@@ -6,14 +6,15 @@
 //! other spaces and the commands. Typing ranks them all together; a last row
 //! opens what was typed as an address or a web search in a new card (first,
 //! when it looks like an address). Pages from history (`storage::pagetext`)
-//! that no card shows come just before that row.
+//! that no card shows come just before that row. Cards closed this session
+//! (in this space) are found too, and come back where they were.
 
 use std::collections::{HashMap, HashSet};
 
 use compositor::{Layer, Quad, Renderer, Shape, Text};
 use scene::pagetext;
 use scene::palette::{self, Candidate};
-use scene::{NodeId, Rect, Scene, Vec2};
+use scene::{Node, NodeId, Rect, Scene, Vec2};
 use storage::pagetext::Visit;
 use storage::spaces::{SpaceId, SpaceIndex};
 
@@ -125,6 +126,8 @@ pub enum Item {
     Command(Command),
     /// Open this URL in a new card.
     Open(String),
+    /// Bring back this closed card where it was.
+    Closed(NodeId),
 }
 
 /// A result row.
@@ -160,38 +163,67 @@ fn host(url: &str) -> &str {
 
 /// History rows shown at most (after the board's own results).
 pub const MAX_HISTORY: usize = 6;
+/// Closed cards searched at most, newest first.
+pub const MAX_CLOSED: usize = 10;
+/// Closed cards listed when nothing is typed.
+pub const MAX_CLOSED_EMPTY: usize = 3;
+
+/// A label for a card: its title, or "Untitled".
+fn card_label(n: &Node) -> String {
+    if n.title.trim().is_empty() { "Untitled".to_string() } else { n.title.clone() }
+}
+
+/// The colour dot a card shows in the list: a sticky note's, or its trail's.
+fn card_dot(n: &Node) -> Option<Dot> {
+    match (&n.sticky, &n.trail.colour) {
+        (Some(s), _) => Some(Dot::Sticky(s.clone())),
+        (None, Some(c)) => Some(Dot::Trail(c.clone())),
+        _ => None,
+    }
+}
+
+/// What a card says on the right ("example.com", "Note") and the second text
+/// it is found by (its address without the scheme, a note's body).
+fn card_detail(n: &Node) -> (String, String) {
+    if n.is_note() {
+        let kind = if n.is_sticky() { "Sticky note" } else { "Note" };
+        (kind.to_string(), n.note.clone().unwrap_or_default())
+    } else {
+        let alt = n.url.split_once("://").map_or(n.url.as_str(), |(_, r)| r).to_string();
+        (host(&n.url).to_string(), alt)
+    }
+}
 
 /// The rows for `query`: every card, folded ones too (by `used`, then stacking order, most recent
-/// first), the other spaces and the commands, ranked together; then pages from
-/// history (`visits`, best first) that no card shows; then the row that opens
-/// the query as an address or a search.
-pub fn rows(query: &str, scene: &Scene, used: &HashMap<NodeId, u64>, spaces: &SpaceIndex, visits: &[Visit]) -> Vec<Row> {
+/// first), cards closed this session (`closed`, oldest first as the undo
+/// stack keeps them; newest are offered first), the other spaces and the
+/// commands, ranked together; then pages from history (`visits`, best first)
+/// that no card shows; then the row that opens the query as an address or a
+/// search.
+pub fn rows(query: &str, scene: &Scene, used: &HashMap<NodeId, u64>, closed: &[&Node], spaces: &SpaceIndex, visits: &[Visit]) -> Vec<Row> {
     let mut cards: Vec<_> = scene.all_nodes().collect();
     cards.sort_by_key(|n| std::cmp::Reverse((used.get(&n.id).copied().unwrap_or(0), n.z)));
 
     let mut items: Vec<Row> = Vec::new();
     let mut alts: Vec<String> = Vec::new();
     for n in cards {
-        let label = if n.title.trim().is_empty() { "Untitled".to_string() } else { n.title.clone() };
-        let (detail, alt) = if n.is_note() {
-            let kind = if n.is_sticky() { "Sticky note" } else { "Note" };
-            (kind.to_string(), n.note.clone().unwrap_or_default())
-        } else {
-            let alt = n.url.split_once("://").map_or(n.url.as_str(), |(_, r)| r).to_string();
-            (host(&n.url).to_string(), alt)
-        };
+        let (detail, alt) = card_detail(n);
         // Folded away in a stack: still found, and going to it shows it in front.
         let detail = match (scene.is_hidden(n.id), detail.is_empty()) {
             (false, _) => detail,
             (true, true) => "In a stack".to_string(),
             (true, false) => format!("{detail} · in a stack"),
         };
-        let dot = match (&n.sticky, &n.trail.colour) {
-            (Some(s), _) => Some(Dot::Sticky(s.clone())),
-            (None, Some(c)) => Some(Dot::Trail(c.clone())),
-            _ => None,
-        };
-        items.push(Row { item: Item::Card(n.id), label, detail, positions: Vec::new(), dot, history: None });
+        items.push(Row { item: Item::Card(n.id), label: card_label(n), detail, positions: Vec::new(), dot: card_dot(n), history: None });
+        alts.push(alt);
+    }
+    // Closed cards, newest first, once each, and not those back on the board (undo).
+    let cap = if query.trim().is_empty() { MAX_CLOSED_EMPTY } else { MAX_CLOSED };
+    let mut gone: HashSet<NodeId> = HashSet::new();
+    for n in closed.iter().rev().filter(|n| scene.node(n.id).is_none() && gone.insert(n.id)).take(cap) {
+        let (detail, alt) = card_detail(n);
+        let detail = if detail.is_empty() { "Closed".to_string() } else { format!("Closed · {detail}") };
+        items.push(Row { item: Item::Closed(n.id), label: card_label(n), detail, positions: Vec::new(), dot: card_dot(n), history: None });
         alts.push(alt);
     }
     for s in spaces.spaces.iter().filter(|s| s.id != spaces.active) {
@@ -221,13 +253,16 @@ pub fn rows(query: &str, scene: &Scene, used: &HashMap<NodeId, u64>, spaces: &Sp
         .collect();
 
     if !query.trim().is_empty() {
-        // A page a card shows is that card's row (if not already found);
-        // other pages open in a new card.
+        // A page a card shows is that card's row (if not already found), or
+        // else a closed card's that showed it; other pages open in a new card.
         let mut cards: HashMap<&str, usize> = HashMap::new();
         for (i, r) in items.iter().enumerate() {
-            if let Item::Card(id) = r.item
-                && let Some(n) = scene.node(id).filter(|n| !n.is_note())
-            {
+            let node = match r.item {
+                Item::Card(id) => scene.node(id),
+                Item::Closed(id) => closed.iter().rev().copied().find(|n| n.id == id),
+                _ => None,
+            };
+            if let Some(n) = node.filter(|n| !n.is_note()) {
                 cards.entry(n.url.as_str()).or_insert(i);
             }
         }
@@ -474,7 +509,7 @@ mod tests {
         let ids: Vec<NodeId> = s.nodes().map(|n| n.id).collect();
         let mut used = HashMap::new();
         used.insert(ids[0], 5);
-        let r = rows("", &s, &used, &SpaceIndex::default(), &[]);
+        let r = rows("", &s, &used, &[], &SpaceIndex::default(), &[]);
         assert_eq!(r[0].item, Item::Card(ids[0]));
         assert_eq!(r[0].detail, "rust-lang.org");
         assert_eq!(r[1].item, Item::Card(ids[1]));
@@ -486,7 +521,7 @@ mod tests {
     #[test]
     fn query_ranks_cards_commands_and_search() {
         let s = board();
-        let r = rows("trail", &s, &HashMap::new(), &SpaceIndex::default(), &[]);
+        let r = rows("trail", &s, &HashMap::new(), &[], &SpaceIndex::default(), &[]);
         assert_eq!(r[0].label, "Trail - Wikipedia");
         assert_eq!(r[0].positions, vec![0, 1, 2, 3, 4]);
         assert!(r.iter().any(|r| r.label == "Trails sidebar"));
@@ -494,14 +529,14 @@ mod tests {
         assert_eq!(last.item, Item::Open("https://duckduckgo.com/?q=trail".into()));
         assert_eq!(last.label, "Search the web for “trail”");
         // Found by its URL.
-        let r = rows("rust-lang", &s, &HashMap::new(), &SpaceIndex::default(), &[]);
+        let r = rows("rust-lang", &s, &HashMap::new(), &[], &SpaceIndex::default(), &[]);
         assert_eq!(r[0].label, "Learn Rust");
         assert!(r[0].positions.is_empty());
     }
 
     #[test]
     fn an_address_opens_first() {
-        let r = rows("example.com", &board(), &HashMap::new(), &SpaceIndex::default(), &[]);
+        let r = rows("example.com", &board(), &HashMap::new(), &[], &SpaceIndex::default(), &[]);
         assert_eq!(r[0].item, Item::Open("https://example.com".into()));
         assert_eq!(r[0].label, "Open example.com");
     }
@@ -511,10 +546,10 @@ mod tests {
         let mut spaces = SpaceIndex::default();
         let other = spaces.add();
         spaces.rename(other, "Reading");
-        let r = rows("read", &Scene::new(), &HashMap::new(), &spaces, &[]);
+        let r = rows("read", &Scene::new(), &HashMap::new(), &[], &spaces, &[]);
         assert_eq!(r[0].item, Item::Space(other));
         assert!(r.iter().any(|r| r.item == Item::Command(Command::Read)));
-        let r = rows("", &Scene::new(), &HashMap::new(), &spaces, &[]);
+        let r = rows("", &Scene::new(), &HashMap::new(), &[], &spaces, &[]);
         assert!(r.iter().any(|r| r.item == Item::Command(Command::NextSpace)));
         // The active space is not offered.
         assert!(!r.iter().any(|r| r.item == Item::Space(spaces.active)));
@@ -528,7 +563,7 @@ mod tests {
             v("https://doc.rust-lang.org/book/", "The Rust Book"),
             v("https://example.org/x", ""),
         ];
-        let r = rows("rust", &board(), &HashMap::new(), &SpaceIndex::default(), &visits);
+        let r = rows("rust", &board(), &HashMap::new(), &[], &SpaceIndex::default(), &visits);
         // The card showing the first page is found by its title already, and only once.
         assert_eq!(r.iter().filter(|r| r.label == "Learn Rust").count(), 1);
         let hist: Vec<&Row> = r.iter().filter(|r| r.detail.starts_with("History")).collect();
@@ -540,13 +575,59 @@ mod tests {
         assert_eq!(r[r.len() - 2].label, "https://example.org/x");
         assert!(r.last().unwrap().label.starts_with("Search the web"));
         // Text only the index matched finds the card that shows it.
-        let r = rows("borrowing", &board(), &HashMap::new(), &SpaceIndex::default(), &visits[..1]);
+        let r = rows("borrowing", &board(), &HashMap::new(), &[], &SpaceIndex::default(), &visits[..1]);
         assert_eq!(r[0].label, "Learn Rust");
         assert!(matches!(r[0].item, Item::Card(_)));
         assert_eq!(r[0].detail, "rust-lang.org");
         // Nothing typed: no history.
-        let r = rows("", &board(), &HashMap::new(), &SpaceIndex::default(), &visits);
+        let r = rows("", &board(), &HashMap::new(), &[], &SpaceIndex::default(), &visits);
         assert!(!r.iter().any(|r| r.detail.starts_with("History")));
+    }
+
+    #[test]
+    fn closed_cards_are_found_and_come_back() {
+        let mut s = board();
+        let r = Rect::new(0.0, 0.0, 400.0, 300.0);
+        let close = |s: &mut Scene, url: &str, title: &str| {
+            let id = s.add_page(r, url);
+            s.node_mut(id).expect("card").title = title.into();
+            s.remove(id).expect("removed").0
+        };
+        let a = close(&mut s, "https://www.gnu.org/", "GNU");
+        let b = close(&mut s, "https://archlinux.org/", "Arch Linux");
+        let c = close(&mut s, "https://kernel.org/", "The Kernel");
+        let d = close(&mut s, "https://hypr.land/", "Hyprland");
+        // `b` was closed twice (closed, undone, closed again): listed once.
+        let closed = [&a, &b, &c, &b, &d];
+        let used = HashMap::new();
+
+        // Nothing typed: the newest few, after the open cards, before the commands.
+        let rows0 = rows("", &s, &used, &closed, &SpaceIndex::default(), &[]);
+        let items: Vec<&Item> = rows0.iter().map(|r| &r.item).collect();
+        assert!(matches!(items[0], Item::Card(_)) && matches!(items[1], Item::Card(_)));
+        assert_eq!(&items[2..5], &[&Item::Closed(d.id), &Item::Closed(b.id), &Item::Closed(c.id)]);
+        assert!(matches!(items[5], Item::Command(_)));
+        assert_eq!(rows0[2].detail, "Closed · hypr.land");
+
+        // Typed: found by title or address.
+        let found = rows("gnu", &s, &used, &closed, &SpaceIndex::default(), &[]);
+        assert_eq!(found[0].item, Item::Closed(a.id));
+        assert_eq!(found[0].label, "GNU");
+        let found = rows("kernel.org", &s, &used, &closed, &SpaceIndex::default(), &[]);
+        assert_eq!(found[1].item, Item::Closed(c.id), "after the Open row");
+
+        // A history page a closed card showed is that card's row.
+        let visits = [Visit { url: "https://archlinux.org/".into(), title: "Arch Linux".into(), seen_ms: 0 }];
+        let found = rows("wiki pacman", &s, &used, &closed, &SpaceIndex::default(), &visits);
+        assert_eq!(found[0].item, Item::Closed(b.id));
+        assert!(found[0].history.is_some());
+
+        // A closed card that is back on the board (undo) is not offered.
+        let mut s2 = s.clone();
+        assert!(s2.insert(d.clone(), &[]));
+        let r2 = rows("hypr", &s2, &used, &closed, &SpaceIndex::default(), &[]);
+        assert!(!r2.iter().any(|r| r.item == Item::Closed(d.id)));
+        assert!(r2.iter().any(|r| r.item == Item::Card(d.id)));
     }
 
     #[test]

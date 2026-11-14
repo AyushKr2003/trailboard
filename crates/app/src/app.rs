@@ -1052,16 +1052,39 @@ impl App {
     /// Ctrl+Shift+T: bring back the newest closed card that isn't already back (via undo).
     fn reopen_closed(&mut self) {
         while let Some((node, edges)) = self.closed.pop() {
-            let id = node.id;
-            if self.scene.insert(node, &edges) {
-                self.create_page(id);
-                self.history.opened(id);
-                self.dirty = true;
-                self.focus(Some(id));
-                self.ensure_visible(id);
+            if self.restore_closed(node, edges) {
                 return;
             }
         }
+    }
+
+    /// A closed card picked in the palette: bring back that one, where it was.
+    fn reopen_closed_card(&mut self, id: NodeId) {
+        let Some(i) = self.closed.iter().rposition(|(n, _)| n.id == id) else {
+            log::info!("reopen closed card {}: no longer closed", id.0);
+            return;
+        };
+        let (node, edges) = self.closed.remove(i);
+        // Older entries for the same card (closed, undone, closed again) go too.
+        self.closed.retain(|(n, _)| n.id != id);
+        if !self.restore_closed(node, edges) {
+            log::info!("reopen closed card {}: already on the board", id.0);
+        }
+    }
+
+    /// Puts a closed card back on the board, as one undo step; false if it is there already.
+    fn restore_closed(&mut self, node: Node, edges: Vec<Edge>) -> bool {
+        let id = node.id;
+        if !self.scene.insert(node, &edges) {
+            return false;
+        }
+        log::info!("reopened closed card {}", id.0);
+        self.create_page(id);
+        self.history.opened(id);
+        self.dirty = true;
+        self.focus(Some(id));
+        self.ensure_visible(id);
+        true
     }
 
     fn undo(&mut self, redo: bool) {
@@ -1441,6 +1464,12 @@ impl App {
                     self.keys_in_page = true;
                 }
             }
+            Item::Closed(id) => {
+                if self.read.is_some() {
+                    self.leave_read();
+                }
+                self.reopen_closed_card(id);
+            }
             Item::Command(c) => self.run_command(c),
         }
     }
@@ -1452,7 +1481,8 @@ impl App {
             return palette::history_rows(&ob.text, &self.scene, &visits, local_ms(now_ms()), local_ms);
         }
         let visits = visits_for(&self.page_index, &self.visits_cache, &ob.text, false);
-        palette::rows(&ob.text, &self.scene, &self.used, &self.spaces, &visits)
+        let closed: Vec<&Node> = self.closed.iter().map(|(n, _)| n).collect();
+        palette::rows(&ob.text, &self.scene, &self.used, &closed, &self.spaces, &visits)
     }
 
     /// Ctrl+H: the history view, every page kept, newest first.

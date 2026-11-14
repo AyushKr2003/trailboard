@@ -395,8 +395,8 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   - Results, ranked together: every card (folded ones too: going there shows
     it at its stack's front), the other spaces, and the board commands (each
     with its keys on the right). A last row opens the text in a new card,
-    as a web search, or first if it looks like an address. History joins when
-    M7 has an index.
+    as a web search, or first if it looks like an address. History (M7) comes
+    just before that row.
   - Empty query: cards by last use this session, then stacking order; then
     spaces and commands in a fixed order.
   - Matching (own design): query letters in order, case and spaces ignored;
@@ -412,7 +412,7 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     on the current card. The page keeps the keys if it had them.
   - Mouse: hover highlights, a click runs the row, the wheel scrolls the list
     (up to 9 rows, fewer in a short window, with a scroll bar).
-  - Not done: history (M7), opening a card *beside* the current one from
+  - Not done: opening a card *beside* the current one from
     the palette (Shift+Enter?), recently closed cards as results.
 - ✅ Find in page (Ctrl+F; `omnibox::Target::Find`, `web::Page::find`).
   Decisions (2026-11-14):
@@ -583,12 +583,36 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     it (above when there's no room), kept inside the window. Hidden during a
     drag, a menu, the palette or omnibox, link hints and the shortcut sheet.
 
-### M7: History and search ⬜
-- `page-text.db` (SQLite FTS5) using the same proven design Marble uses:
-  `pages(url, seen_ms)`, `pages_text` FTS5 (`unicode61 remove_diacritics 2`, prefix 2/3),
-  `thumbs(jpeg)`, BM25 with title weight 4, newest-N retention.
-- Page text and thumbnails captured after load (injected JS → process message).
-- Palette and history view query this index.
+### M7: History and search 🟡
+- ✅ `page-text.db` (`storage::pagetext`, rules in `scene::pagetext`,
+  capture in `web::text`). Decisions (2026-11-14):
+  - Our own schema, SQLite via `rusqlite` (bundled, so FTS5 is always there):
+    `pages(id, url UNIQUE, title, seen_ms)` and an FTS5 table `pages_text`
+    (`title`, `url`, `body`; `rowid` = `pages.id`), `unicode61
+    remove_diacritics 2`, prefix indexes 2 and 3. Version in `PRAGMA
+    user_version` (1); a newer file turns history off and is left alone. WAL.
+  - One row per address (fragment included, so a single-page app's views are
+    separate), replaced with the latest title and text on every visit. Only
+    `http`, `https` and `file` pages; error pages, `data:` and `about:` are
+    not kept; notes are never read. Text cut to 64 KiB, titles to 500 bytes.
+    The newest 5000 pages are kept (pruned when 100 more have built up).
+    Shared by all spaces, like `zoom.json`.
+  - When: 1.2 s after a card's page finishes loading, or after it changes its
+    title while not loading (single-page apps). The app asks
+    (`Page::request_text`); the page answers with a console message; `web`
+    drops it unless the address it reports is the one the browser shows, so
+    a page can't write history for another address.
+  - Query: the typed words, each as a quoted prefix, all required; BM25 with
+    title 4, address 2, text 1; ties to the most recent.
+  - Palette: with something typed, up to 6 history pages come after the
+    board's results, before the web search row. A page a card shows is that
+    card's row (so text inside open cards is found too), otherwise "History ·
+    host" opens it in a new card. Words starting with a query word are
+    highlighted. Results are cached per query.
+- ⬜ Thumbnails (`thumbs` table, a small JPEG per page).
+- ⬜ History view (browse by day, open, forget a page); *Clear history*
+  command; per-space or private (unrecorded) spaces.
+- ⬜ Recently closed cards as palette results.
 
 ### M8: Privacy ⬜
 - Brave `adblock` engine with EasyList/EasyPrivacy in a resource request handler.
@@ -636,15 +660,18 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M6 site icons in title bars and card names when zoomed out.
-**Repo state:** on `master`, committed after f9baf6a; working tree clean.
+**Last session:** 2026-11-14. M7 history index (`page-text.db`) and history in the palette.
+**Repo state:** on `master`, committed after e1f5bbf; working tree clean.
 **Done this session:**
-- Site icons (favicons) per site in title bars, saved under `icons/`; a
-  name label for the hovered or current card when titles are unreadable; the
-  loading bar counts as the loading mark. See M6 for the decisions.
-**Next up:** the M7 history store (`page-text.db`, then palette history);
-or M6's remaining ⬜ (`.desktop` entry and icon, settings, downloads).
-Small follow-ups: prune `icons/` of sites no card uses; a letter tile for
+- Every page shown in a card is kept with its title and text in
+  `page-text.db` (SQLite FTS5); the Ctrl+K palette finds pages by the words
+  in them: open cards by their text, other pages as "History" rows that
+  reopen them. Script command `history WORDS`. See M7 for the decisions.
+**Next up:** the rest of M7: a history view (browse, open, forget a page) and
+a *Clear history* command (there is no way to forget a page yet other than
+deleting `page-text.db`); thumbnails; or M6's remaining ⬜ (`.desktop` entry
+and icon, settings, downloads).
+Small follow-ups: site icons on history rows; prune `icons/` of sites no card uses; a letter tile for
 sites without an icon; the name label for a stack could list its size; a zoom
 badge on a zoomed card's title bar; Ctrl+scroll inside a page to zoom it;
 Shift+Enter in the palette to open beside; sidebar pins and drag to reorder
@@ -653,6 +680,20 @@ several cards; link hints inside iframes; xdg-desktop-portal file chooser for
 Save as Markdown; i18n; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out.
 **Notes for the next session:**
+- History verified e2e (`~/.cache/trailboard-e2e-history`, `run.sh N shot…`;
+  serve `site/` with `python3 -m http.server 8711 --bind 127.0.0.1`: `a.html`
+  gardening, `b.html` ocean, `c.html` retitles itself and pushes `#view`
+  after 2.5 s). Run 1: a, b, c and c#view recorded ("Loading app" then
+  "Glacier View"), a `data:` page not; `history compost/whale/glacier` found
+  the right pages, `zebra` (the data page) nothing; after undoing the three
+  opens, palette "whal" → "Ocean Facts · History · 127.0.0.1:8711", Enter
+  reopened it as a card. Run 2 (copy of run 1, `NOURL=1`): 4 pages still
+  there; "tomato comp" → the open "Gardening Tips" card (matched only by its
+  text). Screenshots palette1, palette2 checked, dark theme only.
+- Not verified: real sites (large pages, many visits, the 5000-page prune
+  outside unit tests), iframes' text (only the main frame is read), pages
+  that never finish loading, how long the palette's search takes on a big
+  index (cached per query, run on the main thread), light themes.
 - Icons verified e2e (`~/.cache/trailboard-e2e-icons`, `run.sh N shot…`,
   `NOURL=1` restores the board without opening a URL). Serve `a/` on
   127.0.0.1:8701 (`<link rel=icon>` to a 32 px transparent red circle) and `b/`

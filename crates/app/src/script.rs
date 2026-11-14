@@ -28,6 +28,7 @@
 //! sidebar              # log the trails sidebar: open/keys, highlight, scroll, each row and where to click it
 //! zooms                # log each live card's page zoom (wanted and Chromium's)
 //! find                 # log the find bar: text, card, matches
+//! history rust         # log the history index's size, its newest pages, and what the words find
 //! palette              # log the Ctrl+K palette: query, highlight, each result row and where to click it
 //! open https://…       # same as Ctrl+T + Enter
 //! log some note        # print to the log (marks screenshot moments)
@@ -55,6 +56,8 @@ pub enum Cmd {
     MenuClick(String),
     /// Click the count badge of the stack whose front is card `id`.
     BadgeClick(u64),
+    /// Log the history index, and a search of it for these words.
+    History(String),
     Fit,
     Undo,
     Redo,
@@ -136,6 +139,7 @@ fn parse(line: &str) -> Option<Cmd> {
         "palette" => Cmd::Palette,
         "zooms" => Cmd::Zooms,
         "icons" => Cmd::Icons,
+        "history" => Cmd::History(rest.trim().to_string()),
         "find" => Cmd::Find,
         "open" => Cmd::Open(rest.trim().to_string()),
         "log" => Cmd::Log(rest.trim().to_string()),

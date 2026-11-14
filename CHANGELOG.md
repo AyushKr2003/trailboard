@@ -7,6 +7,12 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **History search**: every page you open is remembered with its title and
+  text (in `page-text.db` in the data folder, newest 5000 pages, for all
+  spaces). The Ctrl+K palette now finds pages by the words in them: an open
+  card whose page mentions what you typed, and pages from history, which
+  open in a new card. Error pages and `data:` pages are not kept. Script
+  command `history` logs the index and a search of it.
 - **Site icons in title bars**: each card shows its site's icon (favicon)
   before its title. Icons are kept per site and saved (in `icons/` in the data
   folder), so sleeping cards and boards restored after a restart show them

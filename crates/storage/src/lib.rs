@@ -4,6 +4,7 @@
 
 pub mod export;
 pub mod icons;
+pub mod pagetext;
 pub mod spaces;
 pub mod zoom;
 

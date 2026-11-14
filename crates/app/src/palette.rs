@@ -5,20 +5,23 @@
 //! With nothing typed it lists the cards, most recently used first, then the
 //! other spaces and the commands. Typing ranks them all together; a last row
 //! opens what was typed as an address or a web search in a new card (first,
-//! when it looks like an address).
+//! when it looks like an address). Pages from history (`storage::pagetext`)
+//! that no card shows come just before that row.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use compositor::{Layer, Quad, Renderer, Shape, Text};
+use scene::pagetext;
 use scene::palette::{self, Candidate};
 use scene::{NodeId, Rect, Scene, Vec2};
+use storage::pagetext::Visit;
 use storage::spaces::{SpaceId, SpaceIndex};
 
 use crate::omnibox;
 use crate::theme::{rgb, Theme};
 
 /// Board actions the palette can run, each with the keys that also do it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Command {
     NewCard,
     NewNote,
@@ -107,7 +110,7 @@ pub const COMMANDS: &[CommandInfo] = &[
     c(Command::Quit, "Quit Trailboard", "Q", "exit close"),
 ];
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Item {
     Card(NodeId),
     Space(SpaceId),
@@ -145,10 +148,14 @@ fn host(url: &str) -> &str {
     host.strip_prefix("www.").unwrap_or(host)
 }
 
+/// History rows shown at most (after the board's own results).
+pub const MAX_HISTORY: usize = 6;
+
 /// The rows for `query`: every card, folded ones too (by `used`, then stacking order, most recent
-/// first), the other spaces and the commands, ranked together; then the row
-/// that opens the query as an address or a search.
-pub fn rows(query: &str, scene: &Scene, used: &HashMap<NodeId, u64>, spaces: &SpaceIndex) -> Vec<Row> {
+/// first), the other spaces and the commands, ranked together; then pages from
+/// history (`visits`, best first) that no card shows; then the row that opens
+/// the query as an address or a search.
+pub fn rows(query: &str, scene: &Scene, used: &HashMap<NodeId, u64>, spaces: &SpaceIndex, visits: &[Visit]) -> Vec<Row> {
     let mut cards: Vec<_> = scene.all_nodes().collect();
     cards.sort_by_key(|n| std::cmp::Reverse((used.get(&n.id).copied().unwrap_or(0), n.z)));
 
@@ -201,6 +208,38 @@ pub fn rows(query: &str, scene: &Scene, used: &HashMap<NodeId, u64>, spaces: &Sp
         .into_iter()
         .map(|r| Row { positions: r.positions, ..items[r.index].clone() })
         .collect();
+
+    if !query.trim().is_empty() {
+        // A page a card shows is that card's row (if not already found);
+        // other pages open in a new card.
+        let mut cards: HashMap<&str, usize> = HashMap::new();
+        for (i, r) in items.iter().enumerate() {
+            if let Item::Card(id) = r.item
+                && let Some(n) = scene.node(id).filter(|n| !n.is_note())
+            {
+                cards.entry(n.url.as_str()).or_insert(i);
+            }
+        }
+        let mut seen: HashSet<Item> = out.iter().map(|r| r.item.clone()).collect();
+        let mut added = 0;
+        for v in visits {
+            if added == MAX_HISTORY {
+                break;
+            }
+            let row = match cards.get(v.url.as_str()) {
+                Some(&i) => items[i].clone(),
+                None => {
+                    let label = if v.title.trim().is_empty() { v.url.clone() } else { v.title.clone() };
+                    let detail = format!("History · {}", host(&v.url));
+                    Row { item: Item::Open(v.url.clone()), label, detail, positions: Vec::new(), dot: None }
+                }
+            };
+            if seen.insert(row.item.clone()) {
+                out.push(Row { positions: pagetext::highlight(query, &row.label), ..row });
+                added += 1;
+            }
+        }
+    }
 
     if let Some(url) = omnibox::resolve(query) {
         let q = query.trim();
@@ -394,7 +433,7 @@ mod tests {
         let ids: Vec<NodeId> = s.nodes().map(|n| n.id).collect();
         let mut used = HashMap::new();
         used.insert(ids[0], 5);
-        let r = rows("", &s, &used, &SpaceIndex::default());
+        let r = rows("", &s, &used, &SpaceIndex::default(), &[]);
         assert_eq!(r[0].item, Item::Card(ids[0]));
         assert_eq!(r[0].detail, "rust-lang.org");
         assert_eq!(r[1].item, Item::Card(ids[1]));
@@ -406,7 +445,7 @@ mod tests {
     #[test]
     fn query_ranks_cards_commands_and_search() {
         let s = board();
-        let r = rows("trail", &s, &HashMap::new(), &SpaceIndex::default());
+        let r = rows("trail", &s, &HashMap::new(), &SpaceIndex::default(), &[]);
         assert_eq!(r[0].label, "Trail - Wikipedia");
         assert_eq!(r[0].positions, vec![0, 1, 2, 3, 4]);
         assert!(r.iter().any(|r| r.label == "Trails sidebar"));
@@ -414,14 +453,14 @@ mod tests {
         assert_eq!(last.item, Item::Open("https://duckduckgo.com/?q=trail".into()));
         assert_eq!(last.label, "Search the web for “trail”");
         // Found by its URL.
-        let r = rows("rust-lang", &s, &HashMap::new(), &SpaceIndex::default());
+        let r = rows("rust-lang", &s, &HashMap::new(), &SpaceIndex::default(), &[]);
         assert_eq!(r[0].label, "Learn Rust");
         assert!(r[0].positions.is_empty());
     }
 
     #[test]
     fn an_address_opens_first() {
-        let r = rows("example.com", &board(), &HashMap::new(), &SpaceIndex::default());
+        let r = rows("example.com", &board(), &HashMap::new(), &SpaceIndex::default(), &[]);
         assert_eq!(r[0].item, Item::Open("https://example.com".into()));
         assert_eq!(r[0].label, "Open example.com");
     }
@@ -431,13 +470,42 @@ mod tests {
         let mut spaces = SpaceIndex::default();
         let other = spaces.add();
         spaces.rename(other, "Reading");
-        let r = rows("read", &Scene::new(), &HashMap::new(), &spaces);
+        let r = rows("read", &Scene::new(), &HashMap::new(), &spaces, &[]);
         assert_eq!(r[0].item, Item::Space(other));
         assert!(r.iter().any(|r| r.item == Item::Command(Command::Read)));
-        let r = rows("", &Scene::new(), &HashMap::new(), &spaces);
+        let r = rows("", &Scene::new(), &HashMap::new(), &spaces, &[]);
         assert!(r.iter().any(|r| r.item == Item::Command(Command::NextSpace)));
         // The active space is not offered.
         assert!(!r.iter().any(|r| r.item == Item::Space(spaces.active)));
+    }
+
+    #[test]
+    fn history_comes_before_search_without_open_cards() {
+        let v = |url: &str, title: &str| Visit { url: url.into(), title: title.into(), seen_ms: 0 };
+        let visits = [
+            v("https://www.rust-lang.org/learn", "Learn Rust"), // a card shows it
+            v("https://doc.rust-lang.org/book/", "The Rust Book"),
+            v("https://example.org/x", ""),
+        ];
+        let r = rows("rust", &board(), &HashMap::new(), &SpaceIndex::default(), &visits);
+        // The card showing the first page is found by its title already, and only once.
+        assert_eq!(r.iter().filter(|r| r.label == "Learn Rust").count(), 1);
+        let hist: Vec<&Row> = r.iter().filter(|r| r.detail.starts_with("History")).collect();
+        assert_eq!(hist.len(), 2);
+        assert_eq!(hist[0].item, Item::Open("https://doc.rust-lang.org/book/".into()));
+        assert_eq!(hist[0].detail, "History · doc.rust-lang.org");
+        assert_eq!(hist[0].positions, vec![4, 5, 6, 7]);
+        assert_eq!(hist[1].label, "https://example.org/x");
+        assert_eq!(r[r.len() - 2].label, "https://example.org/x");
+        assert!(r.last().unwrap().label.starts_with("Search the web"));
+        // Text only the index matched finds the card that shows it.
+        let r = rows("borrowing", &board(), &HashMap::new(), &SpaceIndex::default(), &visits[..1]);
+        assert_eq!(r[0].label, "Learn Rust");
+        assert!(matches!(r[0].item, Item::Card(_)));
+        assert_eq!(r[0].detail, "rust-lang.org");
+        // Nothing typed: no history.
+        let r = rows("", &board(), &HashMap::new(), &SpaceIndex::default(), &visits);
+        assert!(!r.iter().any(|r| r.detail.starts_with("History")));
     }
 
     #[test]

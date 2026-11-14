@@ -104,6 +104,8 @@ const START_URL: &str = "https://en.wikipedia.org/wiki/Special:Random";
 const CARD_W: f32 = 1024.0;
 const CARD_H: f32 = 720.0;
 const MIN_CARD: f32 = 240.0;
+/// How long after a page loads (or retitles itself) its text is read for history.
+const TEXT_SETTLE: Duration = Duration::from_millis(1200);
 /// One keyboard move or resize step (M, then h/j/k/l), in logical px on screen.
 const ARRANGE_STEP: f32 = 40.0;
 /// The fine step with Ctrl.
@@ -274,6 +276,36 @@ pub struct App {
     /// When the Menu key (or Shift+F10) asked a page for its menu: the menu
     /// that answers opens with its first item highlighted.
     menu_by_key: Option<Instant>,
+    /// The history index (`page-text.db`); `None` if it could not be opened.
+    page_index: Option<storage::pagetext::PageIndex>,
+    /// Cards whose page text is due to be read for history, and when.
+    text_due: HashMap<NodeId, Instant>,
+    /// The last history search (query, results), as the palette asks often.
+    visits_cache: RefCell<VisitsCache>,
+}
+
+/// Last history search (query, results).
+type VisitsCache = Option<(String, Vec<storage::pagetext::Visit>)>;
+
+/// History pages matching `query`, for the palette (cached per query).
+fn visits_for(
+index: &Option<storage::pagetext::PageIndex>,
+cache: &RefCell<VisitsCache>,
+query: &str,
+) -> Vec<storage::pagetext::Visit> {
+    let Some(index) = index else { return Vec::new() };
+    if let Some((q, v)) = &*cache.borrow()
+        && q == query
+    {
+        return v.clone();
+    }
+    // More than shown, as pages open in cards are left out.
+    let v = index.search(query, palette::MAX_HISTORY * 3).unwrap_or_else(|e| {
+        log::warn!("history: searching {query:?}: {e}");
+        Vec::new()
+    });
+    cache.replace(Some((query.to_string(), v.clone())));
+    v
 }
 
 impl App {
@@ -286,6 +318,13 @@ impl App {
             .enumerate()
             .map(|(i, (site, icon))| (site, SiteIcon { key: ICON_KEY | i as u64, serial: 1, icon }))
             .collect();
+        let page_index = match storage::pagetext::PageIndex::open(&data_dir) {
+            Ok(i) => Some(i),
+            Err(e) => {
+                log::warn!("history is off: {e}");
+                None
+            }
+        };
         Self {
             renderer: None,
             scene: Scene::new(),
@@ -350,6 +389,9 @@ impl App {
             found: None,
             last_find: String::new(),
             menu_by_key: None,
+            page_index,
+            text_due: HashMap::new(),
+            visits_cache: RefCell::new(None),
         }
     }
 
@@ -497,6 +539,7 @@ impl App {
         self.ime_page = None;
         self.confirm_delete = false;
         self.epoch += 1;
+        self.text_due.clear();
         // Anything the old pages still had queued is for cards that are gone.
         drop(web::drain_events());
         self.dirty = false;
@@ -2051,9 +2094,15 @@ impl App {
                         }
                 }
                 WebEvent::TitleChanged { page, title } => {
-                    if let Some(n) = self.node_of(page).and_then(|id| self.scene.node_mut(id)) {
+                    let Some(id) = self.node_of(page) else { continue };
+                    if let Some(n) = self.scene.node_mut(id) {
                         n.title = title;
                         self.dirty = true;
+                    }
+                    // A page that changes its title without loading (most
+                    // single-page apps on navigation) has new text to keep.
+                    if self.cards.get(&id).is_some_and(|c| !c.loading) {
+                        self.text_due.insert(id, Instant::now() + TEXT_SETTLE);
                     }
                 }
                 WebEvent::UrlChanged { page, url } => {
@@ -2114,11 +2163,56 @@ impl App {
                     }
                 }
                 WebEvent::LoadingChanged { page, loading } => {
-                    if let Some(c) = self.node_of(page).and_then(|id| self.cards.get_mut(&id)) {
+                    let Some(id) = self.node_of(page) else { continue };
+                    if let Some(c) = self.cards.get_mut(&id) {
                         c.loading = loading;
+                    }
+                    if loading {
+                        self.text_due.remove(&id);
+                    } else {
+                        self.text_due.insert(id, Instant::now() + TEXT_SETTLE);
+                    }
+                }
+                WebEvent::PageText { page, url, title, text } => {
+                    if self.node_of(page).is_some() {
+                        self.record_visit(&url, &title, &text);
                     }
                 }
             }
+        }
+    }
+
+    /// Asks pages whose text is due (loaded and settled) for it, for history.
+    fn read_due_texts(&mut self) {
+        if self.text_due.is_empty() {
+            return;
+        }
+        let now = Instant::now();
+        let due: Vec<NodeId> = self.text_due.iter().filter(|(_, t)| **t <= now).map(|(id, _)| *id).collect();
+        for id in due {
+            self.text_due.remove(&id);
+            if self.page_index.is_some()
+                && let Some(c) = self.cards.get(&id)
+                && !c.loading
+            {
+                c.page.request_text();
+            }
+        }
+    }
+
+    /// Keeps a page's text in the history index.
+    fn record_visit(&mut self, url: &str, title: &str, text: &str) {
+        let Some(index) = self.page_index.as_mut() else { return };
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as i64);
+        match index.record(url, title, text, now_ms) {
+            Ok(true) => {
+                log::info!("history: {url} {title:?} ({} chars)", text.chars().count());
+                self.visits_cache.replace(None);
+            }
+            Ok(false) => {}
+            Err(e) => log::warn!("history: recording {url}: {e}"),
         }
     }
 
@@ -2303,7 +2397,7 @@ impl App {
         if state == ElementState::Pressed
             && let Some(ob) = self.omnibox.as_ref().filter(|ob| ob.target == Target::Palette)
         {
-            let rows = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces);
+            let rows = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces, &visits_for(&self.page_index, &self.visits_cache, &ob.text));
             let panel = palette::Panel::new(self.viewport(), self.ui(), rows.len());
             let scroll = ob.scroll.min(rows.len().saturating_sub(panel.shown));
             if let Some(i) = panel.row_at(p, scroll, rows.len()) {
@@ -2461,7 +2555,7 @@ impl App {
         }
         let (vp, ui) = (self.viewport(), self.ui());
         if let Some(ob) = self.omnibox.as_mut().filter(|ob| ob.target == Target::Palette) {
-            let len = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces).len();
+            let len = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces, &visits_for(&self.page_index, &self.visits_cache, &ob.text)).len();
             let panel = palette::Panel::new(vp, ui, len);
             if panel.contains(p) {
                 if let Some(i) = panel.row_at(p, ob.scroll.min(len.saturating_sub(panel.shown)), len) {
@@ -2562,7 +2656,7 @@ impl App {
         self.menu = None;
         self.link_hints = None; // scrolling a page moves its links
         if let Some(ob) = self.omnibox.as_ref().filter(|ob| ob.target == Target::Palette) {
-            let len = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces).len();
+            let len = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces, &visits_for(&self.page_index, &self.visits_cache, &ob.text)).len();
             let panel = palette::Panel::new(self.viewport(), self.ui(), len);
             if panel.rect.contains(self.cursor) {
                 let rows = if lines { -dy * 3.0 } else { -dy / panel.row_h };
@@ -2680,7 +2774,7 @@ impl App {
 
         // The palette's list: its length and how many rows fit, for the keys below.
         let palette_len = self.omnibox.as_ref().filter(|ob| ob.target == Target::Palette).map(|ob| {
-            let len = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces).len();
+            let len = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces, &visits_for(&self.page_index, &self.visits_cache, &ob.text)).len();
             (len, palette::Panel::new(self.viewport(), self.ui(), len).shown)
         });
         if let Some(ob) = self.omnibox.as_mut() {
@@ -2718,7 +2812,7 @@ impl App {
                 }
                 Some(NamedKey::Enter) if ob.target == Target::Palette => {
                     let ob = self.omnibox.take().expect("palette open");
-                    let rows = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces);
+                    let rows = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces, &visits_for(&self.page_index, &self.visits_cache, &ob.text));
                     if let Some(row) = rows.into_iter().nth(ob.sel) {
                         self.run_palette(row);
                     }
@@ -3516,7 +3610,7 @@ impl App {
             }
             layers.push(l);
             if ob.target == Target::Palette {
-                let rows = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces);
+                let rows = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces, &visits_for(&self.page_index, &self.visits_cache, &ob.text));
                 let panel = palette::Panel::new(vp, ui, rows.len());
                 let scroll = ob.scroll.min(rows.len().saturating_sub(panel.shown));
                 if let Some(rd) = self.renderer.as_mut() {
@@ -3685,6 +3779,7 @@ impl App {
         self.run_script();
         self.follow_desktop();
         self.handle_web_events();
+        self.read_due_texts();
         self.sync_find();
         self.autosave();
         self.step_camera(dt);
@@ -4147,6 +4242,19 @@ impl App {
                         log::info!("script sidebar row {i} at {at}: {what}");
                     }
                 }
+                Cmd::History(query) => match &self.page_index {
+                    None => log::info!("script history: off"),
+                    Some(index) => {
+                        let len = index.len().unwrap_or(0);
+                        log::info!("script history: {len} pages");
+                        for v in index.recent(5).unwrap_or_default() {
+                            log::info!("script history recent: {} {:?}", v.url, v.title);
+                        }
+                        for v in index.search(&query, 10).unwrap_or_default() {
+                            log::info!("script history found {query:?}: {} {:?}", v.url, v.title);
+                        }
+                    }
+                },
                 Cmd::Icons => {
                     let mut sites: Vec<_> = self.icons.iter().map(|(s, i)| format!("{s}={}x{}", i.icon.width, i.icon.height)).collect();
                     sites.sort();
@@ -4177,7 +4285,7 @@ impl App {
                 Cmd::Palette => match self.omnibox.as_ref().filter(|ob| ob.target == Target::Palette) {
                     None => log::info!("script palette: closed"),
                     Some(ob) => {
-                        let rows = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces);
+                        let rows = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces, &visits_for(&self.page_index, &self.visits_cache, &ob.text));
                         let panel = palette::Panel::new(self.viewport(), self.ui(), rows.len());
                         let scroll = ob.scroll.min(rows.len().saturating_sub(panel.shown));
                         log::info!(

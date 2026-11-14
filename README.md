@@ -65,7 +65,7 @@ you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change th
 | Close card / reopen closed | × or Ctrl+W / Ctrl+Shift+T |
 | Undo / redo board edits | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y (after clicking the board or a title bar) |
 | Address bar / new card | Ctrl+L / Ctrl+T |
-| Palette: find a card (folded ones too), another space or a command | Ctrl+K, type a few letters, ↑/↓ (or Ctrl+N/P) and Enter, or click a row; the last row searches the web or opens what you typed |
+| Palette: find a card (folded ones too, or by words in its page), a page from history, another space or a command | Ctrl+K, type a few letters, ↑/↓ (or Ctrl+N/P) and Enter, or click a row; the last row searches the web or opens what you typed |
 | New note (Markdown) | N (while no page has the keys); click a note to edit, Esc or click away to see it rendered |
 | New sticky note / its next colour | Shift+N / C on it (while no page has the keys); drag its coloured strip to move it; *Make sticky note* / *Make note card* in a note's right-click menu |
 | Quote selected text in a note | right-click the selection → *Add to note* (the note last used, or a new one beside the page) |
@@ -102,6 +102,10 @@ Each card's title bar shows its site's icon (kept per site under
 and a moving bar while the page loads. Zoomed out too far to read titles, the
 card under the pointer (or else the current card) shows its icon and title in
 a label below it.
+
+Pages you open are remembered with their text in `page-text.db` in the data
+folder (the newest 5000), so Ctrl+K can find them by any word on them. To
+forget them all for now, quit and delete that file.
 
 On [Omarchy](https://omarchy.org/), Trailboard follows the current theme live
 (colours, light or dark, including the pages' `prefers-color-scheme`),

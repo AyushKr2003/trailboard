@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 log = "0.4.35"
+rusqlite = { version = "0.42", features = ["bundled"] }
 scene = { version = "0.1.0", path = "../scene" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

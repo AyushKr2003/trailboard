@@ -7,6 +7,7 @@ pub mod keys;
 pub mod links;
 pub mod menu;
 pub mod popup;
+pub mod text;
 
 use cef::{args::Args, *};
 use std::cell::RefCell;
@@ -39,6 +40,10 @@ pub enum WebEvent {
     /// The icon of page `page`, which was showing `page_url` when it said which
     /// icon it has: BGRA8 with straight (not premultiplied) alpha, at most [`ICON_SIZE`] px a side.
     Favicon { page: u64, page_url: String, width: u32, height: u32, pixels: Vec<u8> },
+    /// The text of web page `page` at `url`, answering [`Page::request_text`].
+    /// `url` is the page's address as the browser knows it (a page can't claim
+    /// another); the message is dropped if the page has moved on since.
+    PageText { page: u64, url: String, title: String, text: String },
 }
 
 /// Largest favicon side asked of Chromium, px (title bars draw 16 px icons, sharp at 2×).
@@ -748,6 +753,20 @@ wrap_display_handler! {
                 }
                 return 1;
             }
+            if let Some(body) = message.strip_prefix(text::PREFIX) {
+                if self.shared.kind == PageKind::Web
+                    && let Some((url, title, body)) = text::parse(body)
+                    && *self.shared.url.borrow() == url
+                {
+                    emit(WebEvent::PageText {
+                        page: self.shared.key,
+                        url: url.to_string(),
+                        title: title.to_string(),
+                        text: body.to_string(),
+                    });
+                }
+                return 1;
+            }
             if self.shared.kind != PageKind::Note {
                 return 0;
             }
@@ -1214,6 +1233,13 @@ impl Page {
     /// Ask for the links visible in the page; they arrive as [`WebEvent::Links`].
     pub fn request_links(&self) {
         self.run_script(links::SCRIPT);
+    }
+
+    /// Ask for the page's address, title and text; they arrive as [`WebEvent::PageText`].
+    pub fn request_text(&self) {
+        if self.shared.kind == PageKind::Web {
+            self.run_script(text::SCRIPT);
+        }
     }
 
     pub fn kind(&self) -> PageKind {

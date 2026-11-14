@@ -33,6 +33,19 @@ EOF
 cargo run --release -p trailboard -- https://en.wikipedia.org/wiki/Turbofan
 ```
 
+To launch it from the app launcher (Omarchy's included) and let other apps open
+links in it, install the desktop entry and icon (`--uninstall` removes them):
+
+```sh
+cargo build --release && ./scripts/install-desktop.sh
+xdg-settings set default-web-browser trailboard.desktop   # optional
+```
+
+Starting Trailboard again while it runs (from the launcher, a shell or a link
+in another app) opens the given pages as new cards in the running window, in
+the space on screen, and exits. Arguments can be URLs, hosts, search words or
+file paths (relative to where you ran it).
+
 Each space's board is saved to `$XDG_DATA_HOME/trailboard/spaces/<id>.json`
 (default `~/.local/share/trailboard/`), listed by `spaces.json`, and restored on
 the next start; the browser profile (cookies, cache) lives next to it. A

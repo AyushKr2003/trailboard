@@ -97,6 +97,7 @@ use winit::window::{CursorIcon, Window, WindowId};
 
 use crate::clipboard::{Clipboard, Paste};
 use crate::desktop::Desktop;
+use crate::launch;
 use crate::theme::{rgb, text_on, Theme};
 use crate::keymap::{self, KeyIn};
 use crate::menu::{self, ContextMenu, Entry};
@@ -253,7 +254,8 @@ pub struct App {
     /// When the camera last changed (used to re-rasterize pages at the settled zoom).
     camera_changed: Instant,
     page_scale: f32,
-    initial_url: Option<String>,
+    /// Pages asked for on the command line, opened once the window exists.
+    initial_urls: Vec<String>,
     started: Instant,
     script: Option<Script>,
     pub quit: bool,
@@ -364,7 +366,7 @@ fn now_ms() -> i64 {
 }
 
 impl App {
-    pub fn new(initial_url: Option<String>, data_dir: std::path::PathBuf) -> Self {
+    pub fn new(initial_urls: Vec<String>, data_dir: std::path::PathBuf) -> Self {
         let zooms = Rc::new(RefCell::new(storage::zoom::load_zooms(&data_dir)));
         let lookup = zooms.clone();
         web::set_page_zoom(move |url| lookup.borrow().get(url));
@@ -419,7 +421,7 @@ impl App {
             click_count: 1,
             camera_changed: Instant::now(),
             page_scale: 1.0,
-            initial_url,
+            initial_urls,
             started: Instant::now(),
             script: Script::from_env(),
             quit: false,
@@ -1023,6 +1025,22 @@ impl App {
         self.focus(Some(id));
         self.ensure_visible(id);
         Some(id)
+    }
+
+    /// Trailboard was started again while running: open what it was given as
+    /// new cards in the space on screen and ask for the window to come forward.
+    fn relaunched(&mut self, args: &[String], cwd: &str) {
+        let urls: Vec<String> = args.iter().filter_map(|a| launch::target(a, std::path::Path::new(cwd))).collect();
+        log::info!("relaunched with {} page(s): {urls:?}", urls.len());
+        if !urls.is_empty() && self.read.is_some() {
+            self.leave_read();
+        }
+        for url in &urls {
+            self.new_card_at_center(url);
+        }
+        if let Some(w) = self.window() {
+            w.focus_window();
+        }
     }
 
     fn close_card(&mut self, id: NodeId) {
@@ -2326,6 +2344,7 @@ impl App {
     fn handle_web_events(&mut self) {
         for ev in web::drain_events() {
             match ev {
+                WebEvent::Relaunch { args, cwd } => self.relaunched(&args, &cwd),
                 WebEvent::OpenBeside { source, url } => {
                     let Some(src) = self.node_of(source) else { continue };
                     if self.scene.node(src).is_some()
@@ -4833,19 +4852,21 @@ impl ApplicationHandler for App {
         self.page_scale = self.scale();
         self.start_desktop();
         let restored = self.restore();
-        let url = match self.initial_url.take() {
-            Some(u) => Some(u),
-            None if !restored => Some(START_URL.to_string()),
-            None => None,
-        };
-        if let Some(url) = url
-            && let Some(id) = self.new_card_at_center(&url)
-                && !restored {
-                    self.fill_view(id);
-                    if let Some(goal) = self.camera_goal.take() {
-                        self.camera = goal;
-                    }
+        let mut urls = std::mem::take(&mut self.initial_urls);
+        if urls.is_empty() && !restored {
+            urls.push(START_URL.to_string());
+        }
+        let mut last = None;
+        for url in &urls {
+            last = self.new_card_at_center(url).or(last);
+        }
+        if let Some(id) = last
+            && !restored {
+                self.fill_view(id);
+                if let Some(goal) = self.camera_goal.take() {
+                    self.camera = goal;
                 }
+            }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {

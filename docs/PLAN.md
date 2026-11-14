@@ -560,8 +560,27 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   - Test hooks: `TRAILBOARD_OMARCHY_STATE` and `TRAILBOARD_OMARCHY_SHELL`
     point at a fake theme and shell.toml; a `hyprctl` earlier on `PATH` fakes
     the rounding.
-- ⬜ A `.desktop` entry and icon (`share/trailboard.desktop`, `share/trailboard.svg`)
-  so Trailboard shows in the Omarchy launcher; translations of the UI strings.
+- ✅ A `.desktop` entry and icon (`share/trailboard.desktop`, `share/trailboard.svg`,
+  `scripts/install-desktop.sh`) so Trailboard shows in the Omarchy launcher.
+  Decisions (2026-11-14):
+  - The entry declares `WebBrowser` and the http/https/HTML types, so it can be
+    picked as the default browser (`xdg-settings`); the script doesn't do that
+    itself. It installs per user and runs the binary by its absolute path
+    (packaging in M9 will install to `/usr`).
+  - A second launch on the same profile is handed to the running instance by
+    Chromium's own process singleton (`on_already_running_app_relaunch` →
+    `WebEvent::Relaunch`; the second process gets `Startup::Handed` and exits
+    0). No socket of our own. The profile is per `XDG_DATA_HOME`, so isolated
+    test runs never reach the user's window.
+  - Handed pages open as new cards in the space on screen, near the view's
+    middle, the last one current; Read Mode is left first. With no pages the
+    window is only asked to come forward (`focus_window`; Hyprland may just
+    mark it urgent).
+  - Arguments resolve with `launch::target`: an existing file (relative to the
+    launch's directory) becomes a `file://` URL, otherwise as the address bar
+    would. Several arguments open several cards (first launch too).
+- ⬜ Translations of the UI strings (needs a string table first; split off the
+  `.desktop` item).
 - ⬜ Settings panel; download handling and a downloads list.
 - ✅ Loading and site icons in titles; card names when zoomed out
   (`scene::icon`, `storage::icons`, `WebEvent::Favicon`). Decisions (2026-11-14):
@@ -738,14 +757,14 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M7 thumbnails; M7 is done.
-**Repo state:** on `master`, committed after 1221aed; working tree clean.
+**Last session:** 2026-11-14. M6 desktop entry, icon and hand-off to a running instance.
+**Repo state:** on `master`, committed after 35cab5e; working tree clean.
 **Done this session:**
-- Page thumbnails in `page-text.db` (v2): taken with the page's text, shown
-  beside the highlighted row in Ctrl+K / Ctrl+H and on sleeping cards that
-  never painted this session. See M7.
-**Next up:** M6's remaining ⬜ (`.desktop` entry and icon, then settings,
-downloads), or M4/M5's partial items.
+- `share/trailboard.desktop`, `share/trailboard.svg`, `scripts/install-desktop.sh`.
+- A second launch hands its URLs to the running window (CEF process
+  singleton → `WebEvent::Relaunch`) instead of failing with "CEF initialize
+  failed"; command-line paths resolve against the launch's directory. See M6.
+**Next up:** M6's settings panel, then downloads (or M4/M5's partial items).
 Small follow-ups: thumbnails are taken on the main thread (55–85 ms each
 in a debug build at 1.2 s after load; move the shrink/encode off-thread if
 it shows in release); a thumbnail on history rows or the sidebar; Shift+Delete on a closed row could drop it from the stack;
@@ -762,6 +781,17 @@ several cards; link hints inside iframes; xdg-desktop-portal file chooser for
 Save as Markdown; i18n; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out.
 **Notes for the next session:**
+- Hand-off verified e2e (`~/.cache/trailboard-e2e-desktop`, `site/a.html`,
+  `b.html`; `inst/` has the entry installed by the script for a copy of the
+  binary named `trail$board` in `bin dir/`, to test Exec quoting). With one
+  instance on `data/`: `cd site; trailboard b.html example.com` → exit 0,
+  "opened in the running Trailboard", two cards; no arguments → exit 0, a
+  focus request only; `gio launch` of the installed entry with a path → a
+  card. The board then held 4 cards. Screenshot relaunch checked. Not
+  verified: the Omarchy launcher itself (walker) and a real link click from
+  another app, whether Hyprland raises the window (`focus_window` sent;
+  without an activation token it may only mark it urgent), the icon at
+  16–32 px.
 - Thumbnails verified e2e (`~/.cache/trailboard-e2e-thumbs`, `run.sh N
   shot…`, `MAXLIVE=` sets `TRAILBOARD_MAX_LIVE`; serve `site/` on :8741).
   Run 1: a, b, c and c#view each got a 480×338 thumb (3.4–4.6 KB); closed

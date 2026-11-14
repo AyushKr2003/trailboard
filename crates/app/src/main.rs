@@ -6,6 +6,7 @@ mod clipboard;
 mod desktop;
 mod hints;
 mod keymap;
+mod launch;
 mod menu;
 mod note;
 mod omnibox;
@@ -49,6 +50,12 @@ fn main() -> ExitCode {
     let engine = match web::start(&cef_dir(), &data_dir().join("browser")) {
         Ok(web::Startup::Subprocess(code)) => return ExitCode::from(code as u8),
         Ok(web::Startup::Browser(engine)) => engine,
+        Ok(web::Startup::Handed) => {
+            // A launcher (or a link from another app) while we already run:
+            // the running window opens the URLs.
+            eprintln!("trailboard: opened in the running Trailboard");
+            return ExitCode::SUCCESS;
+        }
         Err(e) => {
             eprintln!("trailboard: could not start Chromium: {e}");
             return ExitCode::FAILURE;
@@ -57,10 +64,11 @@ fn main() -> ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,wgpu_core=warn,wgpu_hal=warn,naga=warn"))
         .init();
 
-    let initial_url = std::env::args().skip(1).find(|a| !a.starts_with('-'));
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let urls = std::env::args().skip(1).filter_map(|a| launch::target(&a, &cwd)).collect();
     let mut event_loop = EventLoop::new().expect("event loop");
     event_loop.set_control_flow(ControlFlow::Poll);
-    let mut app = app::App::new(initial_url, data_dir());
+    let mut app = app::App::new(urls, data_dir());
 
     let mut last = Instant::now();
     let code = loop {

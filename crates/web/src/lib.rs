@@ -44,6 +44,12 @@ pub enum WebEvent {
     /// `url` is the page's address as the browser knows it (a page can't claim
     /// another); the message is dropped if the page has moved on since.
     PageText { page: u64, url: String, title: String, text: String },
+    /// Trailboard was started again (from a launcher, or another app opening a
+    /// link) while this instance runs on the same profile. Chromium's process
+    /// singleton handed us its command line: the plain `args` (URLs or paths,
+    /// switches left out) and the directory it was started in. The other
+    /// process exits with [`Startup::Handed`].
+    Relaunch { args: Vec<String>, cwd: String },
 }
 
 /// Largest favicon side asked of Chromium, px (title bars draw 16 px icons, sharp at 2×).
@@ -240,6 +246,30 @@ wrap_app! {
             cl.append_switch(Some(&"use-mock-keychain".into()));
             cl.append_switch(Some(&"password-store=basic".into()));
         }
+
+        fn browser_process_handler(&self) -> Option<BrowserProcessHandler> {
+            Some(TrailProcess::new())
+        }
+    }
+}
+
+wrap_browser_process_handler! {
+    struct TrailProcess;
+
+    impl BrowserProcessHandler {
+        fn on_already_running_app_relaunch(
+            &self,
+            command_line: Option<&mut CommandLine>,
+            current_directory: Option<&CefString>,
+        ) -> ::std::os::raw::c_int {
+            let Some(cl) = command_line else { return 0 };
+            let mut list = CefStringList::new();
+            cl.arguments(Some(&mut list));
+            let cwd = current_directory.map(|d| d.to_string()).unwrap_or_default();
+            emit(WebEvent::Relaunch { args: list.into_iter().collect(), cwd });
+            // Handled: we open the URLs ourselves instead of a Chrome window.
+            1
+        }
     }
 }
 
@@ -249,6 +279,9 @@ pub enum Startup {
     Subprocess(i32),
     /// This is the browser process and CEF is initialized.
     Browser(Engine),
+    /// Another Trailboard already runs on this profile; Chromium handed it our
+    /// command line (it sees [`WebEvent::Relaunch`]). Exit successfully.
+    Handed,
 }
 
 /// Must run first in `main`. Handles CEF helper subprocesses (which re-execute
@@ -285,7 +318,10 @@ pub fn start(cef_dir: &Path, cache_dir: &Path) -> Result<Startup, String> {
         ..Default::default()
     };
     if initialize(Some(args.as_main_args()), Some(&settings), Some(&mut app), std::ptr::null_mut()) != 1 {
-        return Err("CEF initialize failed".into());
+        if get_exit_code() == sys::cef_resultcode_t::CEF_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED as i32 {
+            return Ok(Startup::Handed);
+        }
+        return Err(format!("CEF initialize failed (exit code {})", get_exit_code()));
     }
     Ok(Startup::Browser(Engine { _private: () }))
 }

@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Trailboard
+GenericName=Web Browser
+Comment=Browse the web as cards on an infinite board
+Exec=trailboard %U
+Icon=trailboard
+Terminal=false
+StartupNotify=true
+StartupWMClass=trailboard
+Categories=Network;WebBrowser;
+MimeType=text/html;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
+Keywords=browser;web;internet;canvas;board;tabs;

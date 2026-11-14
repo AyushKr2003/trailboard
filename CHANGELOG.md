@@ -7,6 +7,14 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Desktop entry and icon**: `scripts/install-desktop.sh` installs
+  `trailboard.desktop` and its icon for your user, so Trailboard shows in the
+  app launcher and can be chosen as the default browser.
+- **Opening pages in the running window**: starting Trailboard again while it
+  runs (from the launcher, a shell, or a link in another app) opens the given
+  pages as new cards in the running window instead of failing. Several pages
+  can be given at once, and file paths are read from the directory you ran it
+  in.
 - **Page thumbnails**: a small picture of each page you open is kept with
   its history (for the newest 1000 pages). Ctrl+K and Ctrl+H show the
   highlighted page's picture beside the list (or under it in a narrow

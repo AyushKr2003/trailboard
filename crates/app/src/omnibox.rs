@@ -13,6 +13,8 @@ pub enum Target {
     NameTrail(scene::NodeId),
     /// The Ctrl+K palette: the text searches cards, spaces and commands (`palette`).
     Palette,
+    /// Find in this card's page (Ctrl+F): the text is searched as you type.
+    Find(scene::NodeId),
 }
 
 #[derive(Debug)]

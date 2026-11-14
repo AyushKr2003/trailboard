@@ -26,7 +26,11 @@
 //!   (folded ones too), the other spaces and the board commands; Up/Down pick,
 //!   Enter goes there or runs it, the last row searches the web or opens an address.
 //! - Ctrl+L address bar, Ctrl+T new card, Ctrl+W close, Ctrl+Shift+T reopen,
-//!   Ctrl+R reload, Alt+←/→ back/forward, Ctrl+0 fit all.
+//!   Ctrl+R reload, Alt+←/→ back/forward.
+//! - Ctrl+F find in the current card's page (the bar is an `omnibox::Target::Find`;
+//!   `sync_find` stops the search when it closes). Ctrl +/−/0 zoom the current
+//!   page per site (`scene::pagezoom`, saved by `storage::zoom`, applied by
+//!   `web::set_page_zoom`); with no page current Ctrl+0 fits all.
 //! - Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y) undo/redo board edits (open, close, move,
 //!   resize). After clicking inside a page they go to the page instead (text undo).
 //! - Shift+drag on the board draws a selection band; Shift+click a title bar adds or
@@ -57,7 +61,9 @@
 //! browser (see `scene::liveness`). The others sleep: their page is closed and the
 //! card shows its last frame, dimmed, until it is focused or scrolled into view.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -65,6 +71,7 @@ use compositor::{Background, Layer, Quad, Renderer, Shape, Text};
 use scene::arrange::Arrange;
 use scene::hint;
 use scene::nav::{self, Dir};
+use scene::pagezoom::{self, SiteZooms};
 use scene::{liveness, placement, read, selection, tidy, Camera, Change, Edge, History, Node, NodeId, Rect, Scene, Selection, TrailStep, Vec2};
 use storage::spaces::{self, SpaceId, SpaceIndex};
 use web::{MouseButton as WebButton, Page, SpawnBeside, WebEvent};
@@ -237,10 +244,21 @@ pub struct App {
     /// Files saved as Markdown this session, per space and note (`None`: the
     /// whole board), so saving again overwrites them.
     saved: HashMap<(SpaceId, Option<NodeId>), std::path::PathBuf>,
+    /// Page zoom per site (Ctrl +/−/0), shared with `web` (`web::set_page_zoom`).
+    zooms: Rc<RefCell<SiteZooms>>,
+    /// The page find in page last searched (to stop it when the bar closes).
+    finding: Option<NodeId>,
+    /// Find in page's last result: matches and the active one (1-based).
+    found: Option<(i32, i32)>,
+    /// What find in page last looked for; the bar opens with it.
+    last_find: String,
 }
 
 impl App {
     pub fn new(initial_url: Option<String>, data_dir: std::path::PathBuf) -> Self {
+        let zooms = Rc::new(RefCell::new(storage::zoom::load_zooms(&data_dir)));
+        let lookup = zooms.clone();
+        web::set_page_zoom(move |url| lookup.borrow().get(url));
         Self {
             renderer: None,
             scene: Scene::new(),
@@ -298,6 +316,10 @@ impl App {
             page_scheme: None,
             note_target: None,
             saved: HashMap::new(),
+            zooms,
+            finding: None,
+            found: None,
+            last_find: String::new(),
         }
     }
 
@@ -1138,6 +1160,88 @@ impl App {
         self.ensure_visible(id);
     }
 
+    // ---------------------------------------------------------------- find in page, page zoom
+
+    /// Ctrl+F: the find bar for the current card's page, with the last search
+    /// selected (and run again, so its matches show at once).
+    fn open_find(&mut self) {
+        let Some(id) = self.focused.filter(|id| self.cards.contains_key(id)) else {
+            self.toast("Pick a page to find in first");
+            return;
+        };
+        self.menu = None;
+        self.link_hints = None;
+        self.finish_arrange(true);
+        let text = self.last_find.clone();
+        self.omnibox = Some(Omnibox::new(&text, Target::Find(id)));
+        self.found = None;
+        if !text.is_empty() {
+            self.cards[&id].page.find(&text, true, false);
+        }
+        log::info!("find open on card {}", id.0);
+    }
+
+    /// Keeps the page being searched in step with the find bar: a closed bar
+    /// (Esc, a click, another box) stops the search, and the bar closes when
+    /// its card stops being the current one or its page goes to sleep.
+    fn sync_find(&mut self) {
+        let mut open = self.omnibox.as_ref().and_then(|ob| match ob.target {
+            Target::Find(id) => Some(id),
+            _ => None,
+        });
+        if let Some(id) = open
+            && (self.focused != Some(id) || !self.cards.contains_key(&id))
+        {
+            self.omnibox = None;
+            open = None;
+        }
+        if self.finding != open {
+            if let Some(c) = self.finding.and_then(|old| self.cards.get(&old)) {
+                c.page.stop_finding();
+            }
+            if open.is_none() {
+                self.found = None;
+                log::info!("find closed");
+            }
+            self.finding = open;
+        }
+    }
+
+    /// Ctrl +/− (`dir` ±1) or Ctrl+0 (`dir` 0): zoom the current card's page,
+    /// and every card on the same site with it. With no page current, they zoom
+    /// the board and fit everything instead.
+    fn zoom_page(&mut self, dir: i32) {
+        let url = self.focused.and_then(|id| self.scene.node(id)).filter(|n| !n.is_note()).map(|n| n.url.clone());
+        let Some(url) = url else {
+            if dir == 0 {
+                self.fit_all();
+            } else if self.read.is_none() {
+                self.zoom_by_key(dir > 0);
+            }
+            return;
+        };
+        let want = if dir == 0 { 1.0 } else { pagezoom::step(self.zooms.borrow().get(&url), dir) };
+        if self.zooms.borrow_mut().set(&url, want) {
+            for c in self.cards.values() {
+                c.page.refresh_zoom();
+            }
+            if self.persist
+                && let Err(e) = storage::zoom::save_zooms(&self.data_dir, &self.zooms.borrow())
+            {
+                log::error!("saving page zoom: {e}");
+            }
+        }
+        let site = pagezoom::site_of(&url);
+        let label = pagezoom::label(self.zooms.borrow().get(&url));
+        log::info!("page zoom {site:?} {label}");
+        let name = match site.as_str() {
+            "" | "about" => "Zoom",
+            "file" => "Local files",
+            s => s,
+        };
+        self.toast(format!("{name} · {label}"));
+    }
+
     // ---------------------------------------------------------------- palette
 
     /// Ctrl+K: the palette, over everything but Read Mode's page.
@@ -1209,6 +1313,10 @@ impl App {
                 Some(p) => p.reload(),
                 None => self.toast("No page to reload"),
             },
+            Command::FindInPage => self.open_find(),
+            Command::ZoomIn => self.zoom_page(1),
+            Command::ZoomOut => self.zoom_page(-1),
+            Command::ZoomReset => self.zoom_page(0),
             Command::SelectAll => self.selection.select_all(&self.scene),
             Command::NewSpace => self.new_space(),
             Command::NextSpace | Command::PreviousSpace => {
@@ -1849,6 +1957,15 @@ impl App {
                         self.set_cursor(cursor);
                     }
                 }
+                WebEvent::FindResult { page, count, active, done } => {
+                    let Some(id) = self.node_of(page) else { continue };
+                    if self.omnibox.as_ref().is_some_and(|ob| ob.target == Target::Find(id)) {
+                        self.found = Some((count, active));
+                        if done {
+                            log::info!("find: {active} of {count}");
+                        }
+                    }
+                }
                 WebEvent::Links { page, width, links } => {
                     if let Some(id) = self.node_of(page) {
                         self.got_links(id, width, links);
@@ -2374,6 +2491,14 @@ impl App {
             match ev.named {
                 Some(NamedKey::Escape) => self.omnibox = None,
                 _ if ctrl && code == Some(KeyCode::KeyK) && ob.target == Target::Palette => self.omnibox = None,
+                _ if ctrl && code == Some(KeyCode::KeyF) && matches!(ob.target, Target::Find(_)) => ob.select_all = true,
+                Some(NamedKey::Enter) if matches!(ob.target, Target::Find(_)) => {
+                    if let Target::Find(id) = ob.target
+                        && let Some(c) = self.cards.get(&id)
+                    {
+                        c.page.find(&ob.text, !shift, true);
+                    }
+                }
                 Some(NamedKey::Enter) if ob.target == Target::Palette => {
                     let ob = self.omnibox.take().expect("palette open");
                     let rows = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces);
@@ -2429,6 +2554,17 @@ impl App {
                                 ob.insert(&t);
                             }
                         }
+                }
+            }
+            // Find as you type.
+            if let Some(ob) = self.omnibox.as_ref()
+                && let Target::Find(id) = ob.target
+                && ob.text != before
+            {
+                self.last_find = ob.text.clone();
+                self.found = None;
+                if let Some(c) = self.cards.get(&id) {
+                    c.page.find(&ob.text, true, false);
                 }
             }
             // New text, new results: back to the best one.
@@ -2537,8 +2673,24 @@ impl App {
                     }
                     true
                 }
-                Some(KeyCode::Digit0) if ctrl => {
-                    self.fit_all();
+                Some(KeyCode::KeyF) if ctrl && !alt && !shift => {
+                    self.open_find();
+                    true
+                }
+                Some(
+                    KeyCode::Equal
+                    | KeyCode::NumpadAdd
+                    | KeyCode::Minus
+                    | KeyCode::NumpadSubtract
+                    | KeyCode::Digit0
+                    | KeyCode::Numpad0,
+                ) if ctrl && !alt => {
+                    let dir = match code {
+                        Some(KeyCode::Equal | KeyCode::NumpadAdd) => 1,
+                        Some(KeyCode::Minus | KeyCode::NumpadSubtract) => -1,
+                        _ => 0,
+                    };
+                    self.zoom_page(dir);
                     true
                 }
                 Some(KeyCode::ArrowLeft) if alt => {
@@ -3039,6 +3191,7 @@ impl App {
                 Target::RenameSpace => "Space name",
                 Target::NameTrail(_) => "Trail name (empty to clear)",
                 Target::Palette => "Find a card, space or command",
+                Target::Find(_) => "Find in page",
                 _ => "Search or enter address",
             };
             let selected = ob.select_all && !ob.text.is_empty();
@@ -3080,6 +3233,27 @@ impl App {
                 clip: r,
                 bold: false,
             });
+            // Find in page: "3 of 17" (or "No matches") at the right end.
+            if matches!(ob.target, Target::Find(_)) && !ob.text.is_empty()
+                && let Some((count, active)) = self.found
+            {
+                // Chromium picks an active match only once Enter steps to one.
+                let msg = match (count, active) {
+                    (0, _) => "No matches".to_string(),
+                    (1, 0) => "1 match".to_string(),
+                    (n, 0) => format!("{n} matches"),
+                    (n, a) => format!("{a} of {n}"),
+                };
+                let w = self.renderer.as_mut().map_or(0.0, |rd| rd.measure(&msg, size, false));
+                l.texts.push(Text {
+                    text: msg,
+                    pos: [r.right() - pad - w, r.y + (h - size * 1.3) / 2.0],
+                    size,
+                    color: rgb(th.dim_text(), 1.0),
+                    clip: r,
+                    bold: false,
+                });
+            }
             layers.push(l);
             if ob.target == Target::Palette {
                 let rows = palette::rows(&ob.text, &self.scene, &self.used, &self.spaces);
@@ -3251,6 +3425,7 @@ impl App {
         self.run_script();
         self.follow_desktop();
         self.handle_web_events();
+        self.sync_find();
         self.autosave();
         self.step_camera(dt);
         self.sync_pages();
@@ -3707,6 +3882,23 @@ impl App {
                         log::info!("script sidebar row {i} at {at}: {what}");
                     }
                 }
+                Cmd::Zooms => {
+                    log::info!("script zooms: sites={:?}", self.zooms.borrow().sites);
+                    let mut ids: Vec<_> = self.cards.keys().copied().collect();
+                    ids.sort();
+                    for id in ids {
+                        let url = self.scene.node(id).map(|n| n.url.clone()).unwrap_or_default();
+                        let page = self.cards[&id].page.zoom_factor();
+                        log::info!(
+                            "script zoom card {}: site {:?} want {} chromium/scale {page:.3} {url:?}",
+                            id.0, pagezoom::site_of(&url), pagezoom::label(self.zooms.borrow().get(&url))
+                        );
+                    }
+                }
+                Cmd::Find => match self.omnibox.as_ref().filter(|ob| matches!(ob.target, Target::Find(_))) {
+                    None => log::info!("script find: closed"),
+                    Some(ob) => log::info!("script find: {:?} on {:?} found={:?}", ob.text, ob.target, self.found),
+                },
                 Cmd::Palette => match self.omnibox.as_ref().filter(|ob| ob.target == Target::Palette) {
                     None => log::info!("script palette: closed"),
                     Some(ob) => {

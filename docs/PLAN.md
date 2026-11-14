@@ -84,8 +84,8 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   rects, so the app still works in CSS px. Trade-offs: `devicePixelRatio` equals
   the raster scale; Chromium keeps zoom per origin (shared by same-origin cards,
   fine while the scale is global) and we re-assert it on every navigation, so a
-  page may lay out once at a stale zoom; per-card scales or user page zoom
-  (Ctrl +/-) will need the two multiplied.
+  page may lay out once at a stale zoom. User page zoom (Ctrl +/−, M6) is
+  multiplied in: Chromium gets `scale × zoom`, the view stays `size × scale`.
 - ✅ Undo/redo for board edits (move, resize, close, open): `scene::History`,
   Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y. Decisions: history is per session (not saved);
   page navigation, titles and stacking are not board edits; after a click inside
@@ -414,7 +414,33 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     (up to 9 rows, fewer in a short window, with a scroll bar).
   - Not done: history (M7), opening a card *beside* the current one from
     the palette (Shift+Enter?), recently closed cards as results.
-- Find in page (Ctrl+F) bar; per-page zoom (Ctrl +/−/0 inside a page).
+- ✅ Find in page (Ctrl+F; `omnibox::Target::Find`, `web::Page::find`).
+  Decisions (2026-11-14):
+  - The bar is the app's one text field at the top (like the palette), not a
+    bar on the card: it searches the current card's page (with or without the
+    keys). No current live page: a toast.
+  - Search as you type, case-insensitive (Chromium's find). Enter / Shift+Enter
+    step to the next / previous match; the right end shows "N matches", then
+    "3 of N" once a match is active (Chromium picks one only on Enter), or
+    "No matches". Ctrl+F in the bar selects its text.
+  - It opens with the last search (selected, and run again). Esc, a click
+    elsewhere or another box closes it and stops the search (`sync_find`),
+    leaving the active match selected; it also closes when its card stops
+    being current or goes to sleep.
+- ✅ Page zoom (Ctrl +/−/0; `scene::pagezoom`, `storage::zoom`,
+  `web::set_page_zoom`). Decisions (2026-11-14):
+  - Per site, not per card, like desktop browsers: Chromium keeps zoom per
+    host, so per-card zooms of one site would fight. Site = host with port,
+    lowercased, `www.` dropped; `file:`/`data:`/`about:` pages share one per
+    scheme. Notes are never zoomed.
+  - Steps 25%–500% as in desktop browsers. Saved in `$DATA/zoom.json`
+    (version 1, shared by all spaces; 100% is not stored). A toast shows
+    "site · 110%".
+  - Keys act on the current card whether or not its page has the keys. With
+    no page current, Ctrl +/− zoom the board and Ctrl+0 fits everything;
+    with one, Ctrl+0 is 100% (Shift+F stays Fit).
+  - Not done: a zoom badge on zoomed cards' title bars; Ctrl+scroll inside a
+    page (it zooms the board); zooming notes.
 - ✅ Keyboard-driven board (`scene::nav`, `App::typing`). Decisions (2026-11-14),
   following Omarchy's app conventions (the `omarchy-app` skill: keyboard
   first, `?` sheet, Q quits, Space the main action, bare keys never taken
@@ -564,22 +590,23 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M6 Ctrl+K palette.
-**Repo state:** on `master`, committed after 2f691af; working tree clean.
+**Last session:** 2026-11-14. M6 find in page and page zoom.
+**Repo state:** on `master`, committed after e24c526; working tree clean.
 **Done this session:**
-- `scene::palette`: `fuzzy` (DP best placement, positions for highlight),
-  `rank` (title or hidden alt text, ties in caller order), `keep_visible`.
-  Unit tests.
-- `app::palette`: commands table, `rows` (cards by recency, folded ones too,
-  other spaces, commands, open/search row), `Panel` layout and hit testing,
-  `layer` drawing (dots in trail/sticky colour, matched letters in accent,
-  scroll bar). Unit tests. `omnibox::Target::Palette` with `sel`/`scroll`.
-- `App`: Ctrl+K, keys in the field (↑/↓, Ctrl+N/P/J, PgUp/PgDn), Enter,
-  click/hover/wheel, `run_palette`/`run_command`, `go_to_card` (shared with
-  the sidebar). Script command `palette`. Sheet, README, CHANGELOG updated.
-**Next up:** Find in page (Ctrl+F) bar and per-page zoom (Ctrl +/−/0 inside a
-page), M6.
-Small follow-ups: palette history once M7 exists; Shift+Enter in the palette
+- `scene::pagezoom`: zoom steps, `site_of`, `SiteZooms` (100% not kept). Unit tests.
+- `storage::zoom`: `$DATA/zoom.json` v1 load/save (bad or newer files give
+  none). Unit test.
+- `web`: `set_page_zoom` lookup (the page's URL → factor), applied as
+  `scale × zoom` on every navigation; `Page::refresh_zoom`, `zoom_factor`;
+  `Page::find`/`stop_finding` and a `FindHandler` → `WebEvent::FindResult`.
+- `App`: Ctrl+F (`open_find`, `sync_find`, Enter/Shift+Enter, count in the
+  field), Ctrl +/−/0 (`zoom_page`), palette commands *Find in page*, *Zoom
+  page in/out*, *Reset page zoom*; script `zooms` and `find`. Sheet, README,
+  CHANGELOG updated.
+**Next up:** M6's remaining 🟡: loading/favicons in titles and hover card
+names when zoomed out; or the M7 history store (palette history follows).
+Small follow-ups: a zoom badge on a zoomed card's title bar; Ctrl+scroll
+inside a page to zoom it; palette history once M7 exists; Shift+Enter in the palette
 to open beside; sidebar pins/favourites and drag to reorder (need a stored
 order, board v6); rename a trail from the sidebar or its tag; the Menu key /
 Shift+F10 for the page menu; keyboard selection of several cards; link hints
@@ -588,6 +615,23 @@ a `.desktop` entry and icon, xdg-desktop-portal file chooser for Save as
 Markdown, i18n. Also: animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out.
 **Notes for the next session:**
+- Find and zoom verified e2e (`~/.cache/trailboard-e2e-findzoom`, `run.sh N
+  shot…` opens `find.html`: "apple" ×4 incl. "Apple" and "pineapple", two
+  links, its layout width). Run 1: Ctrl+F, `apple` → 4 matches highlighted;
+  Enter → 1 of 4, 2 of 4, Shift+Enter → 1 of 4; `applex` → No matches; Esc
+  closed and stopped; Ctrl+F reopened with `apple`; Ctrl+= ×2 → 125% (Chromium
+  factor / scale 1.250), f hints sat on the zoomed links; Ctrl+- → 110%, and it
+  stayed 110% after the raster scale went 1 → 0.75; a `data:` card opened
+  beside stayed 100% (other site); `zoom.json` held `file: 1.1`. Run 2 (copy
+  of run 1): restored page laid out at 931 px (1024 / 1.1), toast
+  "Local files · 125%", Ctrl+0 → 100% and the entry removed. Screenshots
+  find1, zoom1, hints1, toast2 checked, dark theme only.
+- Not verified: a real keyboard (Ctrl++ on US layouts is Ctrl+Shift+=, which
+  is accepted, but untested on others), light themes for the count, two
+  same-site cards zoomed together on screen (both follow Chromium's per-host
+  zoom; only one live file card was checked), find in a note or in Read Mode,
+  a page that navigates while the bar is open, the "N matches" label on screen
+  (logged only).
 - Palette verified e2e (`~/.cache/trailboard-e2e-palette`, `run.sh N shot…`,
   seed = the sidebar run's seed in `seed/`). Run 1: Ctrl+K listed 7 cards then
   commands; `milk` → the sticky (letters highlighted), Enter went to it;

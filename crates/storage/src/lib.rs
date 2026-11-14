@@ -4,6 +4,7 @@
 
 pub mod export;
 pub mod spaces;
+pub mod zoom;
 
 use std::fs;
 use std::io::Write;

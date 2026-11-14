@@ -20,12 +20,14 @@
 //! ime-commit 你好        # IME final text
 //! menuclick Copy       # click the open context menu's item with this label
 //! badgeclick 3         # click the count badge of the stack card 3 fronts (opens its outline)
-//! fit                  # same as Ctrl+0
+//! fit                  # same as Shift+F (fit everything)
 //! undo                 # same as Ctrl+Z on the board
 //! redo                 # same as Ctrl+Shift+Z
 //! cards                # log every card (id, rect, live page, selected, title, url), edge and trail label
 //! spaces               # log every space (id, name, background) and which is active
 //! sidebar              # log the trails sidebar: open/keys, highlight, scroll, each row and where to click it
+//! zooms                # log each live card's page zoom (wanted and Chromium's)
+//! find                 # log the find bar: text, card, matches
 //! palette              # log the Ctrl+K palette: query, highlight, each result row and where to click it
 //! open https://…       # same as Ctrl+T + Enter
 //! log some note        # print to the log (marks screenshot moments)
@@ -60,6 +62,10 @@ pub enum Cmd {
     Spaces,
     Sidebar,
     Palette,
+    /// Log each live card's site zoom and the zoom Chromium has.
+    Zooms,
+    /// Log the find bar: its text, card and result.
+    Find,
     Open(String),
     Log(String),
     Quit,
@@ -126,6 +132,8 @@ fn parse(line: &str) -> Option<Cmd> {
         "spaces" => Cmd::Spaces,
         "sidebar" => Cmd::Sidebar,
         "palette" => Cmd::Palette,
+        "zooms" => Cmd::Zooms,
+        "find" => Cmd::Find,
         "open" => Cmd::Open(rest.trim().to_string()),
         "log" => Cmd::Log(rest.trim().to_string()),
         "quit" => Cmd::Quit,

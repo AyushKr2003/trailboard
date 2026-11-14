@@ -12,6 +12,7 @@ pub mod liveness;
 pub mod mark;
 pub mod nav;
 pub mod note;
+pub mod pagezoom;
 pub mod palette;
 pub mod placement;
 pub mod read;

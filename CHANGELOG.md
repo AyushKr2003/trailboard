@@ -7,6 +7,16 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Find in page**: Ctrl+F opens a find bar for the current card's page.
+  Matches are highlighted as you type; Enter and Shift+Enter step to the next
+  and previous one, and the bar shows how many there are ("3 of 17", "No
+  matches"). Esc closes it. It opens with the last search.
+- **Page zoom**: Ctrl++ and Ctrl+- zoom the current card's page (25% to 500%),
+  Ctrl+0 puts it back to 100%. As in other browsers the zoom belongs to the
+  site: every card on it follows, and it is remembered (in `zoom.json`, for
+  all spaces). A toast shows the new zoom. Link hints follow zoomed pages.
+- Palette commands *Find in page*, *Zoom page in*, *Zoom page out* and
+  *Reset page zoom*. Script commands `zooms` and `find`.
 - **Ctrl+K palette**: one box to find any card on the board (folded ones
   too, by title, address or a note's text), switch to another space, or run
   a board command by name (with its shortcut shown beside it). Letters can be
@@ -42,6 +52,8 @@ All notable changes to Trailboard. The format follows
   takes a letter back; Esc, another key, a click or a scroll cancels.
 
 ### Changed
+- Ctrl+0 now resets the current page's zoom; it fits everything only when no
+  card is current. Shift+F always fits everything.
 - Fit everything moved from F to Shift+F (Ctrl+0 still works), because f
   now shows link hints.
 

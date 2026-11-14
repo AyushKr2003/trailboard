@@ -33,6 +33,9 @@ pub enum WebEvent {
     /// the page's layout width in CSS px (to scale their rects to the view's)
     /// and the links. Any page can send this, so only expect it after asking.
     Links { page: u64, width: f32, links: Vec<links::Link> },
+    /// Find in page ([`Page::find`]): `count` matches, the `active` one (1-based,
+    /// 0 for none); `done` once Chromium has finished counting.
+    FindResult { page: u64, count: i32, active: i32, done: bool },
 }
 
 /// What a page is: a web page, or one of the app's own note editors.
@@ -187,6 +190,25 @@ pub fn set_color_scheme(dark: bool) {
     DARK.set(Some(dark));
 }
 
+type ZoomLookup = StdRc<dyn Fn(&str) -> f64>;
+
+thread_local! {
+    /// The user's page zoom for a URL (see [`set_page_zoom`]).
+    static PAGE_ZOOM: RefCell<Option<ZoomLookup>> = const { RefCell::new(None) };
+}
+
+/// Sets how web pages find their user zoom (Ctrl +/−) from their URL: a factor,
+/// 1.0 for none. Pages ask on every navigation; after changing what it answers,
+/// call [`Page::refresh_zoom`] on live pages. Notes are never zoomed.
+pub fn set_page_zoom(lookup: impl Fn(&str) -> f64 + 'static) {
+    PAGE_ZOOM.with_borrow_mut(|z| *z = Some(StdRc::new(lookup)));
+}
+
+fn page_zoom(url: &str) -> f64 {
+    let f = PAGE_ZOOM.with_borrow(|z| z.clone());
+    f.map_or(1.0, |f| f(url)).clamp(0.05, 20.0)
+}
+
 // ---------------------------------------------------------------------------
 // Process bootstrap
 // ---------------------------------------------------------------------------
@@ -312,6 +334,8 @@ struct Shared {
     ime_caret: RefCell<Option<IRect>>,
     /// URL the page was created with; the first navigation to it is never redirected beside.
     initial_url: String,
+    /// The main frame's address, for its user zoom ([`set_page_zoom`]).
+    url: RefCell<String>,
     kind: PageKind,
 }
 
@@ -338,9 +362,20 @@ impl Shared {
         (((w as f32) * s).round().max(1.0) as i32, ((h as f32) * s).round().max(1.0) as i32)
     }
 
+    /// The user's zoom for this page (1.0 for none; notes are never zoomed).
+    fn user_zoom(&self) -> f64 {
+        match self.kind {
+            PageKind::Web => page_zoom(&self.url.borrow()),
+            PageKind::Note => 1.0,
+        }
+    }
+
     /// Re-assert our page zoom; Chromium keeps zoom per origin, so a navigation can reset it.
+    /// It is the raster scale times the user's zoom: the view stays `size × scale`
+    /// pixels, so the page lays out `size / zoom` CSS px wide. Input and popup
+    /// coordinates are view px / scale (card units) either way, so they need no change.
     fn apply_zoom(&self, host: &BrowserHost) {
-        let want = zoom_level_for(*self.scale.borrow());
+        let want = zoom_level_for((*self.scale.borrow() as f64 * self.user_zoom()) as f32);
         if (host.zoom_level() - want).abs() > 1e-3 {
             log::debug!("page {} zoom level {:.3} -> {want:.3}", self.key, host.zoom_level());
             host.set_zoom_level(want);
@@ -643,6 +678,7 @@ wrap_display_handler! {
             if frame.is_some_and(|f| f.is_main() != 0)
                 && self.shared.kind == PageKind::Web
                 && let Some(url) = url {
+                    *self.shared.url.borrow_mut() = url.to_string();
                     if let Some(h) = browser.and_then(|b| b.host()) {
                         self.shared.apply_zoom(&h);
                     }
@@ -771,6 +807,31 @@ wrap_context_menu_handler! {
     }
 }
 
+wrap_find_handler! {
+    struct PageFind {
+        shared: StdRc<Shared>,
+    }
+
+    impl FindHandler {
+        fn on_find_result(
+            &self,
+            _browser: Option<&mut Browser>,
+            _identifier: ::std::os::raw::c_int,
+            count: ::std::os::raw::c_int,
+            _selection_rect: Option<&Rect>,
+            active_match_ordinal: ::std::os::raw::c_int,
+            final_update: ::std::os::raw::c_int,
+        ) {
+            emit(WebEvent::FindResult {
+                page: self.shared.key,
+                count,
+                active: active_match_ordinal,
+                done: final_update != 0,
+            });
+        }
+    }
+}
+
 wrap_client! {
     struct PageClient {
         render: RenderHandler,
@@ -779,6 +840,7 @@ wrap_client! {
         display: DisplayHandler,
         load: LoadHandler,
         menu: ContextMenuHandler,
+        find: FindHandler,
     }
 
     impl Client {
@@ -799,6 +861,9 @@ wrap_client! {
         }
         fn context_menu_handler(&self) -> Option<ContextMenuHandler> {
             Some(self.menu.clone())
+        }
+        fn find_handler(&self) -> Option<FindHandler> {
+            Some(self.find.clone())
         }
     }
 }
@@ -838,6 +903,7 @@ impl Page {
             selection: RefCell::new(String::new()),
             ime_caret: RefCell::new(None),
             initial_url: url.to_string(),
+            url: RefCell::new(url.to_string()),
             kind,
         });
         let mut client = PageClient::new(
@@ -847,6 +913,7 @@ impl Page {
             PageDisplay::new(shared.clone()),
             PageLoad::new(shared.clone()),
             PageMenu::new(shared.clone()),
+            PageFind::new(shared.clone()),
         );
         let window_info = WindowInfo { windowless_rendering_enabled: 1, ..Default::default() };
         let browser_settings = BrowserSettings {
@@ -909,6 +976,39 @@ impl Page {
             if changed_size || changed_scale {
                 h.was_resized();
             }
+        }
+    }
+
+    /// The page zoom Chromium has, without the raster scale: the user's zoom once applied.
+    pub fn zoom_factor(&self) -> f64 {
+        let level = self.host().map_or(0.0, |h| h.zoom_level());
+        1.2f64.powf(level) / *self.shared.scale.borrow() as f64
+    }
+
+    /// Applies a changed user zoom ([`set_page_zoom`]); does nothing if it is unchanged.
+    pub fn refresh_zoom(&self) {
+        if let Some(h) = self.host() {
+            self.shared.apply_zoom(&h);
+        }
+    }
+
+    /// Finds `text` in the page (case-insensitive): a new search with
+    /// `next == false`, otherwise the next (or previous) match of the same text.
+    /// Results arrive as [`WebEvent::FindResult`].
+    pub fn find(&self, text: &str, forward: bool, next: bool) {
+        if let Some(h) = self.host() {
+            if text.is_empty() {
+                h.stop_finding(1);
+            } else {
+                h.find(Some(&CefString::from(text)), forward as _, 0, next as _);
+            }
+        }
+    }
+
+    /// Ends find in page, leaving the active match selected.
+    pub fn stop_finding(&self) {
+        if let Some(h) = self.host() {
+            h.stop_finding(0);
         }
     }
 

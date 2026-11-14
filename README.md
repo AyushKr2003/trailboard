@@ -70,7 +70,7 @@ you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change th
 | New sticky note / its next colour | Shift+N / C on it (while no page has the keys); drag its coloured strip to move it; *Make sticky note* / *Make note card* in a note's right-click menu |
 | Quote selected text in a note | right-click the selection → *Add to note* (the note last used, or a new one beside the page) |
 | Save as Markdown | Ctrl+S: the focused note, else the whole board (its trails as nested lists, notes in full); also *Save as Markdown* in a note's right-click menu. Files go to `Documents/Trailboard/` |
-| Fit everything | Ctrl+0 (or Shift+F while no page has the keys) |
+| Fit everything | Shift+F (while no page has the keys), or Ctrl+0 with no card current |
 | Trails sidebar: every trail as a tree, then the other cards | B (while no page has the keys): j/k go to a card, h/l collapse / expand a trail, Enter types in the card's page, Esc or B closes; or click a row |
 | Tidy: lay trails out left to right, no overlaps | T (while no page has the keys; Ctrl+Z undoes it) |
 | Fold the current trail (or the one in the middle of the view) into a stack / unfold it | S (while no page has the keys; Ctrl+Z undoes it) |
@@ -79,6 +79,8 @@ you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change th
 | Go to the next / previous card on the trail (folded or not) | Alt+PgDn / Alt+PgUp |
 | Name the current trail / give it the next colour | R / C (while no page has the keys; Ctrl+Z undoes it) |
 | Back / forward / reload | Alt+← / Alt+→ / Ctrl+R |
+| Find in the current page | Ctrl+F, type (matches show as you type); Enter / Shift+Enter next / previous; Esc closes |
+| Zoom the current page in / out / back to 100% | Ctrl++ / Ctrl+- / Ctrl+0: every card on that site follows, and the zoom is remembered per site |
 | Page context menu | right-click in a page (open link beside, copy link, edit, search selection) |
 | Copy / cut / paste | Ctrl+C / Ctrl+X / Ctrl+V (shared with the desktop clipboard) |
 | Leave the page | Esc |
@@ -114,10 +116,9 @@ pages paused, live-browser cap, page context menu, desktop clipboard, IME input,
 board persistence, spaces (several boards with their own camera and background),
 Read Mode, Tidy, Fold, stack outline, next/previous on a trail, Markdown notes
 with *Add to note*, trail names and colours, save a note or board as Markdown,
-the trails sidebar.
+the trails sidebar, the Ctrl+K palette, find in page and per-site page zoom.
 
-Next: Ctrl+K palette,
-history with full-text search, ad blocking, then optional semantic search and
+Next: history with full-text search, ad blocking, then optional semantic search and
 an LLM-backed "Explain" panel.
 
 - Full plan and milestone status: [docs/PLAN.md](docs/PLAN.md)

@@ -13,6 +13,7 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("h j k l · Arrows", "Go to the next card that way"),
             ("Enter · Space", "Type in the card's page"),
             ("f", "Label links; type one to open it beside"),
+            ("M, then h j k l", "Move the card (Shift resizes)"),
             ("Esc", "Back to the board, then let go"),
             ("Shift + h j k l", "Pan"),
             ("+ · -", "Zoom in / out"),

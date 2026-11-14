@@ -7,6 +7,11 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Move and resize by keyboard**: press M with no page having the keys to
+  arrange the current card. h/j/k/l or the arrows move it (with the rest of
+  the selection if it is selected), Shift with them resizes it, Ctrl takes
+  small steps. Enter or M keeps the result as one undo step, Esc puts it back.
+  A pill at the bottom shows the keys while you arrange.
 - **Link hints**: press f with no page having the keys to label the links
   you can see in the current card's page (or the one in the middle of the
   view) with short home-row labels. Type a label to open that link beside the

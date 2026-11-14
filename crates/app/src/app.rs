@@ -14,6 +14,9 @@
 //! - f labels the links on the current card's page (`scene::hint`, `web::links`);
 //!   typing a label opens that link beside the card, which becomes current. Esc,
 //!   another key, a click or a scroll ends the labels. Shift+F fits everything.
+//! - M arranges the current card (`scene::arrange`): h/j/k/l move it (the
+//!   selection with it), Shift resizes, Ctrl takes fine steps; Enter/M keep the
+//!   result as one undo step, Esc puts it back, any other key or a click keeps it.
 //! - Ctrl+L address bar, Ctrl+T new card, Ctrl+W close, Ctrl+Shift+T reopen,
 //!   Ctrl+R reload, Alt+←/→ back/forward, Ctrl+0 fit all.
 //! - Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y) undo/redo board edits (open, close, move,
@@ -51,6 +54,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use compositor::{Background, Layer, Quad, Renderer, Shape, Text};
+use scene::arrange::Arrange;
 use scene::hint;
 use scene::nav::{self, Dir};
 use scene::{liveness, placement, read, selection, tidy, Camera, Change, Edge, History, Node, NodeId, Rect, Scene, Selection, TrailStep, Vec2};
@@ -78,6 +82,11 @@ const START_URL: &str = "https://en.wikipedia.org/wiki/Special:Random";
 const CARD_W: f32 = 1024.0;
 const CARD_H: f32 = 720.0;
 const MIN_CARD: f32 = 240.0;
+/// One keyboard move or resize step (M, then h/j/k/l), in logical px on screen.
+const ARRANGE_STEP: f32 = 40.0;
+/// The fine step with Ctrl.
+const ARRANGE_FINE: f32 = 8.0;
+const ARRANGE_HELP: &str = "Moving · h j k l move · Shift resize · Ctrl fine · Enter done · Esc cancel";
 const RESIZE_GRIP: f32 = 18.0;
 const CLOSE_W: f32 = 30.0;
 /// Height of the Read Mode title bar, in overlay px (scaled by `ui()`).
@@ -157,6 +166,8 @@ pub struct App {
     hints: bool,
     /// Link hints (`f`) on a card's page: asked for, or showing labels.
     link_hints: Option<LinkHints>,
+    /// Moving or resizing the current card from the keyboard (M).
+    arrange: Option<Arrange>,
     /// Read Mode: this card fills the window (see `scene::read`).
     read: Option<NodeId>,
     /// The current mouse press started inside the context menu.
@@ -230,6 +241,7 @@ impl App {
             menu: None,
             hints: false,
             link_hints: None,
+            arrange: None,
             read: None,
             menu_pressed: false,
             clipboard: Clipboard::new(),
@@ -376,6 +388,7 @@ impl App {
 
     /// Save the current space and close its pages; keep its undo history for later.
     fn unload_space(&mut self) {
+        self.finish_arrange(true);
         self.save();
         let keys: Vec<u64> = self.scene.all_nodes().map(|n| self.page_key(n.id)).collect();
         if let Some(r) = self.renderer.as_mut() {
@@ -779,6 +792,7 @@ impl App {
     }
 
     fn undo(&mut self, redo: bool) {
+        self.finish_arrange(true);
         let changes = if redo { self.history.redo(&mut self.scene) } else { self.history.undo(&mut self.scene) };
         log::info!("{}: {changes:?}", if redo { "redo" } else { "undo" });
         let mut shown = None;
@@ -804,6 +818,7 @@ impl App {
         }
         self.keys_in_page = false;
         self.link_hints = None;
+        self.finish_arrange(true);
         if let Some(old) = self.focused.and_then(|o| self.cards.get(&o)) {
             old.page.set_focus(false);
         }
@@ -905,6 +920,82 @@ impl App {
             p.set_focus(false);
         }
         log::info!("left the page of card {:?}", self.focused.map(|f| f.0));
+    }
+
+    // ---------------------------------------------------------------- arrange
+
+    /// M: move and resize the current card (else the one in the middle of the
+    /// view) with h/j/k/l until Enter, M or Esc. A selected card brings the
+    /// rest of the selection along when it moves.
+    fn start_arrange(&mut self) {
+        if self.read.is_some() {
+            return;
+        }
+        let Some(id) = self.current() else {
+            self.toast("No card here to move");
+            return;
+        };
+        if !self.selection.contains(id) {
+            self.selection.clear();
+        }
+        self.focus(Some(id));
+        let group = selection::drag_group(&self.scene, &self.selection, id);
+        self.arrange = Arrange::new(&self.scene, id, group);
+        self.ensure_visible(id);
+        log::info!("arranging card {}", id.0);
+    }
+
+    /// Ends arranging: `keep` records the moves as one undo step, else every
+    /// card goes back where it was.
+    fn finish_arrange(&mut self, keep: bool) {
+        let Some(a) = self.arrange.take() else { return };
+        if keep {
+            self.history.moved_many(&self.scene, &a.start);
+        } else {
+            a.cancel(&mut self.scene);
+        }
+        self.dirty = true;
+        log::info!("arranged card {}: {}", a.id.0, if keep { "kept" } else { "cancelled" });
+    }
+
+    /// A key while arranging: h/j/k/l or arrows move, with Shift resize, with
+    /// Ctrl take a fine step; Enter, Space or M keep, Esc cancels. Returns
+    /// false for any other key, which keeps the arrangement and goes on as usual.
+    fn arrange_key(&mut self, code: Option<KeyCode>) -> bool {
+        let Some(a) = self.arrange.as_ref() else { return false };
+        if a.is_stale(&self.scene) {
+            self.arrange = None;
+            return false;
+        }
+        let dir = match code {
+            Some(KeyCode::KeyH | KeyCode::ArrowLeft) => Dir::Left,
+            Some(KeyCode::KeyJ | KeyCode::ArrowDown) => Dir::Down,
+            Some(KeyCode::KeyK | KeyCode::ArrowUp) => Dir::Up,
+            Some(KeyCode::KeyL | KeyCode::ArrowRight) => Dir::Right,
+            Some(KeyCode::Escape) => {
+                self.finish_arrange(false);
+                return true;
+            }
+            Some(KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space | KeyCode::KeyM) => {
+                self.finish_arrange(true);
+                return true;
+            }
+            _ => {
+                self.finish_arrange(true);
+                return false;
+            }
+        };
+        let px = if self.mods.control_key() { ARRANGE_FINE } else { ARRANGE_STEP };
+        let step = px / self.camera.zoom.max(1e-3);
+        if self.mods.shift_key() {
+            a.resize(&mut self.scene, dir, step, MIN_CARD);
+        } else {
+            a.nudge(&mut self.scene, dir, step);
+        }
+        let id = a.id;
+        self.dirty = true;
+        self.ensure_visible(id);
+        true
     }
 
     // ---------------------------------------------------------------- link hints
@@ -1507,6 +1598,10 @@ impl App {
         if state == ElementState::Pressed && self.link_hints.take().is_some() {
             log::info!("link hints cancelled by a click");
         }
+        // A press keeps a keyboard arrangement, then does what it always does.
+        if state == ElementState::Pressed {
+            self.finish_arrange(true);
+        }
         // The context menu takes clicks first. A click outside closes it; a right
         // click outside still goes through so it can open a new menu.
         if let Some(m) = &self.menu {
@@ -1796,6 +1891,13 @@ impl App {
             if pressed && !matches!(ev.named, Some(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super)) {
                 self.link_hint_key(&ev, ctrl || alt);
             }
+            return;
+        }
+        if self.arrange.is_some()
+            && pressed
+            && !matches!(ev.named, Some(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super))
+            && self.arrange_key(code)
+        {
             return;
         }
         let f1 = ev.named == Some(NamedKey::F1) && !ctrl && !alt;
@@ -2099,6 +2201,10 @@ impl App {
                     self.tidy_board();
                     true
                 }
+                Some(KeyCode::KeyM) if !self.typing() && !ctrl && !alt && !shift && self.drag_is_idle() => {
+                    self.start_arrange();
+                    true
+                }
                 Some(KeyCode::KeyN) if !self.typing() && !ctrl && !alt && self.drag_is_idle() => {
                     self.new_note_at_center();
                     true
@@ -2265,7 +2371,9 @@ impl App {
                 // The page with the keys gets a heavier ring than a card that is only current.
                 // The page with the keys gets a heavy, solid ring; a card that is
                 // only current (board keys) a thin, softer one.
-                let (w, alpha) = if typing { (3.5, 1.0) } else { (2.0, 0.6) };
+                // A card being moved by keyboard (M) gets the heavy ring too.
+                let arranging = self.arrange.as_ref().is_some_and(|a| a.id == n.id);
+                let (w, alpha) = if typing || arranging { (3.5, 1.0) } else { (2.0, 0.6) };
                 let w = w * scale.max(1.0);
                 l.quads.push(Quad {
                     shape: Shape::Rect { rect: frame.inflate(w), radius: ring(w) },
@@ -2506,6 +2614,14 @@ impl App {
             let label = self.space_label();
             let color = th.swatch(tint.as_deref());
             layers.push(self.pill(&label, Vec2::new(12.0 * ui, 12.0 * ui), 13.0 * ui, Some(color), false));
+        }
+        // While arranging by keyboard, the keys stay on screen at the bottom.
+        if self.arrange.is_some() && self.omnibox.is_none() {
+            let size = 14.0 * ui;
+            let msg = ARRANGE_HELP;
+            let w = self.renderer.as_mut().map_or(300.0, |r| r.measure(msg, size, false));
+            let pos = Vec2::new((vp.x - w) / 2.0 - 16.0 * ui, vp.y - 54.0 * ui);
+            layers.push(self.pill(msg, pos, size, None, false));
         }
         if let Some((msg, at)) = &self.toast {
             if self.confirm_delete || at.elapsed() < TOAST_FOR {

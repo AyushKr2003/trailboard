@@ -53,6 +53,7 @@ you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change th
 | Type in the current card's page | Enter or Space, or click in the page (a thick ring shows it has the keys) |
 | Back to the board / let go of the card | Esc / Esc again |
 | Pan / zoom with the keyboard | Shift + h/j/k/l or Shift + arrows / + and - |
+| Move / resize a card with the keyboard | M, then h/j/k/l (Shift resizes, Ctrl takes fine steps); Enter keeps, Esc puts it back |
 | Follow a link by keyboard | f labels the links in the current card's page; type a label to open it beside (Esc cancels) |
 | Close the current card / quit | Delete / Q (Ctrl+Q works everywhere) |
 | Focus a page | click it (keyboard and scroll then go to the page) |

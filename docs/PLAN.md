@@ -366,8 +366,22 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   - Board keys (f, N, T, S, O, R, C, `[`, `]`, `?`, Ctrl+A, Ctrl+Z/Y) work
     whenever no page has the keys and act on the current card first.
   - Enter on a note opens its editor at the end (`tbEdit`).
-  - Not done: moving and resizing cards by keyboard, the Menu key /
-    Shift+F10 for the page menu, keyboard selection of several cards.
+  - Not done: the Menu key / Shift+F10 for the page menu, keyboard
+    selection of several cards.
+- ✅ Keyboard move and resize (M; `scene::arrange`, `App::arrange`). Decisions (2026-11-14):
+  - A mode rather than chords: Alt+arrows are back/forward, Ctrl+L the
+    address bar, and Super belongs to Hyprland, so M (no page has the keys)
+    starts arranging the current card, else the one in the middle of the view.
+  - h/j/k/l or arrows move by 40 logical px on screen (so the same feel at
+    any zoom); Ctrl takes 8 px steps. Shift resizes, top-left fixed like the
+    grip: l / j grow, h / k shrink, never below the 240 minimum.
+  - If the card is selected, the whole selection moves with it; resize is
+    only ever the one card. A folded stack moves with its front, as with a drag.
+  - Enter, Space or M keep the result as one undo step; Esc puts every card
+    back. Any other key, a click, a focus change or a space switch keeps it,
+    and the key then does what it always does (so Ctrl+Z undoes the whole move).
+  - The card gets the heavy ring while arranged, the camera follows it, and a
+    pill at the bottom lists the keys for as long as the mode lasts.
 - ✅ Link hints (`f`; `scene::hint`, `web::links`, `App::link_hints`). Decisions (2026-11-14):
   - f (no page has the keys) acts on the current card, else the one in the
     middle of the view, which becomes current. Fit moves to Shift+F (Ctrl+0
@@ -479,27 +493,36 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M6 Link hints (`f`).
-**Repo state:** on `master`, committed after 9617c78; working tree clean.
+**Last session:** 2026-11-14. M6 Keyboard move and resize (M).
+**Repo state:** on `master`, committed after 025a9eb; working tree clean.
 **Done this session:**
-- `scene::hint`: prefix-free home-row labels (`labels`) and typing state
-  (`Hints`: `type_char` → Follow / Narrowed / NoMatch, `backspace`, `shown`); tests.
-- `web::links`: the link-collecting script, its console message prefix and
-  `parse` (tests); `WebEvent::Links`, `Page::request_links`.
-- `app`: `link_hints` state; f shows them (`show_link_hints`, `got_links`),
-  keys while they're up (`link_hint_key`), `follow_link` opens beside and makes
-  the new card current, `link_hint_layer` draws the labels; cancelled on click,
-  wheel, navigation, focus change, Read Mode, space switch. Fit is now Shift+F.
-  Sheet, README, CHANGELOG updated.
-**Next up:** keyboard move/resize of the current card (e.g. a move mode with
-h/j/k/l, Shift for resize), which finishes the keyboard story; then sticky notes
-(M5) and the trails sidebar (M6).
-Small follow-ups: link hints inside iframes and for buttons/inputs (click
-or focus by label); Omarchy app conventions still missing: a `.desktop` entry
-and icon, xdg-desktop-portal file chooser for Save as Markdown, following the
-Omarchy language (i18n). Also: rename a trail from the page menu or its tag;
-animate cards to their Tidy places.
+- `scene::arrange`: `Arrange` (start rects of the card and its group,
+  `nudge`, `resize`, `cancel`, `is_stale`) and `grow`; tests, including one
+  undo step for a whole session.
+- `app`: `arrange` state; M starts it (`start_arrange`), keys while it lasts
+  (`arrange_key`), `finish_arrange(keep)` on Enter/M/Space/Esc, any other key,
+  a click, a focus change, a space switch or an undo. Heavy ring on the
+  arranged card and a key pill at the bottom. Sheet, README, CHANGELOG updated.
+**Next up:** sticky notes (M5), then the trails sidebar (M6).
+Small follow-ups: the Menu key / Shift+F10 for the page menu; keyboard
+selection of several cards; link hints inside iframes and for buttons/inputs
+(click or focus by label); Omarchy app conventions still missing: a `.desktop`
+entry and icon, xdg-desktop-portal file chooser for Save as Markdown,
+following the Omarchy language (i18n). Also: rename a trail from the page menu
+or its tag; animate cards to their Tidy places.
 **Notes for the next session:**
+- Arrange verified e2e (`~/.cache/trailboard-e2e-arrange`, `run.sh N shot…`,
+  seed board in `seed/`, copy it to `dataN` first). Run 1 at zoom ≈ 0.32:
+  j → card 3, M, l l moved it 252 (2 × 40 px); Shift+L, Shift+J grew it
+  126 each, Ctrl+J moved 25 (8 px), Enter; undo restored it in one step, redo
+  re-applied; M h h Esc put it back; M l then a board click kept it; Ctrl+A,
+  M, k, Enter moved all six, one undo put all back; Shift+H × 8 stopped at
+  the 240 minimum. Screenshots arranging1 (heavy ring, card on top, key pill)
+  and sheet1 checked, dark theme only.
+- Not verified: a real keyboard (script keys only), a folded stack moved by
+  keyboard (its front moves like a drag; fold tests cover a moved front),
+  light themes for the pill, M in Read Mode (ignored by design), the camera
+  following a card moved far off screen.
 - Link hints verified e2e (`~/.cache/trailboard-e2e-hints`, `run.sh N shot…`
   opens `links.html`: 12 links plus a hidden, a covered, a `javascript:` and a
   below-the-fold one). Run 1: f labelled exactly the 12 (S…L, AA AS AD AF);

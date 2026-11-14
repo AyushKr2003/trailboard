@@ -2,6 +2,7 @@
 //! and the camera that views them. Pure data — no GPU or browser types — so it
 //! can be unit-tested and serialized.
 
+pub mod arrange;
 pub mod export;
 pub mod fold;
 pub mod geom;

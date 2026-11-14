@@ -54,7 +54,7 @@ use winit::window::{CursorIcon, Window, WindowId};
 
 use crate::clipboard::{Clipboard, Paste};
 use crate::desktop::Desktop;
-use crate::theme::{rgb, Theme};
+use crate::theme::{rgb, text_on, Theme};
 use crate::keymap::{self, KeyIn};
 use crate::menu::{self, ContextMenu, Entry};
 use crate::omnibox::{self, Omnibox, Target};
@@ -869,7 +869,11 @@ impl App {
                 self.ensure_visible(to);
                 let title = self.scene.node(to).map(|n| n.title.clone()).filter(|t| !t.is_empty());
                 let title = title.unwrap_or_else(|| self.scene.node(to).map(|n| n.url.clone()).unwrap_or_default());
-                self.toast(format!("{}/{} · {}", index + 1, len, menu::cut(&title, menu::OUTLINE_CHARS)));
+                let step = format!("{}/{} · {}", index + 1, len, menu::cut(&title, menu::OUTLINE_CHARS));
+                self.toast(match self.scene.trail_mark(to).name {
+                    Some(name) => format!("{name} · {step}"),
+                    None => step,
+                });
                 self.dirty = true;
             }
             TrailStep::End { first, .. } => {
@@ -879,6 +883,42 @@ impl App {
             }
             TrailStep::Lone => self.toast("Not on a trail"),
         }
+    }
+
+    /// R: the address bar, as a name box for the trail in the middle of the view.
+    fn ask_trail_name(&mut self) {
+        let Some(id) = read::pick(&self.scene, self.focused, self.camera.center) else { return };
+        let name = self.scene.trail_mark(id).name.unwrap_or_default();
+        self.omnibox = Some(Omnibox::new(&name, Target::NameTrail(id)));
+    }
+
+    fn name_trail(&mut self, id: NodeId, name: &str) {
+        let old = self.scene.name_trail(id, name);
+        if old.is_empty() {
+            return;
+        }
+        self.history.marked(old);
+        self.dirty = true;
+        let mark = self.scene.trail_mark(id);
+        log::info!("trail of card {} named {:?}", id.0, mark.name);
+        self.toast(match mark.name {
+            Some(n) => format!("Trail named {n}"),
+            None => "Trail name cleared".to_string(),
+        });
+    }
+
+    /// C: the trail in the middle of the view takes its next colour.
+    fn cycle_trail_colour(&mut self) {
+        let Some(id) = read::pick(&self.scene, self.focused, self.camera.center) else { return };
+        let old = self.scene.cycle_trail_colour(id);
+        self.history.marked(old);
+        self.dirty = true;
+        let colour = self.scene.trail_mark(id).colour;
+        log::info!("trail of card {} colour {:?}", id.0, colour);
+        self.toast(match colour {
+            Some(c) => format!("Trail colour: {c}"),
+            None => "Trail colour: accent".to_string(),
+        });
     }
 
     /// Cards folded away lose focus and selection; their pages sleep in `sync_liveness`.
@@ -1497,6 +1537,8 @@ impl App {
                     let ob = self.omnibox.take().expect("omnibox open");
                     if ob.target == Target::RenameSpace {
                         self.rename_space(&ob.text);
+                    } else if let Target::NameTrail(id) = ob.target {
+                        self.name_trail(id, &ob.text);
                     } else if let Some(url) = omnibox::resolve(&ob.text) {
                         match (ob.target, self.focused_page()) {
                             (Target::Focused, Some(page)) => page.load(&url),
@@ -1701,6 +1743,14 @@ impl App {
                     self.new_note_at_center();
                     true
                 }
+                Some(KeyCode::KeyR) if self.focused.is_none() && !ctrl && !alt && !shift && self.drag_is_idle() => {
+                    self.ask_trail_name();
+                    true
+                }
+                Some(KeyCode::KeyC) if self.focused.is_none() && !ctrl && !alt && !shift && self.drag_is_idle() => {
+                    self.cycle_trail_colour();
+                    true
+                }
                 _ => false,
             };
             if handled {
@@ -1757,6 +1807,13 @@ impl App {
 
         // Trail edges under everything: a gentle S-curve from source's right edge to target's left edge.
         let mut edges = Layer::default();
+        let labels: HashMap<NodeId, scene::TrailMark> =
+            if self.read.is_some() { HashMap::new() } else { self.scene.trail_labels().into_iter().collect() };
+        let mut edge_colour: HashMap<NodeId, [u8; 3]> = HashMap::new();
+        for (head, mark) in &labels {
+            let c = th.trail(mark.colour.as_deref());
+            edge_colour.extend(self.scene.trail_of(*head).into_iter().map(|id| (id, c)));
+        }
         let board_edges: Vec<Edge> = if self.read.is_some() { Vec::new() } else { self.scene.visible_edges().copied().collect() };
         for e in &board_edges {
             let (Some(a), Some(b)) = (self.scene.node(e.from), self.scene.node(e.to)) else { continue };
@@ -1769,6 +1826,7 @@ impl App {
             };
             let dx = (p3[0] - p0[0]) * 0.5;
             let (p1, p2) = ([p0[0] + dx, p0[1]], [p3[0] - dx, p3[1]]);
+            let colour = edge_colour.get(&e.from).copied().unwrap_or(th.accent());
             let mut prev = p0;
             for i in 1..=24 {
                 let t = i as f32 / 24.0;
@@ -1777,7 +1835,7 @@ impl App {
                 let y = u * u * u * p0[1] + 3.0 * u * u * t * p1[1] + 3.0 * u * t * t * p2[1] + t * t * t * p3[1];
                 edges.quads.push(Quad {
                     shape: Shape::Segment { from: prev, to: [x, y], width: (2.0 * k).clamp(1.0, 4.0) },
-                    color: rgb(th.accent(), 0.7),
+                    color: rgb(colour, 0.7),
                     texture: None,
                 });
                 prev = [x, y];
@@ -1943,6 +2001,32 @@ impl App {
                     bold: true,
                 });
             }
+            // A marked trail's name above its first card, in its colour (just a
+            // dot for a colour without a name). Screen-sized, like the badge.
+            if let Some(mark) = labels.get(&n.id) {
+                let size = 12.0 * ui;
+                let h = size * 1.7;
+                let pad = size * 0.7;
+                let colour = th.trail(mark.colour.as_deref());
+                let name = mark.name.clone().unwrap_or_default();
+                let tw = if name.is_empty() { 0.0 } else { self.renderer.as_mut().map_or(100.0, |r| r.measure(&name, size, true)) };
+                let w = if name.is_empty() { h } else { (tw + 2.0 * pad).min(frame.w.max(h)) };
+                // Clear of a stack's badge, which sticks out above the corner.
+                let gap = if stack.is_some() { 9.0 } else { 5.0 } * ui;
+                let tag = Rect::new(frame.x, frame.y - gap - h, w, h);
+                let round = if th.rounding > 0.0 || name.is_empty() { h / 2.0 } else { 0.0 };
+                l.quads.push(Quad { shape: Shape::Rect { rect: tag, radius: round }, color: rgb(colour, 1.0), texture: None });
+                if !name.is_empty() {
+                    l.texts.push(Text {
+                        text: name,
+                        pos: [tag.x + pad, tag.y + (h - size * 1.3) / 2.0],
+                        size,
+                        color: rgb(text_on(colour), 1.0),
+                        clip: tag.inflate(-pad * 0.5),
+                        bold: true,
+                    });
+                }
+            }
             layers.push(l);
         }
 
@@ -1977,6 +2061,7 @@ impl App {
             let pad = 16.0 * ui;
             let placeholder = match ob.target {
                 Target::RenameSpace => "Space name",
+                Target::NameTrail(_) => "Trail name (empty to clear)",
                 _ => "Search or enter address",
             };
             let selected = ob.select_all && !ob.text.is_empty();
@@ -2556,6 +2641,9 @@ impl App {
                         if let Some(text) = &n.note {
                             log::info!("script note {}: {:?}", n.id.0, text);
                         }
+                        if !n.trail.is_empty() {
+                            log::info!("script trail {}: name={:?} colour={:?}", n.id.0, n.trail.name, n.trail.colour);
+                        }
                     }
                     for st in self.scene.stacks() {
                         log::info!(
@@ -2565,6 +2653,9 @@ impl App {
                     }
                     for e in self.scene.edges() {
                         log::info!("script edge {} -> {}", e.from.0, e.to.0);
+                    }
+                    for (head, mark) in self.scene.trail_labels() {
+                        log::info!("script label on {}: name={:?} colour={:?}", head.0, mark.name, mark.colour);
                     }
                     let l = self.read_layout();
                     log::info!(

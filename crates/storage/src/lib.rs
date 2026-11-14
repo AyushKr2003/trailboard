@@ -14,7 +14,8 @@ use serde::{Deserialize, Serialize};
 /// 1: cards, edges, camera. 2: adds folded trails (`scene.stacks`).
 /// 3: adds note cards (`node.note`), so builds without notes refuse the file
 /// rather than load notes as broken pages and save them without their text.
-pub const BOARD_VERSION: u32 = 3;
+/// 4: adds trail names and colours (`node.trail`), for the same reason.
+pub const BOARD_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Board {
@@ -78,6 +79,8 @@ pub fn migrate_board(mut v: serde_json::Value) -> Result<serde_json::Value, Load
             1 => v["version"] = 2.into(),
             // Version 3 only adds `note` on cards, which defaults to none.
             2 => v["version"] = 3.into(),
+            // Version 4 only adds `trail` on cards, which defaults to none.
+            3 => v["version"] = 4.into(),
             other => return Err(LoadError::UnsupportedVersion(other)),
         }
     }
@@ -193,6 +196,31 @@ mod tests {
         let b = load_board(&path).unwrap();
         assert_eq!(b.version, BOARD_VERSION);
         assert!(b.scene.all_nodes().all(|n| n.note.is_none()));
+    }
+
+    #[test]
+    fn trail_marks_are_saved_and_version_3_boards_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = board_path(dir.path());
+        let mut scene = Scene::new();
+        let a = scene.add_page(Rect::new(0.0, 0.0, 10.0, 10.0), "a");
+        let b = scene.spawn_beside(a, "b").unwrap();
+        scene.name_trail(a, "Rust");
+        scene.cycle_trail_colour(a);
+        save_board(&path, &Board::new(scene.clone(), Camera::default())).unwrap();
+        let back = load_board(&path).unwrap().scene;
+        assert_eq!(back.trail_mark(b), scene.trail_mark(b));
+        assert_eq!(back.trail_mark(b).colour.as_deref(), Some("blue"));
+
+        let mut v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        v["version"] = 3.into();
+        for n in v["scene"]["nodes"].as_object_mut().unwrap().values_mut() {
+            n.as_object_mut().unwrap().remove("trail");
+        }
+        fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
+        let b3 = load_board(&path).unwrap();
+        assert_eq!(b3.version, BOARD_VERSION);
+        assert!(b3.scene.trail_mark(b).is_empty());
     }
 
     #[test]

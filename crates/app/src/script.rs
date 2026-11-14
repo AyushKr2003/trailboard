@@ -23,7 +23,7 @@
 //! fit                  # same as Ctrl+0
 //! undo                 # same as Ctrl+Z on the board
 //! redo                 # same as Ctrl+Shift+Z
-//! cards                # log every card (id, rect, live page, selected, title, url) and edge
+//! cards                # log every card (id, rect, live page, selected, title, url), edge and trail label
 //! spaces               # log every space (id, name, background) and which is active
 //! open https://…       # same as Ctrl+T + Enter
 //! log some note        # print to the log (marks screenshot moments)

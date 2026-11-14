@@ -184,6 +184,11 @@ pub fn mix(a: Rgb, b: Rgb, t: f32) -> Rgb {
     [m(a[0], b[0]), m(a[1], b[1]), m(a[2], b[2])]
 }
 
+/// Black or white, whichever reads on `c`.
+pub fn text_on(c: Rgb) -> Rgb {
+    if luminance(c) > 0.179 { [0, 0, 0] } else { [255, 255, 255] }
+}
+
 pub fn rgb(c: Rgb, alpha: f32) -> Rgba {
     compositor::rgba(c[0], c[1], c[2], alpha)
 }
@@ -239,7 +244,12 @@ impl Theme {
 
     /// Black or white, whichever reads on the accent (WCAG relative luminance).
     pub fn accent_foreground(&self) -> Rgb {
-        if luminance(self.accent()) > 0.179 { [0, 0, 0] } else { [255, 255, 255] }
+        text_on(self.accent())
+    }
+
+    /// A trail's colour (a theme colour name), or the accent for none.
+    pub fn trail(&self, colour: Option<&str>) -> Rgb {
+        colour.map_or_else(|| self.accent(), |c| self.color(c))
     }
 
     /// A step from the background toward the foreground: surfaces and lines.

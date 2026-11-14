@@ -6,6 +6,7 @@ pub mod fold;
 pub mod geom;
 pub mod history;
 pub mod liveness;
+pub mod mark;
 pub mod note;
 pub mod placement;
 pub mod read;
@@ -18,6 +19,7 @@ use std::collections::BTreeMap;
 pub use fold::{Folded, Member, Stack};
 pub use geom::{Camera, Rect, Vec2};
 pub use history::{Change, Edit, History};
+pub use mark::TrailMark;
 pub use selection::Selection;
 pub use trail::TrailStep;
 use serde::{Deserialize, Serialize};
@@ -40,6 +42,9 @@ pub struct Node {
     /// Markdown text of a note card (`note`); `None` for a web page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// Name and colour of the trail this card is on (`mark`), kept on every card of it.
+    #[serde(default, skip_serializing_if = "TrailMark::is_empty")]
+    pub trail: TrailMark,
 }
 
 impl Node {
@@ -83,7 +88,7 @@ impl Scene {
         let url = url.into();
         self.nodes.insert(
             id,
-            Node { id, rect, title: url.clone(), url, z: self.next_z, note: None },
+            Node { id, rect, title: url.clone(), url, z: self.next_z, note: None, trail: TrailMark::default() },
         );
         id
     }
@@ -93,6 +98,7 @@ impl Scene {
         let src = self.nodes.get(&from)?.clone();
         let rect = placement::beside(self, &src);
         let id = self.add_page(rect, url);
+        self.nodes.get_mut(&id).expect("just added").trail = src.trail;
         self.edges.push(Edge { from, to: id });
         Some(id)
     }

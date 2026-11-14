@@ -20,6 +20,7 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("[ · ]", "Peek through a stack"),
             ("O · click the count", "List a stack's pages"),
             ("Alt+PgDn · Alt+PgUp", "Next / previous on the trail"),
+            ("R · C", "Name / colour a trail"),
             ("Ctrl+Z · Ctrl+Shift+Z", "Undo / redo board edits"),
             ("Ctrl+Shift+T", "Reopen closed card"),
             ("? · F1", "Show / hide these hints"),

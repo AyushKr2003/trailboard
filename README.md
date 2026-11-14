@@ -66,6 +66,7 @@ you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change th
 | Peek at the previous / next card of a stack | [ / ] (with no page focused) |
 | List a stack's pages, bring one to the front or unfold | Click the count badge, or O (with no page focused) |
 | Go to the next / previous card on the trail (folded or not) | Alt+PgDn / Alt+PgUp |
+| Name the trail in the middle of the view / give it the next colour | R / C (with no page focused; Ctrl+Z undoes it) |
 | Back / forward / reload | Alt+← / Alt+→ / Ctrl+R |
 | Page context menu | right-click in a page (open link beside, copy link, edit, search selection) |
 | Copy / cut / paste | Ctrl+C / Ctrl+X / Ctrl+V (shared with the desktop clipboard) |
@@ -101,9 +102,9 @@ resize, close/reopen, multi-select and group move, undo/redo, omnibox, zoom-awar
 pages paused, live-browser cap, page context menu, desktop clipboard, IME input,
 board persistence, spaces (several boards with their own camera and background),
 Read Mode, Tidy, Fold, stack outline, next/previous on a trail, Markdown notes
-with *Add to note*.
+with *Add to note*, trail names and colours.
 
-Next: trail names and colours, Save as Markdown, trails sidebar, Ctrl+K palette,
+Next: Save as Markdown, trails sidebar, Ctrl+K palette,
 history with full-text search, ad blocking, then optional semantic search and
 an LLM-backed "Explain" panel.
 

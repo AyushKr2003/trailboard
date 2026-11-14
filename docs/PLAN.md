@@ -262,7 +262,29 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   - Keys: Alt+PgDn / Alt+PgUp, which work everywhere (inside a page and in
     Read Mode too), on any layout, and sit beside Ctrl+PgDn/PgUp for spaces.
     Chromium binds nothing to them.
-- Trail names and colours.
+- ✅ Trail names and colours (R / C; `scene::mark`). Decisions (2026-11-14):
+  - A trail has no object of its own, so its mark (`Node::trail`: name and
+    colour) is kept on every card of it, board v4. Setting it writes all of
+    them; a card opened beside one (page or note) takes its source's mark.
+    Closing any card, even the first, keeps the name; a trail split by closing
+    a card in the middle leaves both halves named. If cards disagree (a card
+    put back by undo after a rename), the first card in reading order with a
+    name gives the name, likewise for the colour.
+  - Names are one line, trimmed, at most 60 characters; empty clears the name.
+    Colours are theme colour names (none = accent, then blue, green, magenta,
+    orange, cyan, red, the space tints' order), so they follow light and dark
+    themes.
+  - Keys (no card focused, the trail in the middle of the view, like S/T/O): R
+    opens the address bar as a name box holding the current name; C steps the
+    colour. Each change is one undo step (`Edit::SetMarks`). A lone card can
+    be marked too, and links opened from it join its trail with the mark.
+  - Look: a tag in the trail colour (text black or white by luminance) above
+    the first card of the trail that is on the board (a folded trail's stack
+    front), clear of the stack badge, screen-sized like the badge; a colour
+    without a name is a dot. Edges take the trail colour. The step toast reads
+    `Name · 2/4 · Title`.
+  - Not done: renaming from the page menu or by clicking the tag; the trails
+    sidebar (M6) will list names.
 - ✅ Notes (N): Markdown note cards (`scene::note`, `app::note`). Decisions (2026-11-14):
   - A note is a card (`Node::note: Some(text)`, `url` = `trailboard:note`), so
     it moves, resizes, folds, tidies, sleeps, closes and undoes like any card.
@@ -393,21 +415,31 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M5 Notes and Add to note.
-**Repo state:** on `master`, committed after ee46ac4; working tree clean.
+**Last session:** 2026-11-14. M5 Trail names and colours.
+**Repo state:** on `master`, committed after a500760; working tree clean.
 **Done this session:**
-- `scene::note`: `Node::note`, `add_note`, `note_beside`, `set_note`, `title`,
-  `quote`, `append`; `placement::beside_sized`; board v3 (`storage`); tests.
-- `web`: `PageKind::Note` (locked navigation, no title/URL events, console
-  channel → `WebEvent::NoteText` / `OpenBeside`), `Page::run_script`,
-  `MenuAction::AddToNote`, `MenuContext::note`.
-- `app::note` + `note.html`: the editor page and its Markdown renderer. N
-  makes a note; *Add to note*; theme follows live. Script `type` keeps `#`;
-  `cards` logs note text. Sheet and README rows.
-**Next up:** M5 trail names and colours, or Save note/board as Markdown (M5).
-Small follow-ups: sticky notes; animate cards to their Tidy places;
-`.desktop` entry and icon (M6).
+- `scene::mark`: `TrailMark` on `Node::trail`, `trail_mark`, `set_trail_mark`,
+  `name_trail`, `cycle_trail_colour`, `trail_labels`; new cards beside a card
+  inherit its mark; `Edit::SetMarks` / `History::marked`; board v4 (`storage`); tests.
+- `app`: R (name box, `Target::NameTrail`) and C (next colour) with no card
+  focused; tag above the trail's first visible card; coloured edges; trail
+  name in the step toast; `Theme::trail`, `theme::text_on`; script `cards`
+  logs marks and labels. Sheet and README rows.
+**Next up:** Save note/board as Markdown (M5).
+Small follow-ups: sticky notes; rename a trail from the page menu or a click
+on its tag; animate cards to their Tidy places; `.desktop` entry and icon (M6).
 **Notes for the next session:**
+- Trail marks verified e2e (`~/.cache/trailboard-e2e-mark`, `run.sh N shot…`,
+  seed in `data1.seed`, a v3 board so the migration ran). Run 1: R, typed
+  `Research`, Enter, C twice (green) marked all four cards and labelled card 1;
+  undo went back to blue, redo to green; fold moved the label to the stack
+  front (3), unfold back to 1. Run 2 (copy of run 1's data): marks restored
+  after restart, file is version 4; R showed the name selected, Backspace +
+  Enter cleared the name and kept the colour. Screenshots named1, folded1,
+  prompt2 checked, dark theme only.
+- Not verified: light themes for the tag text, a real keyboard R/C, a
+  coloured lone card on screen (scene-tested only), inheritance by a link
+  opened beside in the app (scene-tested only).
 - Notes verified e2e (`~/.cache/trailboard-e2e-note`, `run.sh N shot…` runs
   `scriptN` with `dataN`, `rund.sh` adds `web=debug`; `page.html` selects its
   first paragraph on load). Run 1: N, typed `# Trip ideas` / `- [ ] pack` /

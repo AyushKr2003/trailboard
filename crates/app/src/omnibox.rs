@@ -9,6 +9,8 @@ pub enum Target {
     NewCard,
     /// Rename the current space (the text is a name, not an address).
     RenameSpace,
+    /// Name the trail through this card (a name too).
+    NameTrail(scene::NodeId),
 }
 
 #[derive(Debug)]

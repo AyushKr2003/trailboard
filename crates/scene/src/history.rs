@@ -1,12 +1,13 @@
 //! Undo/redo for board edits: opening, closing, moving and resizing cards, and
-//! folding or unfolding trails. Peeking through a stack is not an edit.
+//! folding or unfolding trails, naming or colouring them. Peeking through a
+//! stack is not an edit.
 //!
 //! Each stack holds the edit that reverses an action. Applying an edit to the
 //! scene returns its own reverse, which goes on the other stack, so undo and
 //! redo share one code path. Page navigation, titles and stacking order are not
 //! board edits and are not recorded.
 
-use crate::{Edge, Folded, Node, NodeId, Rect, Scene, Stack};
+use crate::{Edge, Folded, Node, NodeId, Rect, Scene, Stack, TrailMark};
 
 /// Most actions kept for undo.
 pub const LIMIT: usize = 200;
@@ -23,6 +24,8 @@ pub enum Edit {
     Refold(Stack),
     /// Unfold the stack holding this card.
     Unfold(NodeId),
+    /// Give these cards these trail marks (names and colours).
+    SetMarks(Vec<(NodeId, TrailMark)>),
     /// Several edits undone and redone as one step, applied in order.
     Batch(Vec<Edit>),
 }
@@ -53,6 +56,16 @@ impl Edit {
             Edit::Remove(id) => {
                 let (node, edges) = scene.remove(id)?;
                 Some((Edit::Insert { node, edges }, vec![Change::Removed(id)]))
+            }
+            Edit::SetMarks(marks) => {
+                let mut old = Vec::new();
+                for (id, mark) in marks {
+                    if let Some(n) = scene.node_mut(id) {
+                        old.push((id, std::mem::replace(&mut n.trail, mark)));
+                    }
+                }
+                let first = old.first()?.0;
+                Some((Edit::SetMarks(old), vec![Change::Moved(first)]))
             }
             Edit::Refold(stack) => {
                 let front = stack.front;
@@ -139,6 +152,14 @@ impl History {
     /// A stack was unfolded; `stack` is what [`Scene::unfold`] returned.
     pub fn unfolded(&mut self, stack: &Stack) {
         self.push(Edit::Refold(stack.clone()));
+    }
+
+    /// A trail was named or recoloured; `old` is what [`Scene::set_trail_mark`]
+    /// returned. No-op if nothing changed.
+    pub fn marked(&mut self, old: Vec<(NodeId, TrailMark)>) {
+        if !old.is_empty() {
+            self.push(Edit::SetMarks(old));
+        }
     }
 
     pub fn can_undo(&self) -> bool {

@@ -7,6 +7,17 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Trail names and colours**: press R with no page focused to name the trail
+  in the middle of the view (an empty name clears it), and C to give it the
+  next colour of the desktop theme (back to the accent after red). The name
+  shows on a tag in the trail's colour above its first card (or its stack's
+  front), the trail's edges take its colour, and stepping along it with
+  Alt+PgDn shows the name in the toast. Links opened from a named trail join
+  it with its name and colour, closing any of its cards keeps them, and both
+  are undoable and saved with the board.
+- Board files are now version 4 (adds trail names and colours); older boards
+  are upgraded when read. Script `cards` logs each card's trail mark and the
+  trail labels.
 - **Notes**: press N with no page focused for a note card. Notes are written
   in Markdown: type in the note, then Esc or click away to see it rendered
   (headings, emphasis, links, lists, task lists, quotes, code). Click it to edit

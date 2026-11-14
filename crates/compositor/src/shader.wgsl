@@ -43,7 +43,7 @@ struct Inst {
     // rect: x, y, w, h (px)   segment: x0, y0, x1, y1 (px)
     @location(0) a: vec4f,
     @location(1) color: vec4f,
-    // x: kind (0 rect, 1 segment)  y: corner radius / thickness
+    // x: kind (0 rect, 1 segment, 2 rect rounded at the bottom only)  y: corner radius / thickness
     // z: softness (shadow blur px)  w: textured (0/1)
     @location(2) params: vec4f,
 };
@@ -62,7 +62,7 @@ fn vs_quad(@builtin(vertex_index) vi: u32, i: Inst) -> VOut {
     let corner = vec2f(f32(vi & 1u), f32((vi >> 1u) & 1u));
     var o: VOut;
     var p: vec2f;
-    if (i.params.x < 0.5) {
+    if (i.params.x < 0.5 || i.params.x > 1.5) {
         let size = i.a.zw;
         let half = size * 0.5;
         let center = i.a.xy + half;
@@ -104,8 +104,12 @@ fn fs_quad(v: VOut) -> @location(0) vec4f {
     let t = textureSampleLevel(tex, samp, clamp(v.uv, vec2f(0.0), vec2f(1.0)), 0.0);
     var c = v.color;
     var a = 1.0;
-    if (v.params.x < 0.5) {
-        let r = min(v.params.y, min(v.half.x, v.half.y));
+    if (v.params.x < 0.5 || v.params.x > 1.5) {
+        var r = min(v.params.y, min(v.half.x, v.half.y));
+        // Kind 2: square top corners (local.y < 0 is the top half).
+        if (v.params.x > 1.5 && v.local.y < 0.0) {
+            r = 0.0;
+        }
         let d = sd_round_rect(v.local, v.half, r);
         let soft = v.params.z;
         if (soft > 0.0) {

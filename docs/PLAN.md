@@ -235,6 +235,9 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
   digits in bold now render correctly in the screenshot). Bold fonts lack arrow
   glyphs, so the sheet spells out "Left"/"Right".
 - Keep the sheet's rows in `hints::SECTIONS` in step with new shortcuts.
+- Page content is drawn with `Shape::RoundBottom` (shader kind 2: square top,
+  rounded bottom) so cards' bottom corners match the frame; checked with a
+  magnified screenshot of the corners.
 **Next up:** M4: Spaces (several boards, each with its own camera and
 background; `spaces.json` index; New / Next / Previous / Rename / Delete Space).
 Decide key bindings and how the current `board.json` migrates into the first space.

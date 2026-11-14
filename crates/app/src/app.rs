@@ -1141,7 +1141,8 @@ impl App {
             let has_tex = self.renderer.as_ref().is_some_and(|r| r.has_page(n.id.0));
             let asleep = card.is_none();
             l.quads.push(Quad {
-                shape: Shape::Rect { rect: content, radius: 0.0 },
+                // Round the bottom corners like the frame, so the page doesn't square them off.
+                shape: Shape::RoundBottom { rect: content, radius },
                 color: match (has_tex, asleep) {
                     (true, false) => [1.0; 4],
                     (true, true) => [0.78, 0.78, 0.8, 1.0], // dimmed snapshot

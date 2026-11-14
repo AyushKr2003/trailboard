@@ -72,6 +72,8 @@ All notable changes to Trailboard. The format follows
   already brought back with undo.
 
 ### Fixed
+- Cards' bottom corners are rounded like the rest of the card; the page image
+  used to square them off (new `Shape::RoundBottom` in the compositor).
 - Bold text (card titles) used a fallback serif face with wide gaps between
   words and digits; it now uses the sans font's bold face.
 - Zoomed-in pages are sharp again: pages now render at the zoom's resolution

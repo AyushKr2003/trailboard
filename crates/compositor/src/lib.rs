@@ -37,6 +37,8 @@ pub struct Background {
 pub enum Shape {
     /// Rounded rectangle in screen px.
     Rect { rect: Rect, radius: f32 },
+    /// Rectangle with only its bottom corners rounded (page content under a title bar).
+    RoundBottom { rect: Rect, radius: f32 },
     /// Soft shadow under a rounded rectangle.
     Shadow { rect: Rect, radius: f32, blur: f32 },
     /// Thick line segment in screen px.
@@ -434,6 +436,11 @@ impl Renderer {
                         a: [rect.x, rect.y, rect.w, rect.h],
                         color: q.color,
                         params: [0.0, radius, 0.0, if tex.is_some() { 1.0 } else { 0.0 }],
+                    },
+                    Shape::RoundBottom { rect, radius } => Instance {
+                        a: [rect.x, rect.y, rect.w, rect.h],
+                        color: q.color,
+                        params: [2.0, radius, 0.0, if tex.is_some() { 1.0 } else { 0.0 }],
                     },
                     Shape::Shadow { rect, radius, blur } => Instance {
                         a: [rect.x, rect.y, rect.w, rect.h],

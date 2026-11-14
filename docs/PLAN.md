@@ -137,7 +137,7 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   and closed cards are restored in reverse so trail edges between them come back.
   Undo returns every change (`Vec<Change>`).
 
-### M4: Persistence and Spaces 🟡
+### M4: Persistence and Spaces ✅
 - ✅ Board JSON at `$XDG_DATA_HOME/trailboard/board.json`, atomic write, autosave (3 s), save on exit; unreadable file set aside.
 - ✅ Browser profile (cookies, cache) persisted under the data dir.
 - ✅ Spaces: several boards, each with its own camera and background
@@ -172,9 +172,10 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   `private`; the
   upgrade is written back; unknown/newer versions are refused, not touched).
   Boards the same way (`storage::migrate_board`): v1 → v2 adds `scene.stacks`
-  (Fold), v2 → v3 adds `node.note` (Notes), written back on the next save.
+  (Fold), v2 → v3 adds `node.note` (Notes), v3 → v4 trail marks, v4 → v5
+  sticky notes, v5 → v6 sidebar pins and order; written back on the next save.
 
-### M5: Board tools 🟡
+### M5: Board tools ✅
 - ✅ Read Mode: a card fills the window; Tab toggles board ↔ page
   (`scene::read`: `layout`, `pick`). Decisions (2026-11-14):
   - The page *reflows* to the window (CSS size = window below a title bar,
@@ -362,7 +363,7 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   - Not done: a file chooser (xdg-desktop-portal), saving a web page's text.
 
 ### M6: Chrome UI 🟡
-- 🟡 Trails sidebar (B; `scene::sidebar`, `app::sidebar`). Decisions (2026-11-14):
+- ✅ Trails sidebar (B; `scene::sidebar`, `app::sidebar`). Decisions (2026-11-14):
   - A panel over the left edge of the board (300 px, at most 45% of the
     window, full height), not a resized board: the board, Read Mode and Fit
     stay as they are. Hidden in Read Mode. The space pill moves right of it.
@@ -385,9 +386,23 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     the wheel scrolls the list; the pointer over the panel never reaches pages.
   - Collapsed groups are keyed by the trail's first card and live for the
     session only (reset on a space switch); not in the board file.
-  - Not done: pins/favourites, drag to reorder (both need a stored order, a
-    board format change), rename from the sidebar, a minimum pixel step for
-    touchpad scrolling (small pixel deltas round to no scroll).
+  - Pins and order (2026-11-14, board v6): `p` pins the highlighted row's
+    trail (a card on no trail becomes a group of its own) or unpins it;
+    pinned trails come first, marked ★, with a line under them. Shift+J/K
+    (or Shift+↑/↓) move the highlighted trail one place, and dragging a
+    trail's header onto another trail's rows moves it there (an accent line
+    shows where); a click without a drag still collapses it, now on release.
+    A trail moves only among the pinned or among the rest; *Other cards*
+    stays last. Pin and place are part of the trail's mark (`TrailMark`
+    `pinned`, `place`), so like a name they live on every card of the trail,
+    survive a split, pass to cards opened beside, are undone with Ctrl+Z and
+    saved. Moving numbers the whole part's places afresh; trails never moved
+    follow the moved ones, oldest first; a newly pinned or unpinned trail
+    goes last in its part. Shift+H/L still pan while the sidebar has keys.
+  - Not done: rename from the sidebar, a minimum pixel step for touchpad
+    scrolling (small pixel deltas round to no scroll), dragging a card row
+    (to move a card between trails would change edges, not just order),
+    auto-scroll while dragging past the list's ends.
 - ✅ Ctrl+K palette (`scene::palette`, `app::palette`). Decisions (2026-11-14):
   - Ctrl+K anywhere, inside pages too (like Ctrl+L; a page's own Ctrl+K
     palette loses out). It is the address bar's field (`Target::Palette`, so
@@ -823,16 +838,17 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M6 downloads.
-**Repo state:** on `master`, committed after b531a12; working tree clean.
+**Last session:** 2026-11-14. M6 trails sidebar: pins and order.
+**Repo state:** on `master`, committed after e4014ca; working tree clean.
 **Done this session:**
-- Downloads (M6): straight to the Downloads folder with free names, blank
-  download cards close themselves, pages with running downloads are parked
-  instead of closed, Ctrl+J list in the palette UI with progress, open /
-  folder / retry / cancel / remove, `downloads.json` v1, *Download link* and
-  *Save image* in the page menu. See M6.
-**Next up:** M4/M5's partial items, or M6's translations (needs a string table).
-Small follow-ups: a downloads folder setting (needs a free-text row or a
+- Sidebar pins and order (M6, board v6): `p` pins / unpins, Shift+J/K move a
+  trail, drag a header to move it; stored as `pinned` / `place` on trail
+  marks (`scene::sidebar::{toggle_pin, move_group, drop_to}`), undoable.
+  Script runner gained `press` / `release` (look at a drag half-way).
+- M4 and M5 headers were 🟡 though every item was ✅; marked ✅.
+**Next up:** M6's translations (needs a string table first), or M8 privacy
+(adblock engine), or M9 packaging. Small follow-ups: rename a trail from the
+sidebar; auto-scroll the sidebar while dragging; a downloads folder setting (needs a free-text row or a
 folder picker via xdg-desktop-portal); a progress mark on the board while
 downloads run; ask before quitting with downloads running; pause/resume;
 more settings (start page for an empty board, custom
@@ -846,12 +862,24 @@ undo for forgetting a page; site
 icons on history rows; prune `icons/` of sites no card uses; a letter tile for
 sites without an icon; the name label for a stack could list its size; a zoom
 badge on a zoomed card's title bar; Ctrl+scroll inside a page to zoom it;
-Shift+Enter in the palette to open beside; sidebar pins and drag to reorder
-(board v6); rename a trail from the sidebar or its tag; keyboard selection of
+Shift+Enter in the palette to open beside; rename a trail from its tag; keyboard selection of
 several cards; link hints inside iframes; xdg-desktop-portal file chooser for
 Save as Markdown; i18n; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out.
 **Notes for the next session:**
+- Sidebar pins/order verified e2e (`~/.cache/trailboard-e2e-sidebar`,
+  `run.sh N shot…`; `data5` is `seed` (a v5 board) plus an edge 5→6, so
+  trails Reading (1–4), P5 (5–6), sticky 7 alone). Run 5: B, End, p → "Buy
+  milk" pinned on top with ★ and a line under it, toast; `press` on P5's
+  header, `move` onto Reading's → accent line above Reading (screenshot),
+  `release` → P5 place 0, Reading 1; a click on Reading's header collapsed
+  it (no move); Shift+K → Reading first; Shift+K again no change; Ctrl+Z
+  undid the last move. Run 6 (copy): order and pin restored, file version 6
+  with `pinned`/`place` on every card of each trail. Screenshots pin5,
+  dragline5, moved5, restored6 checked, dark theme only. Not verified: a
+  real mouse drag (scripted press/move/release only), a drop while the list
+  is scrolled, light themes, the ★ glyph with other system fonts (falls back
+  through fontdb).
 - Downloads verified e2e (`~/.cache/trailboard-e2e-downloads`, `run.sh N
   shot…` sets `TRAILBOARD_DOWNLOAD_DIR=dlN` and `TRAILBOARD_OPENER=opener.sh`
   (logs to `opened.txt`); `python3 server.py` serves :8761: `/` links at

@@ -7,6 +7,11 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Trails sidebar: pins and order**: in the sidebar (B), `p` pins a trail
+  (or a lone card) to the top, marked ★; Shift+J / Shift+K move a trail up
+  or down, and dragging a trail's header moves it too. Pins and order are
+  saved with the board (board format v6; older boards upgrade on load) and
+  Ctrl+Z undoes them. The test script runner gains `press` and `release`.
 - **Downloads**: files go straight to your Downloads folder (from
   `user-dirs.dirs`, or `TRAILBOARD_DOWNLOAD_DIR`), numbered "name (1).ext"
   when the name is taken; a toast says when one starts and ends. A card

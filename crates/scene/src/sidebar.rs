@@ -1,10 +1,15 @@
 //! The trails sidebar (B): every card of the board as a list, one group per
 //! trail with its cards as a tree, then the cards on no trail. Our own design.
 //!
-//! - A trail is a group when it has two or more cards, or a name (like Save as
-//!   Markdown, `export`). Groups come in the order their first card was made;
-//!   inside one, cards are in reading order (`Scene::trail_tree`), indented by
-//!   depth. Cards folded away in a stack are listed in their place, marked
+//! - A trail is a group when it has two or more cards, a name (like Save as
+//!   Markdown, `export`) or a pin. Pinned groups come first, then the rest;
+//!   in each part, groups that were moved (`move_group`) keep their place and
+//!   the others follow in the order their first card was made. Inside a
+//!   group, cards are in reading order (`Scene::trail_tree`), indented by
+//!   depth.
+//! - Pins and places are part of the trail's mark (`TrailMark`), so they are
+//!   saved with the board, kept by every card of the trail (a split trail
+//!   keeps them in both halves) and undone like a rename. Cards folded away in a stack are listed in their place, marked
 //!   `folded`, so the list doubles as a way into a stack.
 //! - Cards on no trail come last, under one "Other cards" group.
 //! - A group can be collapsed to its header row. Collapsing is keyed by the
@@ -60,7 +65,8 @@ impl Row {
 /// Header label of the cards on no trail.
 pub const OTHERS: &str = "Other cards";
 
-/// The board's groups, each as `(group, cards in reading order with depth)`.
+/// The board's groups, each as `(group, cards in reading order with depth)`,
+/// in the sidebar's order.
 pub fn groups(scene: &Scene) -> Vec<(Group, Vec<(NodeId, usize)>)> {
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
@@ -71,16 +77,106 @@ pub fn groups(scene: &Scene) -> Vec<(Group, Vec<(NodeId, usize)>)> {
         }
         let tree = scene.trail_tree(n.id);
         seen.extend(tree.iter().map(|&(id, _)| id));
-        if tree.len() == 1 && scene.trail_mark(n.id).name.is_none() {
+        let mark = scene.trail_mark(n.id);
+        if tree.len() == 1 && mark.name.is_none() && !mark.pinned {
             lone.push((n.id, 0));
         } else {
-            out.push((Group::Trail(tree[0].0), tree));
+            out.push((mark, Group::Trail(tree[0].0), tree));
         }
     }
+    // Stable: unplaced groups keep the order their first card was made.
+    out.sort_by_key(|(mark, ..)| (!mark.pinned, mark.place.unwrap_or(u32::MAX)));
+    let mut out: Vec<_> = out.into_iter().map(|(_, g, tree)| (g, tree)).collect();
     if !lone.is_empty() {
         out.push((Group::Others, lone));
     }
     out
+}
+
+/// First cards of the trails listed with `head`'s pin state, in order.
+fn section(scene: &Scene, pinned: bool) -> Vec<NodeId> {
+    groups(scene)
+        .into_iter()
+        .filter_map(|(g, _)| match g {
+            Group::Trail(h) if scene.trail_mark(h).pinned == pinned => Some(h),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Gives every trail of `order` its index as its place. Old marks, to undo.
+fn set_places(scene: &mut Scene, order: &[NodeId]) -> Vec<(NodeId, TrailMark)> {
+    let mut old = Vec::new();
+    for (i, &h) in order.iter().enumerate() {
+        let mark = TrailMark { place: Some(i as u32), ..scene.trail_mark(h) };
+        old.extend(scene.set_trail_mark(h, &mark));
+    }
+    old
+}
+
+/// Where the trail of `head` is among the pinned or the other trails, and
+/// how many those are. `None` if `head` heads no listed trail.
+pub fn position(scene: &Scene, head: NodeId) -> Option<(usize, usize)> {
+    let s = section(scene, scene.trail_mark(head).pinned);
+    Some((s.iter().position(|&h| h == head)?, s.len()))
+}
+
+/// Moves the trail headed by `head` to index `to` among the trails of its
+/// part (pinned or not; clamped), numbering that part's places afresh.
+/// Returns the old marks (for `History::marked`), empty if it didn't move.
+pub fn move_group(scene: &mut Scene, head: NodeId, to: usize) -> Vec<(NodeId, TrailMark)> {
+    let mut order = section(scene, scene.trail_mark(head).pinned);
+    let Some(from) = order.iter().position(|&h| h == head) else { return Vec::new() };
+    let to = to.min(order.len() - 1);
+    if to == from {
+        return Vec::new();
+    }
+    order.remove(from);
+    order.insert(to, head);
+    set_places(scene, &order)
+}
+
+/// Dragging the header of `head`'s trail over a row of `over`: the index
+/// among its part's trails it would move to, if `over` is a trail of the same
+/// part (pinned or not).
+pub fn drop_to(scene: &Scene, head: NodeId, over: Group) -> Option<usize> {
+    let Group::Trail(t) = over else { return None };
+    let pinned = scene.trail_mark(head).pinned;
+    (scene.trail_mark(t).pinned == pinned).then(|| section(scene, pinned).iter().position(|&h| h == t))?
+}
+
+/// The trail a row belongs to, by its first card (`None` for the cards on no trail).
+pub fn trail_head(row: &Row) -> Option<NodeId> {
+    match row.group() {
+        Group::Trail(h) => Some(h),
+        Group::Others => None,
+    }
+}
+
+/// Pins the trail through card `id` (a card on no trail becomes a group of
+/// its own), or unpins it. It goes last in its new part, whose places are
+/// numbered afresh. Returns the old marks and whether it is pinned now.
+pub fn toggle_pin(scene: &mut Scene, id: NodeId) -> (Vec<(NodeId, TrailMark)>, bool) {
+    if scene.node(id).is_none() {
+        return (Vec::new(), false);
+    }
+    let mark = scene.trail_mark(id);
+    let pinned = !mark.pinned;
+    let mut old = scene.set_trail_mark(id, &TrailMark { pinned, place: None, ..mark });
+    let mut order = section(scene, pinned);
+    if let Some(head) = groups(scene).into_iter().find(|(_, cards)| cards.iter().any(|&(c, _)| c == id)).map(|(g, _)| g)
+        && let Group::Trail(head) = head
+    {
+        order.retain(|&h| h != head);
+        order.push(head);
+    }
+    // Keep each card's first old mark only, so undo goes back all the way.
+    for (n, m) in set_places(scene, &order) {
+        if !old.iter().any(|(o, _)| *o == n) {
+            old.push((n, m));
+        }
+    }
+    (old, pinned)
 }
 
 /// Sidebar state that outlives a frame: collapsed groups, highlight, scroll.
@@ -307,6 +403,73 @@ mod tests {
         }
         sb.rows(&s);
         assert!(sb.collapsed.is_empty());
+    }
+
+    fn heads(s: &Scene) -> Vec<Group> {
+        groups(s).into_iter().map(|(g, _)| g).collect()
+    }
+
+    #[test]
+    fn pinned_trails_come_first_and_a_pinned_lone_card_is_a_group() {
+        use Group::*;
+        let (mut s, [a, _, c, _, e, f, g]) = board();
+        assert_eq!(heads(&s), [Trail(a), Trail(f), Others]);
+        let (old, on) = toggle_pin(&mut s, g);
+        assert!(on && old.len() == 1);
+        assert_eq!(heads(&s), [Trail(g), Trail(a), Trail(f), Others]);
+        // Pinning by any card of a trail pins the whole trail, after g.
+        assert!(toggle_pin(&mut s, c).1);
+        assert_eq!(heads(&s), [Trail(g), Trail(a), Trail(f), Others]);
+        assert!(s.trail_mark(a).pinned);
+        // A card opened beside a pinned one is on the pinned trail.
+        let h = s.spawn_beside(g, "h").unwrap();
+        assert!(s.trail_mark(h).pinned);
+        assert_eq!(groups(&s)[0].1.len(), 2);
+        // Unpinning the lone card's trail... it now has two cards, so stays a group.
+        assert!(!toggle_pin(&mut s, h).1);
+        assert_eq!(heads(&s), [Trail(a), Trail(f), Trail(g), Others]);
+        s.remove(h);
+        assert_eq!(heads(&s), [Trail(a), Trail(f), Others], "g is lone and plain again");
+        let rows = Sidebar::default().rows(&s);
+        assert!(matches!(&rows[0], Row::Header { mark, .. } if mark.pinned));
+        assert!(toggle_pin(&mut s, NodeId(99)).0.is_empty());
+        let _ = e;
+    }
+
+    #[test]
+    fn moving_a_trail_keeps_to_its_part_and_undoes() {
+        use Group::*;
+        let (mut s, [a, b, _, _, e, f, g]) = board();
+        let x = s.spawn_beside(e, "x").unwrap();
+        // Trails a, e (e → x), f; g lone.
+        assert_eq!(heads(&s), [Trail(a), Trail(e), Trail(f), Others]);
+        assert_eq!(position(&s, e), Some((1, 3)));
+        let old = move_group(&mut s, f, 0);
+        assert_eq!(heads(&s), [Trail(f), Trail(a), Trail(e), Others]);
+        assert_eq!(s.trail_mark(b).place, Some(1), "every card of the trail keeps the place");
+        assert!(move_group(&mut s, f, 0).is_empty(), "already there");
+        assert!(move_group(&mut s, g, 0).is_empty(), "g is on no trail");
+        move_group(&mut s, f, 99);
+        assert_eq!(heads(&s), [Trail(a), Trail(e), Trail(f), Others], "clamped to the end");
+        // A pinned trail moves among the pinned only.
+        toggle_pin(&mut s, f);
+        toggle_pin(&mut s, x);
+        assert_eq!(heads(&s), [Trail(f), Trail(e), Trail(a), Others]);
+        move_group(&mut s, e, 0);
+        assert_eq!(heads(&s), [Trail(e), Trail(f), Trail(a), Others]);
+        assert_eq!(position(&s, a), Some((0, 1)));
+        assert_eq!(drop_to(&s, f, Trail(e)), Some(0));
+        assert_eq!(drop_to(&s, f, Trail(a)), None, "a is not pinned");
+        assert_eq!(drop_to(&s, f, Others), None);
+        // A new trail comes after the moved ones.
+        let y = s.spawn_beside(g, "y").unwrap();
+        assert_eq!(heads(&s), [Trail(e), Trail(f), Trail(a), Trail(g)]);
+        let _ = y;
+        // Undo puts the marks back as they were before the first move.
+        let mut h = crate::History::default();
+        h.marked(old);
+        h.undo(&mut s);
+        assert_eq!(s.trail_mark(a).place, None);
     }
 
     #[test]

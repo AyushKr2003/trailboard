@@ -60,7 +60,12 @@ pub struct View {
     pub sel: Option<usize>,
     pub hover: Option<usize>,
     pub current: Option<NodeId>,
+    /// While a trail's header is dragged: y of the line where it would go.
+    pub drop_line: Option<f32>,
 }
+
+/// Marks a pinned trail's header.
+pub const PIN: &str = "★";
 
 /// The panel with `rows`, as `marks` says.
 pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], marks: &View, scene: &Scene, th: &Theme, ui: f32) -> Layer {
@@ -117,8 +122,19 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], marks: &View, scene:
         });
     }
 
+    // The pinned trails come first; a line sets them off from the rest.
+    let any_pinned = rows.iter().any(|r| matches!(r, Row::Header { mark, .. } if mark.pinned));
+    let first_unpinned = rows.iter().position(|r| matches!(r, Row::Header { mark, .. } if !mark.pinned));
+
     for (i, row) in rows.iter().enumerate() {
         let Some(rect) = panel.row_rect(i, scroll) else { continue };
+        if any_pinned && first_unpinned == Some(i) {
+            l.quads.push(Quad {
+                shape: Shape::Rect { rect: Rect::new(rect.x + pad, rect.y - line / 2.0, rect.w - 2.0 * pad, line), radius: 0.0 },
+                color: rgb(th.dim_text(), 0.45),
+                texture: None,
+            });
+        }
         let inner = Rect::new(rect.x + pad * 0.5, rect.y + 1.0 * ui, rect.w - pad - line, rect.h - 2.0 * ui);
         if marks.sel == Some(i) || marks.hover == Some(i) {
             let alpha = if marks.sel == Some(i) { 1.0 } else { 0.55 };
@@ -146,8 +162,16 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], marks: &View, scene:
                     x += d + size * 0.5;
                 }
                 let n = count.to_string();
-                let nw = r.measure(&n, size, false);
+                let mut nw = r.measure(&n, size, false);
                 l.texts.push(Text { text: n, pos: [right - nw, text_y(rect)], size, color: rgb(th.dim_text(), 1.0), clip: inner, bold: false });
+                if mark.pinned {
+                    // The star glyph comes small in most fonts; draw it larger.
+                    let ps = size * 1.35;
+                    let pw = r.measure(PIN, ps, false);
+                    nw += pw + size * 0.4;
+                    let y = rect.y + (rect.h - ps * 1.3) / 2.0;
+                    l.texts.push(Text { text: PIN.into(), pos: [right - nw, y], size: ps, color: rgb(th.accent(), 1.0), clip: inner, bold: false });
+                }
                 l.texts.push(Text {
                     text: label.clone(),
                     pos: [x, text_y(rect)],
@@ -190,6 +214,15 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], marks: &View, scene:
                 });
             }
         }
+    }
+
+    if let Some(y) = marks.drop_line {
+        let h = (2.0 * ui).max(1.0);
+        l.quads.push(Quad {
+            shape: Shape::Rect { rect: Rect::new(p.x + pad * 0.5, y - h / 2.0, p.w - pad - line, h), radius: h / 2.0 },
+            color: rgb(th.accent(), 1.0),
+            texture: None,
+        });
     }
 
     // A thin scroll bar when the list is longer than the panel.

@@ -188,6 +188,18 @@ enum Drag {
 
 /// Link hints on card `id`: its visible links (rects in the page view's CSS
 /// px) and their labels, `None` until the page has answered.
+/// A press on a trail's header row in the sidebar (`App::sidebar_press`).
+#[derive(Debug, Clone, Copy)]
+struct SidebarPress {
+    /// The trail, by its first card.
+    head: NodeId,
+    at: Vec2,
+    /// Moved far enough to be a drag rather than a click.
+    dragging: bool,
+    /// Where the trail would go among its part's trails if let go now.
+    to: Option<usize>,
+}
+
 struct LinkHints {
     id: NodeId,
     links: Vec<(Rect, web::links::Action)>,
@@ -246,6 +258,9 @@ pub struct App {
     sidebar_at: Option<usize>,
     /// Sidebar row under the pointer.
     sidebar_hover: Option<usize>,
+    /// A press on a trail's header in the sidebar: a click toggles the group,
+    /// a drag moves the trail.
+    sidebar_press: Option<SidebarPress>,
     /// The current mouse press started inside the context menu.
     menu_pressed: bool,
     clipboard: Clipboard,
@@ -450,6 +465,7 @@ impl App {
             sidebar_keys: false,
             sidebar_at: None,
             sidebar_hover: None,
+            sidebar_press: None,
             menu_pressed: false,
             clipboard: Clipboard::new(),
             ime_allowed: false,
@@ -679,6 +695,7 @@ impl App {
         self.sidebar_keys = false;
         self.sidebar_at = None;
         self.sidebar_hover = None;
+        self.sidebar_press = None;
         self.ime_page = None;
         self.confirm = None;
         self.epoch += 1;
@@ -1354,6 +1371,7 @@ impl App {
         self.sidebar_open = false;
         self.sidebar_keys = false;
         self.sidebar_hover = None;
+        self.sidebar_press = None;
         log::info!("sidebar closed");
     }
 
@@ -1382,9 +1400,21 @@ impl App {
     }
 
     /// Keys while the sidebar has them. False for keys it leaves to the board.
-    fn sidebar_key(&mut self, code: Option<KeyCode>) -> bool {
+    fn sidebar_key(&mut self, code: Option<KeyCode>, shift: bool) -> bool {
         use scene::sidebar::{Row, RowKey};
         let rows = self.sidebar.rows(&self.scene);
+        if shift {
+            // Shift+J/K or Shift+↑/↓ move the highlighted row's trail; other
+            // Shift keys (Shift+H/L pan) stay board keys.
+            let step = match code {
+                Some(KeyCode::KeyJ | KeyCode::ArrowDown) => 1,
+                Some(KeyCode::KeyK | KeyCode::ArrowUp) => -1,
+                _ => return false,
+            };
+            self.sidebar_move_trail(&rows, step);
+            self.sidebar_scroll_to_sel();
+            return true;
+        }
         let shown = self.sidebar_panel().shown as isize;
         let step = match code {
             Some(KeyCode::KeyJ | KeyCode::ArrowDown) => Some(1),
@@ -1422,11 +1452,56 @@ impl App {
                     None => {}
                 }
             }
+            Some(KeyCode::KeyP) => self.sidebar_pin(&rows),
             Some(KeyCode::Escape | KeyCode::KeyB) => self.close_sidebar(),
             _ => return false,
         }
         self.sidebar_scroll_to_sel();
         true
+    }
+
+    /// Shift+J/K: moves the trail of the highlighted row `step` places among
+    /// the pinned or the other trails. The highlight stays on its row.
+    fn sidebar_move_trail(&mut self, rows: &[scene::sidebar::Row], step: isize) {
+        use scene::sidebar;
+        let Some(head) = self.sidebar.index(rows).and_then(|i| sidebar::trail_head(&rows[i])) else {
+            self.toast("Only trails can be moved");
+            return;
+        };
+        let Some((at, _)) = sidebar::position(&self.scene, head) else { return };
+        let to = (at as isize + step).max(0) as usize;
+        self.move_trail(head, to);
+    }
+
+    /// Moves the trail headed by `head` to index `to` of its part, undoably.
+    fn move_trail(&mut self, head: NodeId, to: usize) {
+        let old = scene::sidebar::move_group(&mut self.scene, head, to);
+        if old.is_empty() {
+            return;
+        }
+        self.history.marked(old);
+        self.dirty = true;
+        let at = scene::sidebar::position(&self.scene, head).map(|(i, _)| i);
+        log::info!("sidebar: trail of card {} moved to {at:?}", head.0);
+    }
+
+    /// p: pins the trail of the highlighted row (a card on no trail on its
+    /// own) to the top of the list, or unpins it.
+    fn sidebar_pin(&mut self, rows: &[scene::sidebar::Row]) {
+        use scene::sidebar::{self, Group, Row};
+        let id = match self.sidebar.index(rows).map(|i| &rows[i]) {
+            Some(&Row::Card { id, .. }) => id,
+            Some(&Row::Header { group: Group::Trail(h), .. }) => h,
+            _ => {
+                self.toast("Pick a trail or a card to pin");
+                return;
+            }
+        };
+        let (old, pinned) = sidebar::toggle_pin(&mut self.scene, id);
+        self.history.marked(old);
+        self.dirty = true;
+        log::info!("sidebar: trail of card {} pinned={pinned}", id.0);
+        self.toast(if pinned { "Pinned to the top" } else { "Unpinned" });
     }
 
     /// Goes to card `id` from the sidebar: it is shown at its stack's front if
@@ -1979,7 +2054,7 @@ impl App {
     /// A press on the sidebar: a header collapses or expands its trail, a card
     /// row goes to that card. Either gives the sidebar the keys.
     fn sidebar_click(&mut self, p: Vec2, button: MouseButton) {
-        use scene::sidebar::Row;
+        use scene::sidebar::{Group, Row};
         if button != MouseButton::Left {
             return;
         }
@@ -1993,9 +2068,68 @@ impl App {
         self.sidebar.sel = Some(rows[i].key());
         self.sidebar_at = Some(i);
         match rows[i] {
+            // A trail's header toggles on release, unless it was dragged.
+            Row::Header { group: Group::Trail(head), .. } => {
+                self.sidebar_press = Some(SidebarPress { head, at: p, dragging: false, to: None });
+            }
             Row::Header { group, .. } => self.sidebar.toggle(group),
             Row::Card { id, .. } => self.sidebar_go(id),
         }
+    }
+
+    /// The pointer moved with a trail's header pressed: past a few px it is
+    /// a drag, and the row under the pointer says where the trail would go.
+    fn sidebar_press_moved(&mut self, p: Vec2) {
+        let Some(mut press) = self.sidebar_press else { return };
+        if !press.dragging && (p.y - press.at.y).abs() < 5.0 * self.ui() {
+            return;
+        }
+        press.dragging = true;
+        let rows = self.sidebar.rows(&self.scene);
+        let panel = self.sidebar_panel();
+        press.to = panel
+            .row_at(p, self.sidebar.scroll, rows.len())
+            .and_then(|i| scene::sidebar::drop_to(&self.scene, press.head, rows[i].group()));
+        self.sidebar_press = Some(press);
+    }
+
+    /// Release after a press on a trail's header: a click toggles the group,
+    /// a drag moves the trail where it was let go.
+    fn sidebar_release(&mut self) {
+        let Some(press) = self.sidebar_press.take() else { return };
+        if !press.dragging {
+            self.sidebar.toggle(scene::sidebar::Group::Trail(press.head));
+        } else if let Some(to) = press.to {
+            self.move_trail(press.head, to);
+        }
+    }
+
+    /// While a trail's header is dragged: the y of the line where it would
+    /// go (above the trail it would take the place of, moving up; below it,
+    /// moving down), if that row is shown.
+    fn sidebar_drop_line(&self, rows: &[scene::sidebar::Row], panel: &Panel) -> Option<f32> {
+        use scene::sidebar::{self, Group};
+        let press = self.sidebar_press.filter(|p| p.dragging)?;
+        let to = press.to?;
+        let (from, _) = sidebar::position(&self.scene, press.head)?;
+        let target = sidebar::groups(&self.scene)
+            .into_iter()
+            .filter_map(|(g, _)| match g {
+                Group::Trail(h) if sidebar::drop_to(&self.scene, press.head, g) == Some(to) => Some(h),
+                _ => None,
+            })
+            .next()?;
+        let of_target = |r: &&scene::sidebar::Row| sidebar::trail_head(r) == Some(target);
+        if to == from {
+            return None;
+        }
+        let (index, below) = if to < from {
+            (rows.iter().position(|r| of_target(&r))?, false)
+        } else {
+            (rows.iter().rposition(|r| of_target(&r))?, true)
+        };
+        let rect = panel.row_rect(index, self.sidebar.scroll)?;
+        Some(if below { rect.bottom() } else { rect.y })
     }
 
     // ---------------------------------------------------------------- arrange
@@ -3088,6 +3222,11 @@ impl App {
                 return;
             }
         }
+        if state == ElementState::Released && self.sidebar_press.is_some() && button == MouseButton::Left {
+            self.menu_pressed = false;
+            self.sidebar_release();
+            return;
+        }
         if state == ElementState::Released && std::mem::take(&mut self.menu_pressed) {
             return;
         }
@@ -3274,6 +3413,12 @@ impl App {
             }
         }
         self.sidebar_hover = None;
+        if self.sidebar_press.is_some() {
+            self.sidebar_press_moved(p);
+            self.cursor = p;
+            self.set_cursor(web::Cursor::Default);
+            return;
+        }
         if self.sidebar_shown() && matches!(self.drag, Drag::None) {
             let panel = self.sidebar_panel();
             if panel.rect.contains(p) {
@@ -3627,7 +3772,7 @@ impl App {
 
         // The trails sidebar, when it has the keys, takes its own (j/k, h/l,
         // Enter, Esc, B); the rest are board keys as usual.
-        if pressed && !ctrl && !alt && !shift && self.drag_is_idle() && self.sidebar_has_keys() && self.sidebar_key(code) {
+        if pressed && !ctrl && !alt && self.drag_is_idle() && self.sidebar_has_keys() && self.sidebar_key(code, shift) {
             return;
         }
 
@@ -4286,6 +4431,7 @@ impl App {
                 sel: if keys { self.sidebar.index(&rows) } else { None },
                 hover: self.sidebar_hover,
                 current: self.focused,
+                drop_line: self.sidebar_drop_line(&rows, &panel),
             };
             if let Some(r) = self.renderer.as_mut() {
                 layers.push(crate::sidebar::layer(r, &panel, &rows, &marks, &self.scene, &th, ui));
@@ -4961,6 +5107,11 @@ impl App {
                     self.mouse_input(ElementState::Released, MouseButton::Left);
                     self.mods = saved;
                 }
+                Cmd::Button { at: (x, y), pressed } => {
+                    self.cursor_moved(Vec2::new(x, y));
+                    let state = if pressed { ElementState::Pressed } else { ElementState::Released };
+                    self.mouse_input(state, MouseButton::Left);
+                }
                 Cmd::Undo => self.undo(false),
                 Cmd::Redo => self.undo(true),
                 Cmd::Cards => {
@@ -5021,9 +5172,12 @@ impl App {
                         let at = panel.row_rect(i, self.sidebar.scroll).map(|r| r.center());
                         let at = at.map_or_else(|| "off".to_string(), |c| format!("({:.0},{:.0})", c.x, c.y));
                         let what = match row {
-                            scene::sidebar::Row::Header { label, count, collapsed, .. } => {
-                                format!("header {label:?} count={count}{}", if *collapsed { " collapsed" } else { "" })
-                            }
+                            scene::sidebar::Row::Header { label, count, collapsed, mark, .. } => format!(
+                                "header {label:?} count={count}{}{} place={:?}",
+                                if *collapsed { " collapsed" } else { "" },
+                                if mark.pinned { " pinned" } else { "" },
+                                mark.place
+                            ),
                             scene::sidebar::Row::Card { id, depth, folded, .. } => {
                                 let title = self.scene.node(*id).map(|n| n.title.clone()).unwrap_or_default();
                                 format!("card {} depth={depth}{} {title:?}", id.0, if *folded { " folded" } else { "" })

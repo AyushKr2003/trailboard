@@ -13,6 +13,8 @@
 //! ctrlwheel 2
 //! drag 10 10 300 200   # left press, move in steps, release
 //! sdrag 10 10 300 200  # same with Shift held (selection band on the board)
+//! press 10 10          # left press only (then `move`s, `release`): to look mid-drag
+//! release 300 200      # left release
 //! sclick 400 300       # Shift+click (add/remove a card from the selection)
 //! key ctrl+shift+z     # press + release a key combo (US layout names, see keymap::KeyIn::from_name)
 //! type hello world     (no comment: the rest of the line is typed, `#` included, one key press per character)
@@ -49,6 +51,8 @@ pub enum Cmd {
     CtrlWheel(f32),
     /// Left drag; `shift` holds Shift throughout.
     Drag { from: (f32, f32), to: (f32, f32), shift: bool },
+    /// Left press or release at a point, alone.
+    Button { at: (f32, f32), pressed: bool },
     Key(String),
     Type(String),
     ImePreedit(String),
@@ -122,6 +126,7 @@ fn parse(line: &str) -> Option<Cmd> {
         "pclick" | "prclick" => Cmd::PageClick { id: num(0) as u64, x: num(1), y: num(2), right: word == "prclick" },
         "wheel" => Cmd::Wheel(num(0), num(1)),
         "ctrlwheel" => Cmd::CtrlWheel(num(0)),
+        "press" | "release" => Cmd::Button { at: (num(0), num(1)), pressed: word == "press" },
         "drag" | "sdrag" => Cmd::Drag { from: (num(0), num(1)), to: (num(2), num(3)), shift: word == "sdrag" },
         "key" => Cmd::Key(rest.trim().to_string()),
         // Keep the text's own spacing; only the separator after the word is dropped.

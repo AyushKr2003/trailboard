@@ -85,7 +85,7 @@ in the settings (Ctrl+,), or for one run with `TRAILBOARD_MAX_LIVE=N`.
 | Quote selected text in a note | right-click the selection → *Add to note* (the note last used, or a new one beside the page) |
 | Save as Markdown | Ctrl+S: the focused note, else the whole board (its trails as nested lists, notes in full); also *Save as Markdown* in a note's right-click menu. Files go to `Documents/Trailboard/` |
 | Fit everything | Shift+F (while no page has the keys), or Ctrl+0 with no card current |
-| Trails sidebar: every trail as a tree, then the other cards | B (while no page has the keys): j/k go to a card, h/l collapse / expand a trail, Enter types in the card's page, Esc or B closes; or click a row |
+| Trails sidebar: every trail as a tree, then the other cards | B (while no page has the keys): j/k go to a card, h/l collapse / expand a trail, Enter types in the card's page, p pins a trail to the top, Shift+J/K or dragging a header moves a trail, Esc or B closes; or click a row |
 | Tidy: lay trails out left to right, no overlaps | T (while no page has the keys; Ctrl+Z undoes it) |
 | Fold the current trail (or the one in the middle of the view) into a stack / unfold it | S (while no page has the keys; Ctrl+Z undoes it) |
 | Peek at the previous / next card of a stack | [ / ] (while no page has the keys) |

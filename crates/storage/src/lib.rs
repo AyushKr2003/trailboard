@@ -22,7 +22,9 @@ use serde::{Deserialize, Serialize};
 /// 3: adds note cards (`node.note`), so builds without notes refuse the file
 /// rather than load notes as broken pages and save them without their text.
 /// 4: adds trail names and colours (`node.trail`), for the same reason.
-pub const BOARD_VERSION: u32 = 5;
+/// 5: adds sticky notes (`node.sticky`). 6: adds sidebar pins and order
+/// (`node.trail.pinned`, `node.trail.place`), which older builds would drop.
+pub const BOARD_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Board {
@@ -90,6 +92,8 @@ pub fn migrate_board(mut v: serde_json::Value) -> Result<serde_json::Value, Load
             3 => v["version"] = 4.into(),
             // Version 5 only adds `sticky` on notes, which defaults to none.
             4 => v["version"] = 5.into(),
+            // Version 6 only adds `pinned` and `place` to trail marks (none).
+            5 => v["version"] = 6.into(),
             other => return Err(LoadError::UnsupportedVersion(other)),
         }
     }
@@ -257,6 +261,37 @@ mod tests {
         let b4 = load_board(&path).unwrap();
         assert_eq!(b4.version, BOARD_VERSION);
         assert!(b4.scene.all_nodes().all(|n| !n.is_sticky()));
+    }
+
+    #[test]
+    fn sidebar_pins_and_order_are_saved_and_version_5_boards_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = board_path(dir.path());
+        let mut scene = Scene::new();
+        let a = scene.add_page(Rect::new(0.0, 0.0, 10.0, 10.0), "a");
+        let b = scene.spawn_beside(a, "b").unwrap();
+        let c = scene.add_page(Rect::new(0.0, 50.0, 10.0, 10.0), "c");
+        scene.spawn_beside(c, "d").unwrap();
+        scene::sidebar::move_group(&mut scene, c, 0);
+        let e = scene.add_page(Rect::new(0.0, 90.0, 10.0, 10.0), "e");
+        scene::sidebar::toggle_pin(&mut scene, e);
+        save_board(&path, &Board::new(scene.clone(), Camera::default())).unwrap();
+        let back = load_board(&path).unwrap().scene;
+        assert_eq!(back.trail_mark(b), scene.trail_mark(b));
+        assert_eq!(back.trail_mark(b).place, Some(1));
+        assert!(back.trail_mark(e).pinned);
+        let json = fs::read_to_string(&path).unwrap();
+        assert!(!json.contains("\"pinned\": false"));
+
+        let mut v: serde_json::Value = serde_json::from_slice(json.as_bytes()).unwrap();
+        v["version"] = 5.into();
+        for n in v["scene"]["nodes"].as_object_mut().unwrap().values_mut() {
+            n.as_object_mut().unwrap().remove("trail");
+        }
+        fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
+        let b5 = load_board(&path).unwrap();
+        assert_eq!(b5.version, BOARD_VERSION);
+        assert!(b5.scene.all_nodes().all(|n| !n.trail.pinned && n.trail.place.is_none()));
     }
 
     #[test]

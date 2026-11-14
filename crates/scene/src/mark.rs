@@ -29,11 +29,25 @@ pub struct TrailMark {
     /// A theme colour name (see [`COLOURS`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub colour: Option<String>,
+    /// Pinned to the top of the trails sidebar (`sidebar::toggle_pin`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pinned: bool,
+    /// Place in the sidebar's order, once the trail was moved there
+    /// (`sidebar::move_group`); trails without one follow, oldest first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place: Option<u32>,
 }
 
 impl TrailMark {
+    /// No name and no colour: nothing to show on the board. (A pin or a
+    /// place only shows in the sidebar.)
     pub fn is_empty(&self) -> bool {
         self.name.is_none() && self.colour.is_none()
+    }
+
+    /// Nothing at all: not saved.
+    pub fn is_unset(&self) -> bool {
+        *self == TrailMark::default()
     }
 }
 
@@ -59,7 +73,9 @@ impl Scene {
         let first = |f: fn(&TrailMark) -> &Option<String>| {
             trail.iter().find_map(|&n| self.node(n).and_then(|n| f(&n.trail).clone()))
         };
-        TrailMark { name: first(|m| &m.name), colour: first(|m| &m.colour) }
+        let pinned = trail.iter().any(|&n| self.node(n).is_some_and(|n| n.trail.pinned));
+        let place = trail.iter().find_map(|&n| self.node(n).and_then(|n| n.trail.place));
+        TrailMark { name: first(|m| &m.name), colour: first(|m| &m.colour), pinned, place }
     }
 
     /// Gives every card of the trail through `id` this mark. Returns each
@@ -158,9 +174,9 @@ mod tests {
         assert_eq!(name(&s, d), None);
         assert!(s.name_trail(c, "Rust").is_empty(), "no change");
         s.cycle_trail_colour(a);
-        assert_eq!(s.trail_mark(c), TrailMark { name: Some("Rust".into()), colour: Some("blue".into()) });
+        assert_eq!(s.trail_mark(c), TrailMark { name: Some("Rust".into()), colour: Some("blue".into()), ..Default::default() });
         s.name_trail(a, "");
-        assert_eq!(s.trail_mark(c), TrailMark { name: None, colour: Some("blue".into()) });
+        assert_eq!(s.trail_mark(c), TrailMark { name: None, colour: Some("blue".into()), ..Default::default() });
     }
 
     #[test]
@@ -199,7 +215,7 @@ mod tests {
         assert_eq!(labels.len(), 2);
         assert_eq!(labels[0].0, a);
         assert_eq!(labels[0].1.name.as_deref(), Some("Rust"));
-        assert_eq!(labels[1], (d, TrailMark { name: None, colour: Some("blue".into()) }));
+        assert_eq!(labels[1], (d, TrailMark { name: None, colour: Some("blue".into()), ..Default::default() }));
         s.fold(b).unwrap();
         assert_eq!(s.trail_labels()[0].0, b, "the stack's front");
     }
@@ -213,7 +229,7 @@ mod tests {
         let old = s.cycle_trail_colour(c);
         h.marked(old);
         h.undo(&mut s);
-        assert_eq!(s.trail_mark(a), TrailMark { name: Some("Rust".into()), colour: None });
+        assert_eq!(s.trail_mark(a), TrailMark { name: Some("Rust".into()), colour: None, ..Default::default() });
         h.undo(&mut s);
         assert!(s.trail_mark(c).is_empty());
         h.redo(&mut s);

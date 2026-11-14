@@ -37,7 +37,7 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("Shift+F", "Fit everything"),
             ("Ctrl+T", "New card"),
             ("N · Shift+N", "New note / sticky note"),
-            ("B", "Trails sidebar"),
+            ("B", "Trails sidebar (p pins, Shift+j k moves)"),
             ("T", "Tidy trails"),
             ("S", "Fold / unfold a trail"),
             ("[ · ]", "Peek through a stack"),

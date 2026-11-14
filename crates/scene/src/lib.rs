@@ -57,8 +57,9 @@ pub struct Node {
     /// Markdown text of a note card (`note`); `None` for a web page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
-    /// Name and colour of the trail this card is on (`mark`), kept on every card of it.
-    #[serde(default, skip_serializing_if = "TrailMark::is_empty")]
+    /// Name, colour, pin and sidebar place of the trail this card is on
+    /// (`mark`, `sidebar`), kept on every card of it.
+    #[serde(default, skip_serializing_if = "TrailMark::is_unset")]
     pub trail: TrailMark,
     /// A note shown as a sticky note: the name of its theme colour (`note`).
     #[serde(default, skip_serializing_if = "Option::is_none")]

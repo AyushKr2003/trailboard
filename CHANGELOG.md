@@ -52,12 +52,15 @@ All notable changes to Trailboard. The format follows
   already brought back with undo.
 
 ### Fixed
+- Zoomed-in pages are sharp again: pages now render at the zoom's resolution
+  (CEF ignored the device scale we reported, so pages always rendered at 1×).
 - Shortcuts now follow the logical key instead of the physical keycode, so they
   work on non-QWERTY layouts and with virtual keyboards (a remapped key was
   being read as Escape).
 
 ### Known issues
-- Pages always render at 1× device scale, so zoomed-in pages look soft (zoom-aware resolution isn't taking effect).
+- Pages see `devicePixelRatio` equal to the board's raster scale (0.5–2), and a page may lay out once at a stale zoom right after navigating to a new site.
+- Digits in card titles render with wide gaps.
 - Custom image cursors (`cursor: url(…)`) show the default arrow.
 - A card that wakes from sleep reloads its page, losing scroll position and form input.
 - Manual keyboard typing into pages has not been verified by automated tests.

@@ -49,7 +49,10 @@ Rules
 
 Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
 - Software OSR (`on_paint`) first. Accelerated OSR (dmabuf shared textures) comes later, only if profiling needs it.
-- Page device scale follows the settled zoom (0.5–2.0, quantized), so zoomed-in text stays sharp.
+- Page raster scale follows the settled zoom (0.5–2.0, quarter steps), so zoomed-in text stays sharp.
+  CEF 156 OSR ignores the device scale factor (both `screen_info` and
+  `--force-device-scale-factor`), so the view is `css × scale` pixels with page
+  zoom `scale` (level `ln s / ln 1.2`): layout stays at the card's CSS size.
 - Off-screen cards are hidden (`was_hidden`) and stop painting.
 
 ---
@@ -75,9 +78,14 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
 - ✅ Links open beside their source (`on_before_browse` LINK + gesture, popups, Ctrl/middle-click).
 - ✅ Bezier trail edges; placement right of the source, sliding down past siblings.
 - ✅ Move, resize, close, reopen closed, double-click title → fill view.
-- 🟡 Hide off-screen pages ✅; zoom-aware page resolution ⚠ broken: CEF keeps
-  painting at 1× even when `screen_info` reports scale 2 (found 2026-11-14), so
-  zoomed-in pages are upscaled and soft.
+- ✅ Hide off-screen pages; zoom-aware page resolution. Decision (2026-11-14):
+  done with page zoom instead of the device scale factor, which CEF 156 OSR
+  ignores. `web::Page` converts input (CSS px → view px, wheel deltas) and popup
+  rects, so the app still works in CSS px. Trade-offs: `devicePixelRatio` equals
+  the raster scale; Chromium keeps zoom per origin (shared by same-origin cards,
+  fine while the scale is global) and we re-assert it on every navigation, so a
+  page may lay out once at a stale zoom; per-card scales or user page zoom
+  (Ctrl +/-) will need the two multiplied.
 - ✅ Undo/redo for board edits (move, resize, close, open): `scene::History`,
   Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y. Decisions: history is per session (not saved);
   page navigation, titles and stacking are not board edits; after a click inside
@@ -179,34 +187,31 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. Added popup widget painting and page cursors (M3).
-**Repo state:** on `master`, committed after d2147c3; working tree clean.
+**Last session:** 2026-11-14. Fixed zoom-aware page resolution (M3).
+**Repo state:** on `master`, committed after 11794dd; working tree clean.
 **Done this session:**
-- Live-browser cap (d2147c3): `scene::liveness`, sleeping cards keep a dimmed
-  snapshot, `TRAILBOARD_MAX_LIVE` (default 6).
-- `<select>` and other popups: `on_popup_show`/`on_popup_size`/`PET_POPUP` in
-  `web`, composited over the page frame; pure clamp/blit helpers in
-  `web::popup` with unit tests; mouse events over the popup offset to match.
-- Page cursors: `on_cursor_change` → `WebEvent::CursorChanged` → card cursor →
-  winit `CursorIcon` (hidden for `cursor: none`).
-- Script `cards` now logs each card's title.
-**Next up:**
-1. Fix zoom-aware page resolution: pages always paint at 1× (`page N paints at
-   WxH (scale S)` at debug level shows it). Check whether CEF needs `rect` /
-   `available_rect` filled in `screen_info`, `was_resized` after
-   `notify_screen_info_changed`, or `invalidate(PET_VIEW)`; compare with cefclient's OSR.
-2. Then M3: IME/clipboard/context menu → multi-select.
+- Live-browser cap (d2147c3) and popup widgets + page cursors (11794dd), see M3.
+- Zoom-aware resolution was broken: pages always painted at 1×. Experiments showed
+  CEF 156 OSR ignores the device scale (from `screen_info`, even fixed from
+  creation, and from `--force-device-scale-factor`). Now the view is `css × scale`
+  pixels with page zoom `scale` (`web::zoom_level_for`, re-applied on create,
+  scale change, address change and load state change); device scale is reported as 1.
+- `Page` maps CSS-px input to view px and scales wheel deltas; popup rects are view px.
+**Next up:** M3: IME/composition input, clipboard shortcuts verified, context
+menu → card multi-select (group move can record one `Edit` per card; add a batch edit then).
 **Notes for the next session:**
-- Verified e2e (data: URL test page, isolated data dir under `~/.cache`): clicking a
-  `<select>` shows its list drawn in place (screenshot), clicking "Gamma" set the
-  title via `onchange`; on a 240-px card Chromium shrinks the list to fit (screenshot);
-  zoomed-in the list lines up with the select after the scale fix (screenshot).
-  Hovering `cursor:pointer`/`crosshair` paragraphs logged Pointer/Crosshair/Default.
-- Not verified: the clamp path (Chromium already fits popups into the view, so it
-  never triggered), the window cursor actually changing on screen (grim doesn't
-  capture it), and keyboard navigation inside an open list.
-- Live-browser cap: zooming can churn (a card sleeps, then reloads in view); the
-  "Click to load" label and "· asleep" suffix weren't seen in a screenshot.
+- Verified e2e (data: test pages reporting `innerWidth`, `devicePixelRatio` and a
+  `<select>` rect in the title): layout stays 1024×720 CSS while frames paint at
+  768×540 / 1792×1260 / 2048×1440 for scales 0.75 / 1.75 / 2; screenshot at 2×
+  shows crisp text; at 1.75 the opened list sits under the select (screenshot)
+  and a click picked the option under the pointer.
+- Not verified: navigating a card to a new origin while zoomed (zoom re-assert
+  path), and pages that react badly to `devicePixelRatio` ≠ 1.
+- Card title text renders digits with wide gaps (e.g. "4 0 , 4 0"); likely a
+  glyphon font fallback issue in `compositor`; pre-existing, not investigated.
+- Popup clamp path never triggered (Chromium fits popups into the view); the
+  window cursor change isn't visible in grim screenshots.
+- Live-browser cap: zooming can churn (sleep, then reload in view).
 - Real Ctrl+Z key routing and typing into pages haven't been tested by hand.
 - Keep test boards small (RAM). Use an isolated `XDG_DATA_HOME` under `~/.cache` for e2e runs.
 - `hyprctl clients -j` can report a window off-screen right after it opens

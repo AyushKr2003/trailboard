@@ -241,6 +241,10 @@ struct Shared {
     key: u64,
     /// View size in CSS pixels.
     size: RefCell<(i32, i32)>,
+    /// Raster scale: pixels per CSS pixel. CEF 156 OSR ignores the device scale
+    /// factor we report, so we get it with page zoom instead: the view is
+    /// `size × scale` pixels and the page zoom is `scale`, which keeps the CSS
+    /// layout at `size` while painting `scale`× sharper. See [`zoom_level_for`].
     scale: RefCell<f32>,
     /// What the app shows: the page with any open popup drawn on top.
     frame: RefCell<PaintFrame>,
@@ -254,27 +258,50 @@ struct Shared {
 #[derive(Default)]
 struct PopupState {
     shown: bool,
-    /// Where Chromium placed the popup, CSS px in view coordinates.
+    /// Where Chromium placed the popup, in view pixels.
     rect: IRect,
     width: u32,
     height: u32,
     pixels: Vec<u8>,
 }
 
+/// Chromium zoom level (factor = 1.2^level) that renders at `scale`.
+pub fn zoom_level_for(scale: f32) -> f64 {
+    (scale.max(0.01) as f64).ln() / 1.2f64.ln()
+}
+
 impl Shared {
-    /// Where the popup is drawn (CSS px): Chromium's rect moved inside the card.
+    /// View size in pixels (what CEF lays out and paints).
+    fn view_px(&self) -> (i32, i32) {
+        let (w, h) = *self.size.borrow();
+        let s = *self.scale.borrow();
+        (((w as f32) * s).round().max(1.0) as i32, ((h as f32) * s).round().max(1.0) as i32)
+    }
+
+    /// Re-assert our page zoom; Chromium keeps zoom per origin, so a navigation can reset it.
+    fn apply_zoom(&self, host: &BrowserHost) {
+        let want = zoom_level_for(*self.scale.borrow());
+        if (host.zoom_level() - want).abs() > 1e-3 {
+            log::debug!("page {} zoom level {:.3} -> {want:.3}", self.key, host.zoom_level());
+            host.set_zoom_level(want);
+        }
+    }
+
+    /// Where the popup is drawn (view px): Chromium's rect moved inside the card.
     fn popup_drawn(&self) -> Option<(IRect, IRect)> {
         let p = self.popup.borrow();
         if !p.shown || p.rect.w <= 0 || p.rect.h <= 0 {
             return None;
         }
-        let (w, h) = *self.size.borrow();
+        let (w, h) = self.view_px();
         Some((p.rect, popup::clamp_into_view(p.rect, w, h)))
     }
 
-    /// Map a point in the card to the point Chromium expects: a point over the drawn
-    /// popup is shifted back to where Chromium thinks the popup is.
+    /// Map a point in the card (CSS px) to the view pixel Chromium expects. A point over
+    /// the drawn popup is shifted back to where Chromium thinks the popup is.
     fn widget_point(&self, x: i32, y: i32) -> (i32, i32) {
+        let s = *self.scale.borrow();
+        let (x, y) = ((x as f32 * s).round() as i32, (y as f32 * s).round() as i32);
         match self.popup_drawn() {
             Some((orig, drawn)) if drawn.contains(x, y) => (x - (drawn.x - orig.x), y - (drawn.y - orig.y)),
             _ => (x, y),
@@ -292,11 +319,10 @@ impl Shared {
         f.pixels.extend_from_slice(&view.pixels);
         if let Some((_, drawn)) = self.popup_drawn() {
             let p = self.popup.borrow();
-            // Scale of the pixels we actually have: right after a zoom change the
-            // requested device scale can be ahead of the last paint.
-            let css_w = self.size.borrow().0.max(1);
-            let scale = view.width as f32 / css_w as f32;
-            // Clamp again in device pixels, using the buffer's real size.
+            // Right after a scale change the last paint can lag the requested size;
+            // map view px onto the pixels we actually have.
+            let scale = view.width as f32 / self.view_px().0 as f32;
+            // Clamp again in frame pixels, using the buffer's real size.
             let mut dev = drawn.scaled(scale);
             dev.w = p.width as i32;
             dev.h = p.height as i32;
@@ -319,7 +345,7 @@ wrap_render_handler! {
     impl RenderHandler {
         fn view_rect(&self, _browser: Option<&mut Browser>, rect: Option<&mut Rect>) {
             if let Some(rect) = rect {
-                let (w, h) = *self.shared.size.borrow();
+                let (w, h) = self.shared.view_px();
                 rect.x = 0;
                 rect.y = 0;
                 rect.width = w.max(1);
@@ -330,7 +356,12 @@ wrap_render_handler! {
         fn screen_info(&self, _browser: Option<&mut Browser>, info: Option<&mut ScreenInfo>) -> ::std::os::raw::c_int {
             match info {
                 Some(info) => {
-                    info.device_scale_factor = *self.shared.scale.borrow();
+                    // Scale comes from page zoom (see `Shared::scale`), so the "screen" is 1×.
+                    info.device_scale_factor = 1.0;
+                    let (w, h) = self.shared.view_px();
+                    let r = Rect { x: 0, y: 0, width: w, height: h };
+                    info.rect = r.clone();
+                    info.available_rect = r;
                     1
                 }
                 None => 0,
@@ -383,6 +414,7 @@ wrap_render_handler! {
             // SAFETY: CEF guarantees `buffer` holds width*height BGRA pixels for this call.
             let src = unsafe { std::slice::from_raw_parts(buffer, len) };
             let sh = &self.shared;
+            log::trace!("page {} paint {width}x{height} popup={}", sh.key, type_ == PaintElementType::POPUP);
             if type_ != PaintElementType::POPUP && sh.frame.borrow().width != width as u32 {
                 log::debug!("page {} paints at {width}x{height} (scale {})", sh.key, sh.scale.borrow());
             }
@@ -510,9 +542,12 @@ wrap_display_handler! {
     }
 
     impl DisplayHandler {
-        fn on_address_change(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, url: Option<&CefString>) {
+        fn on_address_change(&self, browser: Option<&mut Browser>, frame: Option<&mut Frame>, url: Option<&CefString>) {
             if frame.is_some_and(|f| f.is_main() != 0)
                 && let Some(url) = url {
+                    if let Some(h) = browser.and_then(|b| b.host()) {
+                        self.shared.apply_zoom(&h);
+                    }
                     emit(WebEvent::UrlChanged { page: self.shared.key, url: url.to_string() });
                 }
         }
@@ -544,11 +579,14 @@ wrap_load_handler! {
     impl LoadHandler {
         fn on_loading_state_change(
             &self,
-            _browser: Option<&mut Browser>,
+            browser: Option<&mut Browser>,
             is_loading: ::std::os::raw::c_int,
             _can_go_back: ::std::os::raw::c_int,
             _can_go_forward: ::std::os::raw::c_int,
         ) {
+            if let Some(h) = browser.and_then(|b| b.host()) {
+                self.shared.apply_zoom(&h);
+            }
             emit(WebEvent::LoadingChanged { page: self.shared.key, loading: is_loading != 0 });
         }
     }
@@ -637,6 +675,9 @@ impl Page {
             None,
             None,
         )?;
+        if let Some(h) = browser.host() {
+            shared.apply_zoom(&h);
+        }
         Some(Page { browser, shared })
     }
 
@@ -652,7 +693,7 @@ impl Page {
         self.browser.host()
     }
 
-    /// Resize the page viewport (CSS px) and/or change its device scale.
+    /// Resize the page viewport (CSS px) and/or change its raster scale (pixels per CSS px).
     pub fn resize(&self, size: (i32, i32), scale: f32) {
         let changed_size = *self.shared.size.borrow() != size;
         let changed_scale = (*self.shared.scale.borrow() - scale).abs() > f32::EPSILON;
@@ -660,7 +701,7 @@ impl Page {
         *self.shared.scale.borrow_mut() = scale;
         if let Some(h) = self.host() {
             if changed_scale {
-                h.notify_screen_info_changed();
+                self.shared.apply_zoom(&h);
             }
             if changed_size || changed_scale {
                 h.was_resized();
@@ -719,6 +760,9 @@ impl Page {
 
     pub fn mouse_wheel(&self, x: i32, y: i32, modifiers: u32, dx: i32, dy: i32) {
         let (x, y) = self.shared.widget_point(x, y);
+        // Deltas are view pixels; scale them so a notch scrolls the same CSS distance.
+        let s = *self.shared.scale.borrow();
+        let (dx, dy) = ((dx as f32 * s).round() as i32, (dy as f32 * s).round() as i32);
         if let Some(h) = self.host() {
             h.send_mouse_wheel_event(Some(&MouseEvent { x, y, modifiers }), dx, dy);
         }
@@ -756,4 +800,18 @@ pub mod flags {
     pub const LEFT_MOUSE: u32 = 1 << 4;
     pub const MIDDLE_MOUSE: u32 = 1 << 5;
     pub const RIGHT_MOUSE: u32 = 1 << 6;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::zoom_level_for;
+
+    #[test]
+    fn zoom_level_matches_chromium_factor() {
+        for s in [0.5f32, 1.0, 1.25, 2.0] {
+            let factor = 1.2f64.powf(zoom_level_for(s));
+            assert!((factor - s as f64).abs() < 1e-9, "{s}: {factor}");
+        }
+        assert_eq!(zoom_level_for(1.0), 0.0);
+    }
 }

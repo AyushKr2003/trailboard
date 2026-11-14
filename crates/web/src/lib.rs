@@ -36,7 +36,13 @@ pub enum WebEvent {
     /// Find in page ([`Page::find`]): `count` matches, the `active` one (1-based,
     /// 0 for none); `done` once Chromium has finished counting.
     FindResult { page: u64, count: i32, active: i32, done: bool },
+    /// The icon of page `page`, which was showing `page_url` when it said which
+    /// icon it has: BGRA8 with straight (not premultiplied) alpha, at most [`ICON_SIZE`] px a side.
+    Favicon { page: u64, page_url: String, width: u32, height: u32, pixels: Vec<u8> },
 }
+
+/// Largest favicon side asked of Chromium, px (title bars draw 16 px icons, sharp at 2×).
+pub const ICON_SIZE: u32 = 32;
 
 /// What a page is: a web page, or one of the app's own note editors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -336,6 +342,8 @@ struct Shared {
     initial_url: String,
     /// The main frame's address, for its user zoom ([`set_page_zoom`]).
     url: RefCell<String>,
+    /// The icon last asked for, so a page that repeats it isn't fetched again.
+    icon_url: RefCell<String>,
     kind: PageKind,
 }
 
@@ -697,6 +705,27 @@ wrap_display_handler! {
             1
         }
 
+        fn on_favicon_urlchange(&self, browser: Option<&mut Browser>, icon_urls: Option<&mut CefStringList>) {
+            if self.shared.kind != PageKind::Web {
+                return;
+            }
+            // Chromium lists the page's icons best first, ending with /favicon.ico.
+            let Some(first) = icon_urls.and_then(|l| {
+                let raw: *mut cef::sys::_cef_string_list_t = l.into();
+                CefStringList::from(raw).into_iter().next()
+            }) else {
+                return;
+            };
+            if *self.shared.icon_url.borrow() == first {
+                return;
+            }
+            *self.shared.icon_url.borrow_mut() = first.clone();
+            let Some(host) = browser.and_then(|b| b.host()) else { return };
+            let page_url = self.shared.url.borrow().clone();
+            let mut done = IconDone::new(self.shared.key, page_url);
+            host.download_image(Some(&CefString::from(first.as_str())), 1, ICON_SIZE, 0, Some(&mut done));
+        }
+
         fn on_title_change(&self, _browser: Option<&mut Browser>, title: Option<&CefString>) {
             if self.shared.kind == PageKind::Web
                 && let Some(title) = title {
@@ -731,6 +760,35 @@ wrap_display_handler! {
                 return 1;
             }
             0
+        }
+    }
+}
+
+wrap_download_image_callback! {
+    struct IconDone {
+        key: u64,
+        page_url: String,
+    }
+
+    impl DownloadImageCallback {
+        fn on_download_image_finished(&self, image_url: Option<&CefString>, status: ::std::os::raw::c_int, image: Option<&mut Image>) {
+            let url = image_url.map(|u| u.to_string()).unwrap_or_default();
+            let Some(image) = image else {
+                log::debug!("page {}: no icon at {url:?} (HTTP {status})", self.key);
+                return;
+            };
+            let (mut w, mut h) = (0, 0);
+            let Some(bin) = image.as_bitmap(1.0, ColorType::BGRA_8888, AlphaType::POSTMULTIPLIED, Some(&mut w), Some(&mut h)) else {
+                return;
+            };
+            let (width, height) = (w.max(0) as u32, h.max(0) as u32);
+            let mut pixels = vec![0u8; bin.size()];
+            bin.data(Some(&mut pixels), 0);
+            if width == 0 || height == 0 || pixels.len() != (width * height * 4) as usize {
+                return;
+            }
+            log::debug!("page {}: icon {width}x{height} from {url:?}", self.key);
+            emit(WebEvent::Favicon { page: self.key, page_url: self.page_url.clone(), width, height, pixels });
         }
     }
 }
@@ -904,6 +962,7 @@ impl Page {
             ime_caret: RefCell::new(None),
             initial_url: url.to_string(),
             url: RefCell::new(url.to_string()),
+            icon_url: RefCell::new(String::new()),
             kind,
         });
         let mut client = PageClient::new(

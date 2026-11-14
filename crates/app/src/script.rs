@@ -64,6 +64,8 @@ pub enum Cmd {
     Palette,
     /// Log each live card's site zoom and the zoom Chromium has.
     Zooms,
+    /// Log each card's icon site and whether its icon is known.
+    Icons,
     /// Log the find bar: its text, card and result.
     Find,
     Open(String),
@@ -133,6 +135,7 @@ fn parse(line: &str) -> Option<Cmd> {
         "sidebar" => Cmd::Sidebar,
         "palette" => Cmd::Palette,
         "zooms" => Cmd::Zooms,
+        "icons" => Cmd::Icons,
         "find" => Cmd::Find,
         "open" => Cmd::Open(rest.trim().to_string()),
         "log" => Cmd::Log(rest.trim().to_string()),

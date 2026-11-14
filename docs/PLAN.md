@@ -562,7 +562,26 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
 - ⬜ A `.desktop` entry and icon (`share/trailboard.desktop`, `share/trailboard.svg`)
   so Trailboard shows in the Omarchy launcher; translations of the UI strings.
 - ⬜ Settings panel; download handling and a downloads list.
-- Loading/favicons in titles; hover card names when zoomed out.
+- ✅ Loading and site icons in titles; card names when zoomed out
+  (`scene::icon`, `storage::icons`, `WebEvent::Favicon`). Decisions (2026-11-14):
+  - The loading bar along the title bar's bottom edge (existing) is the
+    loading mark; no spinner.
+  - Icons come from Chromium's favicon list (`on_favicon_urlchange`, first =
+    best, `/favicon.ico` last), fetched with `download_image` at ≤32 px and
+    kept **per site** (`pagezoom::site_of`, http/https hosts only; `file:`,
+    `data:`, notes get none). Every card on a site shows the same icon; a card
+    that navigates shows its new site's icon (or none) at once.
+  - Saved under `$DATA/icons/<safe name>.icon` (shared by all spaces): magic,
+    version 1, size, the site itself (file names make `host:port` safe, so the
+    site is kept inside), then BGRA8 with straight alpha. Re-fetched identical
+    icons aren't re-written. No pruning yet (a few KB a site).
+  - The icon sits at the title bar's left at 16 units and keeps showing down to
+    4 px, after the title (≥6 px) is gone, so cards can still be told apart.
+    The shader now multiplies by the texture's alpha (pages are opaque).
+  - Below `icon::READABLE_TITLE` (9 px titles) the card under the pointer, or
+    else the current card, gets a screen-sized label with icon and title under
+    it (above when there's no room), kept inside the window. Hidden during a
+    drag, a menu, the palette or omnibox, link hints and the shortcut sheet.
 
 ### M7: History and search ⬜
 - `page-text.db` (SQLite FTS5) using the same proven design Marble uses:
@@ -617,26 +636,41 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M6 find in page and page zoom, then everything by keyboard.
-**Repo state:** on `master`, committed after 0973d99; working tree clean.
+**Last session:** 2026-11-14. M6 site icons in title bars and card names when zoomed out.
+**Repo state:** on `master`, committed after f9baf6a; working tree clean.
 **Done this session:**
-- Find in page (Ctrl+F) and per-site page zoom (Ctrl +/−/0): see M6.
-- Everything by keyboard (see M6): `v` select, `z` fill view, `d`/`u`
-  scroll, Menu / Shift+F10 page menu (`KeyCode::ContextMenu` → VK_APPS),
-  j/k in menus, `f` hints on controls (`web::links::Action`: Open, Click,
-  Type; `App::click_target`). Palette commands, sheet, README, CHANGELOG.
-**Next up:** M6's remaining 🟡: loading/favicons in titles and hover card
-names when zoomed out; or the M7 history store (palette history follows).
-Small follow-ups: a zoom badge on a zoomed card's title bar; Ctrl+scroll
-inside a page to zoom it; palette history once M7 exists; Shift+Enter in the palette
-to open beside; sidebar pins/favourites and drag to reorder (need a stored
-order, board v6); rename a trail from the sidebar or its tag; the Menu key /
-Shift+F10 for the page menu; keyboard selection of several cards; link hints
-inside iframes and for buttons/inputs; Omarchy app conventions still missing:
-a `.desktop` entry and icon, xdg-desktop-portal file chooser for Save as
-Markdown, i18n. Also: animate cards to their Tidy places; a sticky note's
+- Site icons (favicons) per site in title bars, saved under `icons/`; a
+  name label for the hovered or current card when titles are unreadable; the
+  loading bar counts as the loading mark. See M6 for the decisions.
+**Next up:** the M7 history store (`page-text.db`, then palette history);
+or M6's remaining ⬜ (`.desktop` entry and icon, settings, downloads).
+Small follow-ups: prune `icons/` of sites no card uses; a letter tile for
+sites without an icon; the name label for a stack could list its size; a zoom
+badge on a zoomed card's title bar; Ctrl+scroll inside a page to zoom it;
+Shift+Enter in the palette to open beside; sidebar pins and drag to reorder
+(board v6); rename a trail from the sidebar or its tag; keyboard selection of
+several cards; link hints inside iframes; xdg-desktop-portal file chooser for
+Save as Markdown; i18n; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out.
 **Notes for the next session:**
+- Icons verified e2e (`~/.cache/trailboard-e2e-icons`, `run.sh N shot…`,
+  `NOURL=1` restores the board without opening a URL). Serve `a/` on
+  127.0.0.1:8701 (`<link rel=icon>` to a 32 px transparent red circle) and `b/`
+  on :8702 (only `/favicon.ico`, green 16 px) with `python3 -m http.server`.
+  Run 1: both icons fetched and saved (`icon for 127.0.0.1:8701: 32x32`, …),
+  drawn on both cards; zoomed out with no current card → no label; l → label
+  for card 2. Run 2 (copy of run 1): icons loaded from disk under the right
+  sites (a first version lost the `:port`; the site is now inside the file),
+  identical re-fetches not re-saved; pointer on card 1 → its label, pointer on
+  the board → none. Run 3 (copy of run 2, :8702 stopped): the error page's
+  card still shows the saved green icon beside its title. Screenshots
+  titles1, current1, hover2, near3 checked (transparency right), dark theme only.
+- Not verified: real sites (only local servers; SVG and multi-size `.ico`
+  icons untested), HiDPI sharpness, light themes for the label, a real mouse
+  leaving the window (CursorLeft clears the hover), a site whose icon changes
+  (it replaces the saved one; untested), the label over the sidebar.
+- Stop a test server by port (`ss -ltnp 'sport = :8702'`), never `pkill -f`,
+  which killed this session's own shell.
 - Keyboard parity verified e2e (`~/.cache/trailboard-e2e-kbd`, `run.sh N
   shot…` opens `controls.html`: a link, a button, a checkbox, a text field, a
   select, a `javascript:` link, a disabled button, each setting the title).

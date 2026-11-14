@@ -118,6 +118,16 @@ const TOAST_FOR: Duration = Duration::from_millis(1800);
 /// Bits of a page key that hold the card id; the space epoch sits above them.
 const KEY_ID_BITS: u32 = 40;
 
+/// Texture keys of site icons: this bit set, so they never meet a page key.
+const ICON_KEY: u64 = 1 << 63;
+
+/// A site's icon, uploaded as texture `key` whenever `serial` changes.
+struct SiteIcon {
+    key: u64,
+    serial: u64,
+    icon: storage::icons::Icon,
+}
+
 /// Browser and texture key for card `id` while `epoch` is current.
 fn page_key(epoch: u64, id: NodeId) -> u64 {
     (epoch << KEY_ID_BITS) | id.0
@@ -251,6 +261,10 @@ pub struct App {
     saved: HashMap<(SpaceId, Option<NodeId>), std::path::PathBuf>,
     /// Page zoom per site (Ctrl +/−/0), shared with `web` (`web::set_page_zoom`).
     zooms: Rc<RefCell<SiteZooms>>,
+    /// Site icons by `scene::icon::site`, for every space, saved under `icons/`.
+    icons: HashMap<String, SiteIcon>,
+    /// Whether the pointer is over the window (for the zoomed-out name label).
+    pointer_in: bool,
     /// The page find in page last searched (to stop it when the bar closes).
     finding: Option<NodeId>,
     /// Find in page's last result: matches and the active one (1-based).
@@ -267,6 +281,11 @@ impl App {
         let zooms = Rc::new(RefCell::new(storage::zoom::load_zooms(&data_dir)));
         let lookup = zooms.clone();
         web::set_page_zoom(move |url| lookup.borrow().get(url));
+        let icons = storage::icons::load_icons(&data_dir)
+            .into_iter()
+            .enumerate()
+            .map(|(i, (site, icon))| (site, SiteIcon { key: ICON_KEY | i as u64, serial: 1, icon }))
+            .collect();
         Self {
             renderer: None,
             scene: Scene::new(),
@@ -325,6 +344,8 @@ impl App {
             note_target: None,
             saved: HashMap::new(),
             zooms,
+            icons,
+            pointer_in: false,
             finding: None,
             found: None,
             last_find: String::new(),
@@ -2087,6 +2108,11 @@ impl App {
                         self.dirty = true;
                     }
                 }
+                WebEvent::Favicon { page, page_url, width, height, pixels } => {
+                    if self.node_of(page).is_some() {
+                        self.set_icon(&page_url, width, height, pixels);
+                    }
+                }
                 WebEvent::LoadingChanged { page, loading } => {
                     if let Some(c) = self.node_of(page).and_then(|id| self.cards.get_mut(&id)) {
                         c.loading = loading;
@@ -2094,6 +2120,92 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Keeps `pixels` as the icon of `page_url`'s site, saving it when it is new.
+    fn set_icon(&mut self, page_url: &str, width: u32, height: u32, pixels: Vec<u8>) {
+        let Some(site) = scene::icon::site(page_url) else { return };
+        let Some(icon) = storage::icons::Icon::new(width, height, pixels) else {
+            log::warn!("icon for {site}: unusable size {width}x{height}");
+            return;
+        };
+        if self.icons.get(&site).is_some_and(|s| s.icon == icon) {
+            return;
+        }
+        if let Err(e) = storage::icons::save_icon(&self.data_dir, &site, &icon) {
+            log::warn!("saving the icon for {site}: {e}");
+        }
+        log::info!("icon for {site}: {width}x{height}");
+        let next = ICON_KEY | self.icons.len() as u64;
+        let entry = self.icons.entry(site).or_insert(SiteIcon { key: next, serial: 0, icon: icon.clone() });
+        entry.icon = icon;
+        entry.serial += 1;
+    }
+
+    /// The card whose name shows when titles are too small to read: the one
+    /// under the pointer, or else the current card. None while something else
+    /// has the pointer's attention (a drag, a menu, the palette, link hints).
+    fn named_card(&self) -> Option<NodeId> {
+        if !matches!(self.drag, Drag::None) || self.menu.is_some() || self.omnibox.is_some() || self.link_hints.is_some() || self.hints {
+            return None;
+        }
+        let over_panel = self.sidebar_shown() && self.sidebar_panel().rect.contains(self.cursor);
+        let hovered = if self.pointer_in && !over_panel { self.hit(self.cursor).id() } else { None };
+        hovered.or(self.focused).filter(|id| self.scene.node(*id).is_some())
+    }
+
+    /// A screen-sized label with the named card's icon and title, under the card.
+    fn name_label_layer(&mut self) -> Option<Layer> {
+        let id = self.named_card()?;
+        let n = self.scene.node(id)?;
+        let th = self.theme.clone();
+        let (ui, vp) = (self.ui(), self.viewport());
+        let size = 13.0 * ui;
+        let pad = 9.0 * ui;
+        let h = size * 2.0;
+        let icon_px = 16.0 * ui;
+        let icon = self.icon_key(&n.url);
+        let title = if n.title.is_empty() { n.url.clone() } else { n.title.clone() };
+        let title = if self.cards.contains_key(&id) { title } else { format!("{title} · asleep") };
+        let frame = self.to_screen_rect(n.frame());
+        let tw = self.renderer.as_mut().map_or(200.0, |r| r.measure(&title, size, true));
+        let lead = if icon.is_some() { icon_px + 7.0 * ui } else { 0.0 };
+        let w = (pad * 2.0 + lead + tw).min(480.0 * ui).min(vp.x - 16.0 * ui);
+        let rect = scene::icon::name_label(frame, Vec2::new(w, h), vp, 6.0 * ui, 8.0 * ui);
+        let mut l = Layer::default();
+        l.quads.push(Quad {
+            shape: Shape::Shadow { rect: rect.translate(Vec2::new(0.0, 3.0 * ui)), radius: th.radius(ui), blur: 10.0 * ui },
+            color: th.shadow(0.35),
+            texture: None,
+        });
+        l.quads.push(Quad {
+            shape: Shape::Rect { rect, radius: th.radius(ui) },
+            color: rgb(th.card(true), 1.0),
+            texture: None,
+        });
+        if let Some(key) = icon {
+            l.quads.push(Quad {
+                shape: Shape::Rect { rect: Rect::new(rect.x + pad, rect.y + (h - icon_px) / 2.0, icon_px, icon_px), radius: 0.0 },
+                color: [1.0; 4],
+                texture: Some(key),
+            });
+        }
+        let x = rect.x + pad + lead;
+        l.texts.push(Text {
+            text: title,
+            pos: [x, rect.y + (h - size * 1.3) / 2.0],
+            size,
+            color: rgb(th.foreground(), 1.0),
+            clip: Rect::new(x, rect.y, (rect.right() - pad - x).max(1.0), h),
+            bold: true,
+        });
+        Some(l)
+    }
+
+    /// The texture key of `url`'s site icon, if there is one.
+    fn icon_key(&self, url: &str) -> Option<u64> {
+        let key = self.icons.get(&scene::icon::site(url)?)?.key;
+        self.renderer.as_ref().is_some_and(|r| r.has_page(key)).then_some(key)
     }
 
     // ---------------------------------------------------------------- input
@@ -2334,6 +2446,7 @@ impl App {
     }
 
     fn cursor_moved(&mut self, p: Vec2) {
+        self.pointer_in = true;
         if let Some(m) = self.menu.as_mut()
             && m.rect.contains(p)
             && matches!(self.drag, Drag::None)
@@ -3005,6 +3118,9 @@ impl App {
                 let f = card.page.frame();
                 r.update_page(page_key(epoch, *id), f.width, f.height, &f.pixels, f.serial);
             }
+            for s in self.icons.values() {
+                r.update_page(s.key, s.icon.width, s.icon.height, &s.icon.pixels, s.serial);
+            }
         }
 
         let origin = self.camera.world_to_screen(Vec2::default(), vp, scale);
@@ -3178,18 +3294,31 @@ impl App {
                 });
             }
             let font = 13.0 * k;
+            let pad = 10.0 * k;
+            // The site's icon at the start of the title bar; it stays a little
+            // further out than the title, so cards can be told apart by it.
+            let icon = if sticky.is_none() { self.icon_key(&n.url) } else { None };
+            let icon_px = 16.0 * k;
+            let mut title_x = header.x + pad;
+            if let Some(key) = icon.filter(|_| icon_px >= 4.0) {
+                l.quads.push(Quad {
+                    shape: Shape::Rect { rect: Rect::new(title_x, header.y + (header.h - icon_px) / 2.0, icon_px, icon_px), radius: 0.0 },
+                    color: if asleep { [0.78, 0.78, 0.8, 1.0] } else { [1.0; 4] },
+                    texture: Some(key),
+                });
+                title_x += icon_px + 6.0 * k;
+            }
             if font >= 6.0 && sticky.is_none() {
-                let pad = 10.0 * k;
                 let title = if n.title.is_empty() { n.url.as_str() } else { n.title.as_str() };
                 let title = if asleep { format!("{title} · asleep") } else { title.to_string() };
                 let title = match stack {
                     Some((i, len)) => format!("{i}/{len} · {title}"),
                     None => title,
                 };
-                let clip = Rect::new(header.x + pad, header.y, (header.w - pad * 2.0 - CLOSE_W * k).max(1.0), header.h);
+                let clip = Rect::new(title_x, header.y, (header.right() - pad - CLOSE_W * k - title_x).max(1.0), header.h);
                 l.texts.push(Text {
                     text: title,
-                    pos: [header.x + pad, header.y + (header.h - font * 1.3) / 2.0],
+                    pos: [title_x, header.y + (header.h - font * 1.3) / 2.0],
                     size: font,
                     color: match (focused, asleep) {
                         (true, _) => rgb(th.foreground(), 1.0),
@@ -3279,6 +3408,13 @@ impl App {
                     bold: false,
                 }],
             });
+        }
+
+        if self.read.is_none()
+            && 13.0 * k < scene::icon::READABLE_TITLE
+            && let Some(l) = self.name_label_layer()
+        {
+            layers.push(l);
         }
 
         if self.read.is_none()
@@ -4011,6 +4147,16 @@ impl App {
                         log::info!("script sidebar row {i} at {at}: {what}");
                     }
                 }
+                Cmd::Icons => {
+                    let mut sites: Vec<_> = self.icons.iter().map(|(s, i)| format!("{s}={}x{}", i.icon.width, i.icon.height)).collect();
+                    sites.sort();
+                    log::info!("script icons: sites={sites:?} named={:?}", self.named_card().map(|id| id.0));
+                    for n in self.scene.nodes() {
+                        let site = scene::icon::site(&n.url);
+                        let drawn = self.icon_key(&n.url).is_some();
+                        log::info!("script icon card {}: site {site:?} drawn {drawn}", n.id.0);
+                    }
+                }
                 Cmd::Zooms => {
                     log::info!("script zooms: sites={:?}", self.zooms.borrow().sites);
                     let mut ids: Vec<_> = self.cards.keys().copied().collect();
@@ -4202,6 +4348,7 @@ impl ApplicationHandler for App {
             WindowEvent::ModifiersChanged(m) => self.mods = m.state(),
             WindowEvent::CursorMoved { position, .. } => self.cursor_moved(Vec2::new(position.x as f32, position.y as f32)),
             WindowEvent::CursorLeft { .. } => {
+                self.pointer_in = false;
                 if let Some(id) = self.hit(self.cursor).id()
                     && let (Some(card), Some((x, y))) = (self.cards.get(&id), self.page_point(id, self.cursor)) {
                         card.page.mouse_move(x, y, 0, true);

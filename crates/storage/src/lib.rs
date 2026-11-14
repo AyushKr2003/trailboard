@@ -3,6 +3,7 @@
 //! Each space has its own board; `spaces` holds the index of spaces.
 
 pub mod export;
+pub mod icons;
 pub mod spaces;
 pub mod zoom;
 

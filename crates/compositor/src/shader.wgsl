@@ -118,7 +118,8 @@ fn fs_quad(v: VOut) -> @location(0) vec4f {
             a = clamp(0.5 - d, 0.0, 1.0);
         }
         if (v.params.w > 0.5) {
-            c = vec4f(t.rgb * c.rgb, c.a);
+            // Straight alpha: pages are opaque, icons are not.
+            c = vec4f(t.rgb * c.rgb, c.a * t.a);
         }
     } else {
         a = clamp(0.5 - (abs(v.local.y) - v.half.y), 0.0, 1.0);

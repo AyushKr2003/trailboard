@@ -7,6 +7,7 @@ pub mod export;
 pub mod fold;
 pub mod geom;
 pub mod hint;
+pub mod icon;
 pub mod history;
 pub mod liveness;
 pub mod mark;

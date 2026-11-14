@@ -97,6 +97,12 @@ you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change th
 
 Input methods (e.g. fcitx5) work in pages and in the address bar.
 
+Each card's title bar shows its site's icon (kept per site under
+`icons/` in the data folder, so sleeping cards and restored boards keep theirs)
+and a moving bar while the page loads. Zoomed out too far to read titles, the
+card under the pointer (or else the current card) shows its icon and title in
+a label below it.
+
 On [Omarchy](https://omarchy.org/), Trailboard follows the current theme live
 (colours, light or dark, including the pages' `prefers-color-scheme`),
 Hyprland's window rounding and the desktop text size. Elsewhere it uses a dark

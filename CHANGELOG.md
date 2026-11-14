@@ -7,6 +7,13 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Site icons in title bars**: each card shows its site's icon (favicon)
+  before its title. Icons are kept per site and saved (in `icons/` in the data
+  folder), so sleeping cards and boards restored after a restart show them
+  too, and stay visible when the board is zoomed out past the titles.
+- **Card names when zoomed out**: when titles are too small to read, the card
+  under the pointer, or else the current card, shows its icon and title in a
+  label below it. Script command `icons` logs the known icons.
 - **Everything by keyboard**: every mouse action now has a key too.
   - f labels buttons, checkboxes, text fields, selects and other controls as
     well as links: typing a label clicks it, and a field gets the keys so you

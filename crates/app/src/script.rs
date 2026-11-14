@@ -9,7 +9,11 @@
 //! click 400 300        # left press + release
 //! wheel 0 -3           # line deltas
 //! ctrlwheel 2
+//! drag 10 10 300 200   # left press, move in steps, release
 //! fit                  # same as Ctrl+0
+//! undo                 # same as Ctrl+Z on the board
+//! redo                 # same as Ctrl+Shift+Z
+//! cards                # log every card (id, rect, live page, url) and edge
 //! open https://…       # same as Ctrl+T + Enter
 //! log some note        # print to the log (marks screenshot moments)
 //! quit
@@ -25,7 +29,11 @@ pub enum Cmd {
     Click(f32, f32),
     Wheel(f32, f32),
     CtrlWheel(f32),
+    Drag(f32, f32, f32, f32),
     Fit,
+    Undo,
+    Redo,
+    Cards,
     Open(String),
     Log(String),
     Quit,
@@ -72,7 +80,11 @@ fn parse(line: &str) -> Option<Cmd> {
         "click" => Cmd::Click(num(0), num(1)),
         "wheel" => Cmd::Wheel(num(0), num(1)),
         "ctrlwheel" => Cmd::CtrlWheel(num(0)),
+        "drag" => Cmd::Drag(num(0), num(1), num(2), num(3)),
         "fit" => Cmd::Fit,
+        "undo" => Cmd::Undo,
+        "redo" => Cmd::Redo,
+        "cards" => Cmd::Cards,
         "open" => Cmd::Open(rest.trim().to_string()),
         "log" => Cmd::Log(rest.trim().to_string()),
         "quit" => Cmd::Quit,

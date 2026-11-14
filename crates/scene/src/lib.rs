@@ -3,11 +3,13 @@
 //! can be unit-tested and serialized.
 
 pub mod geom;
+pub mod history;
 pub mod placement;
 
 use std::collections::BTreeMap;
 
 pub use geom::{Camera, Rect, Vec2};
+pub use history::{Change, Edit, History};
 use serde::{Deserialize, Serialize};
 
 /// Height of a card's title bar, in world units, drawn above the page content.
@@ -16,7 +18,7 @@ pub const HEADER_H: f32 = 30.0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct NodeId(pub u64);
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Node {
     pub id: NodeId,
     /// Page content area in world units. The title bar sits directly above it.
@@ -79,9 +81,33 @@ impl Scene {
         Some(id)
     }
 
-    pub fn remove(&mut self, id: NodeId) -> Option<Node> {
-        self.edges.retain(|e| e.from != id && e.to != id);
-        self.nodes.remove(&id)
+    /// Removes a card and its trail edges, returning both so the card can be restored.
+    pub fn remove(&mut self, id: NodeId) -> Option<(Node, Vec<Edge>)> {
+        let node = self.nodes.remove(&id)?;
+        let (gone, kept) = self.edges.drain(..).partition(|e| e.from == id || e.to == id);
+        self.edges = kept;
+        Some((node, gone))
+    }
+
+    /// Puts back a card removed earlier, under its old id and on top of the
+    /// stack, with those of its `edges` whose other end still exists.
+    /// Returns false (and changes nothing) if the id is already in use.
+    pub fn insert(&mut self, mut node: Node, edges: &[Edge]) -> bool {
+        let id = node.id;
+        if self.nodes.contains_key(&id) {
+            return false;
+        }
+        self.next_id = self.next_id.max(id.0);
+        self.next_z += 1;
+        node.z = self.next_z;
+        self.nodes.insert(id, node);
+        for e in edges {
+            let touches = e.from == id || e.to == id;
+            if touches && self.nodes.contains_key(&e.from) && self.nodes.contains_key(&e.to) && !self.edges.contains(e) {
+                self.edges.push(*e);
+            }
+        }
+        true
     }
 
     pub fn node(&self, id: NodeId) -> Option<&Node> {
@@ -171,5 +197,23 @@ mod tests {
         let b = s.spawn_beside(a, "b").unwrap();
         s.remove(b);
         assert!(s.edges().is_empty());
+    }
+
+    #[test]
+    fn insert_restores_node_and_live_edges_only() {
+        let mut s = Scene::new();
+        let a = s.add_page(Rect::new(0.0, 0.0, 100.0, 100.0), "a");
+        let b = s.spawn_beside(a, "b").unwrap();
+        let c = s.spawn_beside(b, "c").unwrap();
+        let (node_b, edges_b) = s.remove(b).unwrap();
+        assert_eq!(edges_b.len(), 2);
+        s.remove(c);
+        assert!(s.insert(node_b.clone(), &edges_b));
+        assert_eq!(s.edges(), &[Edge { from: a, to: b }]);
+        assert!(!s.insert(node_b, &edges_b), "id already in use");
+        // Restored card is on top, and fresh ids never collide with it.
+        assert_eq!(s.topmost_at(Vec2::new(200.0, 50.0)), Some(b));
+        let d = s.add_page(Rect::default(), "d");
+        assert!(d.0 > c.0);
     }
 }

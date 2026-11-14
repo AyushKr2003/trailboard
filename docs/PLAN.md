@@ -76,7 +76,12 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
 - ✅ Bezier trail edges; placement right of the source, sliding down past siblings.
 - ✅ Move, resize, close, reopen closed, double-click title → fill view.
 - ✅ Hide off-screen pages; zoom-aware page resolution.
-- ⬜ Undo/redo for board edits (move, resize, close, open).
+- ✅ Undo/redo for board edits (move, resize, close, open): `scene::History`,
+  Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y. Decisions: history is per session (not saved);
+  page navigation, titles and stacking are not board edits; after a click inside
+  a page, Ctrl+Z goes to the page (text undo) until the board, a title bar or a
+  resize grip is clicked; a card restored by undo keeps its id and trail edges
+  whose other end still exists, and Ctrl+Shift+T skips cards already restored.
 - ⬜ Live-browser cap (e.g. 6–8 live; others show a cached snapshot and wake on focus).
 - ⬜ `<select>`/popup widgets (`PET_POPUP` painting) and cursor shape from pages.
 - ⬜ IME / composition input; clipboard shortcuts verified; context menu.
@@ -159,10 +164,25 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. Built M0–M2, most of M3, persistence from M4, and the docs.
-**Repo state:** initial commit 4e73f50 on `master`; working tree clean.
-**Next up:** M3 remaining items in order: undo/redo → live-browser cap →
-`<select>`/popup painting → IME/clipboard/context menu → multi-select.
+**Last session:** 2026-11-14. Added undo/redo for board edits (M3).
+**Repo state:** on `master`, undo/redo committed after 597d07f; working tree clean.
+**Done this session:**
+- `scene::history` (`History`, `Edit`, `Change`): each stack holds the reversing
+  edit, and applying an edit returns its own reverse. `Scene::remove` now returns
+  the card's edges, and `Scene::insert` restores a card under its old id.
+- App records open (incl. links and Ctrl+Shift+T), close, move and resize, and
+  maps Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y. Ctrl+Shift+T now restores trail edges too.
+- Script commands `drag`, `undo`, `redo`, `cards` (logs world and screen rects).
+**Next up:** M3 remaining items in order: live-browser cap →
+`<select>`/popup painting → IME/clipboard/context menu → multi-select (group
+move can record one `Edit` per card; add a batch edit then).
 **Notes for the next session:**
+- Verified e2e: move, resize and close each undone/redone with live pages restored;
+  screenshot after close+undo showed the page re-rendered. Undo of a card opened
+  from a page link (trail edge) is covered only by unit tests, not e2e.
+- Real Ctrl+Z key routing (page vs board) was not tested with a physical keyboard;
+  the script calls the same handler directly.
 - Typing into pages has not been verified by hand; ask the user to try it if relevant.
-- Keep test boards small (RAM). Use an isolated `XDG_DATA_HOME` for e2e runs.
+- Keep test boards small (RAM). Use an isolated `XDG_DATA_HOME` under `~/.cache` for e2e runs.
+- `hyprctl clients -j` can report a window off-screen right after it opens
+  (open animation); take the screenshot a few seconds later.

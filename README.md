@@ -47,6 +47,7 @@ profile (cookies, cache) lives next to it.
 | Move / resize a card | drag its title bar / bottom-right corner |
 | Fill the view with a card | double-click its title bar |
 | Close card / reopen closed | × or Ctrl+W / Ctrl+Shift+T |
+| Undo / redo board edits | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y (after clicking the board or a title bar) |
 | Address bar / new card | Ctrl+L / Ctrl+T (or N with no page focused) |
 | Fit everything | Ctrl+0 (or F with no page focused) |
 | Back / forward / reload | Alt+← / Alt+→ / Ctrl+R |

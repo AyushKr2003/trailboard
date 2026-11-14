@@ -7,6 +7,10 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Undo/redo for board edits**: Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y undo and redo
+  opening, closing, moving and resizing cards. A restored card gets its live page
+  and trail edges back. After a click inside a page, Ctrl+Z goes to the page.
+- Script commands `drag`, `undo`, `redo` and `cards` for end-to-end runs.
 - **Reverse-engineering notes** for Marble 0.1.28 (macOS), gathered with REA:
   architecture, module map, 1,549 recovered function names, SQLite page-text
   schema, board JSON structures, menus/shortcuts and the Explain API contract
@@ -33,6 +37,10 @@ All notable changes to Trailboard. The format follows
 - `scripts/install-cef.sh` installs the CEF build that matches the `cef` crate
   (works around `export-cef-dir` failing on CEF's >10 MB build index).
 - README, plan (`docs/PLAN.md`), future plans (`docs/FUTURE.md`) and `CLAUDE.md`.
+
+### Changed
+- Ctrl+Shift+T now restores the closed card's trail edges and skips cards
+  already brought back with undo.
 
 ### Fixed
 - Shortcuts now follow the logical key instead of the physical keycode, so they

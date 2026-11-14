@@ -16,7 +16,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::placement::GAP;
-use crate::{Node, NodeId, Rect, Scene, Vec2, HEADER_H};
+use crate::{Node, NodeId, Rect, Scene, Vec2};
 
 /// Extra space between two trails, on top of [`GAP`].
 pub const TRAIL_GAP: f32 = GAP;
@@ -99,7 +99,7 @@ pub fn tidy(scene: &Scene) -> Vec<(NodeId, Rect)> {
                 y += row_h + GAP;
                 row_h = 0.0;
             }
-            out.insert(n.id, Rect::new(x, y + HEADER_H, n.rect.w, n.rect.h));
+            out.insert(n.id, Rect::new(x, y + n.header_h(), n.rect.w, n.rect.h));
             x += f.w + GAP;
             row_h = row_h.max(f.h);
         }
@@ -155,7 +155,7 @@ fn layout_tree(
     for &id in tree {
         let n = nodes[&id];
         let y = top[&id];
-        out.insert(id, Rect::new(col_x[depth[&id]], y + HEADER_H, n.rect.w, n.rect.h));
+        out.insert(id, Rect::new(col_x[depth[&id]], y + n.header_h(), n.rect.w, n.rect.h));
         let mut cy = y;
         for c in kids.get(&id).into_iter().flatten() {
             top.insert(*c, cy);
@@ -173,7 +173,7 @@ fn reading_order(a: &Node, b: &Node) -> std::cmp::Ordering {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Edge;
+    use crate::{Edge, HEADER_H};
 
     fn apply(s: &mut Scene, rects: &[(NodeId, Rect)]) {
         for (id, r) in rects {

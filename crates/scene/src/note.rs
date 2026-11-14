@@ -149,9 +149,25 @@ pub fn append(text: &str, block: &str) -> String {
     format!("{head}\n\n{block}")
 }
 
+/// Colours a sticky note takes in turn with C, by desktop-theme name; new
+/// ones start on the first.
+pub const STICKY_COLOURS: [&str; 6] = ["yellow", "green", "cyan", "blue", "magenta", "red"];
+
+/// The sticky colour after `colour`, wrapping round; the first for one not in
+/// [`STICKY_COLOURS`] (a hand-edited file).
+pub fn next_sticky_colour(colour: &str) -> &'static str {
+    let i = STICKY_COLOURS.iter().position(|c| *c == colour).map_or(0, |i| i + 1);
+    STICKY_COLOURS[i % STICKY_COLOURS.len()]
+}
+
 impl Node {
     pub fn is_note(&self) -> bool {
         self.note.is_some()
+    }
+
+    /// A note shown as a sticky note: no title bar, the paper in its colour.
+    pub fn is_sticky(&self) -> bool {
+        self.is_note() && self.sticky.is_some()
     }
 }
 
@@ -176,6 +192,29 @@ impl Scene {
         Some(id)
     }
 
+    /// Adds a sticky note holding `text` at `rect`, in the first sticky colour.
+    pub fn add_sticky(&mut self, rect: Rect, text: impl Into<String>) -> NodeId {
+        let id = self.add_note(rect, text);
+        self.nodes.get_mut(&id).expect("just added").sticky = Some(STICKY_COLOURS[0].to_string());
+        id
+    }
+
+    /// Makes note `id` a sticky note in `colour`, or a note card again with
+    /// `None`. Returns the old value (to undo), or `None` if `id` is not a
+    /// note or nothing changed. The content rect stays put; only the strip
+    /// above it changes height.
+    pub fn set_sticky(&mut self, id: NodeId, colour: Option<String>) -> Option<Option<String>> {
+        let n = self.nodes.get_mut(&id).filter(|n| n.is_note() && n.sticky != colour)?;
+        Some(std::mem::replace(&mut n.sticky, colour))
+    }
+
+    /// Gives sticky note `id` its next colour. Returns the old one, as
+    /// [`Scene::set_sticky`]; `None` for a card that is not a sticky note.
+    pub fn cycle_sticky_colour(&mut self, id: NodeId) -> Option<Option<String>> {
+        let now = self.nodes.get(&id).filter(|n| n.is_sticky())?.sticky.clone()?;
+        self.set_sticky(id, Some(next_sticky_colour(&now).to_string()))
+    }
+
     /// Replaces a note's text (and so its title). False if `id` is not a note.
     pub fn set_note(&mut self, id: NodeId, text: impl Into<String>) -> bool {
         let Some(n) = self.nodes.get_mut(&id).filter(|n| n.is_note()) else { return false };
@@ -189,6 +228,50 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{HEADER_H, STICKY_GRIP_H, Vec2};
+
+    #[test]
+    fn sticky_notes_have_a_strip_not_a_title_bar() {
+        let mut s = Scene::new();
+        let id = s.add_sticky(Rect::new(0.0, 100.0, 240.0, 200.0), "buy milk");
+        let n = s.node(id).unwrap();
+        assert!(n.is_note() && n.is_sticky());
+        assert_eq!(n.sticky.as_deref(), Some("yellow"));
+        assert_eq!(n.title, "buy milk");
+        assert_eq!(n.frame(), Rect::new(0.0, 100.0 - STICKY_GRIP_H, 240.0, 200.0 + STICKY_GRIP_H));
+        // Above the strip is board, where a title bar would have been.
+        assert_eq!(s.topmost_at(Vec2::new(10.0, 100.0 - STICKY_GRIP_H - 1.0)), None);
+        assert_eq!(s.topmost_at(Vec2::new(10.0, 100.0 - 1.0)), Some(id));
+    }
+
+    #[test]
+    fn notes_turn_sticky_and_back_and_pages_never_do() {
+        let mut s = Scene::new();
+        let note = s.add_note(Rect::new(0.0, 0.0, 100.0, 100.0), "");
+        let page = s.add_page(Rect::new(300.0, 0.0, 100.0, 100.0), "https://a");
+        assert_eq!(s.set_sticky(page, Some("green".into())), None);
+        assert!(!s.node(page).unwrap().is_sticky());
+        assert_eq!(s.set_sticky(note, Some("green".into())), Some(None));
+        assert_eq!(s.node(note).unwrap().header_h(), STICKY_GRIP_H);
+        assert_eq!(s.set_sticky(note, Some("green".into())), None, "no change");
+        assert_eq!(s.set_sticky(note, None), Some(Some("green".into())));
+        assert_eq!(s.node(note).unwrap().header_h(), HEADER_H);
+        assert_eq!(s.cycle_sticky_colour(note), None, "a plain note has no sticky colour");
+    }
+
+    #[test]
+    fn sticky_colours_cycle_and_wrap() {
+        let mut s = Scene::new();
+        let id = s.add_sticky(Rect::default(), "");
+        let mut seen = vec![s.node(id).unwrap().sticky.clone().unwrap()];
+        for _ in 0..STICKY_COLOURS.len() {
+            assert!(s.cycle_sticky_colour(id).is_some());
+            seen.push(s.node(id).unwrap().sticky.clone().unwrap());
+        }
+        assert_eq!(seen[..STICKY_COLOURS.len()], STICKY_COLOURS.map(String::from));
+        assert_eq!(seen.last().unwrap(), STICKY_COLOURS[0], "wraps to the first");
+        assert_eq!(next_sticky_colour("plaid"), STICKY_COLOURS[0]);
+    }
 
     #[test]
     fn title_takes_the_first_line_with_text() {

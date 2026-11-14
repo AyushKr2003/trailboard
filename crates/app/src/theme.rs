@@ -252,6 +252,24 @@ impl Theme {
         colour.map_or_else(|| self.accent(), |c| self.color(c))
     }
 
+    /// A sticky note's paper: theme colour `colour` itself, a little softened
+    /// toward the background so it doesn't glare, like paper on the board.
+    pub fn sticky_paper(&self, colour: &str) -> Rgb {
+        mix(self.color(colour), self.background(), 0.08)
+    }
+
+    /// Text on a sticky note: black or white for its paper, softened.
+    pub fn sticky_ink(&self, colour: &str) -> Rgb {
+        let paper = self.sticky_paper(colour);
+        mix(text_on(paper), paper, 0.12)
+    }
+
+    /// A sticky note's grab strip: its paper, a shade deeper (more when focused).
+    pub fn sticky_strip(&self, colour: &str, focused: bool) -> Rgb {
+        let paper = self.sticky_paper(colour);
+        mix(paper, text_on(paper), if focused { 0.22 } else { 0.12 })
+    }
+
     /// A step from the background toward the foreground: surfaces and lines.
     fn step(&self, t: f32) -> Rgb {
         mix(self.background(), self.foreground(), t)
@@ -454,6 +472,22 @@ red = "#f7768e"
         assert_eq!(parse_rounding(r#"{"option": "decoration:rounding", "int": 8, "set": true }"#), Some(8.0));
         assert_eq!(parse_rounding(r#"{"int": -1}"#), None);
         assert_eq!(parse_rounding("not json"), None);
+    }
+
+    #[test]
+    fn sticky_ink_reads_on_every_sticky_colour() {
+        let contrast = |a: Rgb, b: Rgb| {
+            let (la, lb) = (luminance(a), luminance(b));
+            (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+        };
+        let light = Theme { palette: parse_palette("background = \"#f5f5f5\"\nforeground = \"#202020\"\n", true), ..Theme::default() };
+        for th in [Theme::default(), Theme { palette: parse_palette(TOKYO, false), ..Theme::default() }, light] {
+            for c in scene::note::STICKY_COLOURS {
+                let (paper, ink) = (th.sticky_paper(c), th.sticky_ink(c));
+                assert!(contrast(paper, ink) >= 4.5, "{c}: {paper:?} / {ink:?}");
+                assert_ne!(th.sticky_strip(c, false), paper);
+            }
+        }
     }
 
     #[test]

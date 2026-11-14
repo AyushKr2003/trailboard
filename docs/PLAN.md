@@ -319,7 +319,27 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   focused, edited or made in this space), or makes a new note beside the page
   with a trail edge when there is none. Toast "Added to Title". While reading,
   a new note is not read next.
-- ⬜ Sticky notes (small coloured notes without a title bar).
+- ✅ Sticky notes (small coloured notes without a title bar). Decisions (2026-11-14):
+  - A sticky note is a note card with `sticky: Some(colour)` (board v5; v4 →
+    v5 adds nothing to old files, and v4 builds refuse v5 boards so they
+    can't drop the colour on save). Same editor, text, title, export, undo,
+    sleep and trails as any note; only its look and chrome differ.
+  - No title bar: a 16-unit strip (`STICKY_GRIP_H`) in a deeper shade of its
+    colour is its only chrome, drag it to move; no title text, no ×, no
+    loading bar. Close with Delete or Ctrl+W, resize by the corner or M.
+    `Node::header_h()` gives the strip or title bar height, so `frame()`,
+    hit tests and Tidy fit both. 12 units was ~4 px when fitted; 16 is still
+    small far out, where M moves it.
+  - Paper is the theme colour itself (8% toward the background), with black
+    or white ink by contrast (≥ 4.5:1 tested for every colour in dark, Tokyo
+    Night and a light palette); links and task boxes use the ink, not the
+    accent. Colours are theme names (`STICKY_COLOURS`: yellow, green, cyan,
+    blue, magenta, red), so they follow theme changes.
+  - Keys: Shift+N makes one in the middle of the view (280×240, yellow, keys
+    in it), on no trail. C recolours the card it picks if that is a sticky
+    note (the current card, else the one in the middle), else the trail as
+    before. A note's page menu toggles *Make sticky note* / *Make note card*.
+    Recolouring and toggling are undoable (`Edit::SetSticky`).
 - ✅ Save as Markdown (Ctrl+S, note menu; `scene::export`, `storage::export`). Decisions (2026-11-14):
   - Ctrl+S saves the focused note, else the whole board of the space (also
     with a web page focused, where Chromium has nothing on Ctrl+S). A note's
@@ -493,24 +513,41 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M6 Keyboard move and resize (M).
-**Repo state:** on `master`, committed after 025a9eb; working tree clean.
+**Last session:** 2026-11-14. M5 Sticky notes.
+**Repo state:** on `master`, committed after 2796a53; working tree clean.
 **Done this session:**
-- `scene::arrange`: `Arrange` (start rects of the card and its group,
-  `nudge`, `resize`, `cancel`, `is_stale`) and `grow`; tests, including one
-  undo step for a whole session.
-- `app`: `arrange` state; M starts it (`start_arrange`), keys while it lasts
-  (`arrange_key`), `finish_arrange(keep)` on Enter/M/Space/Esc, any other key,
-  a click, a focus change, a space switch or an undo. Heavy ring on the
-  arranged card and a key pill at the bottom. Sheet, README, CHANGELOG updated.
-**Next up:** sticky notes (M5), then the trails sidebar (M6).
+- `scene`: `Node::sticky`, `header_h()`, `STICKY_GRIP_H`; `note::STICKY_COLOURS`,
+  `next_sticky_colour`, `add_sticky`, `set_sticky`, `cycle_sticky_colour`;
+  `Edit::SetSticky` / `Change::Restyled`; Tidy places by each card's own
+  header height. `storage`: board v5. Tests for all of it.
+- `app`: Shift+N, C on a sticky note, sticky strip drawing and hit test,
+  note editor colours for sticky paper (`theme::sticky_paper/ink/strip`),
+  recolour on undo and theme change; `web::menu` *Make sticky note* /
+  *Make note card*. Sheet, README, CHANGELOG updated.
+**Next up:** the trails sidebar (M6).
 Small follow-ups: the Menu key / Shift+F10 for the page menu; keyboard
 selection of several cards; link hints inside iframes and for buttons/inputs
 (click or focus by label); Omarchy app conventions still missing: a `.desktop`
 entry and icon, xdg-desktop-portal file chooser for Save as Markdown,
 following the Omarchy language (i18n). Also: rename a trail from the page menu
-or its tag; animate cards to their Tidy places.
+or its tag; animate cards to their Tidy places; a sticky note's strip is hard
+to hit when zoomed far out (consider a minimum hit height in screen px).
 **Notes for the next session:**
+- Sticky notes verified e2e (`~/.cache/trailboard-e2e-sticky`, `run.sh N
+  shot…`, seed = the arrange run's seed in `seed/`). Run 1: Shift+N made
+  sticky 7 (yellow), typed `# Buy *milk*` / `- [ ] eggs` (title "Buy milk");
+  C C → green → cyan, undo → green; Esc, C on the sticky in the middle → cyan,
+  undo; note 6's menu showed *Make sticky note*, which made it yellow, undo
+  made it a card again. Run 2 (copy of run 1): sticky restored green after
+  restart, file version 5. Run 3: a click 7 px above the strip hit the board;
+  dragging the strip up 200 px moved it 272 units at zoom 0.735, undo put it
+  back. Screenshots sticky1, cyan1, sticky2, zoom2, drag3, sheet1 checked,
+  dark theme only.
+- Not verified: light themes on screen (contrast unit-tested only), a live
+  theme switch recolouring a sticky, a real keyboard Shift+N/C, a sticky
+  note in a stack or in Read Mode, resizing one by its corner by mouse.
+- Type into a new note only after its page has loaded (script: `wait 1500`
+  after N or Shift+N); keys sent earlier are lost.
 - Arrange verified e2e (`~/.cache/trailboard-e2e-arrange`, `run.sh N shot…`,
   seed board in `seed/`, copy it to `dataN` first). Run 1 at zoom ≈ 0.32:
   j → card 3, M, l l moved it 252 (2 × 40 px); Shift+L, Shift+J grew it

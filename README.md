@@ -66,6 +66,7 @@ you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change th
 | Undo / redo board edits | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y (after clicking the board or a title bar) |
 | Address bar / new card | Ctrl+L / Ctrl+T |
 | New note (Markdown) | N (while no page has the keys); click a note to edit, Esc or click away to see it rendered |
+| New sticky note / its next colour | Shift+N / C on it (while no page has the keys); drag its coloured strip to move it; *Make sticky note* / *Make note card* in a note's right-click menu |
 | Quote selected text in a note | right-click the selection → *Add to note* (the note last used, or a new one beside the page) |
 | Save as Markdown | Ctrl+S: the focused note, else the whole board (its trails as nested lists, notes in full); also *Save as Markdown* in a note's right-click menu. Files go to `Documents/Trailboard/` |
 | Fit everything | Ctrl+0 (or Shift+F while no page has the keys) |

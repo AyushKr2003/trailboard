@@ -7,6 +7,14 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Sticky notes**: press Shift+N with no page having the keys for a small
+  coloured note without a title bar, ready to type in (Markdown, like any
+  note). Drag its coloured strip to move it; C gives it the next colour
+  (yellow, green, cyan, blue, magenta, red, from the desktop theme). A note's
+  right-click menu has *Make sticky note* / *Make note card*. Colour changes
+  are undoable and saved with the board.
+- Board files are now version 5 (adds sticky notes); older boards are
+  upgraded when read. Script `cards` logs each sticky note's colour.
 - **Move and resize by keyboard**: press M with no page having the keys to
   arrange the current card. h/j/k/l or the arrows move it (with the rest of
   the selection if it is selected), Shift with them resizes it, Ctrl takes

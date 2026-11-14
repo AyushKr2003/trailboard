@@ -31,6 +31,9 @@ use serde::{Deserialize, Serialize};
 /// Height of a card's title bar, in world units, drawn above the page content.
 pub const HEADER_H: f32 = 30.0;
 
+/// Height of a sticky note's grab strip, its only chrome (`note`).
+pub const STICKY_GRIP_H: f32 = 16.0;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct NodeId(pub u64);
 
@@ -49,16 +52,26 @@ pub struct Node {
     /// Name and colour of the trail this card is on (`mark`), kept on every card of it.
     #[serde(default, skip_serializing_if = "TrailMark::is_empty")]
     pub trail: TrailMark,
+    /// A note shown as a sticky note: the name of its theme colour (`note`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sticky: Option<String>,
 }
 
 impl Node {
+    /// Height of the chrome above the content: a title bar, or a sticky note's strip.
+    pub fn header_h(&self) -> f32 {
+        if self.is_sticky() { STICKY_GRIP_H } else { HEADER_H }
+    }
+
     /// Content rect plus title bar: the area the card occupies on the board.
     pub fn frame(&self) -> Rect {
-        Rect::new(self.rect.x, self.rect.y - HEADER_H, self.rect.w, self.rect.h + HEADER_H)
+        let h = self.header_h();
+        Rect::new(self.rect.x, self.rect.y - h, self.rect.w, self.rect.h + h)
     }
 
     pub fn header(&self) -> Rect {
-        Rect::new(self.rect.x, self.rect.y - HEADER_H, self.rect.w, HEADER_H)
+        let h = self.header_h();
+        Rect::new(self.rect.x, self.rect.y - h, self.rect.w, h)
     }
 }
 
@@ -92,7 +105,7 @@ impl Scene {
         let url = url.into();
         self.nodes.insert(
             id,
-            Node { id, rect, title: url.clone(), url, z: self.next_z, note: None, trail: TrailMark::default() },
+            Node { id, rect, title: url.clone(), url, z: self.next_z, note: None, trail: TrailMark::default(), sticky: None },
         );
         id
     }

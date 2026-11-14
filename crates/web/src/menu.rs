@@ -23,6 +23,8 @@ pub struct MenuContext {
     pub can_forward: bool,
     /// The page is a note: no navigation, and nothing to add to a note.
     pub note: bool,
+    /// The note is a sticky note (set by the app; the page doesn't know).
+    pub sticky: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +36,8 @@ pub enum MenuAction {
     AddToNote(String),
     /// Save the note as a Markdown file.
     SaveMarkdown,
+    /// Make the note a sticky note, or a sticky note a note card.
+    ToggleSticky,
     Undo,
     Redo,
     Cut,
@@ -110,7 +114,11 @@ pub fn items(ctx: &MenuContext) -> Vec<MenuItem> {
         sections.push(vec![MenuItem::new("Select all", MenuAction::SelectAll, true)]);
     }
     if ctx.note {
-        sections.push(vec![MenuItem::new("Save as Markdown", MenuAction::SaveMarkdown, true)]);
+        let toggle = if ctx.sticky { "Make note card" } else { "Make sticky note" };
+        sections.push(vec![
+            MenuItem::new("Save as Markdown", MenuAction::SaveMarkdown, true),
+            MenuItem::new(toggle, MenuAction::ToggleSticky, true),
+        ]);
     }
     if sections.is_empty() {
         sections.push(vec![
@@ -192,9 +200,11 @@ mod tests {
     #[test]
     fn notes_offer_saving_but_no_navigation_or_add_to_note() {
         let ctx = MenuContext { note: true, ..Default::default() };
-        assert_eq!(labels(&items(&ctx)), ["Select all", "-", "Save as Markdown"]);
+        assert_eq!(labels(&items(&ctx)), ["Select all", "-", "Save as Markdown", "Make sticky note"]);
         let ctx = MenuContext { note: true, selection: "words".into(), ..Default::default() };
-        assert_eq!(labels(&items(&ctx)), ["Copy", "Search for “words”", "-", "Save as Markdown"]);
+        assert_eq!(labels(&items(&ctx)), ["Copy", "Search for “words”", "-", "Save as Markdown", "Make sticky note"]);
+        let ctx = MenuContext { note: true, sticky: true, ..Default::default() };
+        assert_eq!(labels(&items(&ctx)), ["Select all", "-", "Save as Markdown", "Make note card"]);
     }
 
     #[test]

@@ -1,11 +1,15 @@
 //! The note editor page: our own HTML (`note.html`) with the note's text and
 //! the theme's colours filled in, loaded into a note card as a `data:` URL.
 
-use crate::theme::{Rgb, Theme};
+use crate::theme::{Rgb, Theme, mix};
 
 /// Size of a new note's content, world units.
 pub const W: f32 = 560.0;
 pub const H: f32 = 420.0;
+
+/// Size of a new sticky note's content, world units.
+pub const STICKY_W: f32 = 280.0;
+pub const STICKY_H: f32 = 240.0;
 
 const EDITOR: &str = include_str!("note.html");
 
@@ -13,35 +17,52 @@ fn hex(c: Rgb) -> String {
     format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
 }
 
-/// The theme's colours as the editor's CSS variables, a JSON object.
-fn colors(th: &Theme) -> String {
-    let vars = [
-        ("bg", th.placeholder()),
-        ("fg", th.foreground()),
-        ("dim", th.dim_text()),
-        ("accent", th.accent()),
-        ("sel", th.selection()),
-        ("code", th.card(false)),
-        ("rule", th.divider()),
-    ];
+/// The theme's colours as the editor's CSS variables, a JSON object. A
+/// sticky note (`sticky`, its colour name) is written on its coloured paper.
+fn colors(th: &Theme, sticky: Option<&str>) -> String {
+    let vars = match sticky {
+        None => [
+            ("bg", th.placeholder()),
+            ("fg", th.foreground()),
+            ("dim", th.dim_text()),
+            ("accent", th.accent()),
+            ("sel", th.selection()),
+            ("code", th.card(false)),
+            ("rule", th.divider()),
+        ],
+        Some(c) => {
+            // Ink on coloured paper: links and boxes in the ink, not the accent,
+            // which may not read on it.
+            let (paper, ink) = (th.sticky_paper(c), th.sticky_ink(c));
+            [
+                ("bg", paper),
+                ("fg", ink),
+                ("dim", mix(ink, paper, 0.4)),
+                ("accent", ink),
+                ("sel", mix(paper, ink, 0.25)),
+                ("code", mix(paper, ink, 0.08)),
+                ("rule", mix(paper, ink, 0.25)),
+            ]
+        }
+    };
     let body: Vec<String> = vars.iter().map(|(k, c)| format!("\"{k}\":\"{}\"", hex(*c))).collect();
     format!("{{{}}}", body.join(","))
 }
 
-/// The editor page for a note holding `text`.
-pub fn page_url(text: &str, th: &Theme) -> String {
+/// The editor page for a note holding `text`, a sticky note in colour `sticky`.
+pub fn page_url(text: &str, th: &Theme, sticky: Option<&str>) -> String {
     // The text goes in last, so nothing in it is taken for a placeholder.
     let html = EDITOR
         .replacen("__PREFIX__", &web::js_string(web::NOTE_MESSAGE), 1)
         .replacen("__OPEN__", &web::js_string(web::NOTE_OPEN), 1)
-        .replacen("__THEME__", &colors(th), 1)
+        .replacen("__THEME__", &colors(th, sticky), 1)
         .replacen("__TEXT__", &web::js_string(text), 1);
     format!("data:text/html;charset=utf-8,{}", percent_encode(&html))
 }
 
-/// Script that recolours a live note editor.
-pub fn theme_script(th: &Theme) -> String {
-    format!("window.tbTheme&&tbTheme({})", colors(th))
+/// Script that recolours a live note editor (a sticky note in colour `sticky`).
+pub fn theme_script(th: &Theme, sticky: Option<&str>) -> String {
+    format!("window.tbTheme&&tbTheme({})", colors(th, sticky))
 }
 
 /// Script that opens a live note editor for writing (Enter on the board).
@@ -89,20 +110,31 @@ mod tests {
     #[test]
     fn page_holds_the_text_and_theme() {
         let th = Theme::default();
-        let url = page_url("# Hi </script> __THEME__ é", &th);
+        let url = page_url("# Hi </script> __THEME__ é", &th, None);
         let body = url.strip_prefix("data:text/html;charset=utf-8,").unwrap();
         assert!(body.bytes().all(|b| b.is_ascii_alphanumeric() || b"-._~%".contains(&b)));
         let html = decode(body);
         assert!(html.contains(r##"let text = "# Hi \u003c/script\u003e __THEME__ é";"##));
-        assert!(html.contains(&format!("window.tbTheme({});", colors(&th))));
+        assert!(html.contains(&format!("window.tbTheme({});", colors(&th, None))));
         assert!(!html.contains("__PREFIX__") && !html.contains("__OPEN__") && !html.contains("__TEXT__"));
         assert!(html.contains(r#"const PREFIX = "\u0001trailboard-note\u0001", OPEN = "\u0001trailboard-open\u0001";"#));
     }
 
     #[test]
     fn colors_are_css_hex() {
-        let c = colors(&Theme::default());
+        let c = colors(&Theme::default(), None);
         assert!(c.starts_with("{\"bg\":\"#") && c.ends_with("\"}"));
         assert_eq!(c.matches('#').count(), 7);
+    }
+
+    #[test]
+    fn sticky_notes_are_written_on_their_colour() {
+        let th = Theme::default();
+        let paper = hex(th.sticky_paper("yellow"));
+        let c = colors(&th, Some("yellow"));
+        assert!(c.starts_with(&format!("{{\"bg\":\"{paper}\"")), "{c}");
+        assert_eq!(c.matches('#').count(), 7);
+        assert_ne!(colors(&th, Some("green")), c);
+        assert!(theme_script(&th, Some("yellow")).contains(&paper));
     }
 }

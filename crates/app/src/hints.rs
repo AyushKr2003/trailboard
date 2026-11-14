@@ -28,7 +28,7 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl + Scroll", "Zoom"),
             ("Shift+F · Ctrl+0", "Fit everything"),
             ("Ctrl+T", "New card"),
-            ("N", "New note"),
+            ("N · Shift+N", "New note / sticky note"),
             ("T", "Tidy trails"),
             ("S", "Fold / unfold a trail"),
             ("[ · ]", "Peek through a stack"),
@@ -50,6 +50,7 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("Double-click title", "Fill the view"),
             ("× · Ctrl+W", "Close"),
             ("Tab", "Read mode / back to the board"),
+            ("C on a sticky note", "Its next colour"),
         ],
     ),
     (

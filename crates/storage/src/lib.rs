@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// 3: adds note cards (`node.note`), so builds without notes refuse the file
 /// rather than load notes as broken pages and save them without their text.
 /// 4: adds trail names and colours (`node.trail`), for the same reason.
-pub const BOARD_VERSION: u32 = 4;
+pub const BOARD_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Board {
@@ -82,6 +82,8 @@ pub fn migrate_board(mut v: serde_json::Value) -> Result<serde_json::Value, Load
             2 => v["version"] = 3.into(),
             // Version 4 only adds `trail` on cards, which defaults to none.
             3 => v["version"] = 4.into(),
+            // Version 5 only adds `sticky` on notes, which defaults to none.
+            4 => v["version"] = 5.into(),
             other => return Err(LoadError::UnsupportedVersion(other)),
         }
     }
@@ -224,6 +226,31 @@ mod tests {
         let b3 = load_board(&path).unwrap();
         assert_eq!(b3.version, BOARD_VERSION);
         assert!(b3.scene.trail_mark(b).is_empty());
+    }
+
+    #[test]
+    fn sticky_notes_are_saved_and_version_4_boards_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = board_path(dir.path());
+        let mut scene = Scene::new();
+        let a = scene.add_sticky(Rect::new(0.0, 0.0, 10.0, 10.0), "milk");
+        scene.cycle_sticky_colour(a);
+        let b = scene.add_note(Rect::new(50.0, 0.0, 10.0, 10.0), "plain");
+        save_board(&path, &Board::new(scene.clone(), Camera::default())).unwrap();
+        let back = load_board(&path).unwrap().scene;
+        assert_eq!(back.node(a).unwrap().sticky.as_deref(), Some("green"));
+        assert!(!back.node(b).unwrap().is_sticky());
+        assert!(!fs::read_to_string(&path).unwrap().contains("\"sticky\": null"));
+
+        let mut v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        v["version"] = 4.into();
+        for n in v["scene"]["nodes"].as_object_mut().unwrap().values_mut() {
+            n.as_object_mut().unwrap().remove("sticky");
+        }
+        fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
+        let b4 = load_board(&path).unwrap();
+        assert_eq!(b4.version, BOARD_VERSION);
+        assert!(b4.scene.all_nodes().all(|n| !n.is_sticky()));
     }
 
     #[test]

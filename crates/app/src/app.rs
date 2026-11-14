@@ -501,9 +501,9 @@ impl App {
             }
             self.page_scheme = Some(dark);
         }
-        let recolour = crate::note::theme_script(&self.theme);
-        for c in self.cards.values().filter(|c| c.page.kind() == web::PageKind::Note) {
-            c.page.run_script(&recolour);
+        let notes: Vec<NodeId> = self.cards.keys().copied().collect();
+        for id in notes {
+            self.recolour_note(id);
         }
         // The open menu was laid out at the old text size.
         self.menu = None;
@@ -636,7 +636,7 @@ impl App {
         let Some(n) = self.scene.node(id) else { return };
         let r = n.rect;
         let (url, kind) = match &n.note {
-            Some(text) => (crate::note::page_url(text, &self.theme), web::PageKind::Note),
+            Some(text) => (crate::note::page_url(text, &self.theme, n.sticky.as_deref()), web::PageKind::Note),
             None => (n.url.clone(), web::PageKind::Web),
         };
         match Page::new(self.page_key(id), &url, kind, (r.w as i32, r.h as i32), self.page_scale, &self.spawn_beside) {
@@ -660,6 +660,57 @@ impl App {
         self.keys_in_page = true;
         log::info!("new note {}", id.0);
         id
+    }
+
+    /// Shift+N: a new, empty sticky note in the middle of the view, ready to type in.
+    fn new_sticky_at_center(&mut self) -> NodeId {
+        let (w, h) = (crate::note::STICKY_W, crate::note::STICKY_H);
+        let rect = placement::free_near(&self.scene, self.camera.center, w, h);
+        let id = self.scene.add_sticky(rect, "");
+        self.create_page(id);
+        self.history.opened(id);
+        self.dirty = true;
+        self.note_target = Some(id);
+        self.focus(Some(id));
+        self.ensure_visible(id);
+        self.keys_in_page = true;
+        log::info!("new sticky note {}", id.0);
+        id
+    }
+
+    /// *Make sticky note* / *Make note card* on note `id`. Undoable.
+    fn toggle_sticky(&mut self, id: NodeId) {
+        let Some(n) = self.scene.node(id).filter(|n| n.is_note()) else { return };
+        let colour = if n.is_sticky() { None } else { Some(scene::note::STICKY_COLOURS[0].to_string()) };
+        let old = self.scene.set_sticky(id, colour);
+        self.history.restyled(id, old);
+        self.restyled(id);
+        let sticky = self.scene.node(id).is_some_and(Node::is_sticky);
+        log::info!("note {} sticky {sticky}", id.0);
+    }
+
+    /// C on a sticky note: its next colour. Undoable.
+    fn cycle_sticky_colour(&mut self, id: NodeId) {
+        let old = self.scene.cycle_sticky_colour(id);
+        self.history.restyled(id, old);
+        self.restyled(id);
+        let colour = self.scene.node(id).and_then(|n| n.sticky.clone()).unwrap_or_default();
+        log::info!("sticky note {} colour {colour}", id.0);
+        self.toast(format!("Sticky note: {colour}"));
+    }
+
+    /// Note `id` became or stopped being a sticky note, or changed colour.
+    fn restyled(&mut self, id: NodeId) {
+        self.recolour_note(id);
+        self.dirty = true;
+    }
+
+    /// Gives a live note's editor the colours of the theme and its sticky colour.
+    fn recolour_note(&self, id: NodeId) {
+        let (Some(n), Some(c)) = (self.scene.node(id), self.cards.get(&id)) else { return };
+        if n.is_note() && c.page.kind() == web::PageKind::Note {
+            c.page.run_script(&crate::note::theme_script(&self.theme, n.sticky.as_deref()));
+        }
     }
 
     /// Ctrl+S or *Save as Markdown*: the note `note` as its own file, else
@@ -804,6 +855,10 @@ impl App {
                 }
                 Change::Removed(id) => self.drop_page(id),
                 Change::Moved(id) => shown = Some(id),
+                Change::Restyled(id) => {
+                    self.recolour_note(id);
+                    shown = Some(id);
+                }
             }
             self.dirty = true;
         }
@@ -1276,8 +1331,14 @@ impl App {
     }
 
     /// C: the trail in the middle of the view takes its next colour.
+    /// C: the next colour of the trail of the current card (or the one in the
+    /// middle of the view), or of that card itself if it is a sticky note.
     fn cycle_trail_colour(&mut self) {
         let Some(id) = read::pick(&self.scene, self.focused, self.camera.center) else { return };
+        if self.scene.node(id).is_some_and(Node::is_sticky) {
+            self.cycle_sticky_colour(id);
+            return;
+        }
         let old = self.scene.cycle_trail_colour(id);
         self.history.marked(old);
         self.dirty = true;
@@ -1562,7 +1623,8 @@ impl App {
         let k = self.camera.pixels_per_unit(self.scale());
         let grip = RESIZE_GRIP / k.min(1.0);
         if w.y < n.rect.y {
-            if w.x > n.rect.right() - CLOSE_W {
+            // A sticky note's strip only moves it; it has no ×.
+            if !n.is_sticky() && w.x > n.rect.right() - CLOSE_W {
                 return Hit::Close(id);
             }
             return Hit::Header(id);
@@ -2205,6 +2267,10 @@ impl App {
                     self.start_arrange();
                     true
                 }
+                Some(KeyCode::KeyN) if !self.typing() && !ctrl && !alt && shift && self.drag_is_idle() => {
+                    self.new_sticky_at_center();
+                    true
+                }
                 Some(KeyCode::KeyN) if !self.typing() && !ctrl && !alt && self.drag_is_idle() => {
                     self.new_note_at_center();
                     true
@@ -2381,9 +2447,11 @@ impl App {
                     texture: None,
                 });
             }
+            // A sticky note's frame is its strip, in its colour.
+            let sticky = n.sticky.as_deref().filter(|_| n.is_sticky());
             l.quads.push(Quad {
                 shape: Shape::Rect { rect: frame, radius },
-                color: rgb(th.card(focused), 1.0),
+                color: rgb(sticky.map_or_else(|| th.card(focused), |c| th.sticky_strip(c, focused)), 1.0),
                 texture: None,
             });
             let key = page_key(epoch, n.id);
@@ -2395,7 +2463,8 @@ impl App {
                 color: match (has_tex, asleep) {
                     (true, false) => [1.0; 4],
                     (true, true) => [0.78, 0.78, 0.8, 1.0], // dimmed snapshot
-                    (false, _) => rgb(th.placeholder(), 1.0), // first paint pending, or asleep and never painted
+                    // First paint pending, or asleep and never painted.
+                    (false, _) => rgb(sticky.map_or_else(|| th.placeholder(), |c| th.sticky_paper(c)), 1.0),
                 },
                 texture: has_tex.then_some(key),
             });
@@ -2414,8 +2483,8 @@ impl App {
                     });
                 }
             }
-            // Loading bar along the bottom of the title bar.
-            if card.is_some_and(|c| c.loading) {
+            // Loading bar along the bottom of the title bar (a sticky note has none).
+            if sticky.is_none() && card.is_some_and(|c| c.loading) {
                 let t = (self.started.elapsed().as_secs_f32() * 0.8).fract();
                 let w = header.w * 0.25;
                 let x = header.x + (header.w - w) * t;
@@ -2426,7 +2495,7 @@ impl App {
                 });
             }
             let font = 13.0 * k;
-            if font >= 6.0 {
+            if font >= 6.0 && sticky.is_none() {
                 let pad = 10.0 * k;
                 let title = if n.title.is_empty() { n.url.as_str() } else { n.title.as_str() };
                 let title = if asleep { format!("{title} · asleep") } else { title.to_string() };
@@ -2866,7 +2935,8 @@ impl App {
     fn open_menu(&mut self, id: NodeId, x: f32, y: f32, ctx: &web::menu::MenuContext) {
         let Some(at) = self.page_rect_to_screen(id, Rect::new(x, y, 0.0, 0.0)) else { return };
         let anchor = Vec2::new(at.x, at.y);
-        let items = web::menu::items(ctx).into_iter().map(Entry::Page).collect();
+        let ctx = web::menu::MenuContext { sticky: self.scene.node(id).is_some_and(Node::is_sticky), ..ctx.clone() };
+        let items = web::menu::items(&ctx).into_iter().map(Entry::Page).collect();
         let m = self.layout_menu(id, items, anchor);
         log::info!("context menu on card {}: {:?}", id.0, menu_labels(&m.items));
         self.menu = Some(m);
@@ -2955,6 +3025,7 @@ impl App {
             MenuAction::Search(q) => open_beside(self, &omnibox::search_url(&q)),
             MenuAction::AddToNote(text) => self.add_to_note(id, &text),
             MenuAction::SaveMarkdown => self.save_markdown(Some(id)),
+            MenuAction::ToggleSticky => self.toggle_sticky(id),
             MenuAction::CopyText(t) => self.clipboard.set_text(&t),
             MenuAction::Copy => self.page_copy(false, None),
             MenuAction::Cut => self.page_copy(true, None),
@@ -3142,6 +3213,9 @@ impl App {
                         );
                         if let Some(text) = &n.note {
                             log::info!("script note {}: {:?}", n.id.0, text);
+                        }
+                        if let Some(c) = n.sticky.as_ref().filter(|_| n.is_sticky()) {
+                            log::info!("script sticky {}: colour={c}", n.id.0);
                         }
                         if !n.trail.is_empty() {
                             log::info!("script trail {}: name={:?} colour={:?}", n.id.0, n.trail.name, n.trail.colour);

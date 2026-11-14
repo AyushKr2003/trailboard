@@ -26,6 +26,8 @@ pub enum Edit {
     Unfold(NodeId),
     /// Give these cards these trail marks (names and colours).
     SetMarks(Vec<(NodeId, TrailMark)>),
+    /// Make a note a sticky note in this colour, or (`None`) a note card again.
+    SetSticky { id: NodeId, colour: Option<String> },
     /// Several edits undone and redone as one step, applied in order.
     Batch(Vec<Edit>),
 }
@@ -36,6 +38,8 @@ pub enum Change {
     Added(NodeId),
     Removed(NodeId),
     Moved(NodeId),
+    /// A note became a sticky note, changed colour, or became a note card again.
+    Restyled(NodeId),
 }
 
 impl Edit {
@@ -66,6 +70,10 @@ impl Edit {
                 }
                 let first = old.first()?.0;
                 Some((Edit::SetMarks(old), vec![Change::Moved(first)]))
+            }
+            Edit::SetSticky { id, colour } => {
+                let old = scene.set_sticky(id, colour)?;
+                Some((Edit::SetSticky { id, colour: old }, vec![Change::Restyled(id)]))
             }
             Edit::Refold(stack) => {
                 let front = stack.front;
@@ -162,6 +170,14 @@ impl History {
         }
     }
 
+    /// A note was made sticky, recoloured or made a card again; `old` is what
+    /// [`Scene::set_sticky`] returned. No-op for `None` (nothing changed).
+    pub fn restyled(&mut self, id: NodeId, old: Option<Option<String>>) {
+        if let Some(colour) = old {
+            self.push(Edit::SetSticky { id, colour });
+        }
+    }
+
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }
@@ -212,6 +228,25 @@ impl History {
 mod tests {
     use super::*;
     use crate::Vec2;
+
+    #[test]
+    fn sticky_changes_undo_and_redo() {
+        let mut s = Scene::new();
+        let mut h = History::new();
+        let id = s.add_note(Rect::new(0.0, 0.0, 100.0, 100.0), "x");
+        h.restyled(id, s.set_sticky(id, Some("yellow".into())));
+        h.restyled(id, s.cycle_sticky_colour(id));
+        h.restyled(id, s.set_sticky(id, Some("green".into()))); // already green: nothing recorded
+        assert_eq!(s.node(id).unwrap().sticky.as_deref(), Some("green"));
+        assert_eq!(h.undo(&mut s), vec![Change::Restyled(id)]);
+        assert_eq!(s.node(id).unwrap().sticky.as_deref(), Some("yellow"));
+        h.undo(&mut s);
+        assert!(!s.node(id).unwrap().is_sticky());
+        assert!(!h.can_undo());
+        h.redo(&mut s);
+        h.redo(&mut s);
+        assert_eq!(s.node(id).unwrap().sticky.as_deref(), Some("green"));
+    }
 
     fn board() -> (Scene, History, NodeId) {
         let mut s = Scene::new();

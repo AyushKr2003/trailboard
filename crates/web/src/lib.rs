@@ -760,6 +760,7 @@ wrap_context_menu_handler! {
                 can_back: browser.as_ref().is_some_and(|b| b.can_go_back() != 0),
                 can_forward: browser.as_ref().is_some_and(|b| b.can_go_forward() != 0),
                 note: self.shared.kind == PageKind::Note,
+                sticky: false,
             };
             // Params are view px; the app works in CSS px.
             let s = *self.shared.scale.borrow();

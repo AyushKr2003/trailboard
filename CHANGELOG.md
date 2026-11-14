@@ -7,6 +7,11 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Dropdowns and popups in pages**: `<select>` lists and other popup widgets are
+  drawn over the page and can be clicked.
+- **Page cursors**: the pointer shows the page's cursor (hand over links, text
+  beam, resize arrows, hidden for `cursor: none`).
+- Script command `cards` also logs each card's title.
 - **Live-browser cap**: at most 6 cards (set with `TRAILBOARD_MAX_LIVE`) keep a
   live browser: the focused card, then cards on screen, then the most recently
   used. The others sleep and show their last frame, dimmed, and wake when clicked
@@ -52,6 +57,7 @@ All notable changes to Trailboard. The format follows
   being read as Escape).
 
 ### Known issues
-- `<select>` dropdowns and other popup widgets inside pages are not drawn yet.
+- Pages always render at 1× device scale, so zoomed-in pages look soft (zoom-aware resolution isn't taking effect).
+- Custom image cursors (`cursor: url(…)`) show the default arrow.
 - A card that wakes from sleep reloads its page, losing scroll position and form input.
 - Manual keyboard typing into pages has not been verified by automated tests.

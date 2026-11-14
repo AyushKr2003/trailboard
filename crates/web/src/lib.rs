@@ -4,11 +4,14 @@
 //! with `external_message_pump` + [`pump`], so plain `Rc`/`RefCell` are enough.
 
 pub mod keys;
+pub mod popup;
 
 use cef::{args::Args, *};
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc as StdRc;
+
+use popup::IRect;
 
 /// Something a page asked the app to do. Drained once per frame with [`drain_events`].
 #[derive(Debug, Clone)]
@@ -18,6 +21,103 @@ pub enum WebEvent {
     TitleChanged { page: u64, title: String },
     UrlChanged { page: u64, url: String },
     LoadingChanged { page: u64, loading: bool },
+    /// The mouse cursor the page wants while the pointer is over it.
+    CursorChanged { page: u64, cursor: Cursor },
+}
+
+/// Mouse cursor shapes a page can ask for (CSS `cursor`), independent of any windowing crate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Cursor {
+    #[default]
+    Default,
+    Pointer,
+    Text,
+    VerticalText,
+    Wait,
+    Progress,
+    Help,
+    Crosshair,
+    Cell,
+    Move,
+    Grab,
+    Grabbing,
+    NotAllowed,
+    NoDrop,
+    Copy,
+    Alias,
+    ContextMenu,
+    ZoomIn,
+    ZoomOut,
+    AllScroll,
+    ResizeE,
+    ResizeN,
+    ResizeNE,
+    ResizeNW,
+    ResizeS,
+    ResizeSE,
+    ResizeSW,
+    ResizeW,
+    ResizeNS,
+    ResizeEW,
+    ResizeNESW,
+    ResizeNWSE,
+    ResizeCol,
+    ResizeRow,
+    /// `cursor: none`.
+    Hidden,
+}
+
+impl Cursor {
+    fn from_cef(t: CursorType) -> Cursor {
+        match t {
+            CursorType::HAND => Cursor::Pointer,
+            CursorType::IBEAM => Cursor::Text,
+            CursorType::VERTICALTEXT => Cursor::VerticalText,
+            CursorType::WAIT => Cursor::Wait,
+            CursorType::PROGRESS => Cursor::Progress,
+            CursorType::HELP => Cursor::Help,
+            CursorType::CROSS => Cursor::Crosshair,
+            CursorType::CELL => Cursor::Cell,
+            CursorType::MOVE | CursorType::DND_MOVE => Cursor::Move,
+            CursorType::GRAB => Cursor::Grab,
+            CursorType::GRABBING => Cursor::Grabbing,
+            CursorType::NOTALLOWED => Cursor::NotAllowed,
+            CursorType::NODROP | CursorType::DND_NONE => Cursor::NoDrop,
+            CursorType::COPY | CursorType::DND_COPY => Cursor::Copy,
+            CursorType::ALIAS | CursorType::DND_LINK => Cursor::Alias,
+            CursorType::CONTEXTMENU => Cursor::ContextMenu,
+            CursorType::ZOOMIN => Cursor::ZoomIn,
+            CursorType::ZOOMOUT => Cursor::ZoomOut,
+            CursorType::MIDDLEPANNING
+            | CursorType::MIDDLE_PANNING_VERTICAL
+            | CursorType::MIDDLE_PANNING_HORIZONTAL
+            | CursorType::EASTPANNING
+            | CursorType::NORTHPANNING
+            | CursorType::NORTHEASTPANNING
+            | CursorType::NORTHWESTPANNING
+            | CursorType::SOUTHPANNING
+            | CursorType::SOUTHEASTPANNING
+            | CursorType::SOUTHWESTPANNING
+            | CursorType::WESTPANNING => Cursor::AllScroll,
+            CursorType::EASTRESIZE => Cursor::ResizeE,
+            CursorType::NORTHRESIZE => Cursor::ResizeN,
+            CursorType::NORTHEASTRESIZE => Cursor::ResizeNE,
+            CursorType::NORTHWESTRESIZE => Cursor::ResizeNW,
+            CursorType::SOUTHRESIZE => Cursor::ResizeS,
+            CursorType::SOUTHEASTRESIZE => Cursor::ResizeSE,
+            CursorType::SOUTHWESTRESIZE => Cursor::ResizeSW,
+            CursorType::WESTRESIZE => Cursor::ResizeW,
+            CursorType::NORTHSOUTHRESIZE => Cursor::ResizeNS,
+            CursorType::EASTWESTRESIZE => Cursor::ResizeEW,
+            CursorType::NORTHEASTSOUTHWESTRESIZE => Cursor::ResizeNESW,
+            CursorType::NORTHWESTSOUTHEASTRESIZE => Cursor::ResizeNWSE,
+            CursorType::COLUMNRESIZE => Cursor::ResizeCol,
+            CursorType::ROWRESIZE => Cursor::ResizeRow,
+            CursorType::NONE => Cursor::Hidden,
+            // POINTER, CUSTOM (bitmap cursors aren't supported yet) and anything new.
+            _ => Cursor::Default,
+        }
+    }
 }
 
 thread_local! {
@@ -142,9 +242,73 @@ struct Shared {
     /// View size in CSS pixels.
     size: RefCell<(i32, i32)>,
     scale: RefCell<f32>,
+    /// What the app shows: the page with any open popup drawn on top.
     frame: RefCell<PaintFrame>,
+    /// While a popup is open, the page's own pixels (so the popup can move or close cleanly).
+    view: RefCell<Option<PaintFrame>>,
+    popup: RefCell<PopupState>,
     /// URL the page was created with; the first navigation to it is never redirected beside.
     initial_url: String,
+}
+
+#[derive(Default)]
+struct PopupState {
+    shown: bool,
+    /// Where Chromium placed the popup, CSS px in view coordinates.
+    rect: IRect,
+    width: u32,
+    height: u32,
+    pixels: Vec<u8>,
+}
+
+impl Shared {
+    /// Where the popup is drawn (CSS px): Chromium's rect moved inside the card.
+    fn popup_drawn(&self) -> Option<(IRect, IRect)> {
+        let p = self.popup.borrow();
+        if !p.shown || p.rect.w <= 0 || p.rect.h <= 0 {
+            return None;
+        }
+        let (w, h) = *self.size.borrow();
+        Some((p.rect, popup::clamp_into_view(p.rect, w, h)))
+    }
+
+    /// Map a point in the card to the point Chromium expects: a point over the drawn
+    /// popup is shifted back to where Chromium thinks the popup is.
+    fn widget_point(&self, x: i32, y: i32) -> (i32, i32) {
+        match self.popup_drawn() {
+            Some((orig, drawn)) if drawn.contains(x, y) => (x - (drawn.x - orig.x), y - (drawn.y - orig.y)),
+            _ => (x, y),
+        }
+    }
+
+    /// Rebuild `frame` from the clean view plus the popup.
+    fn compose(&self) {
+        let view = self.view.borrow();
+        let Some(view) = view.as_ref() else { return };
+        let mut f = self.frame.borrow_mut();
+        f.width = view.width;
+        f.height = view.height;
+        f.pixels.clear();
+        f.pixels.extend_from_slice(&view.pixels);
+        if let Some((_, drawn)) = self.popup_drawn() {
+            let p = self.popup.borrow();
+            // Scale of the pixels we actually have: right after a zoom change the
+            // requested device scale can be ahead of the last paint.
+            let css_w = self.size.borrow().0.max(1);
+            let scale = view.width as f32 / css_w as f32;
+            // Clamp again in device pixels, using the buffer's real size.
+            let mut dev = drawn.scaled(scale);
+            dev.w = p.width as i32;
+            dev.h = p.height as i32;
+            let dev = popup::clamp_into_view(dev, view.width as i32, view.height as i32);
+            log::trace!(
+                "page {} popup blit {:?} buffer {}x{} view {}x{} scale {scale}",
+                self.key, dev, p.width, p.height, view.width, view.height
+            );
+            popup::blit(&mut f.pixels, (view.width, view.height), &p.pixels, (p.width, p.height), (dev.x, dev.y));
+        }
+        f.serial += 1;
+    }
 }
 
 wrap_render_handler! {
@@ -173,6 +337,36 @@ wrap_render_handler! {
             }
         }
 
+        fn on_popup_show(&self, _browser: Option<&mut Browser>, show: ::std::os::raw::c_int) {
+            let sh = &self.shared;
+            log::debug!("page {} popup show={show}", sh.key);
+            if show != 0 {
+                sh.popup.borrow_mut().shown = true;
+                if sh.view.borrow().is_none() {
+                    let f = sh.frame.borrow();
+                    *sh.view.borrow_mut() =
+                        Some(PaintFrame { width: f.width, height: f.height, pixels: f.pixels.clone(), serial: 0 });
+                }
+            } else {
+                *sh.popup.borrow_mut() = PopupState::default();
+                // Restore the page pixels the popup covered.
+                if let Some(view) = sh.view.borrow_mut().take() {
+                    let mut f = sh.frame.borrow_mut();
+                    f.width = view.width;
+                    f.height = view.height;
+                    f.pixels = view.pixels;
+                    f.serial += 1;
+                }
+            }
+        }
+
+        fn on_popup_size(&self, _browser: Option<&mut Browser>, rect: Option<&Rect>) {
+            let Some(r) = rect else { return };
+            log::debug!("page {} popup rect {},{} {}x{}", self.shared.key, r.x, r.y, r.width, r.height);
+            self.shared.popup.borrow_mut().rect = IRect { x: r.x, y: r.y, w: r.width, h: r.height };
+            self.shared.compose();
+        }
+
         fn on_paint(
             &self,
             _browser: Option<&mut Browser>,
@@ -182,19 +376,38 @@ wrap_render_handler! {
             width: ::std::os::raw::c_int,
             height: ::std::os::raw::c_int,
         ) {
-            // Popup widgets (e.g. <select> dropdowns) arrive as PET_POPUP; not composited yet.
-            if type_ != PaintElementType::default() || buffer.is_null() || width <= 0 || height <= 0 {
+            if buffer.is_null() || width <= 0 || height <= 0 {
                 return;
             }
             let len = width as usize * height as usize * 4;
             // SAFETY: CEF guarantees `buffer` holds width*height BGRA pixels for this call.
             let src = unsafe { std::slice::from_raw_parts(buffer, len) };
-            let mut f = self.shared.frame.borrow_mut();
-            f.width = width as u32;
-            f.height = height as u32;
-            f.pixels.clear();
-            f.pixels.extend_from_slice(src);
-            f.serial += 1;
+            let sh = &self.shared;
+            if type_ != PaintElementType::POPUP && sh.frame.borrow().width != width as u32 {
+                log::debug!("page {} paints at {width}x{height} (scale {})", sh.key, sh.scale.borrow());
+            }
+            let store = |f: &mut PaintFrame| {
+                f.width = width as u32;
+                f.height = height as u32;
+                f.pixels.clear();
+                f.pixels.extend_from_slice(src);
+                f.serial += 1;
+            };
+            if type_ == PaintElementType::POPUP {
+                let mut p = sh.popup.borrow_mut();
+                p.width = width as u32;
+                p.height = height as u32;
+                p.pixels.clear();
+                p.pixels.extend_from_slice(src);
+            } else {
+                let mut view = sh.view.borrow_mut();
+                match view.as_mut() {
+                    Some(v) => store(v),
+                    // No popup: write straight into the shown frame.
+                    None => return store(&mut sh.frame.borrow_mut()),
+                }
+            }
+            sh.compose();
         }
     }
 }
@@ -304,6 +517,17 @@ wrap_display_handler! {
                 }
         }
 
+        fn on_cursor_change(
+            &self,
+            _browser: Option<&mut Browser>,
+            _cursor: ::std::os::raw::c_ulong,
+            type_: CursorType,
+            _custom_cursor_info: Option<&CursorInfo>,
+        ) -> ::std::os::raw::c_int {
+            emit(WebEvent::CursorChanged { page: self.shared.key, cursor: Cursor::from_cef(type_) });
+            1
+        }
+
         fn on_title_change(&self, _browser: Option<&mut Browser>, title: Option<&CefString>) {
             if let Some(title) = title {
                 emit(WebEvent::TitleChanged { page: self.shared.key, title: title.to_string() });
@@ -388,6 +612,8 @@ impl Page {
             size: RefCell::new(size),
             scale: RefCell::new(scale),
             frame: RefCell::new(PaintFrame::default()),
+            view: RefCell::new(None),
+            popup: RefCell::new(PopupState::default()),
             initial_url: url.to_string(),
         });
         let mut client = PageClient::new(
@@ -473,6 +699,7 @@ impl Page {
     }
 
     pub fn mouse_move(&self, x: i32, y: i32, modifiers: u32, leave: bool) {
+        let (x, y) = self.shared.widget_point(x, y);
         if let Some(h) = self.host() {
             h.send_mouse_move_event(Some(&MouseEvent { x, y, modifiers }), leave as _);
         }
@@ -484,12 +711,14 @@ impl Page {
             MouseButton::Middle => MouseButtonType::MIDDLE,
             MouseButton::Right => MouseButtonType::RIGHT,
         };
+        let (x, y) = self.shared.widget_point(x, y);
         if let Some(h) = self.host() {
             h.send_mouse_click_event(Some(&MouseEvent { x, y, modifiers }), ty, up as _, clicks);
         }
     }
 
     pub fn mouse_wheel(&self, x: i32, y: i32, modifiers: u32, dx: i32, dy: i32) {
+        let (x, y) = self.shared.widget_point(x, y);
         if let Some(h) = self.host() {
             h.send_mouse_wheel_event(Some(&MouseEvent { x, y, modifiers }), dx, dy);
         }

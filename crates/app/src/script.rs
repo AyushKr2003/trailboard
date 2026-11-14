@@ -13,7 +13,7 @@
 //! fit                  # same as Ctrl+0
 //! undo                 # same as Ctrl+Z on the board
 //! redo                 # same as Ctrl+Shift+Z
-//! cards                # log every card (id, rect, live page, url) and edge
+//! cards                # log every card (id, rect, live page, title, url) and edge
 //! open https://…       # same as Ctrl+T + Enter
 //! log some note        # print to the log (marks screenshot moments)
 //! quit

@@ -54,6 +54,8 @@ struct Card {
     page: Page,
     loading: bool,
     hidden: bool,
+    /// Cursor the page asked for, shown while the pointer is over its content.
+    cursor: web::Cursor,
 }
 
 pub struct App {
@@ -242,7 +244,7 @@ impl App {
         let (url, r) = (n.url.clone(), n.rect);
         match Page::new(id.0, &url, (r.w as i32, r.h as i32), self.page_scale, &self.spawn_beside) {
             Some(page) => {
-                self.cards.insert(id, Card { page, loading: true, hidden: false });
+                self.cards.insert(id, Card { page, loading: true, hidden: false, cursor: web::Cursor::Default });
             }
             None => log::error!("failed to create browser for {url}"),
         }
@@ -480,6 +482,21 @@ impl App {
                         self.dirty = true;
                     }
                 }
+                WebEvent::CursorChanged { page, cursor } => {
+                    let id = NodeId(page);
+                    if let Some(c) = self.cards.get_mut(&id) {
+                        c.cursor = cursor;
+                    }
+                    let over_page = match self.drag {
+                        Drag::Page { id: d, .. } => d == id,
+                        Drag::None => self.hit(self.cursor) == Hit::Content(id),
+                        _ => false,
+                    };
+                    if over_page {
+                        log::debug!("page {page} cursor {cursor:?}");
+                        self.set_cursor(cursor);
+                    }
+                }
                 WebEvent::LoadingChanged { page, loading } => {
                     if let Some(c) = self.cards.get_mut(&NodeId(page)) {
                         c.loading = loading;
@@ -638,16 +655,26 @@ impl App {
                     && let (Some(card), Some((x, y))) = (self.cards.get(&old), self.page_point(old, p)) {
                         card.page.mouse_move(x, y, mods, true);
                     }
-                let icon = match hit {
-                    Hit::Header(_) => CursorIcon::Grab,
-                    Hit::Grip(_) => CursorIcon::SeResize,
-                    Hit::Close(_) => CursorIcon::Pointer,
-                    _ => CursorIcon::Default,
+                let cursor = match hit {
+                    Hit::Header(_) => web::Cursor::Grab,
+                    Hit::Grip(_) => web::Cursor::ResizeSE,
+                    Hit::Close(_) => web::Cursor::Pointer,
+                    Hit::Content(id) => self.cards.get(&id).map_or(web::Cursor::Default, |c| c.cursor),
+                    Hit::Board => web::Cursor::Default,
                 };
-                if let Some(w) = self.window() {
-                    w.set_cursor(icon);
-                }
+                self.set_cursor(cursor);
             }
+        }
+    }
+
+    fn set_cursor(&self, cursor: web::Cursor) {
+        let Some(w) = self.window() else { return };
+        match cursor_icon(cursor) {
+            Some(icon) => {
+                w.set_cursor_visible(true);
+                w.set_cursor(icon);
+            }
+            None => w.set_cursor_visible(false),
         }
     }
 
@@ -1078,8 +1105,8 @@ impl App {
                     for n in self.scene.nodes() {
                         let (r, f) = (n.rect, self.to_screen_rect(n.frame()));
                         log::info!(
-                            "script card {}: world ({:.0},{:.0} {:.0}x{:.0}) screen ({:.0},{:.0} {:.0}x{:.0}) live={} {}",
-                            n.id.0, r.x, r.y, r.w, r.h, f.x, f.y, f.w, f.h, self.cards.contains_key(&n.id), n.url
+                            "script card {}: world ({:.0},{:.0} {:.0}x{:.0}) screen ({:.0},{:.0} {:.0}x{:.0}) live={} title={:?} {}",
+                            n.id.0, r.x, r.y, r.w, r.h, f.x, f.y, f.w, f.h, self.cards.contains_key(&n.id), n.title, n.url
                         );
                     }
                     for e in self.scene.edges() {
@@ -1094,6 +1121,48 @@ impl App {
             }
         }
     }
+}
+
+/// Window cursor for a page cursor; `None` hides it.
+fn cursor_icon(c: web::Cursor) -> Option<CursorIcon> {
+    use web::Cursor as C;
+    Some(match c {
+        C::Default => CursorIcon::Default,
+        C::Pointer => CursorIcon::Pointer,
+        C::Text => CursorIcon::Text,
+        C::VerticalText => CursorIcon::VerticalText,
+        C::Wait => CursorIcon::Wait,
+        C::Progress => CursorIcon::Progress,
+        C::Help => CursorIcon::Help,
+        C::Crosshair => CursorIcon::Crosshair,
+        C::Cell => CursorIcon::Cell,
+        C::Move => CursorIcon::Move,
+        C::Grab => CursorIcon::Grab,
+        C::Grabbing => CursorIcon::Grabbing,
+        C::NotAllowed => CursorIcon::NotAllowed,
+        C::NoDrop => CursorIcon::NoDrop,
+        C::Copy => CursorIcon::Copy,
+        C::Alias => CursorIcon::Alias,
+        C::ContextMenu => CursorIcon::ContextMenu,
+        C::ZoomIn => CursorIcon::ZoomIn,
+        C::ZoomOut => CursorIcon::ZoomOut,
+        C::AllScroll => CursorIcon::AllScroll,
+        C::ResizeE => CursorIcon::EResize,
+        C::ResizeN => CursorIcon::NResize,
+        C::ResizeNE => CursorIcon::NeResize,
+        C::ResizeNW => CursorIcon::NwResize,
+        C::ResizeS => CursorIcon::SResize,
+        C::ResizeSE => CursorIcon::SeResize,
+        C::ResizeSW => CursorIcon::SwResize,
+        C::ResizeW => CursorIcon::WResize,
+        C::ResizeNS => CursorIcon::NsResize,
+        C::ResizeEW => CursorIcon::EwResize,
+        C::ResizeNESW => CursorIcon::NeswResize,
+        C::ResizeNWSE => CursorIcon::NwseResize,
+        C::ResizeCol => CursorIcon::ColResize,
+        C::ResizeRow => CursorIcon::RowResize,
+        C::Hidden => return None,
+    })
 }
 
 fn max_live_from_env() -> usize {

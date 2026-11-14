@@ -14,6 +14,7 @@
 //!   card's title bar moves the whole selection; Delete/Backspace closes it. A click
 //!   on the board or Esc clears it.
 //!
+//! - `?` with no card focused shows a sheet of shortcuts; Esc, `?` or a click hides it.
 //! - Right-click in a page opens a context menu (drawn by the app); Esc, a click
 //!   outside, scrolling or moving the board closes it.
 //! - Ctrl+C / Ctrl+X / Ctrl+V in a page go through the desktop clipboard (see `clipboard`).
@@ -98,6 +99,8 @@ pub struct App {
     keys_in_page: bool,
     omnibox: Option<Omnibox>,
     menu: Option<ContextMenu>,
+    /// The shortcut sheet (`?`) is showing.
+    hints: bool,
     /// The current mouse press started inside the context menu.
     menu_pressed: bool,
     clipboard: Clipboard,
@@ -145,6 +148,7 @@ impl App {
             keys_in_page: false,
             omnibox: None,
             menu: None,
+            hints: false,
             menu_pressed: false,
             clipboard: Clipboard::new(),
             ime_allowed: false,
@@ -582,6 +586,15 @@ impl App {
     fn mouse_input(&mut self, state: ElementState, button: MouseButton) {
         let p = self.cursor;
         let mods = keymap::modifiers(self.mods);
+        // Any click closes the shortcut sheet, and does nothing else.
+        if self.hints {
+            if state == ElementState::Pressed {
+                self.hints = false;
+                log::info!("hints hidden");
+                self.menu_pressed = true; // swallow the release too
+            }
+            return;
+        }
         // The context menu takes clicks first. A click outside closes it; a right
         // click outside still goes through so it can open a new menu.
         if let Some(m) = &self.menu {
@@ -822,6 +835,21 @@ impl App {
         let alt = self.mods.alt_key();
         // Shortcuts follow the logical key (layout-aware), like browsers do.
         let code = ev.code;
+
+        let is_question = ev.text.as_deref() == Some("?") || (shift && code == Some(KeyCode::Slash));
+        if self.hints {
+            // Esc or ? hides the sheet; other keys (except modifiers) hide it too and are dropped.
+            if pressed && !matches!(ev.named, Some(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super)) {
+                self.hints = false;
+                log::info!("hints hidden");
+            }
+            return;
+        }
+        if pressed && is_question && !ctrl && !alt && self.focused.is_none() && self.omnibox.is_none() && self.menu.is_none() {
+            self.hints = true;
+            log::info!("hints shown");
+            return;
+        }
 
         if pressed && self.menu.is_some() {
             match ev.named {
@@ -1182,7 +1210,7 @@ impl App {
         // Empty-board hint.
         if self.scene.is_empty() && self.omnibox.is_none() {
             let size = 16.0 * scale;
-            let msg = "Press N or Ctrl+T to open a page";
+            let msg = "Press N or Ctrl+T to open a page · ? for shortcuts";
             let w = self.renderer.as_mut().map_or(300.0, |r| r.measure(msg, size, false));
             layers.push(Layer {
                 quads: vec![],
@@ -1260,6 +1288,12 @@ impl App {
 
         if let Some(m) = &self.menu {
             layers.push(menu_layer(m, scale, screen));
+        }
+
+        if self.hints
+            && let Some(r) = self.renderer.as_mut()
+        {
+            layers.push(crate::hints::layer(r, scale, screen));
         }
 
         if let Some(r) = self.renderer.as_mut() {

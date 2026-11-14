@@ -3,6 +3,7 @@
 
 mod app;
 mod clipboard;
+mod hints;
 mod keymap;
 mod menu;
 mod omnibox;

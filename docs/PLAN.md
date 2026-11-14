@@ -154,11 +154,14 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   selected text with a link back to its source card.
 - Save note/board as Markdown.
 
-### M6: Chrome UI ⬜
+### M6: Chrome UI 🟡
 - Trails sidebar: tree per root, pins/favourites, drag to reorder, collapse.
 - Ctrl+K palette: fuzzy search over open cards, history and commands.
 - Find in page (Ctrl+F) bar; per-page zoom (Ctrl +/−/0 inside a page).
-- Settings panel; keyboard-shortcut sheet; download handling and a downloads list.
+- ✅ Keyboard-shortcut sheet: `?` with no card focused (`app::hints`). Decisions
+  (2026-11-14): only when no card is focused, so `?` still types in pages; Esc,
+  `?`, any other key or a click hides it, and that click/key does nothing else.
+- ⬜ Settings panel; download handling and a downloads list.
 - Loading/favicons in titles; hover card names when zoomed out.
 
 ### M7: History and search ⬜
@@ -214,7 +217,8 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. Card multi-select and group move (M3 now complete).
+**Last session:** 2026-11-14. Card multi-select and group move (M3 now complete);
+`?` shortcut sheet (M6); bold text font fix.
 **Repo state:** on `master`, committed after 44db158; working tree clean.
 **Done this session:**
 - `scene::selection`: selection set, band hit test, group drag; `Rect::from_corners`.
@@ -223,6 +227,14 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 - App: `Drag::Band`, group title-bar drag (`App::group`), `close_cards`, amber
   selection ring (outside the blue focus ring) and a translucent band.
 - Script commands `sdrag` and `sclick` (Shift held); `cards` logs `sel=`.
+- `app::hints`: shortcut sheet on `?` (script: `key shift+/`), logged as
+  "hints shown/hidden". Verified e2e: Esc, `?` and a click hide it; the click
+  doesn't reach the card below; with a card focused `?` goes to the page.
+- `compositor`: bold text now asks for `Weight::BOLD`; SEMIBOLD fell back to a
+  serif face with wide spaces and broken digits (the old "4 0 , 4 0" title bug;
+  digits in bold now render correctly in the screenshot). Bold fonts lack arrow
+  glyphs, so the sheet spells out "Left"/"Right".
+- Keep the sheet's rows in `hints::SECTIONS` in step with new shortcuts.
 **Next up:** M4: Spaces (several boards, each with its own camera and
 background; `spaces.json` index; New / Next / Previous / Rename / Delete Space).
 Decide key bindings and how the current `board.json` migrates into the first space.
@@ -236,8 +248,6 @@ Decide key bindings and how the current `board.json` migrates into the first spa
 - Not verified on screen: the band while it is being drawn (script drags press,
   move and release in one go, so there is no frame to capture mid-drag).
 - Ctrl+Shift+T after a group close reopens one card at a time (newest first).
-- Card title text renders digits with wide gaps (e.g. "4 0 , 4 0"); likely a
-  glyphon font fallback issue in `compositor`; pre-existing, not investigated.
 - Live-browser cap: zooming can churn (sleep, then reload in view).
 - Keep test boards small (RAM). Use a fresh `XDG_DATA_HOME` under `~/.cache` for
   each e2e run (a saved board plus the URL argument gives two cards).

@@ -13,6 +13,8 @@ All notable changes to Trailboard. The format follows
   the whole selection; Delete or Backspace closes it. A click on the board or Esc
   clears the selection. Group moves and closes undo in one step, and closed cards
   get their trail edges back.
+- **Shortcut sheet**: press `?` with no card focused to see keyboard and mouse
+  shortcuts; Esc, `?` or a click hides it. The empty board mentions it.
 - Script commands `sdrag` and `sclick` (Shift held); `cards` logs whether each card is selected.
 - **Page context menu**: right-click in a page for Open link beside, Copy link
   address, Open/Copy image address, Undo/Redo/Cut/Copy/Paste/Select all in text
@@ -70,6 +72,8 @@ All notable changes to Trailboard. The format follows
   already brought back with undo.
 
 ### Fixed
+- Bold text (card titles) used a fallback serif face with wide gaps between
+  words and digits; it now uses the sans font's bold face.
 - Zoomed-in pages are sharp again: pages now render at the zoom's resolution
   (CEF ignored the device scale we reported, so pages always rendered at 1×).
 - Shortcuts now follow the logical key instead of the physical keycode, so they
@@ -82,7 +86,6 @@ All notable changes to Trailboard. The format follows
   clipboard. Desktop text is pasted as plain text.
 - Text copied from Trailboard leaves the clipboard when Trailboard quits.
 - Pages see `devicePixelRatio` equal to the board's raster scale (0.5–2), and a page may lay out once at a stale zoom right after navigating to a new site.
-- Digits in card titles render with wide gaps.
 - Custom image cursors (`cursor: url(…)`) show the default arrow.
 - A card that wakes from sleep reloads its page, losing scroll position and form input.
 - Typing is tested through scripted key events, not real keyboard input.

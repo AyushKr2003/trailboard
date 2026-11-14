@@ -60,6 +60,7 @@ you click them or bring them into view. Set `TRAILBOARD_MAX_LIVE=N` to change th
 | Page context menu | right-click in a page (open link beside, copy link, edit, search selection) |
 | Copy / cut / paste | Ctrl+C / Ctrl+X / Ctrl+V (shared with the desktop clipboard) |
 | Leave the page | Esc |
+| Show shortcuts | ? (with no page focused) |
 
 Input methods (e.g. fcitx5) work in pages and in the address bar.
 

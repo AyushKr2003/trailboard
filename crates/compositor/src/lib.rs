@@ -399,7 +399,9 @@ impl Renderer {
             let fs = &mut self.font_system;
             let mut b = Buffer::new(fs, Metrics::new(size, size * 1.3));
             b.set_size(Some(width), Some(size * 1.6));
-            let weight = if bold { Weight::SEMIBOLD } else { Weight::NORMAL };
+            // BOLD, not SEMIBOLD: common sans fonts (e.g. Liberation Sans) ship no semibold
+            // face, and the fallback picked a serif face with broken digits and wide spaces.
+            let weight = if bold { Weight::BOLD } else { Weight::NORMAL };
             b.set_text(text, &Attrs::new().family(Family::SansSerif).weight(weight), Shaping::Advanced, None);
             b.shape_until_scroll(fs, false);
             self.text_cache.insert(key.clone(), b);

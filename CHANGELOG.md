@@ -7,6 +7,12 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Rename a trail from the sidebar or its tag**: in the trails sidebar, R
+  names the highlighted row's trail (a card on no trail becomes a trail of
+  its own), and a double-click on a trail's header does the same without
+  collapsing it. On the board, a click on a trail's tag above its first
+  card opens the name box too. The name box now sits beside an open
+  sidebar instead of over its top.
 - **See the sites where ads are allowed**: *Sites with ads allowed* in
   Ctrl+K lists every site where you turned blocking off, with how many
   cards show it and "Until you quit" for those allowed from a private

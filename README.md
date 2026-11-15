@@ -123,13 +123,13 @@ note* in Ctrl+K.
 | Quote selected text in a note | right-click the selection → *Add to note* (the note last used, or a new one beside the page) |
 | Save as Markdown | Ctrl+S: the focused note, else the whole board (its trails as nested lists, notes in full); also *Save as Markdown* in a note's right-click menu. Files go to `Documents/Trailboard/` |
 | Fit everything | Shift+F (while no page has the keys), or Ctrl+0 with no card current |
-| Trails sidebar: every trail as a tree, then the other cards | B (while no page has the keys): j/k go to a card, h/l collapse / expand a trail, Enter types in the card's page, p pins a trail to the top, Shift+J/K or dragging a header moves a trail, Esc or B closes; or click a row. Rest the pointer on the window's left edge to peek at it; it slides away when the pointer leaves. The chips at its foot switch spaces, + makes a new one |
+| Trails sidebar: every trail as a tree, then the other cards | B (while no page has the keys): j/k go to a card, h/l collapse / expand a trail, Enter types in the card's page, p pins a trail to the top, r or a double-click on a header names a trail, Shift+J/K or dragging a header moves a trail, Esc or B closes; or click a row. Rest the pointer on the window's left edge to peek at it; it slides away when the pointer leaves. The chips at its foot switch spaces, + makes a new one |
 | Tidy: lay trails out left to right, no overlaps | T (while no page has the keys; Ctrl+Z undoes it) |
 | Fold the current trail (or the one in the middle of the view) into a stack / unfold it | S (while no page has the keys; Ctrl+Z undoes it) |
 | Peek at the previous / next card of a stack | [ / ] (while no page has the keys) |
 | List a stack's pages, bring one to the front or unfold | Click the count badge, or O (while no page has the keys) |
 | Go to the next / previous card on the trail (folded or not) | Alt+PgDn / Alt+PgUp |
-| Name the current trail / give it the next colour | R / C (while no page has the keys; Ctrl+Z undoes it) |
+| Name the current trail / give it the next colour | R / C (while no page has the keys; Ctrl+Z undoes it), or click the trail's tag above its first card to name it |
 | Back / forward / reload | Alt+← / Alt+→ / Ctrl+R |
 | Click a link, button, checkbox or field by keyboard | f, then type its label (links open beside; a field gets the keys) |
 | Select / deselect the current card | v (h/j/k/l keep the selection) |

@@ -285,8 +285,20 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     front), clear of the stack badge, screen-sized like the badge; a colour
     without a name is a dot. Edges take the trail colour. The step toast reads
     `Name · 2/4 · Title`.
-  - Not done: renaming from the page menu or by clicking the tag; the trails
-    sidebar (M6) will list names.
+  - Renaming from elsewhere (2026-11-15): R in the sidebar names the
+    highlighted row's trail (a header's, or a card row's; a card on no
+    trail is named alone and becomes a trail, as R does on the board;
+    "Other cards" toasts). A double-click on a trail's header names it
+    too: the second click takes back the first click's collapse or
+    expand, so the group ends as it was (it flickers once; acting on
+    release only after 400 ms would make every click feel slow). A click
+    on the tag above a trail's first card opens the name box (the tag had
+    no other action, so no double-click); a colour-only dot works too.
+    Tags are hit like the stack badge, under any card drawn above them.
+    The name box, address bar and find bar sit centred right of an open
+    sidebar (`palette::field_rect_from`); the lists stay centred sheets.
+  - Not done: renaming from the page menu, or a right-click menu on a
+    sidebar header (menus are page menus today).
 - ✅ Notes (N): Markdown note cards (`scene::note`, `app::note`). Decisions (2026-11-14):
   - A note is a card (`Node::note: Some(text)`, `url` = `trailboard:note`), so
     it moves, resizes, folds, tidies, sleeps, closes and undoes like any card.
@@ -1286,13 +1298,16 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-15 (eleventh). M8 follow-up: a palette list of allowed sites.
+**Last session:** 2026-11-15 (twelfth). Follow-up: rename a trail from the
+sidebar and from its tag.
 **Repo state:** on `master`, committed; working tree clean.
 **Done this session:**
-- *Sites with ads allowed* in Ctrl+K: a list view of the sites where
-  blocking is off, with "Until you quit" and a card count per row; Enter,
-  a click or Shift+Delete blocks ads there again (the list stays open).
-  Decisions under M8 (Per-site toggle → A list of allowed sites).
+- R in the sidebar names the highlighted row's trail; a double-click on a
+  trail's header names it (the group keeps its collapsed state); a click
+  on a trail's tag on the board opens the name box. The name box, address
+  bar and find bar sit right of an open sidebar. Script command
+  `tagclick ID`. Decisions under M5 (Trail names and colours → Renaming
+  from elsewhere).
 **Owner decisions (2026-11-15):** no AppImage, Flatpak or AUR work (the owner
 publishes later, on their own); no UI translations; licence is Apache-2.0
 only (`LICENSE-APACHE`); all AI features (semantic search, Explain, any
@@ -1301,8 +1316,8 @@ passkeys are all on hold until the owner says otherwise (see M10).
 **Next up:** no M10 work: its items are on hold or wait for the owner to
 pick them. M11 (premium look): step 4 is done; the other steps wait for
 the owner to ask (corners stay Hyprland's, see M11). Take the small
-follow-ups below; a good next one is renaming a trail from the sidebar
-(or from its tag).
+follow-ups below; a good next one is auto-scrolling the sidebar while a
+header is dragged, or Shift+Enter in the palette to open beside.
 
 After that, the other small follow-ups below. Sandbox follow-ups: verify the setuid path on a kernel without unprivileged user namespaces (needs `kernel.unprivileged_userns_clone=0` or linux-hardened, and the package installed). Consent follow-ups: more platforms as real sites show them (TCF
 `__tcfapi` frames, Ketch, Termly, Borlabs, Axeptio); a separate *Reject cookie banners* switch
@@ -1311,8 +1326,7 @@ if clicking ever breaks a site. Small blocking follow-ups: scriptlets/`$redirect
 licence); serialize the
 compiled engine if startup ever shows it; procedural cosmetic rules
 (`:has-text()` and friends, run in the page); a separate *Hide cookie
-banners* switch if one list ever breaks sites the other doesn't. Other small follow-ups: rename a trail from the
-sidebar; auto-scroll the sidebar while dragging; a downloads folder setting (needs a free-text row or a
+banners* switch if one list ever breaks sites the other doesn't. Other small follow-ups: auto-scroll the sidebar while dragging; a downloads folder setting (needs a free-text row or a
 folder picker via xdg-desktop-portal); a progress mark on the board while
 downloads run; ask before quitting with downloads running; pause/resume;
 more settings (start page for an empty board, custom
@@ -1326,12 +1340,23 @@ undo for forgetting a page; site
 icons on history rows; prune `icons/` of sites no card uses; a letter tile for
 sites without an icon; the name label for a stack could list its size; a zoom
 badge on a zoomed card's title bar; Ctrl+scroll inside a page to zoom it;
-Shift+Enter in the palette to open beside; rename a trail from its tag; keyboard selection of
+Shift+Enter in the palette to open beside; keyboard selection of
 several cards; link hints inside iframes; xdg-desktop-portal file chooser for
 Save as Markdown; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out; open `crash.log` from the crash
 toast or a palette command.
 **Notes for the next session:**
+- Trail renaming verified e2e (`~/.cache/trailboard-e2e-trailname`; start
+  `python3 server.py 8781` there, copy `seed/` to `dataN`, `run.sh N
+  shot…`): R on the "Async Rust" header and on a card row of the
+  Typography trail renames them (toasts); End, R, Esc cancels on a lone
+  note; one click collapses "Lisbon in May", a slow second expands, a
+  double-click opens the box with the group still expanded (`d1`: box
+  right of the sheet); `tagclick 5` opens it holding the name (`t1`),
+  renaming changes the tag (`t2`); `tagclick 8` on a dot opens it empty;
+  undo brings the old name back. Not verified: a real pointer's
+  double-click and cursor over the tag (scripted only), a tag under
+  another card, light theme, HiDPI.
 - Allowed-sites list verified e2e (`~/.cache/trailboard-e2e-allowed`;
   `seed/` has `privacy.json` allowing 127.0.0.1:8771 and example.com;
   copy it to `dataN`, `run.sh N shot…`): the list logs both rows ("1
@@ -1368,8 +1393,9 @@ toast or a palette command.
   a private space's hollow chip, a real pointer at the edge (scripted moves
   only).
 - Sidebar follow-ups: slide out on close (step 6); scroll by pixels for a
-  smoother wheel; a close button on a card row on hover; rename a trail
-  from its header; drag a card between trails.
+  smoother wheel; a close button on a card row on hover; drag a card
+  between trails; a right-click menu on a trail's header (rename, colour,
+  pin).
 - Shield menu verified e2e (`~/.cache/trailboard-e2e-shieldmenu`, `run.sh
   N shot…`; serve `site/` with `python3 -m http.server 8771 --bind
   127.0.0.1 --directory site`; copy `seed/` to `dataN` first): blocked=2 →

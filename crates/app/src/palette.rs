@@ -480,8 +480,15 @@ const PREVIEW_MIN: f32 = 160.0;
 
 /// The text field's rect (shared with the address bar).
 pub fn field_rect(viewport: Vec2, ui: f32) -> Rect {
-    let w = (720.0 * ui).min(viewport.x - 32.0 * ui);
-    Rect::new((viewport.x - w) / 2.0, 18.0 * ui, w, 48.0 * ui)
+    field_rect_from(viewport, ui, 0.0)
+}
+
+/// The text field's rect, centred in the part of the window right of
+/// `left` (an open sidebar's edge), so a box without a list doesn't cover it.
+pub fn field_rect_from(viewport: Vec2, ui: f32, left: f32) -> Rect {
+    let room = viewport.x - left;
+    let w = (720.0 * ui).min(room - 32.0 * ui);
+    Rect::new(left + (room - w) / 2.0, 18.0 * ui, w, 48.0 * ui)
 }
 
 /// Where the result list is, in screen px.
@@ -960,5 +967,19 @@ mod tests {
         assert_eq!(Panel::new(Vec2::new(1000.0, 250.0), 1.0, 20).shown, 4);
         assert!(p.contains(Vec2::new(500.0, 40.0)));
         assert!(!p.contains(Vec2::new(500.0, 790.0)));
+    }
+
+    #[test]
+    fn a_lone_field_sits_right_of_the_sidebar() {
+        let vp = Vec2::new(1000.0, 800.0);
+        assert_eq!(field_rect_from(vp, 1.0, 0.0), field_rect(vp, 1.0));
+        // Wide window: full width, centred in the room right of the sheet.
+        let r = field_rect_from(Vec2::new(1600.0, 800.0), 1.0, 296.0);
+        assert_eq!(r.w, 720.0);
+        assert_eq!(r.x, 296.0 + (1304.0 - 720.0) / 2.0);
+        // Narrow window: shrinks to the room, never starting under the sheet.
+        let r = field_rect_from(vp, 1.0, 296.0);
+        assert_eq!(r.x, 296.0 + 16.0);
+        assert_eq!(r.right(), 1000.0 - 16.0);
     }
 }

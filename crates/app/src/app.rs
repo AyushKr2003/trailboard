@@ -13,8 +13,9 @@
 //!   act on the current card, else the one in the middle of the view.
 //! - B opens the trails sidebar (`scene::sidebar`, `sidebar`) with the keys:
 //!   j/k move its highlight and go to that card, h/l collapse / expand a trail,
-//!   Enter gives a card's page the keys (or toggles a trail), Esc or B closes it.
-//!   Clicks on a row do the same; a click elsewhere takes the keys back, the
+//!   Enter gives a card's page the keys (or toggles a trail), r names the
+//!   row's trail, Esc or B closes it. Clicks on a row do the same (a
+//!   double-click on a trail's header names it); a click elsewhere takes the keys back, the
 //!   panel stays open. The pointer resting on the window's left edge peeks it
 //!   without the keys (`sidebar::Peek`); it goes once the pointer leaves, and
 //!   B keeps it. The chips at its foot switch spaces.
@@ -267,6 +268,9 @@ pub struct App {
     /// Where the title-bar shields were drawn last frame (screen px, with a
     /// little room around them), for clicks.
     shields: Vec<(NodeId, Rect)>,
+    /// Where the trail tags were drawn last frame (screen px), in draw
+    /// order, for clicks: a click on one names its trail.
+    tags: Vec<(NodeId, Rect)>,
     /// The shortcut sheet (`?`) is showing.
     hints: bool,
     /// Link hints (`f`) on a card's page: asked for, or showing labels.
@@ -287,6 +291,9 @@ pub struct App {
     /// A press on a trail's header in the sidebar: a click toggles the group,
     /// a drag moves the trail.
     sidebar_press: Option<SidebarPress>,
+    /// The last click that toggled a trail's header, for a double-click
+    /// (which names the trail instead).
+    sidebar_toggled: Option<(Instant, NodeId)>,
     /// The sidebar was opened by the pointer on the window's edge, and goes
     /// when the pointer leaves it (`sidebar::Peek`).
     sidebar_peek: bool,
@@ -496,6 +503,7 @@ impl App {
             omnibox: None,
             menu: None,
             shields: Vec::new(),
+            tags: Vec::new(),
             hints: false,
             link_hints: None,
             arrange: None,
@@ -506,6 +514,7 @@ impl App {
             sidebar_at: None,
             sidebar_hover: None,
             sidebar_press: None,
+            sidebar_toggled: None,
             sidebar_peek: false,
             peek: Default::default(),
             sidebar_chip_hover: None,
@@ -1604,6 +1613,7 @@ impl App {
                 }
             }
             Some(KeyCode::KeyP) => self.sidebar_pin(&rows),
+            Some(KeyCode::KeyR) => self.sidebar_name(&rows),
             Some(KeyCode::Escape | KeyCode::KeyB) => self.close_sidebar(),
             _ => return false,
         }
@@ -1653,6 +1663,16 @@ impl App {
         self.dirty = true;
         log::info!("sidebar: trail of card {} pinned={pinned}", id.0);
         self.toast(if pinned { "Pinned to the top" } else { "Unpinned" });
+    }
+
+    /// R: the name box for the trail of the highlighted row (a card on no
+    /// trail is named on its own, and becomes a trail of its own).
+    fn sidebar_name(&mut self, rows: &[scene::sidebar::Row]) {
+        use scene::sidebar::{Group, Row};
+        match self.sidebar.index(rows).map(|i| &rows[i]) {
+            Some(&Row::Card { id, .. } | &Row::Header { group: Group::Trail(id), .. }) => self.ask_trail_name_of(id),
+            _ => self.toast("Pick a trail or a card to name"),
+        }
     }
 
     /// Goes to card `id` from the sidebar: it is shown at its stack's front if
@@ -2314,9 +2334,17 @@ impl App {
         self.sidebar.sel = Some(rows[i].key());
         self.sidebar_at = Some(i);
         match rows[i] {
-            // A trail's header toggles on release, unless it was dragged.
+            // A trail's header toggles on release, unless it was dragged. A
+            // second click soon after names the trail, and takes back the
+            // first click's toggle so the group stays as it was.
             Row::Header { group: Group::Trail(head), .. } => {
-                self.sidebar_press = Some(SidebarPress { head, at: p, dragging: false, to: None });
+                let again = self.sidebar_toggled.take().is_some_and(|(t, h)| h == head && t.elapsed() < Duration::from_millis(400));
+                if again {
+                    self.sidebar.toggle(Group::Trail(head));
+                    self.ask_trail_name_of(head);
+                } else {
+                    self.sidebar_press = Some(SidebarPress { head, at: p, dragging: false, to: None });
+                }
             }
             Row::Header { group, .. } => self.sidebar.toggle(group),
             Row::Card { id, .. } => self.sidebar_go(id),
@@ -2344,6 +2372,7 @@ impl App {
         let Some(press) = self.sidebar_press.take() else { return };
         if !press.dragging {
             self.sidebar.toggle(scene::sidebar::Group::Trail(press.head));
+            self.sidebar_toggled = Some((Instant::now(), press.head));
         } else if let Some(to) = press.to {
             self.move_trail(press.head, to);
         }
@@ -2798,8 +2827,17 @@ impl App {
     /// R: the address bar, as a name box for the trail in the middle of the view.
     fn ask_trail_name(&mut self) {
         let Some(id) = read::pick(&self.scene, self.focused, self.camera.center) else { return };
+        self.ask_trail_name_of(id);
+    }
+
+    /// The name box for the trail through card `id` (from R, the sidebar or
+    /// a click on the trail's tag), holding its current name.
+    fn ask_trail_name_of(&mut self, id: NodeId) {
+        self.menu = None;
+        self.link_hints = None;
         let name = self.scene.trail_mark(id).name.unwrap_or_default();
         self.omnibox = Some(Omnibox::new(&name, Target::NameTrail(id)));
+        log::info!("name box for the trail of card {}: {name:?}", id.0);
     }
 
     fn name_trail(&mut self, id: NodeId, name: &str) {
@@ -3398,6 +3436,14 @@ impl App {
         if let Some(n) = badge {
             return Hit::Badge(n.id);
         }
+        // Trail tags stick out above their card the same way.
+        let tag = self
+            .tags
+            .iter()
+            .rfind(|(t, r)| r.contains(screen) && self.scene.node(*t).is_some_and(|n| top_z.is_none_or(|z| n.z >= z)));
+        if let Some(&(id, _)) = tag {
+            return Hit::Tag(id);
+        }
         let Some(id) = top else { return Hit::Board };
         let n = self.scene.node(id).expect("hit node exists");
         let k = self.camera.pixels_per_unit(self.scale());
@@ -3593,6 +3639,11 @@ impl App {
                     self.open_shield_menu(id);
                     self.menu_pressed = true;
                 }
+                Hit::Tag(id) => {
+                    self.keys_in_page = false;
+                    self.ask_trail_name_of(id);
+                    self.menu_pressed = true; // swallow the release
+                }
                 Hit::Badge(id) => {
                     self.keys_in_page = false;
                     self.open_outline(id);
@@ -3747,7 +3798,7 @@ impl App {
                 let cursor = match hit {
                     Hit::Header(_) => web::Cursor::Grab,
                     Hit::Grip(_) => web::Cursor::ResizeSE,
-                    Hit::Close(_) | Hit::Badge(_) | Hit::Shield(_) => web::Cursor::Pointer,
+                    Hit::Close(_) | Hit::Badge(_) | Hit::Shield(_) | Hit::Tag(_) => web::Cursor::Pointer,
                     Hit::Content(id) => self.cards.get(&id).map_or(web::Cursor::Default, |c| c.cursor),
                     Hit::Board | Hit::ReadBar(_) => web::Cursor::Default,
                 };
@@ -4470,6 +4521,7 @@ impl App {
         let typing = self.typing();
         let board_cards = if self.read.is_some() { Vec::new() } else { self.scene.draw_order() };
         self.shields.clear();
+        self.tags.clear();
         for n in board_cards {
             let frame = self.to_screen_rect(n.frame());
             if !frame.inflate(40.0).intersects(&screen) {
@@ -4751,6 +4803,7 @@ impl App {
                 let tag = Rect::new(frame.x, frame.y - gap - h, w, h);
                 let round = if th.rounding > 0.0 || name.is_empty() { h / 2.0 } else { 0.0 };
                 l.quads.push(Quad { shape: Shape::Rect { rect: tag, radius: round }, color: rgb(colour, 1.0), texture: None });
+                self.tags.push((n.id, tag));
                 if !name.is_empty() {
                     l.texts.push(Text {
                         text: name,
@@ -4839,7 +4892,9 @@ impl App {
         let shown = self.omnibox.as_ref().map(|ob| anim_key(std::mem::discriminant(&ob.target)));
         let came = self.anim.omnibox.update(shown, Instant::now());
         if let Some(ob) = &self.omnibox {
-            let r = palette::field_rect(vp, ui);
+            // The lists are centred sheets over everything; a lone box (a
+            // name, an address, find) sits clear of an open sidebar.
+            let r = if ob.target.is_list() { palette::field_rect(vp, ui) } else { palette::field_rect_from(vp, ui, sidebar_w) };
             let h = r.h;
             let size = 17.0 * ui;
             let pad = 18.0 * ui;
@@ -5611,6 +5666,14 @@ impl App {
                     }
                     None => log::warn!("script: card {id} shows no shield"),
                 },
+                Cmd::TagClick(id) => match self.tags.iter().find(|(t, _)| t.0 == id).map(|(_, r)| *r) {
+                    Some(r) => {
+                        self.cursor_moved(r.center());
+                        self.mouse_input(ElementState::Pressed, MouseButton::Left);
+                        self.mouse_input(ElementState::Released, MouseButton::Left);
+                    }
+                    None => log::warn!("script: no trail tag on card {id}"),
+                },
                 Cmd::Key(combo) => match keymap::parse_combo(&combo) {
                     Some((mods, name)) => self.script_key(name, mods),
                     None => log::warn!("script: bad key combo {combo:?}"),
@@ -5874,13 +5937,15 @@ enum Hit {
     Badge(NodeId),
     /// The blocked-request count on a card's title bar.
     Shield(NodeId),
+    /// A trail's tag above its first card on the board.
+    Tag(NodeId),
 }
 
 impl Hit {
     fn id(&self) -> Option<NodeId> {
         match *self {
             Hit::Board => None,
-            Hit::Header(id) | Hit::Close(id) | Hit::Grip(id) | Hit::Content(id) | Hit::ReadBar(id) | Hit::Badge(id) | Hit::Shield(id) => Some(id),
+            Hit::Header(id) | Hit::Close(id) | Hit::Grip(id) | Hit::Content(id) | Hit::ReadBar(id) | Hit::Badge(id) | Hit::Shield(id) | Hit::Tag(id) => Some(id),
         }
     }
 }

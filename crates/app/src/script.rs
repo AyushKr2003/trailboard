@@ -66,6 +66,8 @@ pub enum Cmd {
     BadgeClick(u64),
     /// Click the blocked-request shield on card `id`'s title bar.
     ShieldClick(u64),
+    /// Click the trail tag drawn above card `id`.
+    TagClick(u64),
     /// Log the history index, and a search of it for these words.
     History(String),
     Fit,
@@ -144,6 +146,7 @@ fn parse(line: &str) -> Option<Cmd> {
         "menuclick" => Cmd::MenuClick(rest.trim().to_string()),
         "badgeclick" => Cmd::BadgeClick(num(0) as u64),
         "shieldclick" => Cmd::ShieldClick(num(0) as u64),
+        "tagclick" => Cmd::TagClick(num(0) as u64),
         "fit" => Cmd::Fit,
         "undo" => Cmd::Undo,
         "redo" => Cmd::Redo,

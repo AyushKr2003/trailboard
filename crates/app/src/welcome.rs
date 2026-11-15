@@ -34,7 +34,7 @@ pub fn action(name: &str) -> Option<Action> {
 }
 
 /// The theme as the page's CSS variables (and a `light` flag), a JSON object.
-fn colors(th: &Theme) -> String {
+pub(crate) fn colors(th: &Theme) -> String {
     let bg = th.placeholder();
     let vars = [
         ("bg", bg),

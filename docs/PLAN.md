@@ -685,8 +685,8 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     fight sites' own styles and need injecting per frame). Measured while
     choosing: a card scrolls at an even ~60 paints/s, no slow frames, so
     the look, not the frame rate, was the problem. Not a setting.
-  - Not yet settings: a start page for an empty board (still a random
-    Wikipedia page), a custom search URL, the default card size, downloads
+  - Not yet settings: a custom start page for an empty board (it opens a
+    blank card with a search box, `app::start`), a custom search URL, the default card size, downloads
     folder (downloads use the desktop's folder for now), ad blocking (M8).
 - ✅ Downloads and a downloads list (Ctrl+J; `web::download`,
   `scene::download`, `storage::downloads`, `palette::download_rows`).
@@ -1118,7 +1118,7 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   - It is an ordinary note, not a special card or page: no extra Chromium
     page type, the user can edit, keep, export or close it (Ctrl+W), and it
     is saved with the board. Not focused, so the page keeps the keys.
-  - The start page stays (Wikipedia's random article, or the URLs given on
+  - The start page stays (a search box card since 2026-11-15, or the URLs given on
     the command line); the guide goes beside it with
     `placement::left_of` (tops aligned, `free_near` when taken).
   - Changed at the owner's request (2026-11-15): no longer a Markdown note
@@ -1954,8 +1954,22 @@ toast or a palette command.
 - Not verified: light themes in the editor, a live theme switch recolouring
   an open note, real keyboard/IME typing into a note (script keys only),
   *Add to note* while in Read Mode, a note in a stack's outline.
-- Without a board and without a URL the app opens a random Wikipedia page as
-  card 1 (network); seed a board when that matters.
+- ✅ Without a board and without a URL the app opens a start page as card 1:
+  a blank card with one search box (`app::start`, `trailboard:start`).
+  Enter (or Ctrl+L) loads the search or address in that card, which turns
+  into an ordinary page (2026-11-15; was a random Wikipedia page). Verified
+  by a scripted run (type + Enter → DuckDuckGo results in card 1) and a
+  screenshot.
+- ✅ Start page engine picker and search engine guide (`app::engines`,
+  `trailboard:engines`): 15 engines in three groups, chosen on the start
+  page or the guide and saved like the Settings choice; live start pages
+  and the guide follow a change (`tbEngine`). Badges show each engine's own
+  icon, loaded from its site (Google's favicon service for Brave, Startpage,
+  WolframAlpha and Google, whose own icon addresses change per release),
+  over a coloured monogram that stays when the icon can't load. Gibiru and
+  Oscobo only publish 16 px icons, so theirs look soft. Verified by a scripted run
+  (picker → Brave saved; help → guide beside the start card) and
+  screenshots. Not verified: the light theme, each engine's results page.
 - A note's last keystroke can be lost if its card is closed or put to sleep
   within the same frame (the text is sent on every input, not on close).
 - Trail steps verified e2e (`~/.cache/trailboard-e2e-trail`). Not verified: a

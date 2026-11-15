@@ -11,10 +11,18 @@ pub enum SearchEngine {
     Startpage,
     Ecosia,
     Kagi,
+    Mojeek,
+    Oscobo,
+    MetaGer,
+    Gibiru,
+    Swisscows,
+    WolframAlpha,
+    Qwant,
+    Searx,
 }
 
 impl SearchEngine {
-    pub const ALL: [SearchEngine; 7] = [
+    pub const ALL: [SearchEngine; 15] = [
         SearchEngine::DuckDuckGo,
         SearchEngine::Google,
         SearchEngine::Bing,
@@ -22,6 +30,14 @@ impl SearchEngine {
         SearchEngine::Startpage,
         SearchEngine::Ecosia,
         SearchEngine::Kagi,
+        SearchEngine::Mojeek,
+        SearchEngine::Oscobo,
+        SearchEngine::MetaGer,
+        SearchEngine::Gibiru,
+        SearchEngine::Swisscows,
+        SearchEngine::WolframAlpha,
+        SearchEngine::Qwant,
+        SearchEngine::Searx,
     ];
 
     /// Its name in the settings file.
@@ -34,6 +50,14 @@ impl SearchEngine {
             SearchEngine::Startpage => "startpage",
             SearchEngine::Ecosia => "ecosia",
             SearchEngine::Kagi => "kagi",
+            SearchEngine::Mojeek => "mojeek",
+            SearchEngine::Oscobo => "oscobo",
+            SearchEngine::MetaGer => "metager",
+            SearchEngine::Gibiru => "gibiru",
+            SearchEngine::Swisscows => "swisscows",
+            SearchEngine::WolframAlpha => "wolframalpha",
+            SearchEngine::Qwant => "qwant",
+            SearchEngine::Searx => "searx",
         }
     }
 
@@ -51,6 +75,14 @@ impl SearchEngine {
             SearchEngine::Startpage => "Startpage",
             SearchEngine::Ecosia => "Ecosia",
             SearchEngine::Kagi => "Kagi",
+            SearchEngine::Mojeek => "Mojeek",
+            SearchEngine::Oscobo => "Oscobo",
+            SearchEngine::MetaGer => "MetaGer",
+            SearchEngine::Gibiru => "Gibiru",
+            SearchEngine::Swisscows => "Swisscows",
+            SearchEngine::WolframAlpha => "WolframAlpha",
+            SearchEngine::Qwant => "Qwant",
+            SearchEngine::Searx => "SearXNG",
         }
     }
 
@@ -64,6 +96,15 @@ impl SearchEngine {
             SearchEngine::Startpage => "https://www.startpage.com/do/search?q=",
             SearchEngine::Ecosia => "https://www.ecosia.org/search?q=",
             SearchEngine::Kagi => "https://kagi.com/search?q=",
+            SearchEngine::Mojeek => "https://www.mojeek.com/search?q=",
+            SearchEngine::Oscobo => "https://www.oscobo.com/search.php?q=",
+            SearchEngine::MetaGer => "https://metager.org/meta/meta.ger3?eingabe=",
+            SearchEngine::Gibiru => "https://gibiru.com/results.html?q=",
+            SearchEngine::Swisscows => "https://swisscows.com/en/web?query=",
+            SearchEngine::WolframAlpha => "https://www.wolframalpha.com/input?i=",
+            SearchEngine::Qwant => "https://www.qwant.com/?q=",
+            // SearXNG is run by many people; this is one public instance.
+            SearchEngine::Searx => "https://searx.be/search?q=",
         };
         format!("{base}{encoded}")
     }
@@ -287,7 +328,7 @@ mod tests {
     fn choices_wrap_and_numbers_stop() {
         let mut s = Settings::default();
         assert!(s.step(Key::Search, -1));
-        assert_eq!(s.search, SearchEngine::Kagi);
+        assert_eq!(s.search, SearchEngine::Searx);
         assert!(s.step(Key::Search, 1));
         assert_eq!(s.search, SearchEngine::DuckDuckGo);
         s.step(Key::PageColours, 1);
@@ -327,7 +368,7 @@ mod tests {
     fn ids_round_trip_and_values_read() {
         for e in SearchEngine::ALL {
             assert_eq!(SearchEngine::from_id(e.id()), Some(e));
-            assert!(e.url("a+b").starts_with("https://") && e.url("a+b").ends_with("?q=a+b"));
+            assert!(e.url("a+b").starts_with("https://") && e.url("a+b").ends_with("=a+b"));
         }
         for c in PageColours::ALL {
             assert_eq!(PageColours::from_id(c.id()), Some(c));

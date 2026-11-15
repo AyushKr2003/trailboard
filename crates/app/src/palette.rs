@@ -236,6 +236,12 @@ fn card_detail(n: &Node) -> (String, String) {
         if n.url == scene::note::WELCOME_URL {
             return ("Trailboard".to_string(), "guide help".to_string());
         }
+        if n.url == scene::note::ENGINES_URL {
+            return ("Trailboard".to_string(), "search engines guide compare".to_string());
+        }
+        if n.url == scene::note::START_URL {
+            return ("Trailboard".to_string(), String::new());
+        }
         let alt = n.url.split_once("://").map_or(n.url.as_str(), |(_, r)| r).to_string();
         (host(&n.url).to_string(), alt)
     }

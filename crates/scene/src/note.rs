@@ -13,6 +13,17 @@ pub const WELCOME_URL: &str = "trailboard:welcome";
 /// The welcome page card's title (its page never reports one).
 pub const WELCOME_TITLE: &str = "Welcome to Trailboard";
 
+/// The `url` of a start page card: a search box until something is typed
+/// in it, then an ordinary page (the app builds its page).
+pub const START_URL: &str = "trailboard:start";
+/// The start page card's title.
+pub const START_TITLE: &str = "New page";
+
+/// The `url` of the search engine guide card (the app builds its page).
+pub const ENGINES_URL: &str = "trailboard:engines";
+/// The search engine guide's title.
+pub const ENGINES_TITLE: &str = "Search engines";
+
 /// Title shown for a note without any text.
 pub const UNTITLED: &str = "Note";
 
@@ -201,6 +212,18 @@ impl Scene {
         id
     }
 
+    /// The search engine guide card, if the board has one.
+    pub fn engines_card(&self) -> Option<NodeId> {
+        self.all_nodes().find(|n| n.note.is_none() && n.url == ENGINES_URL).map(|n| n.id)
+    }
+
+    /// Adds a start page as a card at `rect`.
+    pub fn add_start(&mut self, rect: Rect) -> NodeId {
+        let id = self.add_page(rect, START_URL);
+        self.nodes.get_mut(&id).expect("just added").title = START_TITLE.to_string();
+        id
+    }
+
     pub fn note_with_text(&self, text: &str) -> Option<NodeId> {
         self.all_nodes().find(|n| n.note.as_deref() == Some(text)).map(|n| n.id)
     }
@@ -349,6 +372,19 @@ mod tests {
         let n = s.node(w).unwrap();
         assert!(!n.is_note());
         assert_eq!((n.url.as_str(), n.title.as_str()), (WELCOME_URL, WELCOME_TITLE));
+    }
+
+    #[test]
+    fn a_start_page_is_a_page_card_with_its_own_address() {
+        let mut s = Scene::new();
+        let id = s.add_start(Rect::new(0.0, 0.0, 800.0, 600.0));
+        let n = s.node(id).unwrap();
+        assert!(!n.is_note());
+        assert_eq!((n.url.as_str(), n.title.as_str()), (START_URL, START_TITLE));
+        assert_eq!(s.welcome_card(), None);
+        assert_eq!(s.engines_card(), None);
+        let g = s.spawn_beside(id, ENGINES_URL).unwrap();
+        assert_eq!(s.engines_card(), Some(g));
     }
 
     #[test]

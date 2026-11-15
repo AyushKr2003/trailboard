@@ -117,7 +117,6 @@ use crate::palette::{self, Command, Item};
 use crate::script::{Cmd, Script};
 use crate::sidebar::Panel;
 
-const START_URL: &str = "https://en.wikipedia.org/wiki/Special:Random";
 const CARD_W: f32 = 1024.0;
 const CARD_H: f32 = 720.0;
 const MIN_CARD: f32 = 240.0;
@@ -1076,6 +1075,8 @@ impl App {
         let (url, kind) = match &n.note {
             Some(text) => (crate::note::page_url(text, &self.theme, n.sticky.as_deref()), web::PageKind::Note),
             None if n.url == scene::note::WELCOME_URL => (crate::welcome::page_url(&self.theme), web::PageKind::App),
+            None if n.url == scene::note::ENGINES_URL => (crate::engines::page_url(&self.theme, self.settings.search), web::PageKind::App),
+            None if n.url == scene::note::START_URL => (crate::start::page_url(&self.theme, self.settings.search), web::PageKind::App),
             None => (n.url.clone(), web::PageKind::Web),
         };
         let jar = self.jar.as_ref();
@@ -1100,6 +1101,112 @@ impl App {
         self.dirty = true;
         log::info!("first run: welcome page {}", id.0);
         id
+    }
+
+    /// Nothing to show: an empty card with a search box in the middle of the
+    /// view, taking the keys.
+    fn add_start(&mut self) -> NodeId {
+        let rect = placement::free_near(&self.scene, self.camera.center, CARD_W, CARD_H);
+        let id = self.scene.add_start(rect);
+        self.create_page(id);
+        self.history.opened(id);
+        self.dirty = true;
+        self.focus(Some(id));
+        self.keys_in_page = true;
+        log::info!("start page {}", id.0);
+        id
+    }
+
+    /// Whether card `id` is a start page that nothing was typed in yet.
+    fn is_start(&self, id: NodeId) -> bool {
+        self.scene.node(id).is_some_and(|n| !n.is_note() && n.url == scene::note::START_URL)
+    }
+
+    /// Something was typed in start page `id`: load it there, so the card
+    /// becomes an ordinary page.
+    fn start_go(&mut self, id: NodeId, input: &str) {
+        let Some(url) = crate::omnibox::resolve(input, self.settings.search) else { return };
+        let Some(n) = self.scene.node_mut(id) else { return };
+        log::info!("start page {}: {url}", id.0);
+        n.url = url.clone();
+        n.title = url;
+        if let Some(card) = self.cards.remove(&id) {
+            self.release(card.page);
+        }
+        self.create_page(id);
+        self.dirty = true;
+        self.focus(Some(id));
+        self.keys_in_page = true;
+    }
+
+    /// A message from a start page or the search engine guide (card `id`).
+    /// Returns whether it was one of theirs.
+    fn engine_page_action(&mut self, id: NodeId, action: &str) -> bool {
+        if let Some(input) = action.strip_prefix(crate::start::GO) {
+            if self.is_start(id) {
+                self.start_go(id, input);
+            }
+        } else if let Some(engine) = action.strip_prefix(crate::start::ENGINE) {
+            match prefs::SearchEngine::from_id(engine) {
+                Some(e) => self.set_engine(e),
+                None => log::warn!("unknown search engine {engine:?}"),
+            }
+        } else if action == crate::start::GUIDE {
+            self.show_engines(id);
+        } else {
+            return false;
+        }
+        true
+    }
+
+    /// Search with `e` from now on (chosen on a start page or the guide).
+    fn set_engine(&mut self, e: prefs::SearchEngine) {
+        if self.settings.search == e {
+            return;
+        }
+        self.settings.search = e;
+        log::info!("setting Search = {}", e.name());
+        if let Err(err) = storage::settings::save_settings(&self.data_dir, &self.settings) {
+            log::warn!("settings: saving: {err}");
+            self.toast("Couldn't save settings");
+        }
+        self.engine_changed();
+    }
+
+    /// Tells live start pages and the guide which engine is in use.
+    fn engine_changed(&self) {
+        let script = crate::engines::engine_script(self.settings.search);
+        for (id, card) in &self.cards {
+            let ours = self.scene.node(*id).is_some_and(|n| n.url == scene::note::START_URL || n.url == scene::note::ENGINES_URL);
+            if ours && card.page.kind() == web::PageKind::App {
+                card.page.run_script(&script);
+            }
+        }
+    }
+
+    /// The search engine guide: go to it if it is on the board, else open it
+    /// beside card `from`.
+    fn show_engines(&mut self, from: NodeId) {
+        self.keys_in_page = false;
+        if let Some(id) = self.scene.engines_card() {
+            self.go_to_card(id);
+            return;
+        }
+        let (w, h) = (crate::engines::W, crate::engines::H);
+        let rect = self.scene.node(from).map(|src| placement::beside_sized(&self.scene, src, w, h));
+        let Some(id) = self.scene.spawn_beside(from, scene::note::ENGINES_URL) else { return };
+        if let Some(n) = self.scene.node_mut(id) {
+            n.title = scene::note::ENGINES_TITLE.to_string();
+            if let Some(r) = rect {
+                n.rect = r;
+            }
+        }
+        self.create_page(id);
+        self.history.opened(id);
+        self.dirty = true;
+        self.focus(Some(id));
+        self.ensure_visible(id);
+        log::info!("search engine guide {}", id.0);
     }
 
     /// A button on the welcome page: the same as its keys.
@@ -1984,7 +2091,8 @@ impl App {
         self.settings = s;
         log::info!("setting {key:?} = {}", s.value(key));
         match key {
-            prefs::Key::Search | prefs::Key::ScrollSpeed => {}
+            prefs::Key::Search => self.engine_changed(),
+            prefs::Key::ScrollSpeed => {}
             prefs::Key::LivePages => {
                 self.max_live = s.live_pages;
                 self.live_from_env = false;
@@ -3214,6 +3322,11 @@ impl App {
                     }
                 }
                 WebEvent::AppAction { page, action } => {
+                    if let Some(id) = self.node_of(page)
+                        && self.engine_page_action(id, &action)
+                    {
+                        continue;
+                    }
                     let Some(action) = self.node_of(page).and(crate::welcome::action(&action)) else {
                         log::warn!("app page {page} asked for unknown action {action:?}");
                         continue;
@@ -4136,6 +4249,11 @@ impl App {
                             // Shift+Enter: beside the current card instead.
                             _ if shift => self.open_beside_current(&url),
                             (Target::Focused, Some(page)) if page.kind() == web::PageKind::Web => page.load(&url),
+                            // A start page becomes the page typed.
+                            (Target::Focused, Some(_)) if self.focused.is_some_and(|id| self.is_start(id)) => {
+                                let id = self.focused.expect("checked");
+                                self.start_go(id, &url);
+                            }
                             // A note or the welcome page never navigates: the address opens beside it.
                             (Target::Focused, Some(_)) => self.open_beside_current(&url),
                             _ => {
@@ -4265,7 +4383,7 @@ impl App {
                 Some(KeyCode::KeyL) if ctrl => {
                     // A note has no address: the bar opens a new card instead.
                     let page = self.focused.and_then(|id| self.scene.node(id)).filter(|n| !n.is_note());
-                    let url = page.map(|n| n.url.clone()).unwrap_or_default();
+                    let url = page.filter(|n| n.url != scene::note::START_URL).map(|n| n.url.clone()).unwrap_or_default();
                     let target = if page.is_some() { Target::Focused } else { Target::NewCard };
                     self.omnibox = Some(Omnibox::new(&url, target));
                     true
@@ -6147,13 +6265,13 @@ impl ApplicationHandler for App {
         self.start_desktop();
         let first_run = spaces::is_first_run(&self.data_dir);
         let restored = self.restore();
-        let mut urls = std::mem::take(&mut self.initial_urls);
-        if urls.is_empty() && !restored {
-            urls.push(START_URL.to_string());
-        }
+        let urls = std::mem::take(&mut self.initial_urls);
         let mut last = None;
         for url in &urls {
             last = self.new_card_at_center(url).or(last);
+        }
+        if urls.is_empty() && !restored {
+            last = Some(self.add_start());
         }
         let guide = (first_run && self.persist).then(|| self.add_guide(last));
         if !restored {

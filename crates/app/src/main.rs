@@ -7,6 +7,7 @@ mod chrome;
 mod clipboard;
 mod crash;
 mod desktop;
+mod engines;
 mod hints;
 mod keymap;
 mod launch;
@@ -16,6 +17,7 @@ mod omnibox;
 mod palette;
 mod script;
 mod sidebar;
+mod start;
 mod theme;
 mod welcome;
 

@@ -7,6 +7,21 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Changed
+- **Start page**: starting with an empty board and no URL opens a blank
+  *New page* card with the Trailboard name and icon over one search box
+  (the chosen search engine, or an address) instead of a random Wikipedia
+  article. Enter loads what was typed in the same card, which then becomes
+  an ordinary page; Ctrl+L on it does the same. A picker on the left of
+  the box switches search engine (grouped: privacy first, most popular,
+  answers), and a help button opens a **search engine guide** card that
+  explains each engine, who it suits and what it trades, with a button to
+  use it. Each engine shows its own icon, loaded from the web (its
+  letters on a coloured badge while it loads or if it can't).
+
+### Added
+- **Search engines**: Mojeek, Oscobo, MetaGer, Gibiru, Swisscows,
+  WolframAlpha, Qwant and SearXNG (a public instance, searx.be), alongside
+  the existing seven.
 - **Stacks**: a folded trail looks more like a stack: the cards behind its
   front stand further out and up to three of them show (was two).
 - **Welcome page**: the first start now shows a designed welcome page (our

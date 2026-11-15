@@ -7,6 +7,16 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **A new trails sidebar**: B now opens a sheet floating over the board
+  rather than a panel stuck to the window's edge. It shows the space's
+  name and how many cards and trails it holds, keeps trails apart with
+  space instead of lines, labels the pinned trails, shows each page's site
+  icon (a letter when the site has none), and lines a trail's cards up
+  under it with faint guides. Its foot holds a chip for every space: click
+  one to switch, + to make a new one.
+- **Peek at the sidebar**: rest the pointer on the window's left edge and
+  the sidebar slides in; move away and it goes. Press B while it peeks to
+  keep it open.
 - **Click the shield on a title bar** to see what Trailboard did on the
   site: a short menu opens under it with *Allow ads on …* (and *Cookie
   banner rejected* when it applies), without going through the page's

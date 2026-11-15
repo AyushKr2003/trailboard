@@ -15,7 +15,9 @@
 //!   j/k move its highlight and go to that card, h/l collapse / expand a trail,
 //!   Enter gives a card's page the keys (or toggles a trail), Esc or B closes it.
 //!   Clicks on a row do the same; a click elsewhere takes the keys back, the
-//!   panel stays open.
+//!   panel stays open. The pointer resting on the window's left edge peeks it
+//!   without the keys (`sidebar::Peek`); it goes once the pointer leaves, and
+//!   B keeps it. The chips at its foot switch spaces.
 //! - f labels the links and controls on the current card's page (`scene::hint`,
 //!   `web::links`); typing a label opens a link beside the card, which becomes
 //!   current, or clicks a control (a field also gets the keys). Esc, another
@@ -285,6 +287,12 @@ pub struct App {
     /// A press on a trail's header in the sidebar: a click toggles the group,
     /// a drag moves the trail.
     sidebar_press: Option<SidebarPress>,
+    /// The sidebar was opened by the pointer on the window's edge, and goes
+    /// when the pointer leaves it (`sidebar::Peek`).
+    sidebar_peek: bool,
+    peek: crate::sidebar::Peek,
+    /// The space chip under the pointer in the sidebar's foot.
+    sidebar_chip_hover: Option<usize>,
     /// The current mouse press started inside the context menu.
     menu_pressed: bool,
     clipboard: Clipboard,
@@ -498,6 +506,9 @@ impl App {
             sidebar_at: None,
             sidebar_hover: None,
             sidebar_press: None,
+            sidebar_peek: false,
+            peek: Default::default(),
+            sidebar_chip_hover: None,
             menu_pressed: false,
             clipboard: Clipboard::new(),
             ime_allowed: false,
@@ -1447,8 +1458,36 @@ impl App {
 
     // ---------------------------------------------------------------- sidebar
 
-    fn sidebar_panel(&self) -> Panel {
-        Panel::new(self.viewport(), self.ui())
+    /// The sidebar's rows and where they go.
+    fn sidebar_layout(&mut self) -> (Vec<scene::sidebar::Row>, Panel) {
+        let rows = self.sidebar.rows(&self.scene);
+        let panel = Panel::new(self.viewport(), self.ui(), &crate::sidebar::slots(&rows));
+        (rows, panel)
+    }
+
+    /// The sidebar's sheet, for hit tests that don't need its rows.
+    fn sidebar_rect(&self) -> Rect {
+        Panel::sheet(self.viewport(), self.ui())
+    }
+
+    /// The pointer resting on the window's left edge peeks the sidebar (no
+    /// keys); it goes again once the pointer has been away from it a moment.
+    fn sidebar_peek_tick(&mut self) {
+        let busy = self.read.is_some() || self.omnibox.is_some() || self.menu.is_some() || self.hints || !matches!(self.drag, Drag::None);
+        let at_edge = self.pointer_in && !busy && self.cursor.x <= 2.0 * self.scale();
+        let reach = self.sidebar_rect().inflate(24.0 * self.ui());
+        let near = self.pointer_in && (reach.contains(self.cursor) || self.cursor.x <= reach.right()) || self.sidebar_press.is_some() || self.menu.is_some();
+        match self.peek.update(Instant::now(), self.pointer_in, at_edge, near, self.sidebar_open, self.sidebar_peek) {
+            Some(crate::sidebar::PeekAct::Open) => {
+                self.sidebar_open = true;
+                self.sidebar_peek = true;
+                self.sidebar_keys = false;
+                self.sidebar_scroll_to_sel();
+                log::info!("sidebar peek");
+            }
+            Some(crate::sidebar::PeekAct::Close) => self.close_sidebar(),
+            None => {}
+        }
     }
 
     /// The sidebar is on screen (not in Read Mode, which covers the window).
@@ -1467,10 +1506,12 @@ impl App {
         if self.read.is_some() {
             return;
         }
-        if self.sidebar_open && self.sidebar_keys {
+        if self.sidebar_open && self.sidebar_keys && !self.sidebar_peek {
             self.close_sidebar();
             return;
         }
+        // B on a peek keeps it open.
+        self.sidebar_peek = false;
         self.sidebar_open = true;
         self.take_sidebar_keys();
         log::info!("sidebar open, highlight {:?}", self.sidebar.sel);
@@ -1478,6 +1519,8 @@ impl App {
 
     fn close_sidebar(&mut self) {
         self.sidebar_open = false;
+        self.sidebar_peek = false;
+        self.sidebar_chip_hover = None;
         self.sidebar_keys = false;
         self.sidebar_hover = None;
         self.sidebar_press = None;
@@ -1499,13 +1542,12 @@ impl App {
     }
 
     fn sidebar_scroll_to_sel(&mut self) {
-        let rows = self.sidebar.rows(&self.scene);
+        let (rows, panel) = self.sidebar_layout();
         let i = self.sidebar.index(&rows);
         if i.is_some() {
             self.sidebar_at = i;
         }
-        let shown = self.sidebar_panel().shown;
-        self.sidebar.scroll_to(i, rows.len(), shown);
+        self.sidebar.scroll = panel.keep_visible(i, self.sidebar.scroll);
     }
 
     /// Keys while the sidebar has them. False for keys it leaves to the board.
@@ -1524,7 +1566,7 @@ impl App {
             self.sidebar_scroll_to_sel();
             return true;
         }
-        let shown = self.sidebar_panel().shown as isize;
+        let shown = self.sidebar_layout().1.fits(self.sidebar.scroll) as isize;
         let step = match code {
             Some(KeyCode::KeyJ | KeyCode::ArrowDown) => Some(1),
             Some(KeyCode::KeyK | KeyCode::ArrowUp) => Some(-1),
@@ -2216,13 +2258,24 @@ impl App {
         if button != MouseButton::Left {
             return;
         }
-        let rows = self.sidebar.rows(&self.scene);
-        let panel = self.sidebar_panel();
+        let (rows, panel) = self.sidebar_layout();
+        let n = self.spaces.spaces.len();
+        if let Some(c) = panel.chip_at(p, n) {
+            if c == n {
+                self.close_sidebar();
+                self.new_space(false);
+            } else if let Some(to) = self.spaces.spaces.get(c).map(|s| s.id)
+                && to != self.spaces.active
+            {
+                self.switch_space(to);
+            }
+            return;
+        }
         if self.typing() {
             self.leave_page();
         }
         self.sidebar_keys = true;
-        let Some(i) = panel.row_at(p, self.sidebar.scroll, rows.len()) else { return };
+        let Some(i) = panel.row_at(p, self.sidebar.scroll) else { return };
         self.sidebar.sel = Some(rows[i].key());
         self.sidebar_at = Some(i);
         match rows[i] {
@@ -2243,10 +2296,9 @@ impl App {
             return;
         }
         press.dragging = true;
-        let rows = self.sidebar.rows(&self.scene);
-        let panel = self.sidebar_panel();
+        let (rows, panel) = self.sidebar_layout();
         press.to = panel
-            .row_at(p, self.sidebar.scroll, rows.len())
+            .row_at(p, self.sidebar.scroll)
             .and_then(|i| scene::sidebar::drop_to(&self.scene, press.head, rows[i].group()));
         self.sidebar_press = Some(press);
     }
@@ -2817,7 +2869,7 @@ impl App {
         let Some(frame) = self.scene.node(id).map(|n| n.frame()) else { return };
         let vp = self.viewport();
         // The open sidebar covers the left of the window: fit the card in the rest.
-        let left = if self.sidebar_shown() { self.sidebar_panel().rect.right() } else { 0.0 };
+        let left = if self.sidebar_shown() { self.sidebar_rect().right() } else { 0.0 };
         let on_screen = self.to_screen_rect(frame);
         if on_screen.x >= left && on_screen.y >= 0.0 && on_screen.right() <= vp.x && on_screen.bottom() <= vp.y {
             return;
@@ -3239,7 +3291,7 @@ impl App {
         if !matches!(self.drag, Drag::None) || self.menu.is_some() || self.omnibox.is_some() || self.link_hints.is_some() || self.hints {
             return None;
         }
-        let over_panel = self.sidebar_shown() && self.sidebar_panel().rect.contains(self.cursor);
+        let over_panel = self.sidebar_shown() && self.sidebar_rect().contains(self.cursor);
         let hovered = if self.pointer_in && !over_panel { self.hit(self.cursor).id() } else { None };
         hovered.or(self.focused).filter(|id| self.scene.node(*id).is_some())
     }
@@ -3427,7 +3479,7 @@ impl App {
         // The sidebar covers the board's left edge and takes its clicks; a
         // press anywhere else takes the keys from it (it stays open).
         if state == ElementState::Pressed && self.sidebar_shown() {
-            if self.sidebar_panel().rect.contains(p) {
+            if self.sidebar_rect().contains(p) {
                 self.sidebar_click(p, button);
                 self.menu_pressed = true; // swallow the release
                 return;
@@ -3584,21 +3636,21 @@ impl App {
             }
         }
         self.sidebar_hover = None;
+        self.sidebar_chip_hover = None;
         if self.sidebar_press.is_some() {
             self.sidebar_press_moved(p);
             self.cursor = p;
             self.set_cursor(web::Cursor::Default);
             return;
         }
-        if self.sidebar_shown() && matches!(self.drag, Drag::None) {
-            let panel = self.sidebar_panel();
-            if panel.rect.contains(p) {
-                let len = self.sidebar.rows(&self.scene).len();
-                self.sidebar_hover = panel.row_at(p, self.sidebar.scroll, len);
-                self.cursor = p;
-                self.set_cursor(web::Cursor::Default);
-                return;
-            }
+        if self.sidebar_shown() && matches!(self.drag, Drag::None) && self.sidebar_rect().contains(p) {
+            let (_, panel) = self.sidebar_layout();
+            self.sidebar_hover = panel.row_at(p, self.sidebar.scroll);
+            self.sidebar_chip_hover = panel.chip_at(p, self.spaces.spaces.len());
+            self.cursor = p;
+            // The space chips are buttons.
+            self.set_cursor(if self.sidebar_chip_hover.is_some() { web::Cursor::Pointer } else { web::Cursor::Default });
+            return;
         }
         let prev = self.cursor;
         self.cursor = p;
@@ -3689,11 +3741,10 @@ impl App {
                 return;
             }
         }
-        if self.sidebar_shown() && self.sidebar_panel().rect.contains(self.cursor) {
-            let panel = self.sidebar_panel();
-            let len = self.sidebar.rows(&self.scene).len();
-            let rows = if lines { -dy * 3.0 } else { -dy / panel.row_h };
-            self.sidebar.scroll_by(rows.round() as isize, len, panel.shown);
+        if self.sidebar_shown() && self.sidebar_rect().contains(self.cursor) {
+            let (_, panel) = self.sidebar_layout();
+            let rows = if lines { -dy * 3.0 } else { -dy / (crate::sidebar::ROW_H * self.ui()) };
+            self.sidebar.scroll = panel.scroll_by(self.sidebar.scroll, rows.round() as isize);
             return;
         }
         if self.mods.control_key() {
@@ -4685,25 +4736,46 @@ impl App {
         }
 
         let sidebar_w = if self.sidebar_shown() {
-            let panel = self.sidebar_panel();
-            let rows = self.sidebar.rows(&self.scene);
-            self.sidebar.scroll_to(None, rows.len(), panel.shown);
+            let (rows, panel) = self.sidebar_layout();
+            self.sidebar.scroll = panel.keep_visible(None, self.sidebar.scroll);
             let keys = self.sidebar_has_keys();
+            // Icons are looked up before the renderer is borrowed to draw.
+            let icons: HashMap<NodeId, u64> = rows
+                .iter()
+                .filter_map(|r| match r {
+                    scene::sidebar::Row::Card { id, .. } => Some(*id),
+                    _ => None,
+                })
+                .filter_map(|id| Some((id, self.icon_key(&self.scene.node(id)?.url)?)))
+                .collect();
+            let icon = |n: &scene::Node| icons.get(&n.id).copied();
+            let chips: Vec<crate::sidebar::SpaceChip> = self
+                .spaces
+                .spaces
+                .iter()
+                .map(|e| crate::sidebar::SpaceChip { name: e.name.clone(), colour: e.tint.as_deref().map(|t| th.trail(Some(t))), private: e.private })
+                .collect();
+            let space = self.spaces.active_entry().name.clone();
             let marks = crate::sidebar::View {
                 scroll: self.sidebar.scroll,
                 sel: if keys { self.sidebar.index(&rows) } else { None },
                 hover: self.sidebar_hover,
                 current: self.focused,
                 drop_line: self.sidebar_drop_line(&rows, &panel),
+                space: &space,
+                spaces: &chips,
+                active_space: self.spaces.position(self.spaces.active).unwrap_or(0),
+                hover_chip: self.sidebar_chip_hover,
+                icon: &icon,
             };
             let came = self.anim.sidebar.update(Some(0), Instant::now());
             if let Some(r) = self.renderer.as_mut() {
                 let mut l = crate::sidebar::layer(r, &panel, &rows, &marks, &self.scene, &th, ui);
-                // Slides in from the window's left edge.
-                crate::chrome::fade(&mut l, 0.4 + 0.6 * came, Vec2::new(-panel.rect.w * 0.25 * (1.0 - came), 0.0));
+                // Slides in from past the window's left edge, settling quickly.
+                crate::chrome::fade(&mut l, 0.5 + 0.5 * came, Vec2::new(-panel.rect.right() * 0.6 * (1.0 - came), 0.0));
                 layers.push(l);
             }
-            panel.rect.w
+            panel.rect.right()
         } else {
             self.anim.sidebar.update(None, Instant::now());
             0.0
@@ -5026,6 +5098,7 @@ impl App {
             self.toast(msg);
         }
         self.read_due_texts();
+        self.sidebar_peek_tick();
         self.sync_find();
         self.autosave();
         self.step_camera(dt);
@@ -5561,12 +5634,11 @@ impl App {
                     }
                 }
                 Cmd::Sidebar => {
-                    let panel = self.sidebar_panel();
-                    let rows = self.sidebar.rows(&self.scene);
+                    let (rows, panel) = self.sidebar_layout();
                     log::info!(
-                        "script sidebar: open={} keys={} sel={:?} scroll={} shown={} width={:.0} rows={}",
-                        self.sidebar_open, self.sidebar_has_keys(), self.sidebar.index(&rows), self.sidebar.scroll,
-                        panel.shown, panel.rect.w, rows.len()
+                        "script sidebar: open={} peek={} keys={} sel={:?} scroll={} shown={} width={:.0} rows={}",
+                        self.sidebar_open, self.sidebar_peek, self.sidebar_has_keys(), self.sidebar.index(&rows), self.sidebar.scroll,
+                        panel.fits(self.sidebar.scroll), panel.rect.w, rows.len()
                     );
                     for (i, row) in rows.iter().enumerate() {
                         let at = panel.row_rect(i, self.sidebar.scroll).map(|r| r.center());

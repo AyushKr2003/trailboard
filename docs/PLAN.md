@@ -1099,9 +1099,14 @@ See [FUTURE.md](FUTURE.md). Each item starts only when the owner picks it.
   not start until the owner says so.
 - ⬜ CEF extensions (a curated set); only when the owner picks it.
 
-### M11: Premium look ⏸
-Waiting for the owner's go (asked 2026-11-15: "we will start it when I
-say"). Do not start building until the owner says so. Aim: Trailboard should
+### M11: Premium look 🟡
+Started by the owner on 2026-11-15 with the sidebar (step 4); take the
+other steps only when the owner asks for them.
+
+**Owner answers (2026-11-15):** corners keep following Hyprland's rounding
+(sharp on this machine, no separate *Look* setting for now), so "premium"
+has to come from spacing, type, depth, icons and motion, not soft corners;
+the sidebar both opens with B and peeks from the window's left edge. Aim: Trailboard should
 feel as finished and calm as the premium browsers (Zen, Arc) and Marble,
 while staying a board of cards and staying clean-room.
 
@@ -1171,11 +1176,42 @@ and light):**
   hover, softer depth for unfocused cards and a calm accent ring for the
   current one; Read Mode's single page inset with a margin and rounded
   instead of edge to edge.
-- ⬜ 4. Sidebar: a floating, rounded, slightly translucent panel over the
-  tinted board (not a slab against the edge), trails as rows with site
-  icons, pinned trails as a compact strip at the top, the space switcher as
-  a row of colour dots at the bottom; hover the left edge to peek it,
-  a key to pin it (a "compact" default where nothing shows until wanted).
+- ✅ 4. Sidebar (2026-11-15, `app::sidebar`). Decisions:
+  - A sheet floating 8 px in from the window's top, left and bottom
+    (`chrome::panel`, mid lift, hairline edge), 280 px wide, corners from
+    the theme. Opaque: the renderer has no blur, and a see-through list
+    over live pages hurt reading.
+  - Head: the space's name, "N cards · M trails" (or "Empty") under it,
+    the B keycap on the right. A hairline under it only while rows are
+    scrolled beneath.
+  - Groups are set apart by a 10 px gap, not rules. With pinned trails,
+    small "PINNED" / "TRAILS" labels head the two parts (none without
+    pins: restraint). Pinned trails stay rows rather than a strip of tiles:
+    rows keep j/k, drag-to-reorder and names readable.
+  - Trail header: colour mark in the icon column, bold name in the title
+    column, count right-aligned and dim; the chevron only shows when
+    collapsed or pointed at. "Other cards" gets a hollow mark so every
+    label starts on the same line.
+  - Card rows: the site icon (else a letter tile from the host, ¶ for a
+    note, the paper colour for a sticky note), the title cut to fit with
+    "…" (the renderer wraps otherwise), faint guide lines down each trail
+    level. Current card: an accent bar on the sheet's edge, a lifted fill,
+    bold. Keyboard highlight: the theme's selection colour; hover: a
+    lighter fill.
+  - Foot: a chip per space (its tint; grey for none; hollow when private),
+    the current one ringed, then "+" for a new space; the pointed chip's
+    name beside them. A hairline over the foot while rows go on below.
+  - Rows have different heights now (gaps, labels), so the scroll stays a
+    first-row index but `Panel::{fits, keep_visible, max_scroll}` work out
+    what fits instead of a fixed row count.
+  - Edge peek (`sidebar::Peek`): the pointer resting 120 ms on the
+    window's left 2 px opens it without the keys; 400 ms away from the
+    sheet (24 px slack) closes it; B on a peek keeps it open. It only arms
+    once the pointer has been seen inside the window off the edge, so a
+    window opening under a pointer on its edge doesn't peek. Not while
+    Read Mode, the palette, a menu, the shortcut sheet or a drag is on.
+  - Opening slides it in from past the edge (150 ms ease-out, as before).
+    Closing is instant; the slide out belongs to step 6.
 - ⬜ 5. Command bar finish: the Ctrl+K palette as the centred hero sheet
   (larger input text, section labels in small caps, site icons on rows,
   keycaps right-aligned), and the same finish for the address bar, menus,
@@ -1226,24 +1262,24 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-15 (eighth). Handoff item: clicking the title-bar shield opens the site's blocking menu.
+**Last session:** 2026-11-15 (ninth). M11 step 4: the sidebar redesigned, with edge peek.
 **Repo state:** on `master`, committed; working tree clean.
 **Done this session:**
-- A click on the title-bar shield opens a menu under it with the site's
-  blocking entries (`web::menu::blocking_items`, shared with the page
-  menu; `Hit::Shield`, hit rects recorded while drawing in `App::shields`;
-  script command `shieldclick ID`). Decisions under M9 (the title-bar
-  count). Also committed the M11 (premium look) plan written earlier today.
+- The owner asked for a premium sidebar "like Zen, Arc, Marble"; looked at
+  how those are built (zones, per-space identity, compact-mode peek, quiet
+  controls), asked the corners and peek questions, then built
+  `app::sidebar` anew: floating sheet, space head, spaced groups with
+  section labels, site icons and letter tiles, trail guides, space chips
+  in the foot, edge peek. Decisions under M11 step 4.
 **Owner decisions (2026-11-15):** no AppImage, Flatpak or AUR work (the owner
 publishes later, on their own); no UI translations; licence is Apache-2.0
 only (`LICENSE-APACHE`); all AI features (semantic search, Explain, any
 other AI/ML), imports from other browsers, and password managers and
 passkeys are all on hold until the owner says otherwise (see M10).
 **Next up:** no M10 work: its items are on hold or wait for the owner to
-pick them. M11 (premium look) is planned (research and steps written
-2026-11-15) but waits for the owner's go; when it comes, ask the open
-*Look* question first, then do step 1. Take the small follow-ups below; a
-good next one is a "N hidden" count beside "N blocked" (cosmetic rules
+pick them. M11 (premium look): step 4 is done; the other steps wait for
+the owner to ask (corners stay Hyprland's, see M11). Take the small
+follow-ups below; a good next one is a "N hidden" count beside "N blocked" (cosmetic rules
 that matched), or a palette list of allowed sites.
 
 After that, the other small follow-ups below. Sandbox follow-ups: verify the setuid path on a kernel without unprivileged user namespaces (needs `kernel.unprivileged_userns_clone=0` or linux-hardened, and the package installed). Consent follow-ups: more platforms as real sites show them (TCF
@@ -1275,6 +1311,23 @@ Save as Markdown; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out; open `crash.log` from the crash
 toast or a palette command.
 **Notes for the next session:**
+- Sidebar verified e2e (`~/.cache/trailboard-e2e-sidebar2`; start the
+  site with `python3 server.py 8781` there: every 127.0.0.N host is its
+  own site, most with a drawn icon; copy `seed/` to `dataN`; `run2.sh N
+  shot…`; `TRAILBOARD_OMARCHY_STATE=$PWD/light` gives a light theme):
+  B opens it with the keys, j/k step, a row click goes to the card
+  (`open2`, `hover2`, `dark4`, `light3` checked by eye, zoomed crops
+  `z-top`, `z-foot`); pointer to x=1 peeks it (keys=false) and moving to
+  x=900 closes it 400 ms later (`peek2`, `gone2`); no peek at start with
+  the pointer on the edge; a chip click switches to that space and "+"
+  makes one (`chip5`, also the empty state). Not verified: a list long
+  enough to scroll (unit-tested: `keep_visible`, `max_scroll`), dragging a
+  header with the new spacing (drop line uses the same `row_rect`), HiDPI,
+  a private space's hollow chip, a real pointer at the edge (scripted moves
+  only).
+- Sidebar follow-ups: slide out on close (step 6); scroll by pixels for a
+  smoother wheel; a close button on a card row on hover; rename a trail
+  from its header; drag a card between trails.
 - Shield menu verified e2e (`~/.cache/trailboard-e2e-shieldmenu`, `run.sh
   N shot…`; serve `site/` with `python3 -m http.server 8771 --bind
   127.0.0.1 --directory site`; copy `seed/` to `dataN` first): blocked=2 →

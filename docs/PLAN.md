@@ -1107,9 +1107,9 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     clears the mark, so losing support later is told again. When the crash
     notice is showing, the sandbox notice waits for the next start rather
     than replace it.
-- ✅ First-run defaults: the very first start adds a welcome note (Markdown,
-  `crates/app/src/guide.md`) to the left of the first page, and the view fits
-  both. Decisions (2026-11-14):
+- ✅ First-run defaults: the very first start adds the welcome page
+  (`crates/app/src/welcome.html`; a Markdown note, `guide.md`, until
+  2026-11-15) to the left of the first page, and the view fits both. Decisions (2026-11-14):
   - "First run" means nothing was ever saved in the data folder: no
     `spaces.json`, no space boards, no old `board.json`
     (`storage::spaces::is_first_run`, asked before `open_spaces` writes the

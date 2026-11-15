@@ -9,7 +9,7 @@ Apple Silicon macOS. Marble's behaviour and architecture were studied with REA
 is reused. Where Marble's algorithms were not decompiled (Tidy, placement, Fold),
 we design our own.
 
-Status legend: ✅ done · 🟡 partial · ⬜ not started
+Status legend: ✅ done · 🟡 partial · ⬜ not started · ⏸ on hold for the owner's decision
 
 ---
 
@@ -1043,7 +1043,19 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   file itself; one would only go in a `NOTICE` file or source headers.
 
 ### M10: Optional extras ⬜
-See [FUTURE.md](FUTURE.md): semantic search, Explain with your own LLM key, imports, extensions.
+See [FUTURE.md](FUTURE.md). Each item starts only when the owner picks it.
+- ⏸ **AI features: on hold for the owner's decision (2026-11-15).** Do not
+  design, prototype or build any of these, or add AI dependencies (models,
+  ONNX Runtime, LLM APIs, API-key storage), until the owner says so:
+  - Semantic search ("search by meaning", a local embedding model).
+  - Explain (a side panel using the user's own LLM key).
+  - Any other AI or ML feature (summaries, AI tab grouping, page Q&A, …).
+- ⏸ **Import from other browsers** (history, bookmarks, sessions, cookies):
+  on hold for the owner's decision (2026-11-15). Do not start until the owner says so.
+- ⏸ **Password managers and passkeys** (native messaging for 1Password/
+  Bitwarden, WebAuthn): on hold for the owner's decision (2026-11-15). Do
+  not start until the owner says so.
+- ⬜ CEF extensions (a curated set); only when the owner picks it.
 
 ---
 
@@ -1089,8 +1101,22 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
   copies it, README explains. Decisions under M9.
 **Owner decisions (2026-11-15):** no AppImage, Flatpak or AUR work (the owner
 publishes later, on their own); no UI translations; licence is Apache-2.0
-only (`LICENSE-APACHE`).
-**Next up:** M10 starts with the owner: pick from [FUTURE.md](FUTURE.md)'s near-term list (semantic search, Explain with your own LLM key, imports, password managers) — ask which first. Without an answer, take small follow-ups below. Sandbox follow-ups: show the sandbox state in the settings panel (Ctrl+,) and a one-time toast when it is off for lack of support; verify the setuid path on a kernel without unprivileged user namespaces (needs `kernel.unprivileged_userns_clone=0` or linux-hardened, and the package installed). Consent follow-ups: more platforms as real sites show them (TCF
+only (`LICENSE-APACHE`); all AI features (semantic search, Explain, any
+other AI/ML), imports from other browsers, and password managers and
+passkeys are all on hold until the owner says otherwise (see M10).
+**Next up (owner's order, 2026-11-15):** no M10 work: its items are on
+hold or wait for the owner to pick them. Do these, in this order:
+1. Sandbox state in the settings panel (Ctrl+,), plus a one-time toast
+   when the sandbox is off because the system doesn't support it. Right
+   now that's only in the log, which nobody reads.
+2. Blocked-request count on the title bar: a small shield mark with the
+   number. Today the count only shows in the right-click menu.
+3. "Cookie banner rejected" line in the page menu, so the user can see
+   when Trailboard clicked reject for them.
+4. Reread `filters/user.txt` when it changes, instead of only at start.
+   The `notify` watcher it needs is already a dependency.
+
+After those, the other small follow-ups below. Without an answer, take small follow-ups below. Sandbox follow-ups: show the sandbox state in the settings panel (Ctrl+,) and a one-time toast when it is off for lack of support; verify the setuid path on a kernel without unprivileged user namespaces (needs `kernel.unprivileged_userns_clone=0` or linux-hardened, and the package installed). Consent follow-ups: more platforms as real sites show them (TCF
 `__tcfapi` frames, Ketch, Termly, Borlabs, Axeptio); a "cookie banner
 rejected" line in the page menu; a separate *Reject cookie banners* switch
 if clicking ever breaks a site. Small blocking follow-ups: a shield

@@ -3,16 +3,21 @@
 Ideas beyond the core milestones in [PLAN.md](PLAN.md), roughly in priority order.
 Each needs a short design note before work starts.
 
+> **On hold:** every AI item here (semantic search, Explain, and any other
+> AI/ML feature), import from other browsers, and password managers and
+> passkeys wait for the owner's decision. Do not start on them until the
+> owner says so (see PLAN.md, M10).
+
 ## Near term (after M9)
 
-### Semantic search ("search by meaning")
+### Semantic search ("search by meaning") ⏸ on hold
 - Local embedding model through `ort` (ONNX Runtime) + `tokenizers`; Marble
   ships a ~118 MB int8 multilingual model (likely multilingual-e5-small; unconfirmed).
 - Pick our own openly licensed model; download on first use, not bundled.
 - Store per-passage vectors in `passages(page_id, n, vec)` next to FTS5, and blend
   BM25 and vector scores in the palette.
 
-### Explain (bring your own LLM key)
+### Explain (bring your own LLM key) ⏸ on hold
 - Side panel that explains the current page or selection, answers follow-ups,
   and can mark up the page (highlights, arrows, step numbers) through injected JS.
 - Uses the user's own API key (Claude API by default), stored in the system keyring
@@ -20,11 +25,11 @@ Each needs a short design note before work starts.
 - Inputs bounded like a good client should be: title, excerpt, selection, optional
   screenshot. Honour size limits and show cost and usage.
 
-### Import from other browsers
+### Import from other browsers ⏸ on hold
 - Chrome/Chromium/Brave/Arc, Firefox: history, open tabs/sessions, bookmarks, favicons.
 - Cookies only with explicit consent.
 
-### Password managers and passkeys
+### Password managers and passkeys ⏸ on hold
 - Native messaging hosts for 1Password/Bitwarden extensions; WebAuthn via CEF.
 
 ## Medium term

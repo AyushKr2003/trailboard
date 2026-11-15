@@ -262,6 +262,9 @@ pub struct App {
     keys_in_page: bool,
     omnibox: Option<Omnibox>,
     menu: Option<ContextMenu>,
+    /// Where the title-bar shields were drawn last frame (screen px, with a
+    /// little room around them), for clicks.
+    shields: Vec<(NodeId, Rect)>,
     /// The shortcut sheet (`?`) is showing.
     hints: bool,
     /// Link hints (`f`) on a card's page: asked for, or showing labels.
@@ -484,6 +487,7 @@ impl App {
             keys_in_page: false,
             omnibox: None,
             menu: None,
+            shields: Vec::new(),
             hints: false,
             link_hints: None,
             arrange: None,
@@ -3316,6 +3320,9 @@ impl App {
             if !n.is_sticky() && w.x > n.rect.right() - CLOSE_W {
                 return Hit::Close(id);
             }
+            if self.shields.iter().any(|(s, r)| *s == id && r.contains(screen)) {
+                return Hit::Shield(id);
+            }
             return Hit::Header(id);
         }
         if w.x > n.rect.right() - grip.min(n.rect.w / 4.0) && w.y > n.rect.bottom() - grip.min(n.rect.h / 4.0) {
@@ -3483,6 +3490,12 @@ impl App {
                     }
                 }
                 Hit::Close(id) => self.close_card(id),
+                Hit::Shield(id) => {
+                    self.keys_in_page = false;
+                    self.focus(Some(id));
+                    self.open_shield_menu(id);
+                    self.menu_pressed = true;
+                }
                 Hit::Badge(id) => {
                     self.keys_in_page = false;
                     self.open_outline(id);
@@ -3637,7 +3650,7 @@ impl App {
                 let cursor = match hit {
                     Hit::Header(_) => web::Cursor::Grab,
                     Hit::Grip(_) => web::Cursor::ResizeSE,
-                    Hit::Close(_) | Hit::Badge(_) => web::Cursor::Pointer,
+                    Hit::Close(_) | Hit::Badge(_) | Hit::Shield(_) => web::Cursor::Pointer,
                     Hit::Content(id) => self.cards.get(&id).map_or(web::Cursor::Default, |c| c.cursor),
                     Hit::Board | Hit::ReadBar(_) => web::Cursor::Default,
                 };
@@ -4351,6 +4364,7 @@ impl App {
         let in_band = band.map(|b| selection::in_band(&self.scene, b)).unwrap_or_default();
         let typing = self.typing();
         let board_cards = if self.read.is_some() { Vec::new() } else { self.scene.draw_order() };
+        self.shields.clear();
         for n in board_cards {
             let frame = self.to_screen_rect(n.frame());
             if !frame.inflate(40.0).intersects(&screen) {
@@ -4543,6 +4557,9 @@ impl App {
                         let x = title_right - w;
                         let sy = header.y + (header.h - sh) / 2.0;
                         let shield = Rect::new(x, sy, sw, sh);
+                        // The whole badge, title bar high, is the target.
+                        let pad = 3.0 * k;
+                        self.shields.push((n.id, Rect::new(x - pad, header.y, w + 2.0 * pad, header.h)));
                         let ink = if focused { th.foreground() } else { th.dim_text() };
                         l.quads.push(Quad {
                             shape: Shape::RoundBottom { rect: shield, radius: sw / 2.0 },
@@ -5161,6 +5178,18 @@ impl App {
         ContextMenu::new(id, items, anchor, label_w, self.viewport(), scale)
     }
 
+    /// A click on the title bar's shield: the site's blocking entries (the
+    /// end of the page menu), under the shield.
+    fn open_shield_menu(&mut self, id: NodeId) {
+        let Some(b) = self.blocking_state(id) else { return };
+        let Some(at) = self.shields.iter().find(|(s, _)| *s == id).map(|(_, r)| *r) else { return };
+        let items = web::menu::blocking_items(&b).into_iter().map(Entry::Page).collect();
+        let anchor = Vec2::new(at.x, at.bottom() + 2.0 * self.ui());
+        let m = self.layout_menu(id, items, anchor);
+        log::info!("shield menu on card {}: {:?}", id.0, menu_labels(&m.items));
+        self.menu = Some(m);
+    }
+
     /// The count badge on a stack's front, screen px. Sized by digit count, so
     /// hit testing needs no text measuring.
     fn stack_badge(&self, n: &scene::Node) -> Option<Rect> {
@@ -5444,6 +5473,14 @@ impl App {
                     }
                     None => log::warn!("script: card {id} is no stack's front"),
                 },
+                Cmd::ShieldClick(id) => match self.shields.iter().find(|(s, _)| s.0 == id).map(|(_, r)| *r) {
+                    Some(r) => {
+                        self.cursor_moved(r.center());
+                        self.mouse_input(ElementState::Pressed, MouseButton::Left);
+                        self.mouse_input(ElementState::Released, MouseButton::Left);
+                    }
+                    None => log::warn!("script: card {id} shows no shield"),
+                },
                 Cmd::Key(combo) => match keymap::parse_combo(&combo) {
                     Some((mods, name)) => self.script_key(name, mods),
                     None => log::warn!("script: bad key combo {combo:?}"),
@@ -5705,13 +5742,15 @@ enum Hit {
     ReadBar(NodeId),
     /// A stack's count badge.
     Badge(NodeId),
+    /// The blocked-request count on a card's title bar.
+    Shield(NodeId),
 }
 
 impl Hit {
     fn id(&self) -> Option<NodeId> {
         match *self {
             Hit::Board => None,
-            Hit::Header(id) | Hit::Close(id) | Hit::Grip(id) | Hit::Content(id) | Hit::ReadBar(id) | Hit::Badge(id) => Some(id),
+            Hit::Header(id) | Hit::Close(id) | Hit::Grip(id) | Hit::Content(id) | Hit::ReadBar(id) | Hit::Badge(id) | Hit::Shield(id) => Some(id),
         }
     }
 }

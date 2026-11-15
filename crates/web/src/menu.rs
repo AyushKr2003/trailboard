@@ -155,18 +155,7 @@ pub fn items(ctx: &MenuContext) -> Vec<MenuItem> {
         ]);
         sections.push(vec![MenuItem::new("Select all", MenuAction::SelectAll, true)]);
         if let Some(b) = &ctx.blocking {
-            let label = match (b.on, b.blocked) {
-                (true, 0) => format!("Allow ads on {}", b.site),
-                (true, n) => format!("Allow ads on {} · {n} blocked", b.site),
-                (false, _) => format!("Block ads on {}", b.site),
-            };
-            let mut section = Vec::new();
-            if b.on && b.banner_rejected {
-                // Only telling: nothing to do with it.
-                section.push(MenuItem::new("Cookie banner rejected", MenuAction::ToggleBlocking, false));
-            }
-            section.push(MenuItem::new(label, MenuAction::ToggleBlocking, true));
-            sections.push(section);
+            sections.push(blocking_items(b));
         }
     }
     let mut out = Vec::new();
@@ -177,6 +166,23 @@ pub fn items(ctx: &MenuContext) -> Vec<MenuItem> {
         out.extend(s);
     }
     out
+}
+
+/// The ad-blocking entries for a page's site: what the page menu ends with,
+/// and all the title bar's shield offers.
+pub fn blocking_items(b: &Blocking) -> Vec<MenuItem> {
+    let label = match (b.on, b.blocked) {
+        (true, 0) => format!("Allow ads on {}", b.site),
+        (true, n) => format!("Allow ads on {} · {n} blocked", b.site),
+        (false, _) => format!("Block ads on {}", b.site),
+    };
+    let mut section = Vec::new();
+    if b.on && b.banner_rejected {
+        // Only telling: nothing to do with it.
+        section.push(MenuItem::new("Cookie banner rejected", MenuAction::ToggleBlocking, false));
+    }
+    section.push(MenuItem::new(label, MenuAction::ToggleBlocking, true));
+    section
 }
 
 /// Single-line, shortened text for a menu label.
@@ -234,6 +240,16 @@ mod tests {
         // Over a link, the menu is about the link.
         let ctx = MenuContext { blocking: Some(b), link: Some("https://a/".into()), ..Default::default() };
         assert!(!labels(&items(&ctx)).iter().any(|l| l.contains("ads")));
+    }
+
+    #[test]
+    fn shield_offers_only_the_blocking_entries() {
+        let b = Blocking { site: "news.example".into(), on: true, blocked: 3, banner_rejected: true };
+        let got = blocking_items(&b);
+        assert_eq!(labels(&got), ["Cookie banner rejected", "Allow ads on news.example · 3 blocked"]);
+        // The same entries the page menu ends with.
+        let ctx = MenuContext { blocking: Some(b), ..Default::default() };
+        assert_eq!(items(&ctx)[6..], got[..]);
     }
 
     #[test]

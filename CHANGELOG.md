@@ -7,6 +7,10 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Click the shield on a title bar** to see what Trailboard did on the
+  site: a short menu opens under it with *Allow ads on …* (and *Cookie
+  banner rejected* when it applies), without going through the page's
+  right-click menu.
 - **Your own filter rules apply as you save them**: edits to
   `filters/user.txt` take effect a moment after saving, without a restart,
   and a short message says how many rules it now holds. Reload a page to

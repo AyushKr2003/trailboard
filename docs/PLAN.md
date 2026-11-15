@@ -875,8 +875,16 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     for the page's site and the count is above 0 (`scene::privacy::
     blocked_badge`, capped at "99+"); scaled with the card like the title,
     and dropped when it would leave the title less than 48 units; the title
-    is clipped short of it. A passive mark: clicking it is a title-bar
-    click (drag, double-click), the page menu has the toggle.
+    is clipped short of it.
+  - ✅ Clicking the shield (2026-11-15) opens a short menu under it with
+    just the site's blocking entries (`web::menu::blocking_items`, the same
+    ones the page menu ends with: *Cookie banner rejected* when it applies,
+    then *Allow ads on … · N blocked*). Decided over toggling at once: a
+    click on a small mark shouldn't reload the site's pages unasked. The
+    target is the drawn badge plus 3 units each side, title bar high,
+    recorded while drawing (`App::shields`), so it follows the badge
+    exactly and is gone whenever the badge is; the rest of the title bar
+    still drags and double-clicks.
   - *Block ads and trackers* in the settings (on by default; `block_ads` in
     `settings.json`) turns it off everywhere at once; open pages keep what
     they loaded until reloaded.
@@ -1091,6 +1099,100 @@ See [FUTURE.md](FUTURE.md). Each item starts only when the owner picks it.
   not start until the owner says so.
 - ⬜ CEF extensions (a curated set); only when the owner picks it.
 
+### M11: Premium look ⏸
+Waiting for the owner's go (asked 2026-11-15: "we will start it when I
+say"). Do not start building until the owner says so. Aim: Trailboard should
+feel as finished and calm as the premium browsers (Zen, Arc) and Marble,
+while staying a board of cards and staying clean-room.
+
+**Clean-room note.** Zen, Arc and Marble are references for *principles*
+only. Copy no art, icons, names, colour values, gradients, sounds or CSS
+from any of them, and don't take measurements from third-party "design
+system" pages that imitate them. Every value below is ours to choose.
+
+**Research (2026-11-15), what makes them feel premium:**
+- *The page is the hero; the chrome recedes.* Arc and Zen put tabs in a
+  vertical sidebar and remove the top tab bar. Zen's compact mode hides the
+  sidebar and toolbar entirely and brings them back when the pointer reaches
+  the window's edge, or pins them with a key. The page sits as an inset,
+  rounded sheet inside a tinted window frame instead of running edge to edge.
+- *One colour mood per space.* Both let each space (Arc "Spaces", Zen
+  "workspaces") carry its own colour or soft gradient, which tints the
+  frame, sidebar and accents, so you know where you are without reading.
+  Zen adds an optional grain (noise) over the gradient to avoid banding and
+  flatness. Marble gives each space its own background (a photo or colour).
+- *Few, consistent surfaces.* A small set of surface steps (base, raised,
+  hover, hairline edge) used everywhere; floating things (command bar,
+  menus) are one elevated sheet with a soft wide shadow and a faint light
+  outline.
+- *A central command bar.* Arc's command bar is a centred sheet in the upper
+  part of the window, large input text, rows with right-aligned key hints:
+  one place for tabs, history and actions. (Trailboard's Ctrl+K palette is
+  already this; it needs the finish, not the idea.)
+- *Quiet, quick motion.* Short eased transitions (≈150–250 ms) for the
+  sidebar sliding, titles fading after it, spaces switching with a slight
+  spring; nothing bounces for long.
+- *Editorial type.* Marble's site uses large sentence-case display lines and
+  small, spaced uppercase labels; Arc keeps UI text small and the command
+  input large. A clear type scale (label, body, title, display) matters more
+  than the font.
+- *Restraint.* Mostly neutral surfaces with one accent colour; colour comes
+  from the space's tint, not from many coloured controls.
+
+**Where Trailboard is today:** the Omarchy look (palette from the Omarchy
+theme, corners from Hyprland, sharp by default) plus the 2026-11-14 polish
+pass (`chrome::panel` surfaces, two-part shadows, hairlines, eased
+overlays, vignette, keycaps). Solid, but flat and "tool-like": cards have
+square title bars, the board is a plain dotted colour, spaces differ only by
+background colour, and the sidebar is a plain list.
+
+**Open question for the owner (ask at the start):** the premium look needs
+rounded corners and per-space colour, which the Omarchy look deliberately
+doesn't do (corners follow Hyprland, colours follow the Omarchy theme).
+Proposed answer: a *Look* setting with two choices, **Trailboard** (the new
+look, default) and **Omarchy** (today's, unchanged), so Omarchy users keep
+a matching app. Light/dark keeps following the system in both.
+
+**Steps, in order (each a session or two, each screenshot-checked in dark
+and light):**
+- ⬜ 1. Design tokens: one table of surface steps, hairlines, radii (small
+  controls, panels, cards), shadows, spacing (4 px grid) and a type scale,
+  in `app::chrome`/`app::theme`, used by every overlay; the *Look* setting
+  (`scene::settings`, `storage::settings` with a migration).
+- ⬜ 2. Space colour: each space gets a colour mood (a two-stop soft gradient
+  picked from a small set of our own presets, or a single colour) that tints
+  the board, the sidebar and the accent; optional subtle grain to stop
+  banding. Picked from the space's menu / palette; stored in the board file
+  (board version bump + migration). Spaces' existing background colours
+  migrate to the nearest preset.
+- ⬜ 3. Cards as sheets: rounded corners on the card and its page (page
+  texture clipped by an SDF in the shader), a slimmer title bar that merges
+  with the page top, site icon + title + quiet controls that appear on
+  hover, softer depth for unfocused cards and a calm accent ring for the
+  current one; Read Mode's single page inset with a margin and rounded
+  instead of edge to edge.
+- ⬜ 4. Sidebar: a floating, rounded, slightly translucent panel over the
+  tinted board (not a slab against the edge), trails as rows with site
+  icons, pinned trails as a compact strip at the top, the space switcher as
+  a row of colour dots at the bottom; hover the left edge to peek it,
+  a key to pin it (a "compact" default where nothing shows until wanted).
+- ⬜ 5. Command bar finish: the Ctrl+K palette as the centred hero sheet
+  (larger input text, section labels in small caps, site icons on rows,
+  keycaps right-aligned), and the same finish for the address bar, menus,
+  settings and toasts.
+- ⬜ 6. Motion pass: space switch (cross-fade of the tint and a short slide),
+  sidebar peek, card open beside its source (grow from the link's side),
+  close (shrink and fade), Tidy (cards glide to their places, already a
+  follow-up), all ≈150–250 ms, eased, and off with the system's reduced
+  motion setting if one can be read.
+- ⬜ 7. Empty board and first start: a calm welcome with a large display
+  line and a few keycaps on the space's tint; the app icon redrawn to match.
+- ⬜ 8. Review pass: every overlay and state in dark and light, at small
+  and large windows and a HiDPI scale; fix what looks off.
+
+**Not in scope:** Arc/Zen features that aren't about the look (Boosts,
+split view, auto-archiving tabs, Glance); user CSS themes or mods.
+
 ---
 
 ## 4. Testing strategy
@@ -1124,27 +1226,29 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-15 (seventh). Handoff item 1: `filters/user.txt` is reread when it changes.
+**Last session:** 2026-11-15 (eighth). Handoff item: clicking the title-bar shield opens the site's blocking menu.
 **Repo state:** on `master`, committed; working tree clean.
 **Done this session:**
-- `app::blocking` watches `filters/` with `notify`; a settled change to
-  `user.txt` with new text rebuilds the rules and toasts the rule count
-  (`scene::privacy::{count_rules, user_rules_message}`,
-  `storage::privacy::{is_user_list, load_user_list}`). Decisions under M9
-  (lists, `filters/user.txt`).
+- A click on the title-bar shield opens a menu under it with the site's
+  blocking entries (`web::menu::blocking_items`, shared with the page
+  menu; `Hit::Shield`, hit rects recorded while drawing in `App::shields`;
+  script command `shieldclick ID`). Decisions under M9 (the title-bar
+  count). Also committed the M11 (premium look) plan written earlier today.
 **Owner decisions (2026-11-15):** no AppImage, Flatpak or AUR work (the owner
 publishes later, on their own); no UI translations; licence is Apache-2.0
 only (`LICENSE-APACHE`); all AI features (semantic search, Explain, any
 other AI/ML), imports from other browsers, and password managers and
 passkeys are all on hold until the owner says otherwise (see M10).
 **Next up:** no M10 work: its items are on hold or wait for the owner to
-pick them. Take the small follow-ups below; a good next one is clicking the
-title-bar shield to open the page menu.
+pick them. M11 (premium look) is planned (research and steps written
+2026-11-15) but waits for the owner's go; when it comes, ask the open
+*Look* question first, then do step 1. Take the small follow-ups below; a
+good next one is a "N hidden" count beside "N blocked" (cosmetic rules
+that matched), or a palette list of allowed sites.
 
 After that, the other small follow-ups below. Sandbox follow-ups: verify the setuid path on a kernel without unprivileged user namespaces (needs `kernel.unprivileged_userns_clone=0` or linux-hardened, and the package installed). Consent follow-ups: more platforms as real sites show them (TCF
 `__tcfapi` frames, Ketch, Termly, Borlabs, Axeptio); a separate *Reject cookie banners* switch
-if clicking ever breaks a site. Small blocking follow-ups: clicking the
-title-bar shield could open the page menu or toggle the site; scriptlets/`$redirect` resources
+if clicking ever breaks a site. Small blocking follow-ups: scriptlets/`$redirect` resources
 (need the `resource-assembler` feature and uBO's resources, check the
 licence); a palette list of allowed sites; serialize the
 compiled engine if startup ever shows it; procedural cosmetic rules
@@ -1171,6 +1275,17 @@ Save as Markdown; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out; open `crash.log` from the crash
 toast or a palette command.
 **Notes for the next session:**
+- Shield menu verified e2e (`~/.cache/trailboard-e2e-shieldmenu`, `run.sh
+  N shot…`; serve `site/` with `python3 -m http.server 8771 --bind
+  127.0.0.1 --directory site`; copy `seed/` to `dataN` first): blocked=2 →
+  `shieldclick 1` logs "shield menu on card 1: [Allow ads on 127.0.0.1:8771
+  · 2 blocked]" (`sm1.png`: the menu under the title bar, kept inside the
+  window); Esc closes it; a click elsewhere on the title bar opens nothing;
+  picking the entry toasts "Ads allowed", the page reloads as "ad+ok",
+  blocked=0, and `shieldclick` then finds no shield. Not verified: the
+  pointer cursor over the shield (no real pointer here), the "Cookie banner
+  rejected" line in this menu (unit-tested; shared with the page menu,
+  which was verified e2e), a light theme, HiDPI.
 - user.txt reload verified e2e (`~/.cache/trailboard-e2e-userlist`,
   `run.sh N`, serve its `site/` on 127.0.0.1:8771; the script edits the
   file at `log edit …` marks): no file → blocked=0; writing a `/ads/` rule

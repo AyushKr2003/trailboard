@@ -25,6 +25,19 @@ pub struct MenuContext {
     pub note: bool,
     /// The note is a sticky note (set by the app; the page doesn't know).
     pub sticky: bool,
+    /// Ad blocking on the page's site (set by the app for web pages while
+    /// blocking is on in the settings).
+    pub blocking: Option<Blocking>,
+}
+
+/// Ad blocking on the site of a page, for its menu.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Blocking {
+    pub site: String,
+    /// Off when the user allowed the site.
+    pub on: bool,
+    /// Requests blocked since the page loaded.
+    pub blocked: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +53,8 @@ pub enum MenuAction {
     SaveMarkdown,
     /// Make the note a sticky note, or a sticky note a note card.
     ToggleSticky,
+    /// Turn ad blocking off on the page's site, or back on.
+    ToggleBlocking,
     Undo,
     Redo,
     Cut,
@@ -137,6 +152,14 @@ pub fn items(ctx: &MenuContext) -> Vec<MenuItem> {
             MenuItem::new("Reload", MenuAction::Reload, true),
         ]);
         sections.push(vec![MenuItem::new("Select all", MenuAction::SelectAll, true)]);
+        if let Some(b) = &ctx.blocking {
+            let label = match (b.on, b.blocked) {
+                (true, 0) => format!("Allow ads on {}", b.site),
+                (true, n) => format!("Allow ads on {} · {n} blocked", b.site),
+                (false, _) => format!("Block ads on {}", b.site),
+            };
+            sections.push(vec![MenuItem::new(label, MenuAction::ToggleBlocking, true)]);
+        }
     }
     let mut out = Vec::new();
     for (i, s) in sections.into_iter().enumerate() {
@@ -179,6 +202,23 @@ mod tests {
         assert_eq!(labels(&items), ["Back", "Forward", "Reload", "-", "Select all"]);
         assert!(items[0].is_enabled());
         assert!(!items[1].is_enabled());
+    }
+
+    #[test]
+    fn plain_page_offers_blocking_on_its_site() {
+        let b = Blocking { site: "news.example".into(), on: true, blocked: 12 };
+        let ctx = MenuContext { blocking: Some(b.clone()), ..Default::default() };
+        let got = items(&ctx);
+        assert_eq!(labels(&got), ["Back", "Forward", "Reload", "-", "Select all", "-", "Allow ads on news.example · 12 blocked"]);
+        let MenuItem::Action { action, .. } = &got[6] else { panic!() };
+        assert_eq!(*action, MenuAction::ToggleBlocking);
+        let ctx = MenuContext { blocking: Some(Blocking { blocked: 0, ..b.clone() }), ..Default::default() };
+        assert_eq!(labels(&items(&ctx))[6], "Allow ads on news.example");
+        let ctx = MenuContext { blocking: Some(Blocking { on: false, ..b.clone() }), ..Default::default() };
+        assert_eq!(labels(&items(&ctx))[6], "Block ads on news.example");
+        // Over a link, the menu is about the link.
+        let ctx = MenuContext { blocking: Some(b), link: Some("https://a/".into()), ..Default::default() };
+        assert!(!labels(&items(&ctx)).iter().any(|l| l.contains("ads")));
     }
 
     #[test]

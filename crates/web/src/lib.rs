@@ -2,12 +2,14 @@
 //! browser whose frames arrive as BGRA pixel buffers; the app uploads them to
 //! GPU textures. All CEF callbacks run on the main thread because we drive CEF
 //! with `external_message_pump` + [`pump`], so plain `Rc`/`RefCell` are enough.
+//! The one exception is request blocking ([`shield`]), asked on Chromium's IO thread.
 
 pub mod download;
 pub mod keys;
 pub mod links;
 pub mod menu;
 pub mod popup;
+pub mod shield;
 pub mod text;
 
 use cef::{args::Args, *};
@@ -57,6 +59,9 @@ pub enum WebEvent {
     DownloadAsked { page: u64, id: u32, url: String, suggested: String, blank: bool },
     /// Progress of a download answered with [`download::save_to`].
     DownloadUpdated { id: u32, received: i64, total: i64, state: download::Progress },
+    /// A [`shield::fetch`] tagged `tag` ended: `ok` with the whole body of an
+    /// HTTP 200 answer, else failed (`body` empty).
+    Fetched { tag: String, ok: bool, body: Vec<u8> },
 }
 
 /// Largest favicon side asked of Chromium, px (title bars draw 16 px icons, sharp at 2×).
@@ -666,9 +671,25 @@ wrap_request_handler! {
     struct PageRequests {
         shared: StdRc<Shared>,
         spawn_beside: StdRc<RefCell<bool>>,
+        // `resource_request_handler` runs on the IO thread: it may only touch
+        // this (thread-safe) handler, never `shared`.
+        guard: Option<ResourceRequestHandler>,
     }
 
     impl RequestHandler {
+        fn resource_request_handler(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            _request: Option<&mut Request>,
+            _is_navigation: ::std::os::raw::c_int,
+            _is_download: ::std::os::raw::c_int,
+            _request_initiator: Option<&CefString>,
+            _disable_default_handling: Option<&mut ::std::os::raw::c_int>,
+        ) -> Option<ResourceRequestHandler> {
+            self.guard.clone()
+        }
+
         fn on_before_browse(
             &self,
             _browser: Option<&mut Browser>,
@@ -978,6 +999,7 @@ wrap_context_menu_handler! {
                 can_forward: browser.as_ref().is_some_and(|b| b.can_go_forward() != 0),
                 note: self.shared.kind == PageKind::Note,
                 sticky: false,
+                blocking: None,
             };
             // Params are view px; the app works in CSS px.
             let s = *self.shared.scale.borrow();
@@ -1063,6 +1085,8 @@ use client::PageClient;
 pub struct Page {
     browser: Browser,
     shared: StdRc<Shared>,
+    /// Requests [`shield`] stopped since the main frame last navigated (written on the IO thread).
+    blocked: std::sync::Arc<shield::Blocked>,
 }
 
 /// Shared toggle for "open links beside the page" (Marble's default behaviour).
@@ -1122,10 +1146,11 @@ impl Page {
             kind,
             committed: std::cell::Cell::new(false),
         });
+        let blocked = std::sync::Arc::new(shield::Blocked::default());
         let mut client = PageClient::new(
             PageRender::new(shared.clone()),
             PageLife::new(shared.clone()),
-            PageRequests::new(shared.clone(), spawn_beside.0.clone()),
+            PageRequests::new(shared.clone(), spawn_beside.0.clone(), (kind == PageKind::Web).then(|| shield::guard(blocked.clone()))),
             PageDisplay::new(shared.clone()),
             PageLoad::new(shared.clone()),
             PageMenu::new(shared.clone()),
@@ -1149,7 +1174,7 @@ impl Page {
         if let Some(h) = browser.host() {
             shared.apply_zoom(&h);
         }
-        let page = Page { browser, shared };
+        let page = Page { browser, shared, blocked };
         page.apply_color_scheme();
         Some(page)
     }
@@ -1166,6 +1191,11 @@ impl Page {
         if host.send_dev_tools_message(Some(msg.as_bytes())) == 0 {
             log::warn!("page {}: couldn't set colour scheme", self.shared.key);
         }
+    }
+
+    /// How many addresses were blocked since the page last navigated.
+    pub fn blocked(&self) -> u32 {
+        self.blocked.count()
     }
 
     pub fn key(&self) -> u64 {
@@ -1265,6 +1295,13 @@ impl Page {
 
     pub fn reload(&self) {
         self.browser.reload();
+    }
+
+    /// Reloads without any cache, so every request goes to the network
+    /// again (and past [`shield`]); a plain reload takes scripts and images
+    /// from Blink's memory cache without asking.
+    pub fn reload_fresh(&self) {
+        self.browser.reload_ignore_cache();
     }
 
     pub fn mouse_move(&self, x: i32, y: i32, modifiers: u32, leave: bool) {

@@ -18,6 +18,7 @@ pub mod pagezoom;
 pub mod pagetext;
 pub mod palette;
 pub mod placement;
+pub mod privacy;
 pub mod read;
 pub mod scroll;
 pub mod selection;

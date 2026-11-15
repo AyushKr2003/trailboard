@@ -1,0 +1,133 @@
+//! Ad and tracker blocking on disk (`scene::privacy`), shared by every space:
+//!
+//! - `$DATA/privacy.json` = `{ "version": 1, "allowed": ["example.com"] }`,
+//!   the sites where the user turned blocking off.
+//! - `$DATA/filters/<id>.txt`: the fetched filter lists, as downloaded; their
+//!   modification time says when they were fetched. `filters/user.txt` holds
+//!   the user's own rules and is never overwritten.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+use scene::privacy::{AllowedSites, LISTS, USER_LIST};
+use serde::{Deserialize, Serialize};
+
+use crate::write_atomic;
+
+pub const PRIVACY_VERSION: u32 = 1;
+
+#[derive(Serialize, Deserialize)]
+struct PrivacyFile {
+    version: u32,
+    #[serde(default)]
+    allowed: Vec<String>,
+}
+
+pub fn privacy_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("privacy.json")
+}
+
+/// The sites where blocking is off. A missing, unreadable or newer file gives
+/// none (a newer file is left alone until the user changes a site).
+pub fn load_allowed(data_dir: &Path) -> AllowedSites {
+    let path = privacy_path(data_dir);
+    let Ok(bytes) = fs::read(&path) else { return AllowedSites::default() };
+    match serde_json::from_slice::<PrivacyFile>(&bytes) {
+        Ok(f) if f.version <= PRIVACY_VERSION => {
+            let mut sites: Vec<String> = f.allowed.into_iter().map(|s| s.trim().to_ascii_lowercase()).filter(|s| !s.is_empty()).collect();
+            sites.sort();
+            sites.dedup();
+            AllowedSites { sites }
+        }
+        Ok(f) => {
+            log::warn!("{}: version {} is newer than this build supports", path.display(), f.version);
+            AllowedSites::default()
+        }
+        Err(e) => {
+            log::warn!("{}: {e}", path.display());
+            AllowedSites::default()
+        }
+    }
+}
+
+pub fn save_allowed(data_dir: &Path, allowed: &AllowedSites) -> std::io::Result<()> {
+    let file = PrivacyFile { version: PRIVACY_VERSION, allowed: allowed.sites.clone() };
+    let json = serde_json::to_vec_pretty(&file).map_err(std::io::Error::other)?;
+    write_atomic(&privacy_path(data_dir), &json)
+}
+
+pub fn filters_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join("filters")
+}
+
+pub fn list_path(data_dir: &Path, id: &str) -> PathBuf {
+    filters_dir(data_dir).join(format!("{id}.txt"))
+}
+
+/// Seconds since list `id` was saved, `None` if it isn't (or its time can't be read).
+pub fn list_age(data_dir: &Path, id: &str, now: SystemTime) -> Option<u64> {
+    let modified = fs::metadata(list_path(data_dir, id)).and_then(|m| m.modified()).ok()?;
+    Some(now.duration_since(modified).map(|d| d.as_secs()).unwrap_or(0))
+}
+
+pub fn save_list(data_dir: &Path, id: &str, text: &str) -> std::io::Result<()> {
+    write_atomic(&list_path(data_dir, id), text.as_bytes())
+}
+
+/// The text of every list there is: the fetched ones in [`LISTS`] order, then
+/// the user's own. Missing or unreadable lists are left out.
+pub fn load_lists(data_dir: &Path) -> Vec<(String, String)> {
+    let ids = LISTS.iter().map(|l| l.id).chain([USER_LIST]);
+    ids.filter_map(|id| {
+        let path = list_path(data_dir, id);
+        match fs::read(&path) {
+            Ok(bytes) => Some((id.to_string(), String::from_utf8_lossy(&bytes).into_owned())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => {
+                log::warn!("{}: {e}", path.display());
+                None
+            }
+        }
+    })
+    .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn allowed_round_trip_and_bad_files() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(load_allowed(dir.path()), AllowedSites::default());
+        let a = AllowedSites { sites: vec!["example.com".into(), "localhost:8761".into()] };
+        save_allowed(dir.path(), &a).unwrap();
+        assert_eq!(load_allowed(dir.path()), a);
+
+        let path = privacy_path(dir.path());
+        fs::write(&path, br#"{"version":1,"allowed":[" B.org ","a.net","a.net",""]}"#).unwrap();
+        assert_eq!(load_allowed(dir.path()).sites, ["a.net", "b.org"]);
+        fs::write(&path, br#"{"version":2,"allowed":["a.net"]}"#).unwrap();
+        assert_eq!(load_allowed(dir.path()), AllowedSites::default(), "newer file: none");
+        fs::write(&path, b"not json").unwrap();
+        assert_eq!(load_allowed(dir.path()), AllowedSites::default());
+    }
+
+    #[test]
+    fn lists_in_order_with_ages() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = SystemTime::now();
+        assert!(load_lists(dir.path()).is_empty());
+        assert_eq!(list_age(dir.path(), "easylist", now), None);
+        save_list(dir.path(), USER_LIST, "||mine.example^").unwrap();
+        save_list(dir.path(), "easyprivacy", "[Adblock Plus]\n||t.example^").unwrap();
+        save_list(dir.path(), "easylist", "[Adblock Plus]\n||a.example^").unwrap();
+        let ids: Vec<String> = load_lists(dir.path()).into_iter().map(|(id, _)| id).collect();
+        assert_eq!(ids, ["easylist", "easyprivacy", "user"]);
+        let age = list_age(dir.path(), "easylist", now + Duration::from_secs(100)).unwrap();
+        assert!((99..=101).contains(&age), "{age}");
+        assert_eq!(list_age(dir.path(), "easylist", now - Duration::from_secs(100)), Some(0), "clock went back");
+    }
+}

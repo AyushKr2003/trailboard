@@ -67,6 +67,7 @@ pub enum Command {
     Settings,
     Shortcuts,
     Welcome,
+    ToggleBlocking,
     Quit,
 }
 
@@ -124,6 +125,7 @@ pub const COMMANDS: &[CommandInfo] = &[
     c(Command::Settings, "Settings", "Ctrl+,", "preferences options configure search engine history colours"),
     c(Command::Shortcuts, "Keyboard shortcuts", "?", "help keys hints sheet"),
     c(Command::Welcome, "Welcome note", "", "guide help getting started tour introduction first"),
+    c(Command::ToggleBlocking, "Allow or block ads on this site", "", "adblock trackers privacy whitelist exception protections"),
     c(Command::Quit, "Quit Trailboard", "Q", "exit close"),
 ];
 

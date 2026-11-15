@@ -244,6 +244,8 @@ pub struct App {
     max_live: usize,
     /// The user's settings (Ctrl+,), saved in `settings.json`.
     settings: Settings,
+    /// Ad and tracker blocking: filter lists and the sites allowed.
+    blocking: crate::blocking::Blocking,
     /// `TRAILBOARD_MAX_LIVE` set the live-page cap for this run (until the setting changes).
     live_from_env: bool,
     /// Recency of use per card (larger is more recent), for choosing which cards sleep.
@@ -467,6 +469,7 @@ impl App {
             page_scroll: Default::default(),
             cards: HashMap::new(),
             max_live: live_env.unwrap_or(settings.live_pages),
+            blocking: crate::blocking::Blocking::start(data_dir.clone(), settings.block_ads),
             settings,
             live_from_env: live_env.is_some(),
             used: HashMap::new(),
@@ -1721,6 +1724,48 @@ impl App {
         }
     }
 
+    /// Ad blocking on card `id`'s site, for its page menu: `None` for notes,
+    /// pages that aren't web pages, or while blocking is off in the settings.
+    fn blocking_state(&self, id: NodeId) -> Option<web::menu::Blocking> {
+        let n = self.scene.node(id).filter(|n| !n.is_note() && self.settings.block_ads)?;
+        let site = scene::icon::site(&n.url)?;
+        let blocked = self.cards.get(&id).map_or(0, |c| c.page.blocked());
+        Some(web::menu::Blocking { site, on: !self.blocking.allows(&n.url), blocked })
+    }
+
+    /// Turns ad blocking off on card `id`'s site, or back on, and reloads the
+    /// site's live pages so the change shows.
+    fn toggle_blocking(&mut self, id: Option<NodeId>) {
+        let Some(n) = id.and_then(|id| self.scene.node(id)).filter(|n| !n.is_note()) else {
+            self.toast("No page here");
+            return;
+        };
+        if !self.settings.block_ads {
+            self.toast("Blocking ads is off in Settings (Ctrl+,)");
+            return;
+        }
+        let url = n.url.clone();
+        let private = self.is_private();
+        let Some((site, on)) = self.blocking.toggle(&url, private) else {
+            self.toast("Ads are only blocked on web pages");
+            return;
+        };
+        let mut reloaded = 0;
+        for (cid, c) in &self.cards {
+            let same = self.scene.node(*cid).is_some_and(|n| !n.is_note() && scene::privacy::covers(&site, &n.url));
+            if same && c.page.kind() == web::PageKind::Web {
+                c.page.reload_fresh();
+                reloaded += 1;
+            }
+        }
+        log::info!("blocking {} {site}: {reloaded} page(s) reloaded", if on { "back on for" } else { "off for" });
+        self.toast(match (on, private) {
+            (true, _) => format!("Blocking ads on {site} again"),
+            (false, false) => format!("Ads allowed on {site}"),
+            (false, true) => format!("Ads allowed on {site} until you quit"),
+        });
+    }
+
     /// Ctrl+,: the settings panel, a list of settings to step through.
     fn open_settings(&mut self) {
         self.menu = None;
@@ -1754,6 +1799,7 @@ impl App {
                 }
             }
             prefs::Key::PageColours => self.apply_page_scheme(),
+            prefs::Key::BlockAds => web::shield::set_enabled(s.block_ads),
         }
         if let Err(e) = storage::settings::save_settings(&self.data_dir, &self.settings) {
             log::warn!("settings: saving: {e}");
@@ -2118,6 +2164,7 @@ impl App {
                 log::info!("hints shown");
             }
             Command::Welcome => self.show_guide(),
+            Command::ToggleBlocking => self.toggle_blocking(self.current()),
             Command::Quit => {
                 log::info!("quit (palette)");
                 self.quit = true;
@@ -2852,6 +2899,11 @@ impl App {
         for ev in web::drain_events() {
             match ev {
                 WebEvent::Relaunch { args, cwd } => self.relaunched(&args, &cwd),
+                WebEvent::Fetched { tag, ok, body } => {
+                    if !self.blocking.fetched(&tag, ok, &body) {
+                        log::warn!("fetch {tag}: nobody asked");
+                    }
+                }
                 WebEvent::DownloadAsked { page, id, url, suggested, blank } => {
                     self.download_asked(page, id, &url, &suggested, blank)
                 }
@@ -4859,6 +4911,7 @@ impl App {
         self.run_script();
         self.follow_desktop();
         self.handle_web_events();
+        self.blocking.tick(Instant::now());
         self.read_due_texts();
         self.sync_find();
         self.autosave();
@@ -4982,7 +5035,11 @@ impl App {
     fn open_menu(&mut self, id: NodeId, x: f32, y: f32, ctx: &web::menu::MenuContext) {
         let Some(at) = self.page_rect_to_screen(id, Rect::new(x, y, 0.0, 0.0)) else { return };
         let anchor = Vec2::new(at.x, at.y);
-        let ctx = web::menu::MenuContext { sticky: self.scene.node(id).is_some_and(Node::is_sticky), ..ctx.clone() };
+        let ctx = web::menu::MenuContext {
+            sticky: self.scene.node(id).is_some_and(Node::is_sticky),
+            blocking: self.blocking_state(id),
+            ..ctx.clone()
+        };
         let items = web::menu::items(&ctx).into_iter().map(Entry::Page).collect();
         let m = self.layout_menu(id, items, anchor);
         log::info!("context menu on card {}: {:?}", id.0, menu_labels(&m.items));
@@ -5087,6 +5144,7 @@ impl App {
             MenuAction::AddToNote(text) => self.add_to_note(id, &text),
             MenuAction::SaveMarkdown => self.save_markdown(Some(id)),
             MenuAction::ToggleSticky => self.toggle_sticky(id),
+            MenuAction::ToggleBlocking => self.toggle_blocking(Some(id)),
             MenuAction::CopyText(t) => self.clipboard.set_text(&t),
             MenuAction::Copy => self.page_copy(false, None),
             MenuAction::Cut => self.page_copy(true, None),
@@ -5326,9 +5384,10 @@ impl App {
                     for n in self.scene.all_nodes() {
                         let (r, f) = (n.rect, self.to_screen_rect(n.frame()));
                         log::info!(
-                            "script card {}: world ({:.0},{:.0} {:.0}x{:.0}) screen ({:.0},{:.0} {:.0}x{:.0}) live={} sel={} hidden={} title={:?} {}",
+                            "script card {}: world ({:.0},{:.0} {:.0}x{:.0}) screen ({:.0},{:.0} {:.0}x{:.0}) live={} sel={} hidden={} blocked={} title={:?} {}",
                             n.id.0, r.x, r.y, r.w, r.h, f.x, f.y, f.w, f.h, self.cards.contains_key(&n.id),
-                            self.selection.contains(n.id), self.scene.is_hidden(n.id), n.title, n.url
+                            self.selection.contains(n.id), self.scene.is_hidden(n.id),
+                            self.cards.get(&n.id).map_or(0, |c| c.page.blocked()), n.title, n.url
                         );
                         if let Some(text) = &n.note {
                             log::info!("script note {}: {:?}", n.id.0, text);

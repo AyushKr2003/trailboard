@@ -170,6 +170,15 @@ kept in `downloads.json` in the data folder (downloads made in a private space
 are listed until you quit, not saved). Quitting stops running downloads and
 removes their partial files.
 
+Ads and trackers are blocked with EasyList and EasyPrivacy (Brave's
+`adblock` engine), downloaded to `filters/` in the data folder on the first
+start and refreshed every 4 days; your own rules in the same syntax go in
+`filters/user.txt` (read at start). The page menu's last row turns blocking
+off for that site and its subdomains (or back on) and says how many requests
+it blocked; *Allow or block ads on this site* in Ctrl+K does the same. Sites
+allowed are kept in `privacy.json` (not those allowed from a private space).
+*Block ads and trackers* in the settings turns it off everywhere.
+
 On [Omarchy](https://omarchy.org/), Trailboard follows the current theme live
 (colours, light or dark, including the pages' `prefers-color-scheme`, unless
 *Page colours* in the settings says Light or Dark),
@@ -195,9 +204,10 @@ pages paused, live-browser cap, page context menu, desktop clipboard, IME input,
 board persistence, spaces (several boards with their own camera and background),
 Read Mode, Tidy, Fold, stack outline, next/previous on a trail, Markdown notes
 with *Add to note*, trail names and colours, save a note or board as Markdown,
-the trails sidebar, the Ctrl+K palette, find in page and per-site page zoom.
+the trails sidebar, the Ctrl+K palette, find in page, per-site page zoom,
+history, downloads, settings and ad blocking.
 
-Next: history with full-text search, ad blocking, then optional semantic search and
+Next: cookie-banner rejection and the Chromium sandbox, then optional semantic search and
 an LLM-backed "Explain" panel.
 
 - Full plan and milestone status: [docs/PLAN.md](docs/PLAN.md)

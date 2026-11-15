@@ -828,10 +828,54 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   - A card removed by *undoing* its opening is not "closed" (redo brings it
     back), so it is not offered; same as Ctrl+Shift+T.
 
-### M8: Privacy ⬜
-- Brave `adblock` engine with EasyList/EasyPrivacy in a resource request handler.
-- Cookie-banner auto-reject (cosmetic rules + known CMP actions).
-- Per-site "disable protections" toggle.
+### M8: Privacy 🟡
+- ✅ Brave `adblock` engine (0.13, MPL-2.0) with EasyList/EasyPrivacy in a
+  resource request handler (`web::shield`, 2026-11-15). Decisions:
+  - The lists are not shipped: they are fetched from easylist.to on the first
+    start (3 s after it, so the first pages load first) and again when older
+    than 4 days (their own `Expires`), into `$DATA/filters/<id>.txt`; file
+    mtime is the fetch time. A fetch goes through Chromium (`CefURLRequest`,
+    the profile's proxy settings and cache, not tied to a page so never
+    blocked itself) and must look like a list (`[Adblock` header, ≥100
+    lines) before it replaces the saved one; a failure retries after an hour.
+    Until the first fetch, nothing is blocked. `filters/user.txt` holds the
+    user's own rules in the same syntax (read at start; never fetched).
+  - Network rules only for now (`RuleTypes::NetworkOnly`): cosmetic rules
+    come with the cookie-banner item. Building the engine from both lists
+    (135k lines) takes ~80–140 ms (dependencies build at opt-level 2 even in
+    debug) on a thread of its own; the rules are swapped in whole, and a
+    newer build wins over a slower older one.
+  - Checked in `OnBeforeResourceLoad` on Chromium's IO thread: the one place
+    this crate uses locks and atomics (`RwLock` rules, `AtomicBool` switch,
+    the app's allowed-site test as a `Send + Sync` closure over an
+    `Arc<RwLock<AllowedSites>>`). The `RequestHandler` hands out a
+    `ResourceRequestHandler` holding only an `Arc`, never touching the
+    page's `Rc` state off the main thread. The `adblock` crate is built
+    without its `single-thread` feature, so its `Engine` is `Send + Sync`.
+  - The first party is the main frame's URL (the referrer before it is
+    known). Main-frame documents are never blocked, nor `data:`/`blob:`.
+    Notes get no handler.
+  - Each page counts the distinct URLs it blocked since its main frame last
+    navigated (Chromium asks twice for one when its preload scanner and the
+    parser both want it): "N blocked" in the page menu.
+  - *Block ads and trackers* in the settings (on by default; `block_ads` in
+    `settings.json`) turns it off everywhere at once; open pages keep what
+    they loaded until reloaded.
+- ⬜ Cookie-banner auto-reject (cosmetic rules + known CMP actions).
+- ✅ Per-site toggle (2026-11-15): the page menu's last row ("Allow ads on
+  example.com · 12 blocked" / "Block ads on example.com") and *Allow or block
+  ads on this site* in Ctrl+K. Decisions:
+  - A site is `icon::site` (host with port, `www.` dropped) and covers its
+    subdomains (`scene::privacy::covers`); turning blocking back on from a
+    subdomain removes the entry that covered it. Kept in `$DATA/privacy.json`
+    (version 1, `allowed`), shared by all spaces.
+  - Toggling reloads the site's live pages bypassing the cache: a plain
+    reload lets Blink take scripts and images from its memory cache without
+    a request, so they would not be blocked (found in the e2e run).
+  - From a private space, an allowed site is in force until quitting but
+    never saved (it would record a site visited privately).
+  - Only one switch for now: ads and trackers together. Separate switches
+    (trackers only, cookie banners) can come with cosmetic filtering.
 
 ### M9: Packaging and release ✅
 - ✅ Bundle layout (`scripts/bundle.sh [--tar]`): `target/bundle/trailboard-VERSION-ARCH/`
@@ -953,20 +997,33 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-14. M9 first-run defaults (a welcome note).
+**Last session:** 2026-11-15. M8: ad and tracker blocking with a per-site toggle.
 **Repo state:** on `master`, committed; working tree clean.
 **Done this session:**
-- First start only (nothing saved in the data folder yet): a "Welcome to
-  Trailboard" note left of the start page, the view fitted to both (see M9).
-  `storage::spaces::is_first_run` and `scene::placement::left_of`, with tests.
-- *Welcome note* palette command: goes to the guide, or adds a fresh copy.
-- Fixed on the way: the first view's fit was overridden by the new page's
-  `ensure_visible` goal; the startup fit now clears it.
+- `web::shield`: Brave's `adblock` engine checks every request of a web page
+  on Chromium's IO thread; EasyList and EasyPrivacy are fetched (through
+  CEF) on the first start and every 4 days into `$DATA/filters/`, plus the
+  user's `filters/user.txt`. Pages count the distinct addresses they blocked.
+- *Block ads and trackers* setting; per-site toggle in the page menu ("Allow
+  ads on site · N blocked") and Ctrl+K, kept in `privacy.json` (not saved
+  from a private space). `scene::privacy`, `storage::privacy`,
+  `app::blocking`, with tests. Decisions under M8.
+- Fixed on the way: toggling a site now reloads with `reload_ignore_cache`
+  (a plain reload took the ad script from Blink's memory cache).
 **Owner decisions (2026-11-15):** no AppImage, Flatpak or AUR work (the owner
 publishes later, on their own); no UI translations; licence is Apache-2.0
 only (`LICENSE-APACHE`).
-**Next up:** M8 privacy (adblock engine, cookie banners, per-site toggle), then
-the Chromium sandbox. Small follow-ups: rename a trail from the
+**Next up:** M8 cookie banners: cosmetic filtering first (the `adblock`
+engine's `url_cosmetic_resources` + `hidden_class_id_selectors`, injected as
+a stylesheet per frame; add EasyList Cookie or a similar list), then
+clicking "reject" on known consent platforms (Sourcepoint, OneTrust,
+Didomi, Quantcast…), written from their public DOM, not copied from other
+extensions. Then the Chromium sandbox. Small blocking follow-ups: a shield
+mark with the count on the title bar; scriptlets/`$redirect` resources
+(need the `resource-assembler` feature and uBO's resources, check the
+licence); a palette list of allowed sites; reread `user.txt` when it
+changes (the `notify` watcher is already a dependency); serialize the
+compiled engine if startup ever shows it. Other small follow-ups: rename a trail from the
 sidebar; auto-scroll the sidebar while dragging; a downloads folder setting (needs a free-text row or a
 folder picker via xdg-desktop-portal); a progress mark on the board while
 downloads run; ask before quitting with downloads running; pause/resume;
@@ -987,6 +1044,28 @@ Save as Markdown; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out; open `crash.log` from the crash
 toast or a palette command.
 **Notes for the next session:**
+- Blocking verified e2e (`~/.cache/trailboard-e2e-block`, `run.sh N shot…`;
+  serve `site/` with `python3 -m http.server 8771 --bind 127.0.0.1`;
+  `a.html` loads `/ads/ad.js`, `/ok.js` and `/ads/pixel.png` and titles
+  itself with the scripts that ran; `seed/` has `filters/user.txt` =
+  `/ads/*$script,image`; `RUST_LOG=…,web::shield=debug` logs each block).
+  Run 1 (fresh): title "ok", ad script and image blocked; EasyList (2.07 MB)
+  and EasyPrivacy (1.52 MB) fetched from easylist.to 3 s in, rules from all
+  three in 78 ms; palette toggle → "ad+ok", blocked 0, `privacy.json` holds
+  `127.0.0.1:8771`; page menu "Block ads on 127.0.0.1:8771" → "ok" again.
+  Run 2 (copy): no fetch (fresh), allowed site restored; toggle on → both
+  cards "ok", "2 blocked" each (first try showed "ad+ok": the memory-cache
+  bug, fixed); menu screenshot `menu2.png` checked (dark theme); setting
+  off → menu item gone, Ctrl+R → "ad+ok", `settings.json` `block_ads:
+  false`. Run 3: Ctrl+Shift+P private, toggle → toast "…until you quit",
+  `privacy.json` still empty; theguardian.com: 13 distinct requests blocked
+  (its `ophan` analytics, Sourcepoint's consent script), page loaded and
+  titled. RSS with both lists loaded: browser process ~340 MB, all
+  Trailboard processes ~1.1 GB with 3 live pages (no baseline measured
+  without lists). Not verified: an offline first start (should retry
+  hourly, log a warning), a captive portal answer (unit-tested only), a
+  list fetched through a proxy, YouTube-style sites that break with
+  EasyList (that is what the per-site toggle is for), the light theme.
 - Welcome note verified e2e (`~/.cache/trailboard-e2e-guide`, `run.sh N
   shot…`): run 1, fresh `data1` with a `file://` page: "first run: welcome
   note 2", cards at world (-1132,-360 560×720) and (-512,-360 1024×720),

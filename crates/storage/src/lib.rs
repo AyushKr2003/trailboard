@@ -7,6 +7,7 @@ pub mod downloads;
 pub mod export;
 pub mod icons;
 pub mod pagetext;
+pub mod privacy;
 pub mod settings;
 pub mod spaces;
 pub mod thumbs;

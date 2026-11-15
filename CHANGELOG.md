@@ -7,6 +7,14 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Ad and tracker blocking**: pages no longer load ads and trackers that
+  EasyList and EasyPrivacy know about. The lists are downloaded on the first
+  start and kept up to date every few days, in `filters/` in the data
+  folder; add your own rules in `filters/user.txt`. Right-click a page for
+  *Allow ads on this site* (it shows how many requests were blocked) or use
+  *Allow or block ads on this site* in Ctrl+K; the choice is remembered,
+  except in a private space. *Block ads and trackers* in the settings
+  (Ctrl+,) turns it off everywhere.
 - `LICENSE-APACHE`; the project is licensed Apache-2.0 only (`Cargo.toml`, `PKGBUILD`).
 
 ### Changed

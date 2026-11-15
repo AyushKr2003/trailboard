@@ -1,7 +1,7 @@
 //! The user's settings (`scene::settings`), shared by every space:
 //! `$DATA/settings.json` =
 //! `{ "version": 1, "search": "duckduckgo", "live_pages": 6, "history": true, "page_colours": "theme",
-//! "scroll_speed": "normal" }`.
+//! "scroll_speed": "normal", "block_ads": true }`.
 //!
 //! Each field is read on its own: a missing or unknown value (say, an engine
 //! a newer build added) keeps its default and the rest still load.
@@ -25,6 +25,7 @@ struct SettingsFile<'a> {
     history: bool,
     page_colours: &'a str,
     scroll_speed: &'a str,
+    block_ads: bool,
 }
 
 #[derive(Deserialize)]
@@ -68,6 +69,9 @@ pub fn load_settings(data_dir: &Path) -> Settings {
     if let Some(c) = v["scroll_speed"].as_str().and_then(ScrollSpeed::from_id) {
         s.scroll_speed = c;
     }
+    if let Some(b) = v["block_ads"].as_bool() {
+        s.block_ads = b;
+    }
     s
 }
 
@@ -79,6 +83,7 @@ pub fn save_settings(data_dir: &Path, s: &Settings) -> std::io::Result<()> {
         history: s.history,
         page_colours: s.page_colours.id(),
         scroll_speed: s.scroll_speed.id(),
+        block_ads: s.block_ads,
     };
     let json = serde_json::to_vec_pretty(&file).map_err(std::io::Error::other)?;
     write_atomic(&settings_path(data_dir), &json)
@@ -98,6 +103,7 @@ mod tests {
             history: false,
             page_colours: PageColours::Dark,
             scroll_speed: ScrollSpeed::Faster,
+            block_ads: false,
         };
         save_settings(dir.path(), &s).unwrap();
         assert_eq!(load_settings(dir.path()), s);

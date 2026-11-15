@@ -24,6 +24,8 @@ designing our own versions only.
 | `app` | window, input mapping, UI state, main loop | — |
 
 - CEF runs on the main thread with `external_message_pump`; use `Rc`/`RefCell`, not locks.
+  The exception is request blocking (`web::shield`), called on Chromium's IO
+  thread: it uses locks and atomics, and must never touch a page's `Rc` state.
 - CEF → app communication goes through `web::drain_events()`; don't call app code from CEF callbacks.
 - Upload page textures only when `PaintFrame::serial` changes.
 - Persisted formats carry a `version`; add migrations instead of breaking old files.

@@ -169,6 +169,8 @@ pub struct Settings {
     pub history: bool,
     pub page_colours: PageColours,
     pub scroll_speed: ScrollSpeed,
+    /// Block ads and trackers (`privacy`, `web::shield`).
+    pub block_ads: bool,
 }
 
 impl Default for Settings {
@@ -179,6 +181,7 @@ impl Default for Settings {
             history: true,
             page_colours: PageColours::Theme,
             scroll_speed: ScrollSpeed::Normal,
+            block_ads: true,
         }
     }
 }
@@ -191,11 +194,12 @@ pub enum Key {
     History,
     PageColours,
     ScrollSpeed,
+    BlockAds,
 }
 
 impl Key {
     /// In the panel's order.
-    pub const ALL: [Key; 5] = [Key::Search, Key::LivePages, Key::History, Key::PageColours, Key::ScrollSpeed];
+    pub const ALL: [Key; 6] = [Key::Search, Key::LivePages, Key::History, Key::BlockAds, Key::PageColours, Key::ScrollSpeed];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -204,6 +208,7 @@ impl Key {
             Key::History => "Keep history",
             Key::PageColours => "Page colours",
             Key::ScrollSpeed => "Scroll speed",
+            Key::BlockAds => "Block ads and trackers",
         }
     }
 
@@ -215,6 +220,7 @@ impl Key {
             Key::History => ("record visited pages privacy pause", vec!["on", "off"]),
             Key::PageColours => ("light dark mode colour color scheme", PageColours::ALL.iter().map(|c| c.name()).collect()),
             Key::ScrollSpeed => ("wheel touchpad mouse smooth", ScrollSpeed::ALL.iter().map(|c| c.name()).collect()),
+            Key::BlockAds => ("adblock privacy easylist tracking content blocker", vec!["on", "off"]),
         };
         let mut s = words.to_string();
         for v in values {
@@ -241,6 +247,7 @@ impl Settings {
             Key::History => if self.history { "On" } else { "Off" }.to_string(),
             Key::PageColours => self.page_colours.name().to_string(),
             Key::ScrollSpeed => self.scroll_speed.name().to_string(),
+            Key::BlockAds => if self.block_ads { "On" } else { "Off" }.to_string(),
         }
     }
 
@@ -255,6 +262,7 @@ impl Settings {
             Key::PageColours => self.page_colours = cycle(&PageColours::ALL, self.page_colours, dir),
             Key::ScrollSpeed => self.scroll_speed = cycle(&ScrollSpeed::ALL, self.scroll_speed, dir),
             Key::History => self.history = !self.history,
+            Key::BlockAds => self.block_ads = !self.block_ads,
             Key::LivePages => {
                 let n = self.live_pages;
                 let next = if dir > 0 {
@@ -294,6 +302,10 @@ mod tests {
         assert!(!s.history);
         assert!(s.step(Key::History, -1));
         assert!(s.history);
+        assert!(s.block_ads);
+        assert!(s.step(Key::BlockAds, 1));
+        assert!(!s.block_ads);
+        assert_eq!(s.value(Key::BlockAds), "Off");
 
         s.live_pages = 16;
         assert!(!s.step(Key::LivePages, 1));

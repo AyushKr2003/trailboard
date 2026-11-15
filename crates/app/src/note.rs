@@ -11,15 +11,9 @@ pub const H: f32 = 420.0;
 pub const STICKY_W: f32 = 280.0;
 pub const STICKY_H: f32 = 240.0;
 
-/// The welcome note a brand-new board starts with, and its content size
-/// (as tall as a page card, which it sits beside).
-pub const GUIDE: &str = include_str!("guide.md");
-pub const GUIDE_W: f32 = 640.0;
-pub const GUIDE_H: f32 = 720.0;
-
 const EDITOR: &str = include_str!("note.html");
 
-fn hex(c: Rgb) -> String {
+pub(crate) fn hex(c: Rgb) -> String {
     format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
 }
 
@@ -81,7 +75,7 @@ pub fn set_text_script(text: &str) -> String {
 
 /// Every byte but ASCII letters, digits and `-._~` as `%XX`, so the URL is
 /// already in the form Chromium keeps (it is compared with the URL loaded).
-fn percent_encode(s: &str) -> String {
+pub(crate) fn percent_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 2);
     for b in s.bytes() {
         if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {

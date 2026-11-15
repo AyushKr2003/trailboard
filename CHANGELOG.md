@@ -7,12 +7,11 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Changed
-- **Welcome guide rewritten**: the first-start note now explains the idea
-  (cards, trails, spaces), first steps, where the keys go (board or page,
-  thin or thick ring), moving around, opening and finding pages, trails,
-  notes, spaces, sleeping cards, saving, blocking, history, downloads and
-  settings, and what to press when lost. Its card is 640 px wide and
-  scrolls.
+- **Welcome page**: the first start now shows a designed welcome page (our
+  own HTML, following the theme live) instead of a Markdown note: the idea,
+  first steps, where the keys go, the shortcuts worth knowing and what to
+  expect, with buttons that open a page, the palette, the shortcuts and the
+  settings. *Welcome page* in Ctrl+K brings it back.
 - **Scrollbars**: pages show thin overlay scrollbars that appear while
   scrolling and fade when idle (Chromium's `OverlayScrollbar`), instead of
   the classic grey bar with arrow buttons on every card. They take no width

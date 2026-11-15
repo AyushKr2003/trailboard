@@ -1075,6 +1075,7 @@ impl App {
         let r = n.rect;
         let (url, kind) = match &n.note {
             Some(text) => (crate::note::page_url(text, &self.theme, n.sticky.as_deref()), web::PageKind::Note),
+            None if n.url == scene::note::WELCOME_URL => (crate::welcome::page_url(&self.theme), web::PageKind::App),
             None => (n.url.clone(), web::PageKind::Web),
         };
         let jar = self.jar.as_ref();
@@ -1086,38 +1087,50 @@ impl App {
         }
     }
 
-    /// First start: the welcome note, left of the first page (`beside`).
+    /// First start: the welcome page, left of the first page (`beside`).
     /// Not focused, so the page keeps the keys.
     fn add_guide(&mut self, beside: Option<NodeId>) -> NodeId {
-        let (w, h) = (crate::note::GUIDE_W, crate::note::GUIDE_H);
+        let (w, h) = (crate::welcome::W, crate::welcome::H);
         let rect = match beside.and_then(|id| self.scene.node(id)) {
             Some(src) => placement::left_of(&self.scene, src, w, h),
             None => placement::free_near(&self.scene, self.camera.center, w, h),
         };
-        let id = self.scene.add_note(rect, crate::note::GUIDE);
+        let id = self.scene.add_welcome(rect);
         self.create_page(id);
         self.dirty = true;
-        log::info!("first run: welcome note {}", id.0);
+        log::info!("first run: welcome page {}", id.0);
         id
     }
 
-    /// *Welcome note* (Ctrl+K): go to the welcome note if an unedited one is
-    /// on the board (unfolding it if needed), else add one in the middle of the view.
+    /// A button on the welcome page: the same as its keys.
+    fn welcome_action(&mut self, action: crate::welcome::Action) {
+        use crate::welcome::Action;
+        self.keys_in_page = false; // the board's own UI takes over
+        match action {
+            Action::NewCard => self.run_command(Command::NewCard),
+            Action::Palette => self.open_palette(),
+            Action::Shortcuts => self.run_command(Command::Shortcuts),
+            Action::Settings => self.run_command(Command::Settings),
+        }
+    }
+
+    /// *Welcome* (Ctrl+K): go to the welcome page if it is on the board
+    /// (unfolding it if needed), else add one in the middle of the view.
     fn show_guide(&mut self) {
-        if let Some(id) = self.scene.note_with_text(crate::note::GUIDE) {
-            log::info!("welcome note {} already on the board", id.0);
+        if let Some(id) = self.scene.welcome_card() {
+            log::info!("welcome page {} already on the board", id.0);
             self.go_to_card(id);
             return;
         }
-        let (w, h) = (crate::note::GUIDE_W, crate::note::GUIDE_H);
+        let (w, h) = (crate::welcome::W, crate::welcome::H);
         let rect = placement::free_near(&self.scene, self.camera.center, w, h);
-        let id = self.scene.add_note(rect, crate::note::GUIDE);
+        let id = self.scene.add_welcome(rect);
         self.create_page(id);
         self.history.opened(id);
         self.dirty = true;
         self.focus(Some(id));
         self.ensure_visible(id);
-        log::info!("welcome note {} added", id.0);
+        log::info!("welcome page {} added", id.0);
     }
 
     /// N: a new, empty note in the middle of the view, ready to type in.
@@ -1183,6 +1196,8 @@ impl App {
         let (Some(n), Some(c)) = (self.scene.node(id), self.cards.get(&id)) else { return };
         if n.is_note() && c.page.kind() == web::PageKind::Note {
             c.page.run_script(&crate::note::theme_script(&self.theme, n.sticky.as_deref()));
+        } else if c.page.kind() == web::PageKind::App {
+            c.page.run_script(&crate::welcome::theme_script(&self.theme));
         }
     }
 
@@ -3198,6 +3213,14 @@ impl App {
                         self.open_menu(id, x, y, &context);
                     }
                 }
+                WebEvent::AppAction { page, action } => {
+                    let Some(action) = self.node_of(page).and(crate::welcome::action(&action)) else {
+                        log::warn!("app page {page} asked for unknown action {action:?}");
+                        continue;
+                    };
+                    log::info!("welcome page: {action:?}");
+                    self.welcome_action(action);
+                }
                 WebEvent::NoteText { page, text } => {
                     if let Some(id) = self.node_of(page)
                         && self.scene.node(id).is_some_and(|n| n.note.as_deref() != Some(text.as_str()))
@@ -4112,7 +4135,9 @@ impl App {
                         match (ob.target, self.focused_page()) {
                             // Shift+Enter: beside the current card instead.
                             _ if shift => self.open_beside_current(&url),
-                            (Target::Focused, Some(page)) => page.load(&url),
+                            (Target::Focused, Some(page)) if page.kind() == web::PageKind::Web => page.load(&url),
+                            // A note or the welcome page never navigates: the address opens beside it.
+                            (Target::Focused, Some(_)) => self.open_beside_current(&url),
                             _ => {
                                 // Typed an address: the new page is what you use next.
                                 if self.new_card_at_center(&url).is_some() {

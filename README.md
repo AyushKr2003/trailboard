@@ -93,9 +93,11 @@ in the settings (Ctrl+,), or for one run with `TRAILBOARD_MAX_LIVE=N`.
 
 ## Using it
 
-The first start opens a short welcome note beside the first page; close it
-with Ctrl+W once you know your way around, and bring it back with *Welcome
-note* in Ctrl+K.
+The first start opens a welcome page beside the first page: what Trailboard
+is, your first minute, where the keys go, the shortcuts worth knowing and what
+to expect (sleeping cards, saving, blocking). Its buttons open a page, the
+palette, the shortcuts or the settings. Close it with Ctrl+W, and bring it back
+with *Welcome page* in Ctrl+K.
 
 | Action | Input |
 |---|---|

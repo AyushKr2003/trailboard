@@ -36,6 +36,10 @@ pub enum WebEvent {
     ContextMenu { page: u64, x: f32, y: f32, context: menu::MenuContext },
     /// The text of note page `page` changed (sent by the note editor, see [`PageKind::Note`]).
     NoteText { page: u64, text: String },
+    /// One of the app's own pages ([`PageKind::App`]) asked for one of its
+    /// commands by name (a button on the welcome page). The app decides what
+    /// names mean; web pages can never send this.
+    AppAction { page: u64, action: String },
     /// The links visible in page `page`, answering [`Page::request_links`]:
     /// the page's layout width in CSS px (to scale their rects to the view's)
     /// and the links. Any page can send this, so only expect it after asking.
@@ -79,7 +83,15 @@ pub enum PageKind {
     /// title and address are not reported, and it sends its text as a console
     /// message starting with [`NOTE_MESSAGE`], which becomes [`WebEvent::NoteText`].
     Note,
+    /// One of the app's own pages (the welcome page). Like a note it never
+    /// navigates away (links open beside) and its title and address are not
+    /// reported; it has no text to send, but may ask for commands with a
+    /// console message starting with [`APP_ACTION`] ([`WebEvent::AppAction`]).
+    App,
 }
+
+/// Prefix of the console message an app page sends to run a command.
+pub const APP_ACTION: &str = "\u{1}trailboard-do\u{1}";
 
 /// Prefix of the console message a note editor sends with its whole text.
 pub const NOTE_MESSAGE: &str = "\u{1}trailboard-note\u{1}";
@@ -482,7 +494,7 @@ impl Shared {
     fn user_zoom(&self) -> f64 {
         match self.kind {
             PageKind::Web => page_zoom(&self.url.borrow()),
-            PageKind::Note => 1.0,
+            PageKind::Note | PageKind::App => 1.0,
         }
     }
 
@@ -755,8 +767,8 @@ wrap_request_handler! {
                 request.as_ref().map(|r| r.transition_type().get_raw()),
                 request.as_ref().map(|r| CefString::from(&r.url()).to_string().chars().take(200).collect::<String>())
             );
-            if self.shared.kind == PageKind::Note {
-                // A note stays a note: only its own page loads in it; a link
+            if matches!(self.shared.kind, PageKind::Note | PageKind::App) {
+                // A note stays a note (an app page, itself): only its own page loads in it; a link
                 // the user follows opens beside, anything else is dropped.
                 let url = request.as_ref().map(|r| CefString::from(&r.url()).to_string()).unwrap_or_default();
                 if url == self.shared.initial_url {
@@ -911,6 +923,13 @@ wrap_display_handler! {
                     });
                 }
                 return 1;
+            }
+            if self.shared.kind == PageKind::App {
+                if let Some(action) = message.strip_prefix(APP_ACTION) {
+                    emit(WebEvent::AppAction { page: self.shared.key, action: action.to_string() });
+                    return 1;
+                }
+                return 0;
             }
             if self.shared.kind != PageKind::Note {
                 return 0;

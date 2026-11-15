@@ -8,6 +8,11 @@ use crate::{Edge, Node, NodeId, Rect, Scene, placement};
 /// The `url` every note card carries (its page is built by the app).
 pub const NOTE_URL: &str = "trailboard:note";
 
+/// The `url` of the welcome page card (the app builds its page).
+pub const WELCOME_URL: &str = "trailboard:welcome";
+/// The welcome page card's title (its page never reports one).
+pub const WELCOME_TITLE: &str = "Welcome to Trailboard";
+
 /// Title shown for a note without any text.
 pub const UNTITLED: &str = "Note";
 
@@ -184,6 +189,18 @@ impl Scene {
 
     /// The first note (folded away or not) whose text is exactly `text`: an
     /// untouched copy of a note the app wrote, such as the welcome note.
+    /// The welcome page card, if the board has one (folded away or not).
+    pub fn welcome_card(&self) -> Option<NodeId> {
+        self.all_nodes().find(|n| n.note.is_none() && n.url == WELCOME_URL).map(|n| n.id)
+    }
+
+    /// Adds the welcome page as a card at `rect`.
+    pub fn add_welcome(&mut self, rect: Rect) -> NodeId {
+        let id = self.add_page(rect, WELCOME_URL);
+        self.nodes.get_mut(&id).expect("just added").title = WELCOME_TITLE.to_string();
+        id
+    }
+
     pub fn note_with_text(&self, text: &str) -> Option<NodeId> {
         self.all_nodes().find(|n| n.note.as_deref() == Some(text)).map(|n| n.id)
     }
@@ -320,6 +337,18 @@ mod tests {
         assert_eq!(append("", "> q\n"), "> q\n");
         assert_eq!(append("  \n", "> q\n"), "> q\n");
         assert_eq!(append("# Notes\n\n\n", "> q\n"), "# Notes\n\n> q\n");
+    }
+
+    #[test]
+    fn the_welcome_page_is_a_card_found_by_its_address() {
+        let mut s = Scene::new();
+        assert_eq!(s.welcome_card(), None);
+        s.add_page(Rect::new(0.0, 0.0, 800.0, 600.0), "https://a");
+        let w = s.add_welcome(Rect::new(0.0, 1000.0, 880.0, 720.0));
+        assert_eq!(s.welcome_card(), Some(w));
+        let n = s.node(w).unwrap();
+        assert!(!n.is_note());
+        assert_eq!((n.url.as_str(), n.title.as_str()), (WELCOME_URL, WELCOME_TITLE));
     }
 
     #[test]

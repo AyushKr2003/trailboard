@@ -125,7 +125,7 @@ pub const COMMANDS: &[CommandInfo] = &[
     c(Command::Downloads, "Downloads", "Ctrl+J", "files saved folder download list"),
     c(Command::Settings, "Settings", "Ctrl+,", "preferences options configure search engine history colours"),
     c(Command::Shortcuts, "Keyboard shortcuts", "?", "help keys hints sheet"),
-    c(Command::Welcome, "Welcome note", "", "guide help getting started tour introduction first"),
+    c(Command::Welcome, "Welcome page", "", "guide help getting started tour introduction first note"),
     c(Command::ToggleBlocking, "Allow or block ads on this site", "", "adblock trackers privacy whitelist exception protections"),
     c(Command::AllowedSites, "Sites with ads allowed", "", "adblock trackers privacy whitelist allowlist exceptions protections blocking list"),
     c(Command::Quit, "Quit Trailboard", "Q", "exit close"),
@@ -233,6 +233,9 @@ fn card_detail(n: &Node) -> (String, String) {
         let kind = if n.is_sticky() { "Sticky note" } else { "Note" };
         (kind.to_string(), n.note.clone().unwrap_or_default())
     } else {
+        if n.url == scene::note::WELCOME_URL {
+            return ("Trailboard".to_string(), "guide help".to_string());
+        }
         let alt = n.url.split_once("://").map_or(n.url.as_str(), |(_, r)| r).to_string();
         (host(&n.url).to_string(), alt)
     }

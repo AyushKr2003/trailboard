@@ -17,6 +17,7 @@ mod palette;
 mod script;
 mod sidebar;
 mod theme;
+mod welcome;
 
 use std::path::PathBuf;
 use std::process::ExitCode;

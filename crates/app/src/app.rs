@@ -4638,12 +4638,12 @@ impl App {
             let focused = self.focused == Some(n.id);
             let card = self.cards.get(&n.id);
             let mut l = Layer::default();
-            // A stack shows the edges of up to two cards behind its front, down and to the right.
+            // A stack shows the edges of up to three cards behind its front, down and to the right.
             let stack = self.scene.stack_of(n.id).map(|s| (s.front_index() + 1, s.members.len()));
             if let Some((_, len)) = stack {
                 // At least a few px apart, so a stack still reads when zoomed far out.
-                let step = (10.0 * k).max(5.0 * scale);
-                for i in (1..len.min(3)).rev() {
+                let step = (16.0 * k).max(6.0 * scale);
+                for i in (1..len.min(4)).rev() {
                     let back = frame.translate(Vec2::new(step * i as f32, step * i as f32));
                     l.quads.push(Quad {
                         shape: Shape::Shadow { rect: back.translate(Vec2::new(0.0, 4.0 * k)), radius, blur: (14.0 * k).max(2.0) },

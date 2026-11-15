@@ -7,6 +7,8 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Changed
+- **Stacks**: a folded trail looks more like a stack: the cards behind its
+  front stand further out and up to three of them show (was two).
 - **Welcome page**: the first start now shows a designed welcome page (our
   own HTML, following the theme live) instead of a Markdown note: the idea,
   first steps, where the keys go, the shortcuts worth knowing and what to

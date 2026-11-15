@@ -38,6 +38,8 @@ pub struct Blocking {
     pub on: bool,
     /// Requests blocked since the page loaded.
     pub blocked: u32,
+    /// Page elements hidden by cosmetic rules since the page loaded.
+    pub hidden: u32,
     /// A cookie banner on the page was answered with "reject".
     pub banner_rejected: bool,
 }
@@ -171,10 +173,17 @@ pub fn items(ctx: &MenuContext) -> Vec<MenuItem> {
 /// The ad-blocking entries for a page's site: what the page menu ends with,
 /// and all the title bar's shield offers.
 pub fn blocking_items(b: &Blocking) -> Vec<MenuItem> {
-    let label = match (b.on, b.blocked) {
-        (true, 0) => format!("Allow ads on {}", b.site),
-        (true, n) => format!("Allow ads on {} · {n} blocked", b.site),
-        (false, _) => format!("Block ads on {}", b.site),
+    let label = if b.on {
+        let mut label = format!("Allow ads on {}", b.site);
+        if b.blocked > 0 {
+            label.push_str(&format!(" · {} blocked", b.blocked));
+        }
+        if b.hidden > 0 {
+            label.push_str(&format!(" · {} hidden", b.hidden));
+        }
+        label
+    } else {
+        format!("Block ads on {}", b.site)
     };
     let mut section = Vec::new();
     if b.on && b.banner_rejected {
@@ -220,7 +229,7 @@ mod tests {
 
     #[test]
     fn plain_page_offers_blocking_on_its_site() {
-        let b = Blocking { site: "news.example".into(), on: true, blocked: 12, banner_rejected: false };
+        let b = Blocking { site: "news.example".into(), on: true, blocked: 12, hidden: 0, banner_rejected: false };
         let ctx = MenuContext { blocking: Some(b.clone()), ..Default::default() };
         let got = items(&ctx);
         assert_eq!(labels(&got), ["Back", "Forward", "Reload", "-", "Select all", "-", "Allow ads on news.example · 12 blocked"]);
@@ -228,6 +237,13 @@ mod tests {
         assert_eq!(*action, MenuAction::ToggleBlocking);
         let ctx = MenuContext { blocking: Some(Blocking { blocked: 0, ..b.clone() }), ..Default::default() };
         assert_eq!(labels(&items(&ctx))[6], "Allow ads on news.example");
+        // Elements hidden by cosmetic rules are counted beside the requests.
+        let ctx = MenuContext { blocking: Some(Blocking { hidden: 4, ..b.clone() }), ..Default::default() };
+        assert_eq!(labels(&items(&ctx))[6], "Allow ads on news.example · 12 blocked · 4 hidden");
+        let ctx = MenuContext { blocking: Some(Blocking { blocked: 0, hidden: 1, ..b.clone() }), ..Default::default() };
+        assert_eq!(labels(&items(&ctx))[6], "Allow ads on news.example · 1 hidden");
+        let ctx = MenuContext { blocking: Some(Blocking { on: false, hidden: 4, ..b.clone() }), ..Default::default() };
+        assert_eq!(labels(&items(&ctx))[6], "Block ads on news.example");
         let ctx = MenuContext { blocking: Some(Blocking { on: false, ..b.clone() }), ..Default::default() };
         assert_eq!(labels(&items(&ctx))[6], "Block ads on news.example");
         // A rejected cookie banner is told, above the toggle, while blocking is on.
@@ -244,7 +260,7 @@ mod tests {
 
     #[test]
     fn shield_offers_only_the_blocking_entries() {
-        let b = Blocking { site: "news.example".into(), on: true, blocked: 3, banner_rejected: true };
+        let b = Blocking { site: "news.example".into(), on: true, blocked: 3, hidden: 0, banner_rejected: true };
         let got = blocking_items(&b);
         assert_eq!(labels(&got), ["Cookie banner rejected", "Allow ads on news.example · 3 blocked"]);
         // The same entries the page menu ends with.

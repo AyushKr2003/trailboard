@@ -7,6 +7,11 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Hidden elements are counted**: the shield's menu now says how many
+  ad slots and cookie banners Trailboard hid on the page as well as how
+  many requests it blocked (*Allow ads on … · 22 blocked · 2 hidden*), and
+  the count on the title bar includes them, so a page where something was
+  only hidden shows the shield too.
 - **A new trails sidebar**: B now opens a sheet floating over the board
   rather than a panel stuck to the window's edge. It shows the space's
   name and how many cards and trails it holds, keeps trails apart with

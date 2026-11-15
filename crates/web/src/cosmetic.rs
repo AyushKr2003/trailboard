@@ -28,6 +28,10 @@ use crate::{consent, js_string, shield};
 /// newline, the ids (space-separated).
 pub const PREFIX: &str = "\u{1}trailboard-hide\u{1}";
 
+/// Prefix of the console message with how many elements the rules hide in
+/// a frame: the frame's identifier, a newline, the count.
+pub const COUNT_PREFIX: &str = "\u{1}trailboard-hidden\u{1}";
+
 /// The most class and id names one frame reports in all, so a page that
 /// generates names endlessly can't keep the lookups going.
 const MAX_NAMES: usize = 20_000;
@@ -46,8 +50,37 @@ const SCRIPT: &str = r#"(() => {
     if (!d.adoptedStyleSheets.includes(sheet)) d.adoptedStyleSheets = [...d.adoptedStyleSheets, sheet];
   };
   adopt();
-  window[key] = (more) => { css += more; sheet.replaceSync(css); adopt(); };
+  // Counts the elements the sheet hides (not those inside one it already
+  // hides), at most once a second, and reports the count when it changes.
+  // A frame where counting turns out slow stops counting.
+  let counted = 0, countTimer = 0, lastCount = 0, slow = false;
+  const count = () => {
+    countTimer = 0;
+    lastCount = performance.now();
+    const sels = [];
+    for (const r of sheet.cssRules) if (r.style && r.style.display === 'none') sels.push(r.selectorText);
+    const hit = new Set();
+    const all = (s) => { for (const e of document.querySelectorAll(s)) hit.add(e); };
+    if (sels.length) {
+      try { all(sels.join(',')); } catch (_) { for (const s of sels) try { all(s); } catch (_) {} }
+    }
+    let n = 0;
+    for (const e of hit) {
+      let p = e.parentElement;
+      while (p && !hit.has(p)) p = p.parentElement;
+      if (!p) n++;
+    }
+    if (performance.now() - lastCount > 50) slow = true;
+    if (n !== counted) { counted = n; console.log(__COUNT_PREFIX__ + __FRAME__ + '\n' + n); }
+  };
+  const recount = () => {
+    if (countTimer || slow) return;
+    countTimer = setTimeout(count, Math.max(300, 1000 - (performance.now() - lastCount)));
+  };
+  window[key] = (more) => { css += more; sheet.replaceSync(css); adopt(); recount(); };
   window[key].sheet = sheet;
+  new MutationObserver(recount).observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'id', 'style', 'hidden'] });
+  recount();
   if (!__GENERIC__) return;
   const seenC = new Set(), seenI = new Set();
   let newC = [], newI = [], added = [], changed = [], timer = 0;
@@ -81,9 +114,42 @@ const SCRIPT: &str = r#"(() => {
   if (document.documentElement) { added.push(document.documentElement); soon(); }
 })();"#;
 
-/// Each frame's exceptions (selectors its site unhides), for [`answer`].
+/// Each frame's exceptions (selectors its site unhides), for [`answer`],
+/// and how many elements the rules hide in it.
 #[derive(Default)]
-pub(crate) struct Frames(RefCell<HashMap<String, HashSet<String>>>);
+pub(crate) struct Frames(RefCell<HashMap<String, FrameState>>);
+
+#[derive(Default)]
+struct FrameState {
+    exceptions: HashSet<String>,
+    hidden: u32,
+}
+
+impl Frames {
+    /// Elements hidden in all the page's frames since it last navigated.
+    pub(crate) fn hidden(&self) -> u32 {
+        self.0.borrow().values().fold(0u32, |sum, f| sum.saturating_add(f.hidden))
+    }
+
+    /// Takes a frame's report of how many elements it hides (the body of
+    /// a [`COUNT_PREFIX`] message). A frame we don't know (from before the
+    /// page navigated) is ignored.
+    pub(crate) fn on_count(&self, body: &str) {
+        let Some((id, n)) = parse_count(body) else { return };
+        if let Some(f) = self.0.borrow_mut().get_mut(id) {
+            f.hidden = n;
+        }
+    }
+}
+
+/// Splits a count message body into the frame and its count.
+fn parse_count(body: &str) -> Option<(&str, u32)> {
+    let (frame, n) = body.split_once('\n')?;
+    if frame.is_empty() {
+        return None;
+    }
+    Some((frame, n.trim().parse().ok()?))
+}
 
 /// Whether `url` is a web page (the only frames that get rules).
 fn is_web(url: &str) -> bool {
@@ -120,11 +186,12 @@ pub(crate) fn on_load_start(frames: &Frames, browser: &mut Browser, frame: &mut 
         if res.generichide { ", no generic rules" } else { "" }
     );
     let generic = !res.generichide;
-    frames.0.borrow_mut().insert(id.clone(), res.exceptions);
+    frames.0.borrow_mut().insert(id.clone(), FrameState { exceptions: res.exceptions, hidden: 0 });
     let script = SCRIPT
         .replace("__CSS__", &js_string(&css))
         .replace("__FRAME__", &js_string(&id))
         .replace("__PREFIX__", &js_string(PREFIX))
+        .replace("__COUNT_PREFIX__", &js_string(COUNT_PREFIX))
         .replace("__MAX__", &MAX_NAMES.to_string())
         .replace("__GENERIC__", if generic { "true" } else { "false" });
     frame.execute_java_script(Some(&CefString::from(script.as_str())), Some(&CefString::from(url.as_str())), 0);
@@ -145,7 +212,7 @@ fn parse(body: &str) -> Option<(&str, Vec<&str>, Vec<&str>)> {
 pub(crate) fn answer(frames: &Frames, browser: &mut Browser, body: &str) {
     let Some((id, classes, ids)) = parse(body) else { return };
     let frames = frames.0.borrow();
-    let Some(exceptions) = frames.get(id) else { return }; // a frame from before the page navigated
+    let Some(exceptions) = frames.get(id).map(|f| &f.exceptions) else { return }; // a frame from before the page navigated
     let Some(frame) = browser.frame_by_identifier(Some(&CefString::from(id))) else { return };
     let Some(rules) = shield::rules_for(&main_url(browser)) else { return };
     let selectors = rules.hidden_class_id_selectors(&classes, &ids, exceptions);
@@ -275,10 +342,27 @@ mod tests {
     }
 
     #[test]
+    fn counts_add_up_over_known_frames() {
+        assert_eq!(parse_count("1-2\n5"), Some(("1-2", 5)));
+        assert_eq!(parse_count("1-2\nx"), None);
+        assert_eq!(parse_count("\n5"), None);
+        assert_eq!(parse_count("1-2"), None);
+        let frames = Frames::default();
+        frames.0.borrow_mut().insert("a".into(), FrameState::default());
+        frames.0.borrow_mut().insert("b".into(), FrameState::default());
+        frames.on_count("a\n3");
+        frames.on_count("b\n2");
+        frames.on_count("gone\n9");
+        assert_eq!(frames.hidden(), 5);
+        frames.on_count("a\n1");
+        assert_eq!(frames.hidden(), 3, "a later report replaces the frame's count");
+    }
+
+    #[test]
     fn script_placeholders_are_all_known() {
-        for p in ["__CSS__", "__FRAME__", "__PREFIX__", "__MAX__", "__GENERIC__"] {
+        for p in ["__CSS__", "__FRAME__", "__PREFIX__", "__COUNT_PREFIX__", "__MAX__", "__GENERIC__"] {
             assert!(SCRIPT.contains(p), "{p}");
         }
-        assert_eq!(SCRIPT.matches("__").count(), 10);
+        assert_eq!(SCRIPT.matches("__").count(), 14);
     }
 }

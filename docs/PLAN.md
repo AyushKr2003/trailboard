@@ -885,6 +885,20 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     recorded while drawing (`App::shields`), so it follows the badge
     exactly and is gone whenever the badge is; the rest of the title bar
     still drags and double-clicks.
+  - ✅ "N hidden" beside "N blocked" (2026-11-15): the elements the
+    cosmetic rules hide are counted in the page and shown in the menu
+    (*Allow ads on … · 22 blocked · 2 hidden*; a zero part is left out).
+    Decisions: the cosmetic script counts the elements its sheet's
+    `display:none` rules match, not those inside one already hidden, so a
+    hidden ad box counts once; it recounts at most once a second, after
+    the sheet grows or the DOM changes (a MutationObserver on every page,
+    `$generichide` ones too), reports only a changed count
+    (`cosmetic::COUNT_PREFIX`), and a frame whose count took over 50 ms
+    stops counting and keeps its last figure. Each frame's count lives
+    beside its exceptions in `cosmetic::Frames`; `Page::hidden` sums them,
+    and they reset when the main frame (or that frame) loads again. The
+    title-bar badge shows blocked + hidden, so a page where only elements
+    were hidden still gets the shield and its menu.
   - *Block ads and trackers* in the settings (on by default; `block_ads` in
     `settings.json`) turns it off everywhere at once; open pages keep what
     they loaded until reloaded.
@@ -1262,15 +1276,13 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-15 (ninth). M11 step 4: the sidebar redesigned, with edge peek.
+**Last session:** 2026-11-15 (tenth). M8 follow-up: "N hidden" beside "N blocked".
 **Repo state:** on `master`, committed; working tree clean.
 **Done this session:**
-- The owner asked for a premium sidebar "like Zen, Arc, Marble"; looked at
-  how those are built (zones, per-space identity, compact-mode peek, quiet
-  controls), asked the corners and peek questions, then built
-  `app::sidebar` anew: floating sheet, space head, spaced groups with
-  section labels, site icons and letter tiles, trail guides, space chips
-  in the foot, edge peek. Decisions under M11 step 4.
+- The cosmetic script now counts the elements it hides in each frame and
+  reports changes; the shield menu (and the page menu) reads *Allow ads on
+  … · N blocked · M hidden*, and the title-bar count is their sum.
+  Decisions under M8 ("N hidden" beside "N blocked").
 **Owner decisions (2026-11-15):** no AppImage, Flatpak or AUR work (the owner
 publishes later, on their own); no UI translations; licence is Apache-2.0
 only (`LICENSE-APACHE`); all AI features (semantic search, Explain, any
@@ -1279,8 +1291,7 @@ passkeys are all on hold until the owner says otherwise (see M10).
 **Next up:** no M10 work: its items are on hold or wait for the owner to
 pick them. M11 (premium look): step 4 is done; the other steps wait for
 the owner to ask (corners stay Hyprland's, see M11). Take the small
-follow-ups below; a good next one is a "N hidden" count beside "N blocked" (cosmetic rules
-that matched), or a palette list of allowed sites.
+follow-ups below; a good next one is a palette list of allowed sites.
 
 After that, the other small follow-ups below. Sandbox follow-ups: verify the setuid path on a kernel without unprivileged user namespaces (needs `kernel.unprivileged_userns_clone=0` or linux-hardened, and the package installed). Consent follow-ups: more platforms as real sites show them (TCF
 `__tcfapi` frames, Ketch, Termly, Borlabs, Axeptio); a separate *Reject cookie banners* switch
@@ -1289,8 +1300,7 @@ if clicking ever breaks a site. Small blocking follow-ups: scriptlets/`$redirect
 licence); a palette list of allowed sites; serialize the
 compiled engine if startup ever shows it; procedural cosmetic rules
 (`:has-text()` and friends, run in the page); a separate *Hide cookie
-banners* switch if one list ever breaks sites the other doesn't; a "N
-hidden" count beside "N blocked". Other small follow-ups: rename a trail from the
+banners* switch if one list ever breaks sites the other doesn't. Other small follow-ups: rename a trail from the
 sidebar; auto-scroll the sidebar while dragging; a downloads folder setting (needs a free-text row or a
 folder picker via xdg-desktop-portal); a progress mark on the board while
 downloads run; ask before quitting with downloads running; pause/resume;
@@ -1311,6 +1321,17 @@ Save as Markdown; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out; open `crash.log` from the crash
 toast or a palette command.
 **Notes for the next session:**
+- Hidden count verified e2e (`~/.cache/trailboard-e2e-hidden`; serve
+  `site/` on 127.0.0.1:8771 and `frame/` on 127.0.0.1:8772 with
+  `python3 -m http.server`; copy `seed/` to `dataN`; `run.sh N shot…`,
+  `URL=… run.sh` for another page): h.html with only the user rules
+  hides 5 elements plus 1 in its iframe → `cards` logs
+  elements_hidden=6, matching the page's own H/S report; after the full
+  lists load (they turn generic hiding off on that host) it's 1, the
+  shield shows "1" with blocked=0 and its menu reads "Allow ads on
+  127.0.0.1:8771 · 1 hidden" (`hid1-crop.png`). theguardian.com:
+  "· 22 blocked · 2 hidden" (`real1-crop.png`). Not verified: the 50 ms
+  give-up on a huge page (no page here was slow), a light theme, HiDPI.
 - Sidebar verified e2e (`~/.cache/trailboard-e2e-sidebar2`; start the
   site with `python3 server.py 8781` there: every 127.0.0.N host is its
   own site, most with a drawn icon; copy `seed/` to `dataN`; `run2.sh N

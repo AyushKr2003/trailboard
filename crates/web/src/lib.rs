@@ -847,6 +847,10 @@ wrap_display_handler! {
                 }
                 return 1;
             }
+            if let Some(body) = message.strip_prefix(cosmetic::COUNT_PREFIX) {
+                self.shared.hide.on_count(body);
+                return 1;
+            }
             if let Some(body) = message.strip_prefix(consent::PREFIX) {
                 if let Some((platform, what)) = consent::parse(body) {
                     let url = self.shared.url.borrow();
@@ -1239,6 +1243,12 @@ impl Page {
     /// How many addresses were blocked since the page last navigated.
     pub fn blocked(&self) -> u32 {
         self.blocked.count()
+    }
+
+    /// How many page elements the filter lists' cosmetic rules hide (ad
+    /// slots, cookie banners), in all its frames, since it last navigated.
+    pub fn hidden(&self) -> u32 {
+        self.shared.hide.hidden()
     }
 
     /// Whether Trailboard clicked a cookie banner's reject button on this

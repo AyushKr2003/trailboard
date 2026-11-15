@@ -71,8 +71,8 @@ pub fn covers(site: &str, url: &str) -> bool {
     icon::site(url).is_some_and(|s| s == site || s.strip_suffix(site).is_some_and(|rest| rest.ends_with('.')))
 }
 
-/// The count on a card's title bar for `blocked` requests stopped on its
-/// page: nothing for none, and a capped figure so the mark stays small.
+/// The count on a card's title bar for `blocked` things the blocker stopped
+/// on its page (requests blocked and elements hidden): nothing for none, and a capped figure so the mark stays small.
 pub fn blocked_badge(blocked: u32) -> Option<String> {
     match blocked {
         0 => None,

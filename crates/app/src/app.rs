@@ -1807,8 +1807,9 @@ impl App {
         let site = scene::icon::site(&n.url)?;
         let card = self.cards.get(&id);
         let blocked = card.map_or(0, |c| c.page.blocked());
+        let hidden = card.map_or(0, |c| c.page.hidden());
         let banner_rejected = card.is_some_and(|c| c.page.banner_rejected());
-        Some(web::menu::Blocking { site, on: !self.blocking.allows(&n.url), blocked, banner_rejected })
+        Some(web::menu::Blocking { site, on: !self.blocking.allows(&n.url), blocked, hidden, banner_rejected })
     }
 
     /// Turns ad blocking off on card `id`'s site, or back on, and reloads the
@@ -4591,13 +4592,14 @@ impl App {
                     Some((i, len)) => format!("{i}/{len} · {title}"),
                     None => title,
                 };
-                // Requests the blocker stopped on this page: a small shield
-                // with the count, just left of ×. Not on an allowed site.
+                // What the blocker stopped on this page (requests blocked
+                // and elements hidden): a small shield with the count, just
+                // left of ×. Not on an allowed site.
                 let mut title_right = header.right() - CLOSE_W * k;
                 let badge = self
                     .blocking_state(n.id)
                     .filter(|b| b.on)
-                    .and_then(|b| scene::privacy::blocked_badge(b.blocked));
+                    .and_then(|b| scene::privacy::blocked_badge(b.blocked.saturating_add(b.hidden)));
                 if let Some(count) = badge {
                     let size = 11.5 * k;
                     let tw = self.renderer.as_mut().map_or(size * 1.2, |r| r.measure(&count, size, true));
@@ -5590,10 +5592,11 @@ impl App {
                     for n in self.scene.all_nodes() {
                         let (r, f) = (n.rect, self.to_screen_rect(n.frame()));
                         log::info!(
-                            "script card {}: world ({:.0},{:.0} {:.0}x{:.0}) screen ({:.0},{:.0} {:.0}x{:.0}) live={} sel={} hidden={} blocked={} title={:?} {}",
+                            "script card {}: world ({:.0},{:.0} {:.0}x{:.0}) screen ({:.0},{:.0} {:.0}x{:.0}) live={} sel={} hidden={} blocked={} elements_hidden={} title={:?} {}",
                             n.id.0, r.x, r.y, r.w, r.h, f.x, f.y, f.w, f.h, self.cards.contains_key(&n.id),
                             self.selection.contains(n.id), self.scene.is_hidden(n.id),
-                            self.cards.get(&n.id).map_or(0, |c| c.page.blocked()), n.title, n.url
+                            self.cards.get(&n.id).map_or(0, |c| c.page.blocked()),
+                            self.cards.get(&n.id).map_or(0, |c| c.page.hidden()), n.title, n.url
                         );
                         if let Some(text) = &n.note {
                             log::info!("script note {}: {:?}", n.id.0, text);

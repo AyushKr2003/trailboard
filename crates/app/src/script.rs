@@ -26,7 +26,7 @@
 //! fit                  # same as Shift+F (fit everything)
 //! undo                 # same as Ctrl+Z on the board
 //! redo                 # same as Ctrl+Shift+Z
-//! cards                # log every card (id, rect, live page, selected, requests blocked, title, url), edge and trail label
+//! cards                # log every card (id, rect, live page, selected, requests blocked, elements hidden, title, url), edge and trail label
 //! spaces               # log every space (id, name, background) and which is active
 //! sidebar              # log the trails sidebar: open/keys, highlight, scroll, each row and where to click it
 //! zooms                # log each live card's page zoom (wanted and Chromium's)

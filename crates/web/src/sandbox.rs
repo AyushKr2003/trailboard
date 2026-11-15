@@ -45,6 +45,34 @@ impl Sandbox {
                 .into(),
         }
     }
+
+    /// Its value in the settings panel.
+    pub fn summary(&self) -> &'static str {
+        match self {
+            Sandbox::Namespaces => "On · user namespaces",
+            Sandbox::Setuid(_) => "On · setuid helper",
+            Sandbox::Off(Why::OptOut) => "Off · TRAILBOARD_NO_SANDBOX",
+            Sandbox::Off(Why::Unavailable) => "Off · not supported here",
+        }
+    }
+
+    /// What it means, shown when its row in the settings panel is picked.
+    pub fn explain(&self) -> &'static str {
+        match self {
+            Sandbox::Namespaces => "Pages run in Chromium's sandbox, confined with user namespaces and seccomp",
+            Sandbox::Setuid(_) => "Pages run in Chromium's sandbox, through the setuid chrome-sandbox helper",
+            Sandbox::Off(Why::OptOut) => "Sandbox off for this run because TRAILBOARD_NO_SANDBOX is set",
+            Sandbox::Off(Why::Unavailable) => {
+                "Off: no unprivileged user namespaces here, and chrome-sandbox isn't setuid root · see the README"
+            }
+        }
+    }
+
+    /// The sandbox is off because the system can't run it (not by choice):
+    /// worth telling the user about once.
+    pub fn unsupported(&self) -> bool {
+        *self == Sandbox::Off(Why::Unavailable)
+    }
 }
 
 /// What a `chrome-sandbox` file looks like, as far as Chromium cares.
@@ -165,6 +193,16 @@ mod tests {
         assert_eq!(choose(true, true, helper(GOOD)), Sandbox::Off(Why::OptOut));
         assert!(!Sandbox::Off(Why::OptOut).is_on());
         assert!(Sandbox::Namespaces.is_on());
+    }
+
+    #[test]
+    fn only_unavailable_is_unsupported() {
+        assert!(Sandbox::Off(Why::Unavailable).unsupported());
+        assert!(!Sandbox::Off(Why::OptOut).unsupported());
+        assert!(!Sandbox::Namespaces.unsupported());
+        assert!(!Sandbox::Setuid(PathBuf::from("/x")).unsupported());
+        assert!(Sandbox::Off(Why::Unavailable).summary().starts_with("Off"));
+        assert!(Sandbox::Setuid(PathBuf::from("/x")).summary().starts_with("On"));
     }
 
     #[test]

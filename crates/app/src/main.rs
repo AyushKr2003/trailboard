@@ -96,6 +96,7 @@ fn main() -> ExitCode {
     if storage::crash::take_unseen(&data_dir()) {
         app.note_crash(&storage::crash::log_path(&data_dir()));
     }
+    app.note_sandbox(engine.sandbox().clone());
 
     let mut last = Instant::now();
     let code = loop {

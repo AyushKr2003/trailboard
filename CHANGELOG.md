@@ -7,6 +7,10 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Sandbox state in the settings**: the settings panel (Ctrl+,) has a
+  *Sandbox* line saying whether pages run in Chromium's sandbox and how;
+  pick it for an explanation. When the system can't run the sandbox,
+  Trailboard now says so once on screen instead of only in its log.
 - **Pages run in Chromium's sandbox**: web pages are now confined the way
   they are in Chrome (user namespaces and seccomp), so a page that exploits
   a browser bug has a much harder time reaching your files. Where the system doesn't support

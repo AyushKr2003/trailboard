@@ -1012,8 +1012,19 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     linux-hardened, which has no unprivileged user namespaces; Arch's own
     chromium does the same); `bundle.sh` copies it unprivileged and the
     README says how to make it setuid.
-  - No toast when the sandbox is off: the log line only. A settings row
-    showing the state is a follow-up.
+  - ✅ Shown to the user (2026-11-15, fifth session): the settings panel
+    (Ctrl+,) ends with a read-only *Sandbox* row ("On · user namespaces",
+    "On · setuid helper", "Off · not supported here", "Off ·
+    TRAILBOARD_NO_SANDBOX"); Enter or a click on it explains it in a toast,
+    which over the settings panel hangs below the list (other lists still
+    hide toasts). It is a `palette::Item::Status`, not a setting: ←/→ do
+    nothing and it has no ‹ › marks. When the system can't run the sandbox
+    (not when `TRAILBOARD_NO_SANDBOX` asked for it), the first start says so
+    for 10 s and leaves `sandbox-off-told` in the data folder
+    (`storage::marks`), so it isn't repeated; a start with the sandbox on
+    clears the mark, so losing support later is told again. When the crash
+    notice is showing, the sandbox notice waits for the next start rather
+    than replace it.
 - ✅ First-run defaults: the very first start adds a welcome note (Markdown,
   `crates/app/src/guide.md`) to the left of the first page, and the view fits
   both. Decisions (2026-11-14):
@@ -1090,15 +1101,14 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-15 (fourth). M9: Chromium's sandbox is on; M9 is complete. M6 marked ✅ (its only open item, translations, was dropped), so M0–M9 are all done and only M10 (optional) remains.
+**Last session:** 2026-11-15 (fifth). Handoff item 1: the sandbox state is in the settings panel, with a one-time toast when the system can't run it.
 **Repo state:** on `master`, committed; working tree clean.
 **Done this session:**
-- `web::sandbox`: before `initialize`, a forked child tries the namespaces
-  Chromium's sandbox needs, and `chrome-sandbox` beside the executable is
-  checked for root/setuid; `no_sandbox` is set only when neither works (or
-  `TRAILBOARD_NO_SANDBOX=1`). The choice is logged at start
-  (`Engine::sandbox`). PKGBUILD ships `chrome-sandbox` 4755, `bundle.sh`
-  copies it, README explains. Decisions under M9.
+- Settings panel (Ctrl+,): a read-only *Sandbox* row (`palette::Item::Status`,
+  `web::sandbox::Sandbox::summary`/`explain`); Enter or a click explains it in
+  a toast drawn below the panel. First start without sandbox support: a 10 s
+  toast, once (`storage::marks`, `sandbox-off-told`, cleared when the sandbox
+  runs). Decisions under M9 (sandbox item).
 **Owner decisions (2026-11-15):** no AppImage, Flatpak or AUR work (the owner
 publishes later, on their own); no UI translations; licence is Apache-2.0
 only (`LICENSE-APACHE`); all AI features (semantic search, Explain, any
@@ -1106,17 +1116,14 @@ other AI/ML), imports from other browsers, and password managers and
 passkeys are all on hold until the owner says otherwise (see M10).
 **Next up (owner's order, 2026-11-15):** no M10 work: its items are on
 hold or wait for the owner to pick them. Do these, in this order:
-1. Sandbox state in the settings panel (Ctrl+,), plus a one-time toast
-   when the sandbox is off because the system doesn't support it. Right
-   now that's only in the log, which nobody reads.
-2. Blocked-request count on the title bar: a small shield mark with the
+1. Blocked-request count on the title bar: a small shield mark with the
    number. Today the count only shows in the right-click menu.
-3. "Cookie banner rejected" line in the page menu, so the user can see
+2. "Cookie banner rejected" line in the page menu, so the user can see
    when Trailboard clicked reject for them.
-4. Reread `filters/user.txt` when it changes, instead of only at start.
+3. Reread `filters/user.txt` when it changes, instead of only at start.
    The `notify` watcher it needs is already a dependency.
 
-After those, the other small follow-ups below. Without an answer, take small follow-ups below. Sandbox follow-ups: show the sandbox state in the settings panel (Ctrl+,) and a one-time toast when it is off for lack of support; verify the setuid path on a kernel without unprivileged user namespaces (needs `kernel.unprivileged_userns_clone=0` or linux-hardened, and the package installed). Consent follow-ups: more platforms as real sites show them (TCF
+After those, the other small follow-ups below. Sandbox follow-ups: verify the setuid path on a kernel without unprivileged user namespaces (needs `kernel.unprivileged_userns_clone=0` or linux-hardened, and the package installed). Consent follow-ups: more platforms as real sites show them (TCF
 `__tcfapi` frames, Ketch, Termly, Borlabs, Axeptio); a "cookie banner
 rejected" line in the page menu; a separate *Reject cookie banners* switch
 if clicking ever breaks a site. Small blocking follow-ups: a shield
@@ -1148,6 +1155,19 @@ Save as Markdown; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out; open `crash.log` from the crash
 toast or a palette command.
 **Notes for the next session:**
+- Sandbox row and notice verified e2e (`~/.cache/trailboard-e2e-sandboxui`,
+  `run.sh N [nons]`; `nons` runs inside a user namespace that allows no
+  further ones, as on linux-hardened). Run 1 (sandbox on): row 6 "Sandbox"
+  "On · user namespaces", → does nothing, Enter explains, no notice, no mark.
+  Runs 2a/2b (nons, same data folder): the first start toasts "Pages run
+  without Chromium's sandbox …" and writes `sandbox-off-told`, the second
+  doesn't; row reads "Off · not supported here" and its explanation shows
+  below the panel (screenshot checked). Run 2c (same folder, sandbox on):
+  mark cleared. Not verified: the setuid-helper wording on a real setuid
+  install, the crash notice and sandbox notice on the same start (reasoned:
+  the sandbox one waits), a light theme.
+- Toasts are still hidden while other lists (palette, history, downloads)
+  are open; only the settings panel shows them, below its list.
 - Sandbox verified e2e (`~/.cache/trailboard-e2e-sandbox`, `run.sh N
   shot…` dumps every `trailboard` process's seccomp mode and user/PID
   namespace to `procsN.txt` at `log probe`; `URL=` sets the start page,

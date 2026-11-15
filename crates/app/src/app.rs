@@ -319,6 +319,8 @@ pub struct App {
     /// Short message at the top of the window, until it expires.
     /// Message and when it goes.
     toast: Option<(String, Instant)>,
+    /// How Chromium's sandbox confines pages, once `note_sandbox` is told.
+    sandbox: Option<web::sandbox::Sandbox>,
     /// How far each overlay has come in (see `chrome::Appear`).
     anim: Anims,
     /// Waiting for Enter to do something that can't be undone.
@@ -516,6 +518,7 @@ impl App {
             sessions: HashMap::new(),
             jar: None,
             toast: None,
+            sandbox: None,
             anim: Anims::default(),
             confirm: None,
             dirty: false,
@@ -683,6 +686,32 @@ impl App {
         };
         // Longer than a toast: it comes up while the window is still opening.
         self.toast_for(format!("Trailboard closed unexpectedly last time · report in {shown}"), Duration::from_secs(8));
+    }
+
+    /// How the sandbox confines pages, for the settings panel. When the system
+    /// can't run it, say so once (the log alone goes unread); the mark is
+    /// cleared while it runs, so a later loss of support is told again.
+    pub fn note_sandbox(&mut self, sandbox: web::sandbox::Sandbox) {
+        if sandbox.is_on() {
+            storage::marks::clear(&self.data_dir, storage::marks::SANDBOX_OFF_TOLD);
+        } else if sandbox.unsupported()
+            && self.toast.is_none() // the crash notice goes first; this waits for the next start
+            && storage::marks::first_time(&self.data_dir, storage::marks::SANDBOX_OFF_TOLD)
+        {
+            self.toast_for("Pages run without Chromium's sandbox: this system doesn't support it · Ctrl+, for more", Duration::from_secs(10));
+        }
+        self.sandbox = Some(sandbox);
+    }
+
+    /// Enter or a click on a status line of the settings panel: what it means.
+    fn explain_status(&mut self, status: palette::Status) {
+        match status {
+            palette::Status::Sandbox => {
+                if let Some(s) = &self.sandbox {
+                    self.toast(s.explain());
+                }
+            }
+        }
     }
 
     /// "Name (2 of 3)" for the active space, "Name · Private" or
@@ -1721,6 +1750,7 @@ impl App {
             Item::Command(c) => self.run_command(c),
             Item::Setting(k) => self.step_setting(k, 1),
             Item::Download(key) => self.open_download(key),
+            Item::Status(s) => self.explain_status(s),
         }
     }
 
@@ -1815,7 +1845,8 @@ impl App {
                 notes.insert(prefs::Key::LivePages, "TRAILBOARD_MAX_LIVE".to_string());
             }
             let shown = Settings { live_pages: self.max_live, ..self.settings };
-            return palette::settings_rows(&ob.text, &shown, &notes);
+            let status: Vec<_> = self.sandbox.iter().map(|s| (palette::Status::Sandbox, s.summary().to_string())).collect();
+            return palette::settings_rows(&ob.text, &shown, &notes, &status);
         }
         if ob.target == Target::Downloads {
             let missing = |p: &str| std::fs::symlink_metadata(p).is_err();
@@ -3365,6 +3396,14 @@ impl App {
                     self.step_setting(k, if button == MouseButton::Right { -1 } else { 1 });
                     return;
                 }
+                // A status line explains itself; the panel stays.
+                if let Item::Status(st) = rows[i].item {
+                    if let Some(ob) = self.omnibox.as_mut() {
+                        ob.sel = i;
+                    }
+                    self.explain_status(st);
+                    return;
+                }
                 self.omnibox = None;
                 if button == MouseButton::Left {
                     self.run_palette(rows[i].clone());
@@ -3759,12 +3798,11 @@ impl App {
             (len, palette::Panel::new(self.viewport(), self.ui(), len).shown)
         });
         // The settings panel's highlighted setting, for Enter and ←/→.
-        let setting_sel = self.omnibox.as_ref().filter(|ob| ob.target == Target::Settings).and_then(|ob| {
-            match self.list_rows(ob).into_iter().nth(ob.sel)?.item {
-                Item::Setting(k) => Some(k),
-                _ => None,
-            }
-        });
+        let setting_sel = self
+            .omnibox
+            .as_ref()
+            .filter(|ob| ob.target == Target::Settings)
+            .and_then(|ob| self.list_rows(ob).into_iter().nth(ob.sel).map(|r| r.item));
         if let Some(ob) = self.omnibox.as_mut() {
             if !pressed {
                 return;
@@ -3807,8 +3845,10 @@ impl App {
                 // Settings: Enter or → steps the highlighted one on, Shift+Enter or ← back.
                 Some(NamedKey::Enter | NamedKey::ArrowRight | NamedKey::ArrowLeft) if ob.target == Target::Settings => {
                     let back = ev.named == Some(NamedKey::ArrowLeft) || (shift && ev.named == Some(NamedKey::Enter));
-                    if let Some(k) = setting_sel {
-                        self.step_setting(k, if back { -1 } else { 1 });
+                    match setting_sel {
+                        Some(Item::Setting(k)) => self.step_setting(k, if back { -1 } else { 1 }),
+                        Some(Item::Status(st)) if ev.named == Some(NamedKey::Enter) => self.explain_status(st),
+                        _ => {}
                     }
                 }
                 Some(NamedKey::Delete) if shift && ob.target == Target::Downloads => self.drop_selected_download(),
@@ -4628,7 +4668,7 @@ impl App {
                 let mut rows = self.list_rows(ob);
                 // The highlighted setting shows that ← and → change it.
                 if ob.target == Target::Settings
-                    && let Some(row) = rows.get_mut(ob.sel)
+                    && let Some(row) = rows.get_mut(ob.sel).filter(|r| matches!(r.item, Item::Setting(_)))
                 {
                     row.detail = format!("‹  {}  ›", row.detail);
                 }
@@ -4775,15 +4815,23 @@ impl App {
             let pos = Vec2::new((vp.x - w) / 2.0 - 16.0 * ui, vp.y - 54.0 * ui);
             layers.push(self.pill(msg, pos, size, None, false));
         }
+        // Over the settings panel a toast hangs below the list (it answers a
+        // row there); other lists hide it.
+        let settings_bottom = self
+            .omnibox
+            .as_ref()
+            .filter(|ob| ob.target == Target::Settings)
+            .map(|ob| palette::Panel::new(vp, ui, self.list_rows(ob).len()).rect.bottom());
         if let Some((msg, at)) = &self.toast {
             if self.confirm.is_some() || Instant::now() < *at {
-                if self.omnibox.is_none() {
+                if self.omnibox.is_none() || settings_bottom.is_some() {
                     let size = 15.0 * ui;
                     let msg = msg.clone();
                     let w = self.renderer.as_mut().map_or(300.0, |r| r.measure(&msg, size, false));
                     // Below Read Mode's bar, so it doesn't cover the title.
                     let top = if self.read.is_some() { READ_BAR * ui } else { 0.0 };
-                    let pos = Vec2::new((vp.x - w) / 2.0 - 16.0 * ui, top + 18.0 * ui);
+                    let y = settings_bottom.map_or(top + 18.0 * ui, |b| b + 14.0 * ui);
+                    let pos = Vec2::new((vp.x - w) / 2.0 - 16.0 * ui, y);
                     let warn = self.confirm.is_some();
                     let came = self.anim.toast.update(Some(anim_key(&msg)), Instant::now());
                     let mut l = self.pill(&msg, pos, size, None, warn);
@@ -4794,7 +4842,7 @@ impl App {
                 self.toast = None;
             }
         }
-        if self.toast.is_none() || self.omnibox.is_some() {
+        if self.toast.is_none() || (self.omnibox.is_some() && settings_bottom.is_none()) {
             self.anim.toast.update(None, Instant::now());
         }
 

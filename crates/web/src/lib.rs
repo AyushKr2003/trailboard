@@ -4,6 +4,7 @@
 //! with `external_message_pump` + [`pump`], so plain `Rc`/`RefCell` are enough.
 //! The one exception is request blocking ([`shield`]), asked on Chromium's IO thread.
 
+pub mod consent;
 pub mod cosmetic;
 pub mod download;
 pub mod keys;
@@ -831,6 +832,13 @@ wrap_display_handler! {
                     && let Some(browser) = browser
                 {
                     cosmetic::answer(&self.shared.hide, browser, body);
+                }
+                return 1;
+            }
+            if let Some(body) = message.strip_prefix(consent::PREFIX) {
+                if let Some((platform, what)) = consent::parse(body) {
+                    let url = self.shared.url.borrow();
+                    log::info!("consent: {platform} {what} on {}", url.chars().take(100).collect::<String>());
                 }
                 return 1;
             }

@@ -828,7 +828,7 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   - A card removed by *undoing* its opening is not "closed" (redo brings it
     back), so it is not offered; same as Ctrl+Shift+T.
 
-### M8: Privacy 🟡
+### M8: Privacy ✅
 - ✅ Brave `adblock` engine (0.13, MPL-2.0) with EasyList/EasyPrivacy in a
   resource request handler (`web::shield`, 2026-11-15). Decisions:
   - The lists are not shipped: they are fetched from easylist.to on the first
@@ -861,7 +861,7 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   - *Block ads and trackers* in the settings (on by default; `block_ads` in
     `settings.json`) turns it off everywhere at once; open pages keep what
     they loaded until reloaded.
-- 🟡 Cookie-banner auto-reject (cosmetic rules + known CMP actions).
+- ✅ Cookie-banner auto-reject (cosmetic rules + known CMP actions).
   - ✅ Cosmetic filtering (`web::cosmetic`, 2026-11-15). Decisions:
     - A third list, the EasyList Cookie List (CC-BY 3.0, published at
       `secure.fanboy.co.nz/fanboy-cookiemonster.txt`; easylist.to has no
@@ -895,11 +895,34 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     - A page can see the hook (`Symbol.for('trailboard.hide')`) and could
       send fake reports; at worst it hides list-matched elements in its own
       frames.
-  - ⬜ Answering banners with "reject" on known consent platforms
-    (Sourcepoint, OneTrust, Didomi, Quantcast…), written from their public
-    DOM, not copied from other extensions. Many of these are already stopped
-    by the cookie list's network rules; this matters for those that aren't
-    (and for sites that wall content until a choice is made).
+  - ✅ Answering banners with "reject" on known consent platforms
+    (`web::consent`, 2026-11-15). Decisions:
+    - Our own table of 15 platforms (OneTrust, Didomi, Cookiebot,
+      Sourcepoint, Quantcast, Usercentrics, TrustArc, Google Funding
+      Choices, consentmanager, CookieYes, Complianz, iubenda, Osano, Klaro,
+      Cookie Notice): each a banner selector and its reject button, written
+      from the ids and classes the platform's banner shows on any site, not
+      taken from other blockers' lists. Quantcast's buttons have no role in
+      their markup, so its button must read as a refusal (a whole-label
+      pattern in English and the common EU languages). Usercentrics' banner
+      is in an open shadow root. Sourcepoint's is a frame of its own
+      (`message_id=` in its address) where the button is clicked, plus a
+      watch-only rule on the page's `sp_message_container_*`.
+    - Clicks the DOM button, never the platform's JS API (an API call could
+      overwrite a choice the user made earlier; a button exists only while
+      the platform asks). Only when the banner is shown, counting one our
+      hiding rules hide (the hide stylesheet is disabled for the check), so
+      a hidden banner still gets answered and stops asking. Once per frame,
+      watched for 30 s from the start of loading (mutations, plus checks at
+      0.5/1.5/4/10 s).
+    - Scroll lock: 0.8 s and 2.5 s after a banner is found, if it is gone or
+      hidden and `html` or `body` still computes `overflow: hidden`, both
+      get `overflow: auto !important`. Not when the banner is still visible
+      (no reject button: the user still has to answer it).
+    - Same switches as hiding (runs from `cosmetic::on_load_start` after
+      `shield::rules_for`): the setting and the per-site toggle cover it.
+      No separate switch yet. Outcomes (`rejected`, `no-button`, `shown`,
+      `unlocked`) are logged at info level, not shown in the UI.
 - ✅ Per-site toggle (2026-11-15): the page menu's last row ("Allow ads on
   example.com · 12 blocked" / "Block ads on example.com") and *Allow or block
   ads on this site* in Ctrl+K. Decisions:
@@ -915,7 +938,7 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   - Only one switch for now: ads and trackers together. Separate switches
     (trackers only, cookie banners) can come with cosmetic filtering.
 
-### M9: Packaging and release ✅
+### M9: Packaging and release 🟡
 - ✅ Bundle layout (`scripts/bundle.sh [--tar]`): `target/bundle/trailboard-VERSION-ARCH/`
   holds the release binary, CEF's runtime files and locales beside it,
   `share/applications/trailboard.desktop`, the icon, README, CHANGELOG and
@@ -1035,26 +1058,23 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-15 (second). M8: cosmetic filtering, which hides cookie banners and ad slots.
+**Last session:** 2026-11-15 (third). M8: cookie banners answered with "reject" on known consent platforms; M8 is complete.
 **Repo state:** on `master`, committed; working tree clean.
 **Done this session:**
-- `web::cosmetic`: the engine now loads cosmetic rules too; each frame of a
-  web page gets its site's hiding rules as an adopted stylesheet when it
-  starts loading, and generic class/id rules as it reports its class and id
-  names (console message → `hidden_class_id_selectors` → answered into the
-  frame). `:style()` rules that are plain CSS apply. Decisions under M8.
-- The EasyList Cookie List is a third fetched list (`easylist-cookie`).
-- `shield::rules_for(page)` is the one check of the switch, allowed sites
-  and loaded rules, for requests and hiding alike.
+- `web::consent`: a script run in each frame of a web page beside the
+  cosmetic one watches for 15 known consent platforms' banners and clicks
+  their reject button, then lets a page left with `overflow: hidden` scroll
+  again. Decisions under M8. `cosmetic`'s script exposes its stylesheet
+  (`window[Symbol.for('trailboard.hide')].sheet`) so the visibility check
+  can ignore our own hiding.
 **Owner decisions (2026-11-15):** no AppImage, Flatpak or AUR work (the owner
 publishes later, on their own); no UI translations; licence is Apache-2.0
 only (`LICENSE-APACHE`).
-**Next up:** M8 cookie banners, part 2: click "reject" on known consent
-platforms (Sourcepoint, OneTrust, Didomi, Quantcast, Cookiebot…), written
-from their public DOM, not copied from other extensions; it matters where
-the cookie list doesn't already stop the platform's script, and for sites
-that keep content locked until a choice is made (look for a body left with
-`overflow: hidden` after hiding). Then the Chromium sandbox. Small blocking follow-ups: a shield
+**Next up:** the Chromium sandbox (M9's last ⬜, so M9 is back to 🟡:
+`chrome-sandbox` setuid or user namespaces instead of `no_sandbox`). Consent follow-ups: more platforms as real sites show them (TCF
+`__tcfapi` frames, Ketch, Termly, Borlabs, Axeptio); a "cookie banner
+rejected" line in the page menu; a separate *Reject cookie banners* switch
+if clicking ever breaks a site. Small blocking follow-ups: a shield
 mark with the count on the title bar; scriptlets/`$redirect` resources
 (need the `resource-assembler` feature and uBO's resources, check the
 licence); a palette list of allowed sites; reread `user.txt` when it
@@ -1083,6 +1103,27 @@ Save as Markdown; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out; open `crash.log` from the crash
 toast or a palette command.
 **Notes for the next session:**
+- Consent verified e2e (`~/.cache/trailboard-e2e-consent`, `run.sh N
+  shot…`, `URL=` sets the start page; serve `site/` with `python3 -m
+  http.server 8773 --bind 127.0.0.2` and again on 127.0.0.3:8774 for the
+  Sourcepoint frame). Each test page (`ot`, `qc`, `dd`, `cky`, `uc`, `sp`,
+  `kl`) shows its own made-up banner with the platform's ids after a delay,
+  locks `body`, and titles itself `out:<button clicked> ovf:<overflow>` at
+  4 s. Run 1 (fresh, user rule hiding `.cky-consent-container`, lists
+  fetched 3 s in): OneTrust, Quantcast (by text, past "More options"),
+  CookieYes (hidden by our rule, still answered), Usercentrics (shadow
+  root) all `out:reject ovf:auto`; Didomi without a reject button: the
+  cookie list hides `#didomi-notice`, so `no-button` then unlocked
+  (`dd.png`: banner gone, page scrolls). Run 2: Sourcepoint rejected in
+  its frame and the page unlocked once the container went; Klaro-like
+  banner visible with no reject button: `no-button`, left locked
+  (`ovf:hidden`), as intended. Run 3 (real sites): cookieyes.com's own
+  banner rejected; didomi.io and usercentrics.com showed no banner from
+  here (`dd3.png`, `uc3.png`), so those platforms are verified on test
+  pages only. Not verified: EU-only banners on real sites (outside the EU
+  here), a site that breaks after a reject click, very slow CMPs (>30 s),
+  closed shadow roots.
+
 - Cosmetic filtering verified e2e (`~/.cache/trailboard-e2e-cosmetic`,
   `run.sh N shot…`, `URL=` sets the start page; serve `site/` on
   127.0.0.1:8771 and 127.0.0.2:8773, `frame/` on localhost:8772 and

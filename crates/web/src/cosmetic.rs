@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet};
 use adblock::cosmetic_filter_cache::ProceduralOrActionFilter;
 use cef::*;
 
-use crate::{js_string, shield};
+use crate::{consent, js_string, shield};
 
 /// Prefix of the console message with a frame's new class and id names:
 /// the frame's identifier, a newline, the classes (space-separated), a
@@ -47,6 +47,7 @@ const SCRIPT: &str = r#"(() => {
   };
   adopt();
   window[key] = (more) => { css += more; sheet.replaceSync(css); adopt(); };
+  window[key].sheet = sheet;
   if (!__GENERIC__) return;
   const seenC = new Set(), seenI = new Set();
   let newC = [], newI = [], added = [], changed = [], timer = 0;
@@ -96,7 +97,8 @@ fn main_url(browser: &mut Browser) -> String {
 }
 
 /// Called when `frame` of a web page starts loading: hides what the rules
-/// say to on its site, and starts watching it for generic rules.
+/// say to on its site, starts watching it for generic rules, and for a
+/// consent banner to reject ([`consent`]).
 pub(crate) fn on_load_start(frames: &Frames, browser: &mut Browser, frame: &mut Frame) {
     let id = CefString::from(&frame.identifier()).to_string();
     if frame.is_main() != 0 {
@@ -126,6 +128,7 @@ pub(crate) fn on_load_start(frames: &Frames, browser: &mut Browser, frame: &mut 
         .replace("__MAX__", &MAX_NAMES.to_string())
         .replace("__GENERIC__", if generic { "true" } else { "false" });
     frame.execute_java_script(Some(&CefString::from(script.as_str())), Some(&CefString::from(url.as_str())), 0);
+    frame.execute_java_script(Some(&CefString::from(consent::script().as_str())), Some(&CefString::from(url.as_str())), 0);
 }
 
 /// Splits a message body (after [`PREFIX`]) into the frame, its classes and its ids.
@@ -182,7 +185,7 @@ fn style_ok(style: &str) -> bool {
 
 /// Whether `s` stays inside one rule: no braces or comments, quotes closed,
 /// brackets balanced, no trailing escape, not an at-rule.
-fn contained(s: &str) -> bool {
+pub(crate) fn contained(s: &str) -> bool {
     let s = s.trim();
     if s.is_empty() || s.starts_with('@') || s.contains("/*") || s.contains("*/") {
         return false;

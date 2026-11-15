@@ -7,6 +7,13 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Cookie banners answered with "reject"**: on sites using a well-known
+  consent platform (OneTrust, Didomi, Cookiebot, Sourcepoint, Quantcast,
+  Usercentrics and others), Trailboard clicks the banner's reject button
+  for you, even when the banner is already hidden, so the site stops
+  asking. A page left unable to scroll once its banner is gone scrolls
+  again. The *Block ads and trackers* setting and the per-site toggle
+  cover this too.
 - **Cookie banners and ad slots hidden**: besides stopping requests, the
   blocker now hides the page elements its lists name, such as consent
   pop-ups and the empty boxes ads leave behind, in every frame of a page,

@@ -7,6 +7,10 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Changed
+- **Scrollbars**: pages show thin overlay scrollbars that appear while
+  scrolling and fade when idle (Chromium's `OverlayScrollbar`), instead of
+  the classic grey bar with arrow buttons on every card. They take no width
+  from the page; pages that style their own scrollbars keep them.
 - **Read Mode transition**: Tab grows the card out of its place into the
   window (200 ms, eased) with the board dimming behind it, and leaving
   shrinks it back into its place. It used to be an instant cut.

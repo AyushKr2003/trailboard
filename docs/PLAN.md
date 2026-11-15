@@ -678,6 +678,13 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     earlier try that eased notches ourselves stacked on Chromium's glide
     (330 ms a notch) and was dropped. Wheel over an unfocused card still
     pans the board.
+  - Scrollbars (2026-11-15): Chromium's overlay scrollbars
+    (`--enable-features=OverlayScrollbar`): a thin rounded thumb over the
+    page while it scrolls or the pointer is near, fading when idle, no
+    gutter. Chosen over styling `::-webkit-scrollbar` into every page (would
+    fight sites' own styles and need injecting per frame). Measured while
+    choosing: a card scrolls at an even ~60 paints/s, no slow frames, so
+    the look, not the frame rate, was the problem. Not a setting.
   - Not yet settings: a start page for an empty board (still a random
     Wikipedia page), a custom search URL, the default card size, downloads
     folder (downloads use the desktop's folder for now), ad blocking (M8).
@@ -1322,6 +1329,11 @@ palette to open beside.
   Shift+Enter in the address bar, open the page beside the current card with
   a trail edge (`App::open_beside_current`). Decisions under M5 (Palette →
   Open beside). Guide note and README mention it.
+- Owner asked: Read Mode no longer cuts or squashes. Tab grows the card into
+  the window and back (M11 step 6, now 🟡); page frames are drawn at the
+  CSS size they were painted at (`PaintFrame::css`, `Shape::Page`).
+- Owner asked: overlay scrollbars instead of the classic grey bar (M6
+  settings → Scrollbars).
 **Owner decisions (2026-11-15):** no AppImage, Flatpak or AUR work (the owner
 publishes later, on their own); no UI translations; licence is Apache-2.0
 only (`LICENSE-APACHE`); all AI features (semantic search, Explain, any
@@ -1360,6 +1372,16 @@ Save as Markdown; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out; open `crash.log` from the crash
 toast or a palette command.
 **Notes for the next session:**
+- Read Mode morph verified by frames (`~/.cache/trailboard-e2e-beside`,
+  `script4`–`script7`; grim in a loop, `g/`): grows from the card, the
+  page at its own scale, the board dims; shrink back clean. Frames from
+  gpu-screen-recorder (CPU fallback) showed a dark band that grim's real
+  frames don't: a recorder artefact, don't chase it. Not verified: HiDPI,
+  light theme, switching read cards (a cut, by design).
+- Overlay scrollbars verified e2e (`~/.cache/trailboard-e2e-scroll`,
+  `script10`–`script12`, `DELAY=0`): a thin thumb while scrolling on a white
+  page and on a dark note, none when idle. Not verified: the thumb on hover
+  (the scripted pointer missed the card's edge), Read Mode, a real mouse.
 - Open beside verified e2e (`~/.cache/trailboard-e2e-beside`; serve `site/`
   with `python3 -m http.server 8791 --bind 127.0.0.1 -d site`, then
   `run.sh N shot…`): palette Shift+Enter opens card 3 beside card 1 (edge

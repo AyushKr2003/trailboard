@@ -260,6 +260,11 @@ wrap_app! {
             cl.append_switch(Some(&"hide-crash-restore-bubble".into()));
             cl.append_switch(Some(&"use-mock-keychain".into()));
             cl.append_switch(Some(&"password-store=basic".into()));
+            // Thin overlay scrollbars that show while a page scrolls (or the
+            // pointer is near them) and fade when idle, instead of the classic
+            // grey bar with arrow buttons on every card. They take no width
+            // from the page. Pages that style their own scrollbars keep them.
+            cl.append_switch_with_value(Some(&"enable-features".into()), Some(&"OverlayScrollbar".into()));
         }
 
         fn browser_process_handler(&self) -> Option<BrowserProcessHandler> {

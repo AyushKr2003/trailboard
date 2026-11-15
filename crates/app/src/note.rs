@@ -14,7 +14,7 @@ pub const STICKY_H: f32 = 240.0;
 /// The welcome note a brand-new board starts with, and its content size
 /// (as tall as a page card, which it sits beside).
 pub const GUIDE: &str = include_str!("guide.md");
-pub const GUIDE_W: f32 = 560.0;
+pub const GUIDE_W: f32 = 640.0;
 pub const GUIDE_H: f32 = 720.0;
 
 const EDITOR: &str = include_str!("note.html");

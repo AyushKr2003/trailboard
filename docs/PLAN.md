@@ -1121,8 +1121,16 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   - The start page stays (Wikipedia's random article, or the URLs given on
     the command line); the guide goes beside it with
     `placement::left_of` (tops aligned, `free_near` when taken).
-  - Short enough to fit its 560×720 card without scrolling; the full list
-    stays in the shortcut sheet (?), which the guide points to. English only
+  - ~~Short enough to fit its 560×720 card without scrolling.~~ Changed at
+    the owner's request (2026-11-15): a complete guide for a new user, on a
+    640×720 card that scrolls (overlay scrollbars now). Order: the idea, a
+    "lost? Esc, Shift+F, Ctrl+K, ?" tip, first steps, where the keys go
+    (thin vs thick ring; the most confusing part), moving around, opening
+    and finding, trails, notes, spaces, then "good to know" (sleeping
+    cards, autosave, blocking, history, downloads, settings). Keys in
+    `code`. Every shortcut in it is checked against the README table; the
+    full list stays in the shortcut sheet (?). An unedited old guide on an
+    existing board no longer matches, so *Welcome note* adds the new one. English only
     until the translation item.
   - *Welcome note* in Ctrl+K brings it back: it goes to an unedited welcome
     note already on the board (unfolding its stack; `Scene::note_with_text`),
@@ -1334,6 +1342,8 @@ palette to open beside.
   CSS size they were painted at (`PaintFrame::css`, `Shape::Page`).
 - Owner asked: overlay scrollbars instead of the classic grey bar (M6
   settings → Scrollbars).
+- Owner asked: a complete, professional welcome guide (`guide.md`, card
+  640 wide; First-run defaults in M9).
 **Owner decisions (2026-11-15):** no AppImage, Flatpak or AUR work (the owner
 publishes later, on their own); no UI translations; licence is Apache-2.0
 only (`LICENSE-APACHE`); all AI features (semantic search, Explain, any
@@ -1372,6 +1382,9 @@ Save as Markdown; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out; open `crash.log` from the crash
 toast or a palette command.
 **Notes for the next session:**
+- New guide verified on a first start (`~/.cache/trailboard-e2e-guide2`,
+  `run.sh 2 p1…p5`): every section renders (numbered list, quote, rules,
+  key chips) and scrolls. Not verified: light theme, HiDPI.
 - Read Mode morph verified by frames (`~/.cache/trailboard-e2e-beside`,
   `script4`–`script7`; grim in a loop, `g/`): grows from the card, the
   page at its own scale, the board dims; shrink back clean. Frames from

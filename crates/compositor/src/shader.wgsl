@@ -52,6 +52,8 @@ struct Inst {
     // x: kind (0 rect, 1 segment, 2 rect rounded at the bottom only)  y: corner radius / thickness
     // z: softness (shadow blur px)  w: textured (0/1)
     @location(2) params: vec4f,
+    // xy: how many texture widths/heights the rect spans (1, 1: exactly fills it)
+    @location(3) uv: vec4f,
 };
 
 struct VOut {
@@ -77,7 +79,7 @@ fn vs_quad(@builtin(vertex_index) vi: u32, i: Inst) -> VOut {
         p = center + local;
         o.local = local;
         o.half = half;
-        o.uv = (local + half) / max(size, vec2f(1e-3));
+        o.uv = (local + half) / max(size, vec2f(1e-3)) * i.uv.xy;
     } else {
         let p0 = i.a.xy;
         let p1 = i.a.zw;
@@ -107,7 +109,13 @@ fn sd_round_rect(p: vec2f, half: vec2f, r: f32) -> f32 {
 @fragment
 fn fs_quad(v: VOut) -> @location(0) vec4f {
     // Sample unconditionally (uniform control flow); untextured quads bind a 1x1 white texture.
-    let t = textureSampleLevel(tex, samp, clamp(v.uv, vec2f(0.0), vec2f(1.0)), 0.0);
+    // Past the texture (a page painted smaller than its rect), the row's
+    // left-edge colour fills in, usually the page's background.
+    var st = clamp(v.uv, vec2f(0.0), vec2f(1.0));
+    if (v.uv.x > 1.0 || v.uv.y > 1.0) {
+        st = vec2f(0.0, st.y);
+    }
+    let t = textureSampleLevel(tex, samp, st, 0.0);
     var c = v.color;
     var a = 1.0;
     if (v.params.x < 0.5 || v.params.x > 1.5) {

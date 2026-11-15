@@ -6,6 +6,17 @@ All notable changes to Trailboard. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **Read Mode transition**: Tab grows the card out of its place into the
+  window (200 ms, eased) with the board dimming behind it, and leaving
+  shrinks it back into its place. It used to be an instant cut.
+
+### Fixed
+- **No squashed pages after a resize**: a page's last frame is drawn at the
+  size it was painted at (cropped, or filled out with the page's edge
+  colour) until Chromium paints the new size. Leaving Read Mode used to
+  squash the window-sized page into the card for a few frames.
+
 ### Added
 - **Open beside from the palette**: Shift+Enter (or Shift+click) on a page
   row in Ctrl+K or Ctrl+H, or on the palette's last row, opens the page

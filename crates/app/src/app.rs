@@ -132,6 +132,27 @@ const RESIZE_GRIP: f32 = 18.0;
 const CLOSE_W: f32 = 30.0;
 /// Height of the Read Mode title bar, in overlay px (scaled by `ui()`).
 const READ_BAR: f32 = 34.0;
+
+/// A card moving between the board and Read Mode (`scene::read::morph`).
+#[derive(Debug, Clone, Copy)]
+struct ReadMorph {
+    id: NodeId,
+    /// Growing into Read Mode (else shrinking back to its place on the board).
+    entering: bool,
+    start: Instant,
+}
+
+impl ReadMorph {
+    /// How far into Read Mode the card is: 0 on the board, 1 filling the window.
+    fn progress(&self) -> f32 {
+        let t = crate::chrome::ease_out(self.start.elapsed().as_secs_f32() * 1000.0 / read::MORPH_MS as f32);
+        if self.entering { t } else { 1.0 - t }
+    }
+
+    fn done(&self) -> bool {
+        self.start.elapsed() >= Duration::from_millis(read::MORPH_MS)
+    }
+}
 /// How long a toast stays on screen.
 const TOAST_FOR: Duration = Duration::from_millis(1800);
 /// Bits of a page key that hold the card id; the space epoch sits above them.
@@ -279,6 +300,11 @@ pub struct App {
     arrange: Option<Arrange>,
     /// Read Mode: this card fills the window (see `scene::read`).
     read: Option<NodeId>,
+    /// The card growing into Read Mode or shrinking back to the board.
+    read_morph: Option<ReadMorph>,
+    /// The CSS size each live card's last uploaded frame was laid out at, so
+    /// a frame from before a resize is drawn at its own size, not stretched.
+    page_css: HashMap<NodeId, (f32, f32)>,
     /// The trails sidebar (B): collapsed groups, highlight and scroll.
     sidebar: scene::sidebar::Sidebar,
     sidebar_open: bool,
@@ -508,6 +534,8 @@ impl App {
             link_hints: None,
             arrange: None,
             read: None,
+            read_morph: None,
+            page_css: HashMap::new(),
             sidebar: Default::default(),
             sidebar_open: false,
             sidebar_keys: false,
@@ -2927,6 +2955,10 @@ impl App {
         if self.read != Some(id) {
             log::info!("read mode: card {}", id.0);
         }
+        // From the board, the card grows out of its place (if it is on screen).
+        if self.read.is_none() {
+            self.read_morph = self.card_on_screen(id).then(|| ReadMorph { id, entering: true, start: Instant::now() });
+        }
         self.read = Some(id);
         self.selection.clear();
         self.menu = None;
@@ -2954,6 +2986,14 @@ impl App {
         self.keys_in_page = false;
         self.camera_moved(); // pages go back to the board's raster scale once settled
         self.ensure_visible(id);
+        // It shrinks back into its place (following the camera if that glides).
+        self.read_morph = Some(ReadMorph { id, entering: false, start: Instant::now() });
+    }
+
+    /// Whether any of card `id` is in the window.
+    fn card_on_screen(&self, id: NodeId) -> bool {
+        let vp = self.viewport();
+        self.scene.node(id).is_some_and(|n| self.to_screen_rect(n.frame()).intersects(&Rect::new(0.0, 0.0, vp.x, vp.y)))
     }
 
     /// Glide just enough to bring card `id` on screen (fitting it with the focused card if possible).
@@ -4471,15 +4511,22 @@ impl App {
         // Upload new page frames.
         let epoch = self.epoch;
         if let Some(r) = self.renderer.as_mut() {
+            self.page_css.clear();
             for (id, card) in &self.cards {
                 let f = card.page.frame();
                 r.update_page(page_key(epoch, *id), f.width, f.height, &f.pixels, f.serial);
+                self.page_css.insert(*id, f.css);
             }
             for s in self.icons.values() {
                 r.update_page(s.key, s.icon.width, s.icon.height, &s.icon.pixels, s.serial);
             }
         }
         self.load_sleeping_thumbs();
+        if self.read_morph.is_some_and(|m| m.done() || self.scene.node(m.id).is_none()) {
+            self.read_morph = None;
+        }
+        // While a card grows into Read Mode the board still shows behind it.
+        let board_hidden = self.read.is_some() && self.read_morph.is_none();
         let preview_url = self
             .omnibox
             .as_ref()
@@ -4506,13 +4553,13 @@ impl App {
         // Trail edges under everything: a gentle S-curve from source's right edge to target's left edge.
         let mut edges = Layer::default();
         let labels: HashMap<NodeId, scene::TrailMark> =
-            if self.read.is_some() { HashMap::new() } else { self.scene.trail_labels().into_iter().collect() };
+            if board_hidden { HashMap::new() } else { self.scene.trail_labels().into_iter().collect() };
         let mut edge_colour: HashMap<NodeId, [u8; 3]> = HashMap::new();
         for (head, mark) in &labels {
             let c = th.trail(mark.colour.as_deref());
             edge_colour.extend(self.scene.trail_of(*head).into_iter().map(|id| (id, c)));
         }
-        let board_edges: Vec<Edge> = if self.read.is_some() { Vec::new() } else { self.scene.visible_edges().copied().collect() };
+        let board_edges: Vec<Edge> = if board_hidden { Vec::new() } else { self.scene.visible_edges().copied().collect() };
         for e in &board_edges {
             let (Some(a), Some(b)) = (self.scene.node(e.from), self.scene.node(e.to)) else { continue };
             let fa = self.to_screen_rect(a.frame());
@@ -4545,10 +4592,15 @@ impl App {
         let band = self.band();
         let in_band = band.map(|b| selection::in_band(&self.scene, b)).unwrap_or_default();
         let typing = self.typing();
-        let board_cards = if self.read.is_some() { Vec::new() } else { self.scene.draw_order() };
+        let board_cards = if board_hidden { Vec::new() } else { self.scene.draw_order() };
+        let morphing = self.read_morph.map(|m| m.id);
         self.shields.clear();
         self.tags.clear();
         for n in board_cards {
+            // The card on its way to or from Read Mode is drawn by `read_morph_layer`.
+            if morphing == Some(n.id) {
+                continue;
+            }
             let frame = self.to_screen_rect(n.frame());
             if !frame.inflate(40.0).intersects(&screen) {
                 continue;
@@ -4649,9 +4701,16 @@ impl App {
             let key = page_key(epoch, n.id);
             let has_tex = self.renderer.as_ref().is_some_and(|r| r.has_page(key));
             let asleep = card.is_none();
+            // A live page's last frame at its own size: right after a resize
+            // (leaving Read Mode, resizing the card) it is cropped or filled
+            // out, never squashed, until the page paints at the new size.
+            let extent = match (card, self.page_css.get(&n.id)) {
+                (Some(_), Some(&css)) => read::extent(Vec2::new(n.rect.w, n.rect.h), css),
+                _ => [1.0, 1.0],
+            };
             l.quads.push(Quad {
                 // Round the bottom corners like the frame, so the page doesn't square them off.
-                shape: Shape::RoundBottom { rect: content, radius },
+                shape: Shape::Page { rect: content, radius, round_bottom: true, extent },
                 color: match (has_tex, asleep) {
                     (true, false) => [1.0; 4],
                     (true, true) => [0.78, 0.78, 0.8, 1.0], // dimmed snapshot
@@ -4844,7 +4903,11 @@ impl App {
             layers.push(l);
         }
 
-        if let Some(id) = self.read {
+        if let Some(m) = self.read_morph {
+            if let Some(l) = self.read_morph_layer(m) {
+                layers.push(l);
+            }
+        } else if let Some(id) = self.read {
             let l = self.read_layer(id);
             layers.push(l);
         }
@@ -4857,6 +4920,7 @@ impl App {
         }
 
         if self.read.is_none()
+            && self.read_morph.is_none()
             && 13.0 * k < scene::icon::READABLE_TITLE
             && let Some(l) = self.name_label_layer()
         {
@@ -5133,6 +5197,64 @@ impl App {
         }
     }
 
+    /// A card growing from its place on the board into Read Mode, or
+    /// shrinking back: the board dims behind it, its corners square off and
+    /// the title fades in as it fills the window. The page's pixels keep
+    /// their own scale (`read::morph`), so nothing stretches on the way.
+    fn read_morph_layer(&mut self, m: ReadMorph) -> Option<Layer> {
+        let n = self.scene.node(m.id)?;
+        let (header, content) = (self.to_screen_rect(n.header()), self.to_screen_rect(n.rect));
+        let card_css = Vec2::new(n.rect.w, n.rect.h);
+        let title = if n.title.is_empty() { n.url.clone() } else { n.title.clone() };
+        let p = m.progress();
+        let lay = self.read_layout();
+        let mo = read::morph(header, content, card_css, &lay, p);
+        let th = self.theme.clone();
+        let scale = self.scale();
+        let ui = self.ui();
+        let vp = self.viewport();
+        let k = self.camera.pixels_per_unit(scale);
+        let radius = (th.rounding * k).min(th.radius(scale)) * (1.0 - p);
+        let tint = self.spaces.active_entry().tint.clone();
+        let key = self.page_key(m.id);
+        let has_tex = self.renderer.as_ref().is_some_and(|r| r.has_page(key));
+        let extent = self.page_css.get(&m.id).map_or([1.0, 1.0], |&css| read::extent(mo.css, css));
+        let frame = Rect::new(mo.bar.x, mo.bar.y, mo.bar.w, mo.content.bottom() - mo.bar.y);
+        let mut l = Layer::default();
+        // The board recedes behind the page.
+        l.quads.push(Quad {
+            shape: Shape::Rect { rect: Rect::new(0.0, 0.0, vp.x, vp.y), radius: 0.0 },
+            color: rgb(th.board(tint.as_deref()), 0.75 * p),
+            texture: None,
+        });
+        l.quads.push(Quad {
+            shape: Shape::Shadow { rect: frame.translate(Vec2::new(0.0, 12.0 * scale)), radius, blur: 36.0 * scale },
+            color: th.shadow(0.5 * (1.0 - p * 0.5)),
+            texture: None,
+        });
+        l.quads.push(Quad { shape: Shape::Rect { rect: frame, radius }, color: rgb(th.card(true), 1.0), texture: None });
+        l.quads.push(Quad {
+            shape: Shape::Page { rect: mo.content, radius, round_bottom: true, extent },
+            color: if has_tex { [1.0; 4] } else { rgb(th.placeholder(), 1.0) },
+            texture: has_tex.then_some(key),
+        });
+        // The read bar's title, fading in over the last part of the way.
+        let size = 13.0 * ui;
+        let pad = 14.0 * ui;
+        let fade = ((p - 0.5) * 2.0).clamp(0.0, 1.0);
+        if fade > 0.0 {
+            l.texts.push(Text {
+                text: title,
+                pos: [mo.bar.x + pad, mo.bar.y + (mo.bar.h - size * 1.3) / 2.0],
+                size,
+                color: rgb(th.foreground(), fade),
+                clip: Rect::new(mo.bar.x + pad, mo.bar.y, (mo.bar.w - pad * 2.0).max(1.0), mo.bar.h),
+                bold: true,
+            });
+        }
+        Some(l)
+    }
+
     /// Read Mode: card `id`'s page across the window under a title bar.
     fn read_layer(&mut self, id: NodeId) -> Layer {
         let th = self.theme.clone();
@@ -5144,8 +5266,9 @@ impl App {
         let loading = self.cards.get(&id).is_some_and(|c| c.loading);
         let title = self.scene.node(id).map_or(String::new(), |n| if n.title.is_empty() { n.url.clone() } else { n.title.clone() });
         let mut l = Layer::default();
+        let extent = self.page_css.get(&id).map_or([1.0, 1.0], |&css| read::extent(Vec2::new(lay.css.0 as f32, lay.css.1 as f32), css));
         l.quads.push(Quad {
-            shape: Shape::Rect { rect: lay.content, radius: 0.0 },
+            shape: Shape::Page { rect: lay.content, radius: 0.0, round_bottom: false, extent },
             color: if has_tex { [1.0; 4] } else { rgb(th.placeholder(), 1.0) },
             texture: has_tex.then_some(key),
         });

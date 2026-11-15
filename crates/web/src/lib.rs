@@ -388,6 +388,25 @@ pub struct PaintFrame {
     pub pixels: Vec<u8>,
     /// Bumped on every paint so consumers can upload only when it changes.
     pub serial: u64,
+    /// The view size in CSS px these pixels were laid out at. Right after a
+    /// resize it is still the old size until Chromium paints again, so the
+    /// app can show the old pixels at their own size instead of stretching
+    /// them over the new one.
+    pub css: (f32, f32),
+}
+
+/// The CSS size a `px` (width, height) paint was laid out at: the newest of
+/// the `recent` view sizes (CSS px, raster scale), newest first, whose pixel
+/// size it matches (±1 px for rounding); else `px` over the newest scale.
+pub fn paint_css(px: (u32, u32), recent: &[((i32, i32), f32)]) -> (f32, f32) {
+    let near = |a: f32, b: u32| (a.round() - b as f32).abs() <= 1.0;
+    for &((w, h), s) in recent {
+        if near(w as f32 * s, px.0) && near(h as f32 * s, px.1) {
+            return (w as f32, h as f32);
+        }
+    }
+    let s = recent.first().map_or(1.0, |r| r.1).max(0.01);
+    (px.0 as f32 / s, px.1 as f32 / s)
 }
 
 struct Shared {
@@ -399,6 +418,9 @@ struct Shared {
     /// `size × scale` pixels and the page zoom is `scale`, which keeps the CSS
     /// layout at `size` while painting `scale`× sharper. See [`zoom_level_for`].
     scale: RefCell<f32>,
+    /// The last few (size, scale) pairs, newest first, to tell which one a
+    /// paint belongs to ([`paint_css`]).
+    recent: RefCell<Vec<((i32, i32), f32)>>,
     /// What the app shows: the page with any open popup drawn on top.
     frame: RefCell<PaintFrame>,
     /// While a popup is open, the page's own pixels (so the popup can move or close cleanly).
@@ -499,6 +521,7 @@ impl Shared {
         let mut f = self.frame.borrow_mut();
         f.width = view.width;
         f.height = view.height;
+        f.css = view.css;
         f.pixels.clear();
         f.pixels.extend_from_slice(&view.pixels);
         if let Some((_, drawn)) = self.popup_drawn() {
@@ -585,7 +608,7 @@ wrap_render_handler! {
                 if sh.view.borrow().is_none() {
                     let f = sh.frame.borrow();
                     *sh.view.borrow_mut() =
-                        Some(PaintFrame { width: f.width, height: f.height, pixels: f.pixels.clone(), serial: 0 });
+                        Some(PaintFrame { width: f.width, height: f.height, pixels: f.pixels.clone(), serial: 0, css: f.css });
                 }
             } else {
                 *sh.popup.borrow_mut() = PopupState::default();
@@ -594,6 +617,7 @@ wrap_render_handler! {
                     let mut f = sh.frame.borrow_mut();
                     f.width = view.width;
                     f.height = view.height;
+                    f.css = view.css;
                     f.pixels = view.pixels;
                     f.serial += 1;
                 }
@@ -627,9 +651,11 @@ wrap_render_handler! {
             if type_ != PaintElementType::POPUP && sh.frame.borrow().width != width as u32 {
                 log::debug!("page {} paints at {width}x{height} (scale {})", sh.key, sh.scale.borrow());
             }
+            let css = paint_css((width as u32, height as u32), &sh.recent.borrow());
             let store = |f: &mut PaintFrame| {
                 f.width = width as u32;
                 f.height = height as u32;
+                f.css = css;
                 f.pixels.clear();
                 f.pixels.extend_from_slice(src);
                 f.serial += 1;
@@ -1180,6 +1206,7 @@ impl Page {
             key,
             size: RefCell::new(size),
             scale: RefCell::new(scale),
+            recent: RefCell::new(vec![(size, scale)]),
             frame: RefCell::new(PaintFrame::default()),
             view: RefCell::new(None),
             popup: RefCell::new(PopupState::default()),
@@ -1275,6 +1302,11 @@ impl Page {
         let changed_scale = (*self.shared.scale.borrow() - scale).abs() > f32::EPSILON;
         *self.shared.size.borrow_mut() = size;
         *self.shared.scale.borrow_mut() = scale;
+        if changed_size || changed_scale {
+            let mut recent = self.shared.recent.borrow_mut();
+            recent.insert(0, (size, scale));
+            recent.truncate(4);
+        }
         if let Some(h) = self.host() {
             if changed_scale {
                 self.shared.apply_zoom(&h);
@@ -1558,6 +1590,21 @@ pub mod flags {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_paint_is_matched_to_the_view_size_it_was_laid_out_at() {
+        use super::paint_css;
+        // Card 1024×720 at 0.5, then read at 1440×866 at 2.
+        let recent = [((1440, 866), 2.0), ((1024, 720), 0.5)];
+        assert_eq!(paint_css((2880, 1732), &recent), (1440.0, 866.0));
+        // The old paint, still showing after the resize.
+        assert_eq!(paint_css((512, 360), &recent), (1024.0, 720.0));
+        // Rounding is tolerated.
+        assert_eq!(paint_css((513, 360), &recent), (1024.0, 720.0));
+        // Unknown: the pixels over the newest scale.
+        assert_eq!(paint_css((800, 600), &recent), (400.0, 300.0));
+        assert_eq!(paint_css((10, 10), &[]), (10.0, 10.0));
+    }
+
     use super::{js_string, utf16_len, zoom_level_for};
 
     #[test]

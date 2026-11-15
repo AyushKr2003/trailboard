@@ -45,6 +45,12 @@ pub enum Shape {
     Shadow { rect: Rect, radius: f32, blur: f32 },
     /// Thick line segment in screen px.
     Segment { from: [f32; 2], to: [f32; 2], width: f32 },
+    /// A page texture shown at its own size from the top-left: `extent` is
+    /// how many of the texture's widths and heights the rect spans (1, 1
+    /// fills it exactly, like `Rect`). Past the texture (extent > 1) the
+    /// page's left-edge colour of that row fills in; below 1 it is cropped.
+    /// `round_bottom` rounds the bottom corners only, like `RoundBottom`.
+    Page { rect: Rect, radius: f32, round_bottom: bool, extent: [f32; 2] },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -79,6 +85,8 @@ struct Instance {
     a: [f32; 4],
     color: [f32; 4],
     params: [f32; 4],
+    /// xy: texture extent (see `Shape::Page`); 1, 1 for everything else.
+    uv: [f32; 4],
 }
 
 #[repr(C)]
@@ -243,8 +251,8 @@ impl Renderer {
             multiview_mask: None,
             cache: None,
         });
-        const ATTRS: [wgpu::VertexAttribute; 3] =
-            wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4];
+        const ATTRS: [wgpu::VertexAttribute; 4] =
+            wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4, 3 => Float32x4];
         let quad_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("quads"),
             layout: Some(&layout),
@@ -432,6 +440,7 @@ impl Renderer {
         };
         self.queue.write_buffer(&self.globals_buf, 0, bytemuck::bytes_of(&globals));
 
+        const FULL: [f32; 4] = [1.0, 1.0, 0.0, 0.0];
         // All instances in one buffer; per-layer batches split by texture.
         let mut instances: Vec<Instance> = Vec::new();
         let mut batches: Vec<Vec<(std::ops::Range<u32>, Option<u64>)>> = Vec::with_capacity(layers.len());
@@ -444,21 +453,31 @@ impl Renderer {
                         a: [rect.x, rect.y, rect.w, rect.h],
                         color: q.color,
                         params: [0.0, radius, 0.0, if tex.is_some() { 1.0 } else { 0.0 }],
+                        uv: FULL,
                     },
                     Shape::RoundBottom { rect, radius } => Instance {
                         a: [rect.x, rect.y, rect.w, rect.h],
                         color: q.color,
                         params: [2.0, radius, 0.0, if tex.is_some() { 1.0 } else { 0.0 }],
+                        uv: FULL,
+                    },
+                    Shape::Page { rect, radius, round_bottom, extent } => Instance {
+                        a: [rect.x, rect.y, rect.w, rect.h],
+                        color: q.color,
+                        params: [if round_bottom { 2.0 } else { 0.0 }, radius, 0.0, if tex.is_some() { 1.0 } else { 0.0 }],
+                        uv: [extent[0].max(1e-3), extent[1].max(1e-3), 0.0, 0.0],
                     },
                     Shape::Shadow { rect, radius, blur } => Instance {
                         a: [rect.x, rect.y, rect.w, rect.h],
                         color: q.color,
                         params: [0.0, radius, blur.max(0.5), 0.0],
+                        uv: FULL,
                     },
                     Shape::Segment { from, to, width } => Instance {
                         a: [from[0], from[1], to[0], to[1]],
                         color: q.color,
                         params: [1.0, width, 0.0, 0.0],
+                        uv: FULL,
                     },
                 };
                 let idx = instances.len() as u32;

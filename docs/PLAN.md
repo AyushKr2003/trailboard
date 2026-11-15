@@ -1260,7 +1260,15 @@ and light):**
   (larger input text, section labels in small caps, site icons on rows,
   keycaps right-aligned), and the same finish for the address bar, menus,
   settings and toasts.
-- ⬜ 6. Motion pass: space switch (cross-fade of the tint and a short slide),
+- 🟡 6. Motion pass. Done (2026-11-15): Read Mode in and out
+  (`scene::read::morph`, 200 ms ease-out): the card's header and content
+  move to the read bar and window, screen px per CSS px moving evenly, the
+  board dims behind (0.75 of its colour at full), corners square off, the
+  title fades in over the second half. Only from a card on screen; a
+  switch between read cards stays a cut. Pages are drawn at the CSS size
+  their frame was painted at (`web::PaintFrame::css`, `Shape::Page`'s
+  extent): cropped when the frame is bigger, the row's left-edge colour
+  past it when smaller, never stretched. Left: space switch (cross-fade of the tint and a short slide),
   sidebar peek, card open beside its source (grow from the link's side),
   close (shrink and fade), Tidy (cards glide to their places, already a
   follow-up), all ≈150–250 ms, eased, and off with the system's reduced

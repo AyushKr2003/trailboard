@@ -25,6 +25,45 @@ pub fn layout(viewport: Vec2, scale: f32, bar_px: f32) -> ReadLayout {
     ReadLayout { bar, content, css }
 }
 
+/// How long the card takes to grow into Read Mode, or shrink back (ms).
+pub const MORPH_MS: u64 = 200;
+
+/// One frame of the move between a card on the board and Read Mode.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Morph {
+    /// The title bar (screen px): the card's header → the read bar.
+    pub bar: Rect,
+    /// The page (screen px): the card's content → the read content.
+    pub content: Rect,
+    /// The CSS size `content` shows, so the page's pixels are drawn at their
+    /// own scale (never stretched) while they catch up with the new size.
+    pub css: Vec2,
+}
+
+/// The card's `header` and `content` (screen px, the content showing
+/// `card_css` CSS px) at `t` = 0, Read Mode's `layout` at `t` = 1. Screen
+/// px per CSS px moves evenly between the two, so the page grows at a
+/// steady rate rather than jumping in scale at either end.
+pub fn morph(header: Rect, content: Rect, card_css: Vec2, layout: &ReadLayout, t: f32) -> Morph {
+    let t = t.clamp(0.0, 1.0);
+    let lerp = |a: f32, b: f32| a + (b - a) * t;
+    let rect = |a: Rect, b: Rect| Rect::new(lerp(a.x, b.x), lerp(a.y, b.y), lerp(a.w, b.w), lerp(a.h, b.h));
+    let k0 = content.w / card_css.x.max(1.0);
+    let k1 = layout.content.w / (layout.css.0 as f32).max(1.0);
+    let k = lerp(k0, k1).max(1e-4);
+    let c = rect(content, layout.content);
+    Morph { bar: rect(header, layout.bar), content: c, css: Vec2::new(c.w / k, c.h / k) }
+}
+
+/// How many widths and heights of a page painted at `painted` CSS px a rect
+/// showing `shown` CSS px spans (`compositor::Shape::Page`'s extent).
+pub fn extent(shown: Vec2, painted: (f32, f32)) -> [f32; 2] {
+    if painted.0 < 1.0 || painted.1 < 1.0 {
+        return [1.0, 1.0];
+    }
+    [shown.x / painted.0, shown.y / painted.1]
+}
+
 /// The card to read when Read Mode is asked for: the focused card, else the
 /// topmost card under the middle of the view, else the card nearest to it.
 pub fn pick(scene: &Scene, focused: Option<NodeId>, view_center: Vec2) -> Option<NodeId> {
@@ -58,6 +97,35 @@ mod tests {
         assert_eq!(l.bar, Rect::new(0.0, 0.0, 2880.0, 68.0));
         assert_eq!(l.content, Rect::new(0.0, 68.0, 2880.0, 1732.0));
         assert_eq!(l.css, (1440, 866));
+    }
+
+    #[test]
+    fn morph_runs_from_the_card_to_read_mode() {
+        let l = layout(Vec2::new(2000.0, 1068.0), 1.0, 68.0);
+        let header = Rect::new(100.0, 100.0, 512.0, 20.0);
+        let content = Rect::new(100.0, 120.0, 512.0, 360.0);
+        let css = Vec2::new(1024.0, 720.0);
+        let a = morph(header, content, css, &l, 0.0);
+        assert_eq!((a.bar, a.content, a.css), (header, content, css));
+        let b = morph(header, content, css, &l, 1.0);
+        assert_eq!((b.bar, b.content), (l.bar, l.content));
+        assert!((b.css.x - 2000.0).abs() < 0.01 && (b.css.y - 1000.0).abs() < 0.01);
+        // Halfway: half the way in screen px, and the scale in between (0.5 → 1).
+        let m = morph(header, content, css, &l, 0.5);
+        assert_eq!(m.content.w, 1256.0);
+        assert!((m.css.x - 1256.0 / 0.75).abs() < 0.01);
+        // Out of range clamps.
+        assert_eq!(morph(header, content, css, &l, 2.0), b);
+    }
+
+    #[test]
+    fn extent_shows_old_pixels_at_their_own_size() {
+        assert_eq!(extent(Vec2::new(1024.0, 720.0), (1024.0, 720.0)), [1.0, 1.0]);
+        // The window-sized page squeezed back into a card: cropped, not squashed.
+        assert_eq!(extent(Vec2::new(1024.0, 720.0), (2048.0, 1000.0)), [0.5, 0.72]);
+        // The card's page shown in the window before it repaints: the rest filled.
+        assert_eq!(extent(Vec2::new(2048.0, 1440.0), (1024.0, 720.0)), [2.0, 2.0]);
+        assert_eq!(extent(Vec2::new(10.0, 10.0), (0.0, 0.0)), [1.0, 1.0]);
     }
 
     #[test]

@@ -193,6 +193,7 @@ pub fn fade(l: &mut Layer, alpha: f32, shift: Vec2) {
         q.shape = match q.shape {
             Shape::Rect { rect, radius } => Shape::Rect { rect: rect.translate(d), radius },
             Shape::RoundBottom { rect, radius } => Shape::RoundBottom { rect: rect.translate(d), radius },
+            Shape::Page { rect, radius, round_bottom, extent } => Shape::Page { rect: rect.translate(d), radius, round_bottom, extent },
             Shape::Shadow { rect, radius, blur } => Shape::Shadow { rect: rect.translate(d), radius, blur },
             Shape::Segment { from, to, width } => Shape::Segment { from: [from[0] + d.x, from[1] + d.y], to: [to[0] + d.x, to[1] + d.y], width },
         };

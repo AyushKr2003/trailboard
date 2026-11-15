@@ -50,6 +50,16 @@ pub fn covers(site: &str, url: &str) -> bool {
     icon::site(url).is_some_and(|s| s == site || s.strip_suffix(site).is_some_and(|rest| rest.ends_with('.')))
 }
 
+/// The count on a card's title bar for `blocked` requests stopped on its
+/// page: nothing for none, and a capped figure so the mark stays small.
+pub fn blocked_badge(blocked: u32) -> Option<String> {
+    match blocked {
+        0 => None,
+        1..=99 => Some(blocked.to_string()),
+        _ => Some("99+".into()),
+    }
+}
+
 /// The sites where blocking is off, each a site as [`icon::site`] gives it
 /// (`example.com`, `localhost:8080`). A site covers its subdomains too.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -85,6 +95,15 @@ impl AllowedSites {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blocked_badge_text() {
+        assert_eq!(blocked_badge(0), None);
+        assert_eq!(blocked_badge(1).as_deref(), Some("1"));
+        assert_eq!(blocked_badge(99).as_deref(), Some("99"));
+        assert_eq!(blocked_badge(100).as_deref(), Some("99+"));
+        assert_eq!(blocked_badge(u32::MAX).as_deref(), Some("99+"));
+    }
 
     #[test]
     fn staleness() {

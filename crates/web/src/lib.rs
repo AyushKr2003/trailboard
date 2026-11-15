@@ -419,6 +419,9 @@ struct Shared {
     committed: std::cell::Cell<bool>,
     /// The frames hiding elements by the filter lists' cosmetic rules.
     hide: cosmetic::Frames,
+    /// A frame clicked a cookie banner's reject button ([`consent`]) since
+    /// the main frame last started loading.
+    banner_rejected: std::cell::Cell<bool>,
 }
 
 #[derive(Default)]
@@ -848,6 +851,9 @@ wrap_display_handler! {
                 if let Some((platform, what)) = consent::parse(body) {
                     let url = self.shared.url.borrow();
                     log::info!("consent: {platform} {what} on {}", url.chars().take(100).collect::<String>());
+                    if what == "rejected" {
+                        self.shared.banner_rejected.set(true);
+                    }
                 }
                 return 1;
             }
@@ -939,6 +945,7 @@ wrap_load_handler! {
             let Some(frame) = frame else { return };
             if frame.is_main() != 0 {
                 self.shared.committed.set(true);
+                self.shared.banner_rejected.set(false);
             }
             if self.shared.kind == PageKind::Web
                 && let Some(browser) = browser
@@ -1180,6 +1187,7 @@ impl Page {
             kind,
             committed: std::cell::Cell::new(false),
             hide: Default::default(),
+            banner_rejected: std::cell::Cell::new(false),
         });
         let blocked = std::sync::Arc::new(shield::Blocked::default());
         let mut client = PageClient::new(
@@ -1231,6 +1239,12 @@ impl Page {
     /// How many addresses were blocked since the page last navigated.
     pub fn blocked(&self) -> u32 {
         self.blocked.count()
+    }
+
+    /// Whether Trailboard clicked a cookie banner's reject button on this
+    /// page (in any of its frames) since it last navigated.
+    pub fn banner_rejected(&self) -> bool {
+        self.shared.banner_rejected.get()
     }
 
     pub fn key(&self) -> u64 {

@@ -1759,8 +1759,10 @@ impl App {
     fn blocking_state(&self, id: NodeId) -> Option<web::menu::Blocking> {
         let n = self.scene.node(id).filter(|n| !n.is_note() && self.settings.block_ads)?;
         let site = scene::icon::site(&n.url)?;
-        let blocked = self.cards.get(&id).map_or(0, |c| c.page.blocked());
-        Some(web::menu::Blocking { site, on: !self.blocking.allows(&n.url), blocked })
+        let card = self.cards.get(&id);
+        let blocked = card.map_or(0, |c| c.page.blocked());
+        let banner_rejected = card.is_some_and(|c| c.page.banner_rejected());
+        Some(web::menu::Blocking { site, on: !self.blocking.allows(&n.url), blocked, banner_rejected })
     }
 
     /// Turns ad blocking off on card `id`'s site, or back on, and reloads the
@@ -4524,7 +4526,51 @@ impl App {
                     Some((i, len)) => format!("{i}/{len} · {title}"),
                     None => title,
                 };
-                let clip = Rect::new(title_x, header.y, (header.right() - pad - CLOSE_W * k - title_x).max(1.0), header.h);
+                // Requests the blocker stopped on this page: a small shield
+                // with the count, just left of ×. Not on an allowed site.
+                let mut title_right = header.right() - CLOSE_W * k;
+                let badge = self
+                    .blocking_state(n.id)
+                    .filter(|b| b.on)
+                    .and_then(|b| scene::privacy::blocked_badge(b.blocked));
+                if let Some(count) = badge {
+                    let size = 11.5 * k;
+                    let tw = self.renderer.as_mut().map_or(size * 1.2, |r| r.measure(&count, size, true));
+                    let (sw, sh) = (9.0 * k, 11.0 * k);
+                    let w = sw + 3.5 * k + tw;
+                    // Only while the title keeps some room.
+                    if title_right - w - 4.0 * k - title_x >= 48.0 * k {
+                        let x = title_right - w;
+                        let sy = header.y + (header.h - sh) / 2.0;
+                        let shield = Rect::new(x, sy, sw, sh);
+                        let ink = if focused { th.foreground() } else { th.dim_text() };
+                        l.quads.push(Quad {
+                            shape: Shape::RoundBottom { rect: shield, radius: sw / 2.0 },
+                            color: rgb(ink, 0.85),
+                            texture: None,
+                        });
+                        // Hollow it out where that stays visible, so it reads as an outline.
+                        let edge = 1.4 * k;
+                        if edge >= 1.0 {
+                            let inner = Rect::new(shield.x + edge, shield.y + edge, sw - 2.0 * edge, sh - 2.0 * edge);
+                            l.quads.push(Quad {
+                                shape: Shape::RoundBottom { rect: inner, radius: inner.w / 2.0 },
+                                color: rgb(th.card(focused), 1.0),
+                                texture: None,
+                            });
+                        }
+                        l.texts.push(Text {
+                            text: count,
+                            pos: [x + sw + 3.5 * k, header.y + (header.h - size * 1.3) / 2.0],
+                            size,
+                            color: rgb(ink, 0.85),
+                            clip: header,
+                            bold: true,
+                        });
+                        title_right = x - 4.0 * k;
+                    }
+                }
+                let clip = Rect::new(title_x, header.y, (title_right - pad - title_x).max(1.0), header.h);
                 l.texts.push(Text {
                     text: title,
                     pos: [title_x, header.y + (header.h - font * 1.3) / 2.0],

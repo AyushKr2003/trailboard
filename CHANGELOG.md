@@ -7,6 +7,12 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Blocked count on the title bar**: a page where Trailboard stopped ads
+  or trackers shows a small shield and how many requests it blocked, next
+  to the close button. Allowing ads on the site removes it.
+- **"Cookie banner rejected" in the page menu**: when Trailboard clicked a
+  cookie banner's reject button for you, the page's right-click menu says
+  so, above *Allow ads on …*.
 - **Sandbox state in the settings**: the settings panel (Ctrl+,) has a
   *Sandbox* line saying whether pages run in Chromium's sandbox and how;
   pick it for an explanation. When the system can't run the sandbox,

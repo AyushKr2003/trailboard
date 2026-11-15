@@ -858,6 +858,15 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   - Each page counts the distinct URLs it blocked since its main frame last
     navigated (Chromium asks twice for one when its preload scanner and the
     parser both want it): "N blocked" in the page menu.
+  - ✅ The count on the title bar (2026-11-15): a small outlined shield
+    (a `RoundBottom` quad hollowed by a second one; a plain filled shape
+    when the zoom makes the outline thinner than a pixel) and the count,
+    left of ×, in the title's colour. Decisions: only while blocking is on
+    for the page's site and the count is above 0 (`scene::privacy::
+    blocked_badge`, capped at "99+"); scaled with the card like the title,
+    and dropped when it would leave the title less than 48 units; the title
+    is clipped short of it. A passive mark: clicking it is a title-bar
+    click (drag, double-click), the page menu has the toggle.
   - *Block ads and trackers* in the settings (on by default; `block_ads` in
     `settings.json`) turns it off everywhere at once; open pages keep what
     they loaded until reloaded.
@@ -922,7 +931,11 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     - Same switches as hiding (runs from `cosmetic::on_load_start` after
       `shield::rules_for`): the setting and the per-site toggle cover it.
       No separate switch yet. Outcomes (`rejected`, `no-button`, `shown`,
-      `unlocked`) are logged at info level, not shown in the UI.
+      `unlocked`) are logged at info level.
+    - ✅ Shown in the UI (2026-11-15): a `rejected` from any frame marks the
+      page (`Page::banner_rejected`, cleared when its main frame starts
+      loading); the page menu then has a dim, unclickable "Cookie banner
+      rejected" line above the site toggle, while blocking is on there.
 - ✅ Per-site toggle (2026-11-15): the page menu's last row ("Allow ads on
   example.com · 12 blocked" / "Block ads on example.com") and *Allow or block
   ads on this site* in Ctrl+K. Decisions:
@@ -1101,36 +1114,31 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-15 (fifth). Handoff item 1: the sandbox state is in the settings panel, with a one-time toast when the system can't run it.
+**Last session:** 2026-11-15 (sixth). Handoff items 1 and 2: the blocked-request count on the title bar, and a "Cookie banner rejected" line in the page menu.
 **Repo state:** on `master`, committed; working tree clean.
 **Done this session:**
-- Settings panel (Ctrl+,): a read-only *Sandbox* row (`palette::Item::Status`,
-  `web::sandbox::Sandbox::summary`/`explain`); Enter or a click explains it in
-  a toast drawn below the panel. First start without sandbox support: a 10 s
-  toast, once (`storage::marks`, `sandbox-off-told`, cleared when the sandbox
-  runs). Decisions under M9 (sandbox item).
+- Title bar: a small outlined shield and the number of requests blocked on
+  the page, left of ×, while blocking is on for the site
+  (`scene::privacy::blocked_badge`). Decisions under M9 (blocking, count).
+- Page menu: "Cookie banner rejected" (dim, informational) above the site
+  toggle when Trailboard clicked a banner's reject button on the page
+  (`web::Page::banner_rejected`, `menu::Blocking::banner_rejected`).
 **Owner decisions (2026-11-15):** no AppImage, Flatpak or AUR work (the owner
 publishes later, on their own); no UI translations; licence is Apache-2.0
 only (`LICENSE-APACHE`); all AI features (semantic search, Explain, any
 other AI/ML), imports from other browsers, and password managers and
 passkeys are all on hold until the owner says otherwise (see M10).
 **Next up (owner's order, 2026-11-15):** no M10 work: its items are on
-hold or wait for the owner to pick them. Do these, in this order:
-1. Blocked-request count on the title bar: a small shield mark with the
-   number. Today the count only shows in the right-click menu.
-2. "Cookie banner rejected" line in the page menu, so the user can see
-   when Trailboard clicked reject for them.
-3. Reread `filters/user.txt` when it changes, instead of only at start.
+hold or wait for the owner to pick them.
+1. Reread `filters/user.txt` when it changes, instead of only at start.
    The `notify` watcher it needs is already a dependency.
 
-After those, the other small follow-ups below. Sandbox follow-ups: verify the setuid path on a kernel without unprivileged user namespaces (needs `kernel.unprivileged_userns_clone=0` or linux-hardened, and the package installed). Consent follow-ups: more platforms as real sites show them (TCF
-`__tcfapi` frames, Ketch, Termly, Borlabs, Axeptio); a "cookie banner
-rejected" line in the page menu; a separate *Reject cookie banners* switch
-if clicking ever breaks a site. Small blocking follow-ups: a shield
-mark with the count on the title bar; scriptlets/`$redirect` resources
+After that, the other small follow-ups below. Sandbox follow-ups: verify the setuid path on a kernel without unprivileged user namespaces (needs `kernel.unprivileged_userns_clone=0` or linux-hardened, and the package installed). Consent follow-ups: more platforms as real sites show them (TCF
+`__tcfapi` frames, Ketch, Termly, Borlabs, Axeptio); a separate *Reject cookie banners* switch
+if clicking ever breaks a site. Small blocking follow-ups: clicking the
+title-bar shield could open the page menu or toggle the site; scriptlets/`$redirect` resources
 (need the `resource-assembler` feature and uBO's resources, check the
-licence); a palette list of allowed sites; reread `user.txt` when it
-changes (the `notify` watcher is already a dependency); serialize the
+licence); a palette list of allowed sites; serialize the
 compiled engine if startup ever shows it; procedural cosmetic rules
 (`:has-text()` and friends, run in the page); a separate *Hide cookie
 banners* switch if one list ever breaks sites the other doesn't; a "N
@@ -1155,6 +1163,19 @@ Save as Markdown; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out; open `crash.log` from the crash
 toast or a palette command.
 **Notes for the next session:**
+- Title-bar count verified e2e (`~/.cache/trailboard-e2e-badge`, `run.sh N
+  shot…`; serve `site/` with `python3 -m http.server 8771 --bind
+  127.0.0.1`; `seed/` has a `user.txt` rule blocking `/ads/`): card shows
+  the shield and "2" at board zoom and after z (`badge1/2.png`); after
+  *Allow or block ads* the reloaded page loads its ad and the mark is gone
+  (`badge3.png`). Cookie line verified e2e
+  (`~/.cache/trailboard-e2e-badgeconsent`, the consent site on
+  127.0.0.2:8773): after "OneTrust rejected" the right-click menu shows
+  "Cookie banner rejected" dimmed above "Allow ads on 127.0.0.2:8773"
+  (`menu1.png`); after Ctrl+L to the 8771 page it is gone (`menu2.png`).
+  The shield is hollow at zoom ≈ 0.9 (`badge2.png`) and filled at ≈ 0.57
+  (`badge1.png`), as intended. Not verified: "99+", a light theme, a
+  HiDPI screen.
 - Sandbox row and notice verified e2e (`~/.cache/trailboard-e2e-sandboxui`,
   `run.sh N [nons]`; `nons` runs inside a user namespace that allows no
   further ones, as on linux-hardened). Run 1 (sandbox on): row 6 "Sandbox"

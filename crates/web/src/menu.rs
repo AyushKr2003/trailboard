@@ -38,6 +38,8 @@ pub struct Blocking {
     pub on: bool,
     /// Requests blocked since the page loaded.
     pub blocked: u32,
+    /// A cookie banner on the page was answered with "reject".
+    pub banner_rejected: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -158,7 +160,13 @@ pub fn items(ctx: &MenuContext) -> Vec<MenuItem> {
                 (true, n) => format!("Allow ads on {} · {n} blocked", b.site),
                 (false, _) => format!("Block ads on {}", b.site),
             };
-            sections.push(vec![MenuItem::new(label, MenuAction::ToggleBlocking, true)]);
+            let mut section = Vec::new();
+            if b.on && b.banner_rejected {
+                // Only telling: nothing to do with it.
+                section.push(MenuItem::new("Cookie banner rejected", MenuAction::ToggleBlocking, false));
+            }
+            section.push(MenuItem::new(label, MenuAction::ToggleBlocking, true));
+            sections.push(section);
         }
     }
     let mut out = Vec::new();
@@ -206,7 +214,7 @@ mod tests {
 
     #[test]
     fn plain_page_offers_blocking_on_its_site() {
-        let b = Blocking { site: "news.example".into(), on: true, blocked: 12 };
+        let b = Blocking { site: "news.example".into(), on: true, blocked: 12, banner_rejected: false };
         let ctx = MenuContext { blocking: Some(b.clone()), ..Default::default() };
         let got = items(&ctx);
         assert_eq!(labels(&got), ["Back", "Forward", "Reload", "-", "Select all", "-", "Allow ads on news.example · 12 blocked"]);
@@ -216,6 +224,13 @@ mod tests {
         assert_eq!(labels(&items(&ctx))[6], "Allow ads on news.example");
         let ctx = MenuContext { blocking: Some(Blocking { on: false, ..b.clone() }), ..Default::default() };
         assert_eq!(labels(&items(&ctx))[6], "Block ads on news.example");
+        // A rejected cookie banner is told, above the toggle, while blocking is on.
+        let ctx = MenuContext { blocking: Some(Blocking { banner_rejected: true, ..b.clone() }), ..Default::default() };
+        let got = items(&ctx);
+        assert_eq!(labels(&got)[6..], ["Cookie banner rejected", "Allow ads on news.example · 12 blocked"]);
+        assert!(!got[6].is_enabled() && got[7].is_enabled());
+        let ctx = MenuContext { blocking: Some(Blocking { banner_rejected: true, on: false, ..b.clone() }), ..Default::default() };
+        assert_eq!(labels(&items(&ctx))[6..], ["Block ads on news.example"]);
         // Over a link, the menu is about the link.
         let ctx = MenuContext { blocking: Some(b), link: Some("https://a/".into()), ..Default::default() };
         assert!(!labels(&items(&ctx)).iter().any(|l| l.contains("ads")));

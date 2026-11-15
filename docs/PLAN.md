@@ -440,8 +440,16 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     on the current card. The page keeps the keys if it had them.
   - Mouse: hover highlights, a click runs the row, the wheel scrolls the list
     (up to 9 rows, fewer in a short window, with a scroll bar).
-  - Not done: opening a card *beside* the current one from
-    the palette (Shift+Enter?), recently closed cards as results.
+  - ✅ Open beside (2026-11-15): Shift+Enter or Shift+click on a row that
+    opens a page (a history page not on the board, the last "Open …/search"
+    row; in Ctrl+K and Ctrl+H) opens it beside the current card
+    (`App::current`: the focused card, else the one mid-view) via
+    `Scene::spawn_beside`, with a trail edge, focused with the keys in its
+    page. Other rows ignore Shift (a card row still goes to the card, a
+    closed card comes back where it was). Shift+Enter in the address bar
+    (Ctrl+L, Ctrl+T) does the same instead of loading in place / in the
+    middle. No card on the board: in the middle, like Enter. Not shown as a
+    hint on the rows (the guide note and README list it).
 - ✅ Find in page (Ctrl+F; `omnibox::Target::Find`, `web::Page::find`).
   Decisions (2026-11-14):
   - The bar is the app's one text field at the top (like the palette), not a
@@ -1298,16 +1306,14 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-15 (twelfth). Follow-up: rename a trail from the
-sidebar and from its tag.
+**Last session:** 2026-11-15 (thirteenth). Follow-up: Shift+Enter in the
+palette to open beside.
 **Repo state:** on `master`, committed; working tree clean.
 **Done this session:**
-- R in the sidebar names the highlighted row's trail; a double-click on a
-  trail's header names it (the group keeps its collapsed state); a click
-  on a trail's tag on the board opens the name box. The name box, address
-  bar and find bar sit right of an open sidebar. Script command
-  `tagclick ID`. Decisions under M5 (Trail names and colours → Renaming
-  from elsewhere).
+- Shift+Enter / Shift+click on a page row of Ctrl+K or Ctrl+H, and
+  Shift+Enter in the address bar, open the page beside the current card with
+  a trail edge (`App::open_beside_current`). Decisions under M5 (Palette →
+  Open beside). Guide note and README mention it.
 **Owner decisions (2026-11-15):** no AppImage, Flatpak or AUR work (the owner
 publishes later, on their own); no UI translations; licence is Apache-2.0
 only (`LICENSE-APACHE`); all AI features (semantic search, Explain, any
@@ -1317,7 +1323,7 @@ passkeys are all on hold until the owner says otherwise (see M10).
 pick them. M11 (premium look): step 4 is done; the other steps wait for
 the owner to ask (corners stay Hyprland's, see M11). Take the small
 follow-ups below; a good next one is auto-scrolling the sidebar while a
-header is dragged, or Shift+Enter in the palette to open beside.
+header is dragged, or keyboard selection of several cards.
 
 After that, the other small follow-ups below. Sandbox follow-ups: verify the setuid path on a kernel without unprivileged user namespaces (needs `kernel.unprivileged_userns_clone=0` or linux-hardened, and the package installed). Consent follow-ups: more platforms as real sites show them (TCF
 `__tcfapi` frames, Ketch, Termly, Borlabs, Axeptio); a separate *Reject cookie banners* switch
@@ -1340,12 +1346,20 @@ undo for forgetting a page; site
 icons on history rows; prune `icons/` of sites no card uses; a letter tile for
 sites without an icon; the name label for a stack could list its size; a zoom
 badge on a zoomed card's title bar; Ctrl+scroll inside a page to zoom it;
-Shift+Enter in the palette to open beside; keyboard selection of
+keyboard selection of
 several cards; link hints inside iframes; xdg-desktop-portal file chooser for
 Save as Markdown; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out; open `crash.log` from the crash
 toast or a palette command.
 **Notes for the next session:**
+- Open beside verified e2e (`~/.cache/trailboard-e2e-beside`; serve `site/`
+  with `python3 -m http.server 8791 --bind 127.0.0.1 -d site`, then
+  `run.sh N shot…`): palette Shift+Enter opens card 3 beside card 1 (edge
+  1→3), Ctrl+L Shift+Enter card 4 beside 3, a Ctrl+H row for a closed page
+  opens beside the current card, an `sclick` on a palette row opens beside
+  (`s2.png`: new card focused, edge and trail tag drawn); a card row with
+  Shift just goes to the card. Not verified: Read Mode (goes through
+  `ensure_visible`, which reads the new card), a real keyboard's Shift.
 - Trail renaming verified e2e (`~/.cache/trailboard-e2e-trailname`; start
   `python3 server.py 8781` there, copy `seed/` to `dataN`, `run.sh N
   shot…`): R on the "Async Rust" header and on a card row of the

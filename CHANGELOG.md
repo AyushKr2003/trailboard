@@ -7,6 +7,11 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Open beside from the palette**: Shift+Enter (or Shift+click) on a page
+  row in Ctrl+K or Ctrl+H, or on the palette's last row, opens the page
+  beside the current card, joined to it by a trail edge like a clicked link,
+  and makes it current. Shift+Enter in the address bar (Ctrl+L, Ctrl+T) does
+  the same. With no card on the board it opens in the middle as Enter does.
 - **Rename a trail from the sidebar or its tag**: in the trails sidebar, R
   names the highlighted row's trail (a card on no trail becomes a trail of
   its own), and a double-click on a trail's header does the same without

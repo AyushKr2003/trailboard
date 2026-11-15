@@ -1219,6 +1219,27 @@ impl App {
         self.toast(format!("Added to {}", menu::cut(&title, menu::OUTLINE_CHARS)));
     }
 
+    /// Shift+Enter in the palette or an address field: open `url` beside the
+    /// current card, joined to it by a trail edge as a clicked link would be,
+    /// and make it current with the keys in its page. With no card to open
+    /// beside, it opens in the middle of the view like Enter.
+    fn open_beside_current(&mut self, url: &str) {
+        let src = self.current().filter(|&id| self.scene.node(id).is_some());
+        let id = match src {
+            Some(src) => {
+                let Some(id) = self.open_card(Rect::default(), url, Some(src)) else { return };
+                log::info!("opened card {} beside card {}", id.0, src.0);
+                self.focus(Some(id));
+                self.ensure_visible(id);
+                Some(id)
+            }
+            None => self.new_card_at_center(url),
+        };
+        if id.is_some() {
+            self.keys_in_page = true;
+        }
+    }
+
     fn new_card_at_center(&mut self, url: &str) -> Option<NodeId> {
         let center = self.camera.center;
         let rect = placement::free_near(&self.scene, center, CARD_W, CARD_H);
@@ -1791,9 +1812,11 @@ impl App {
         log::info!("palette open");
     }
 
-    /// Runs a palette row (the palette is already closed).
-    fn run_palette(&mut self, row: palette::Row) {
-        log::info!("palette: {:?} {:?}", row.item, row.label);
+    /// Runs a palette row (the palette is already closed). `beside` (Shift+Enter
+    /// or Shift+click) opens a page row beside the current card instead of
+    /// in the middle of the view; other rows run as usual.
+    fn run_palette(&mut self, row: palette::Row, beside: bool) {
+        log::info!("palette: {:?} {:?}{}", row.item, row.label, if beside { " (beside)" } else { "" });
         match row.item {
             Item::Card(id) => {
                 if self.read.is_some() {
@@ -1802,6 +1825,7 @@ impl App {
                 self.go_to_card(id);
             }
             Item::Space(id) => self.switch_space(id),
+            Item::Open(url) if beside => self.open_beside_current(&url),
             Item::Open(url) => {
                 if self.new_card_at_center(&url).is_some() {
                     self.keys_in_page = true;
@@ -3558,7 +3582,7 @@ impl App {
                 }
                 self.omnibox = None;
                 if button == MouseButton::Left {
-                    self.run_palette(rows[i].clone());
+                    self.run_palette(rows[i].clone(), self.mods.shift_key());
                 }
                 return;
             }
@@ -4035,7 +4059,7 @@ impl App {
                     let ob = self.omnibox.take().expect("palette open");
                     let rows = self.list_rows(&ob);
                     if let Some(row) = rows.into_iter().nth(ob.sel) {
-                        self.run_palette(row);
+                        self.run_palette(row, shift);
                     }
                 }
                 Some(NamedKey::Enter) => {
@@ -4046,6 +4070,8 @@ impl App {
                         self.name_trail(id, &ob.text);
                     } else if let Some(url) = omnibox::resolve(&ob.text, self.settings.search) {
                         match (ob.target, self.focused_page()) {
+                            // Shift+Enter: beside the current card instead.
+                            _ if shift => self.open_beside_current(&url),
                             (Target::Focused, Some(page)) => page.load(&url),
                             _ => {
                                 // Typed an address: the new page is what you use next.

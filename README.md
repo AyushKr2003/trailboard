@@ -116,8 +116,8 @@ note* in Ctrl+K.
 | Read Mode (page fills the window) | Tab (Tab, Esc or double-click its bar to go back) |
 | Close card / reopen closed | × or Ctrl+W / Ctrl+Shift+T |
 | Undo / redo board edits | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y (after clicking the board or a title bar) |
-| Address bar / new card | Ctrl+L / Ctrl+T |
-| Palette: find a card (folded ones too, or by words in its page), a card you closed, a page from history, another space or a command | Ctrl+K, type a few letters, ↑/↓ (or Ctrl+N/P) and Enter, or click a row; the last row searches the web or opens what you typed |
+| Address bar / new card | Ctrl+L / Ctrl+T; Shift+Enter opens what you typed beside the current card instead |
+| Palette: find a card (folded ones too, or by words in its page), a card you closed, a page from history, another space or a command | Ctrl+K, type a few letters, ↑/↓ (or Ctrl+N/P) and Enter, or click a row; the last row searches the web or opens what you typed. Shift+Enter (or Shift+click) opens a page from history or the last row beside the current card, joined to it like a link |
 | New note (Markdown) | N (while no page has the keys); click a note to edit, Esc or click away to see it rendered |
 | New sticky note / its next colour | Shift+N / C on it (while no page has the keys); drag its coloured strip to move it; *Make sticky note* / *Make note card* in a note's right-click menu |
 | Quote selected text in a note | right-click the selection → *Add to note* (the note last used, or a new one beside the page) |
@@ -136,7 +136,7 @@ note* in Ctrl+K.
 | Fill the view with the current card | z |
 | Scroll the current page without entering it | d / u |
 | Page menu by keyboard | Menu key or Shift+F10; j/k or ↑/↓, Enter, Esc |
-| History: pages you opened, newest first | Ctrl+H, type to filter by words in them, Enter opens, Shift+Delete forgets the page; *Clear history* in Ctrl+K forgets all |
+| History: pages you opened, newest first | Ctrl+H, type to filter by words in them, Enter opens (Shift+Enter beside the current card), Shift+Delete forgets the page; *Clear history* in Ctrl+K forgets all |
 | Downloads: files saved, newest first | Ctrl+J (or *Downloads* in Ctrl+K), type to filter; Enter opens the file (or downloads again one that didn't finish), Ctrl+Enter opens its folder, Shift+Delete cancels a running download or takes a finished one off the list |
 | Settings: search engine, pages kept awake, keep history, page colours | Ctrl+, (or *Settings* in Ctrl+K); type to filter, ↑/↓ pick, Enter or → next value, Shift+Enter or ← previous; a click steps a row (right-click back). Changes apply and save at once |
 | Find in the current page | Ctrl+F, type (matches show as you type); Enter / Shift+Enter next / previous; Esc closes |

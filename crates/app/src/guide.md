@@ -13,6 +13,7 @@ Every page is a live card on one big board. A link you open lands **beside** the
 
 - **New card / address bar:** Ctrl+T / Ctrl+L
 - **Find anything** (cards, history, commands): Ctrl+K
+- **Open beside the current card** from Ctrl+K, Ctrl+H or the address bar: Shift+Enter
 - **Follow a link by keyboard:** f, then its label
 - **Close / reopen:** Ctrl+W / Ctrl+Shift+T
 

@@ -982,6 +982,16 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     never saved (it would record a site visited privately).
   - Only one switch for now: ads and trackers together. Separate switches
     (trackers only, cookie banners) can come with cosmetic filtering.
+  - ✅ A list of allowed sites (2026-11-15): *Sites with ads allowed* in
+    Ctrl+K opens a list view (`Target::AllowedSites`,
+    `palette::allowed_rows`), sorted by site, type to filter. Each row says
+    "Until you quit" for a site allowed from a private space and how many
+    cards on the board (this space) show it. Decisions: Enter, a left
+    click or Shift+Delete blocks ads on the site again (there is nothing
+    else to do with a row, and the shield menu undoes it); the list stays
+    open, like the settings panel, so several can go in a row; the site's
+    live pages reload as with the page-menu toggle. No settings-panel row
+    for it yet: the panel has no rows that open other views.
 
 ### M9: Packaging and release ✅
 - ✅ Bundle layout (`scripts/bundle.sh [--tar]`): `target/bundle/trailboard-VERSION-ARCH/`
@@ -1276,13 +1286,13 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-15 (tenth). M8 follow-up: "N hidden" beside "N blocked".
+**Last session:** 2026-11-15 (eleventh). M8 follow-up: a palette list of allowed sites.
 **Repo state:** on `master`, committed; working tree clean.
 **Done this session:**
-- The cosmetic script now counts the elements it hides in each frame and
-  reports changes; the shield menu (and the page menu) reads *Allow ads on
-  … · N blocked · M hidden*, and the title-bar count is their sum.
-  Decisions under M8 ("N hidden" beside "N blocked").
+- *Sites with ads allowed* in Ctrl+K: a list view of the sites where
+  blocking is off, with "Until you quit" and a card count per row; Enter,
+  a click or Shift+Delete blocks ads there again (the list stays open).
+  Decisions under M8 (Per-site toggle → A list of allowed sites).
 **Owner decisions (2026-11-15):** no AppImage, Flatpak or AUR work (the owner
 publishes later, on their own); no UI translations; licence is Apache-2.0
 only (`LICENSE-APACHE`); all AI features (semantic search, Explain, any
@@ -1291,13 +1301,14 @@ passkeys are all on hold until the owner says otherwise (see M10).
 **Next up:** no M10 work: its items are on hold or wait for the owner to
 pick them. M11 (premium look): step 4 is done; the other steps wait for
 the owner to ask (corners stay Hyprland's, see M11). Take the small
-follow-ups below; a good next one is a palette list of allowed sites.
+follow-ups below; a good next one is renaming a trail from the sidebar
+(or from its tag).
 
 After that, the other small follow-ups below. Sandbox follow-ups: verify the setuid path on a kernel without unprivileged user namespaces (needs `kernel.unprivileged_userns_clone=0` or linux-hardened, and the package installed). Consent follow-ups: more platforms as real sites show them (TCF
 `__tcfapi` frames, Ketch, Termly, Borlabs, Axeptio); a separate *Reject cookie banners* switch
 if clicking ever breaks a site. Small blocking follow-ups: scriptlets/`$redirect` resources
 (need the `resource-assembler` feature and uBO's resources, check the
-licence); a palette list of allowed sites; serialize the
+licence); serialize the
 compiled engine if startup ever shows it; procedural cosmetic rules
 (`:has-text()` and friends, run in the page); a separate *Hide cookie
 banners* switch if one list ever breaks sites the other doesn't. Other small follow-ups: rename a trail from the
@@ -1321,6 +1332,16 @@ Save as Markdown; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out; open `crash.log` from the crash
 toast or a palette command.
 **Notes for the next session:**
+- Allowed-sites list verified e2e (`~/.cache/trailboard-e2e-allowed`;
+  `seed/` has `privacy.json` allowing 127.0.0.1:8771 and example.com;
+  copy it to `dataN`, `run.sh N shot…`): the list logs both rows ("1
+  card" on the first), Enter blocks 127.0.0.1:8771 again (1 page
+  reloaded, toast), Shift+Delete example.com, the empty state reads "Ads
+  are blocked on every site" (`al1`, `al3`), `privacy.json` ends empty;
+  in a private space a site allowed shows "Until you quit · 1 card"
+  (`al4`). The server on 8771 was another session's (a.html 404s), so
+  the blocked count wasn't seen to come back. Not verified: a click on a
+  row (same path as Enter), a list long enough to scroll, light theme.
 - Hidden count verified e2e (`~/.cache/trailboard-e2e-hidden`; serve
   `site/` on 127.0.0.1:8771 and `frame/` on 127.0.0.1:8772 with
   `python3 -m http.server`; copy `seed/` to `dataN`; `run.sh N shot…`,

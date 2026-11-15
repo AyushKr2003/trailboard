@@ -189,6 +189,8 @@ start and refreshed every 4 days; your own rules in the same syntax go in
 off for that site and its subdomains (or back on) and says how many requests
 it blocked; *Allow or block ads on this site* in Ctrl+K does the same. Sites
 allowed are kept in `privacy.json` (not those allowed from a private space).
+*Sites with ads allowed* in Ctrl+K lists them; Enter, a click or
+Shift+Delete on one blocks ads there again.
 *Block ads and trackers* in the settings turns it off everywhere.
 
 On [Omarchy](https://omarchy.org/), Trailboard follows the current theme live

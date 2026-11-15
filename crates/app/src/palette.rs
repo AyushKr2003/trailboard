@@ -68,6 +68,7 @@ pub enum Command {
     Shortcuts,
     Welcome,
     ToggleBlocking,
+    AllowedSites,
     Quit,
 }
 
@@ -126,6 +127,7 @@ pub const COMMANDS: &[CommandInfo] = &[
     c(Command::Shortcuts, "Keyboard shortcuts", "?", "help keys hints sheet"),
     c(Command::Welcome, "Welcome note", "", "guide help getting started tour introduction first"),
     c(Command::ToggleBlocking, "Allow or block ads on this site", "", "adblock trackers privacy whitelist exception protections"),
+    c(Command::AllowedSites, "Sites with ads allowed", "", "adblock trackers privacy whitelist allowlist exceptions protections blocking list"),
     c(Command::Quit, "Quit Trailboard", "Q", "exit close"),
 ];
 
@@ -145,6 +147,9 @@ pub enum Item {
     Download(u64),
     /// A read-only line of the settings panel: Enter or a click explains it.
     Status(Status),
+    /// A row of the allowed-sites list: Enter, a click or Shift+Delete
+    /// blocks ads on the site again.
+    AllowedSite(String),
 }
 
 /// Facts shown in the settings panel that can't be changed there.
@@ -404,6 +409,33 @@ pub fn download_rows(
     }
     let urls: Vec<&str> = list.iter().map(|d| d.url.as_str()).collect();
     let cands: Vec<Candidate> = items.iter().zip(&urls).map(|(r, url)| Candidate { text: &r.label, alt: url }).collect();
+    palette::rank(query, &cands).into_iter().map(|r| Row { positions: r.positions, ..items[r.index].clone() }).collect()
+}
+
+/// The allowed-sites list's rows: each site where ads are allowed
+/// (`sites`, sorted, each with whether it lasts only until quitting), saying
+/// how many cards on the board show it. A query filters by site.
+pub fn allowed_rows(query: &str, sites: &[(String, bool)], scene: &Scene) -> Vec<Row> {
+    let items: Vec<Row> = sites
+        .iter()
+        .map(|(site, unsaved)| {
+            let cards = scene.all_nodes().filter(|n| !n.is_note() && scene::privacy::covers(site, &n.url)).count();
+            let mut parts = Vec::new();
+            if *unsaved {
+                parts.push("Until you quit".to_string());
+            }
+            match cards {
+                0 => {}
+                1 => parts.push("1 card".to_string()),
+                n => parts.push(format!("{n} cards")),
+            }
+            Row { item: Item::AllowedSite(site.clone()), label: site.clone(), detail: parts.join(" · "), positions: Vec::new(), dot: None, history: None }
+        })
+        .collect();
+    if query.trim().is_empty() {
+        return items;
+    }
+    let cands: Vec<Candidate> = items.iter().map(|r| Candidate { text: &r.label, alt: "" }).collect();
     palette::rank(query, &cands).into_iter().map(|r| Row { positions: r.positions, ..items[r.index].clone() }).collect()
 }
 
@@ -854,6 +886,22 @@ mod tests {
         assert_eq!(r[2].detail, "example.org · 3 Jan");
         assert!(r.iter().all(|r| r.history.is_some()));
         assert_eq!(r[1].history.as_deref(), Some("https://doc.rust-lang.org/book/"));
+    }
+
+    #[test]
+    fn allowed_site_rows() {
+        let mut s = board();
+        s.add_page(Rect::new(0.0, 0.0, 400.0, 300.0), "https://de.wikipedia.org/wiki/Pfad");
+        let sites = vec![("example.com".to_string(), true), ("rust-lang.org".to_string(), false), ("wikipedia.org".to_string(), false)];
+        let r = allowed_rows("", &sites, &s);
+        let got: Vec<(&str, &str)> = r.iter().map(|r| (r.label.as_str(), r.detail.as_str())).collect();
+        assert_eq!(got, [("example.com", "Until you quit"), ("rust-lang.org", "1 card"), ("wikipedia.org", "2 cards")]);
+        assert_eq!(r[1].item, Item::AllowedSite("rust-lang.org".into()));
+        let r = allowed_rows("wiki", &sites, &s);
+        assert_eq!(r[0].label, "wikipedia.org");
+        assert!(!r[0].positions.is_empty());
+        assert!(allowed_rows("zzqx", &sites, &s).is_empty());
+        assert!(allowed_rows("", &[], &s).is_empty());
     }
 
     #[test]

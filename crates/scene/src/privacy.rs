@@ -111,6 +111,14 @@ impl AllowedSites {
         self.sites.sort();
         Some((site, false))
     }
+
+    /// Turns blocking back on for `site` (an entry as listed). Returns
+    /// whether it was listed.
+    pub fn remove(&mut self, site: &str) -> bool {
+        let before = self.sites.len();
+        self.sites.retain(|s| s != site);
+        self.sites.len() != before
+    }
 }
 
 #[cfg(test)]
@@ -173,6 +181,9 @@ mod tests {
         assert_eq!(a.toggle("file:///home/a.html"), None);
         assert_eq!(a.toggle("about:blank"), None);
         assert!(!a.allows("file:///home/a.html"));
+        assert!(!a.remove("example.com"), "not listed");
+        assert!(a.remove("localhost:8761"));
+        assert!(!a.allows("http://localhost:8761/b"));
         assert!(covers("example.com", "https://a.b.example.com/"));
         assert!(!covers("example.com", "https://example.org/"));
     }

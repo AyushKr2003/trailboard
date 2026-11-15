@@ -1797,6 +1797,7 @@ impl App {
             Item::Setting(k) => self.step_setting(k, 1),
             Item::Download(key) => self.open_download(key),
             Item::Status(s) => self.explain_status(s),
+            Item::AllowedSite(site) => self.block_site_again(&site),
         }
     }
 
@@ -1829,20 +1830,49 @@ impl App {
             self.toast("Ads are only blocked on web pages");
             return;
         };
+        self.reload_site(&site, on);
+        self.toast(match (on, private) {
+            (true, _) => format!("Blocking ads on {site} again"),
+            (false, false) => format!("Ads allowed on {site}"),
+            (false, true) => format!("Ads allowed on {site} until you quit"),
+        });
+    }
+
+    /// Reloads the live pages of `site` after blocking changed there (`on`:
+    /// back on), so the change shows.
+    fn reload_site(&self, site: &str, on: bool) {
         let mut reloaded = 0;
         for (cid, c) in &self.cards {
-            let same = self.scene.node(*cid).is_some_and(|n| !n.is_note() && scene::privacy::covers(&site, &n.url));
+            let same = self.scene.node(*cid).is_some_and(|n| !n.is_note() && scene::privacy::covers(site, &n.url));
             if same && c.page.kind() == web::PageKind::Web {
                 c.page.reload_fresh();
                 reloaded += 1;
             }
         }
         log::info!("blocking {} {site}: {reloaded} page(s) reloaded", if on { "back on for" } else { "off for" });
-        self.toast(match (on, private) {
-            (true, _) => format!("Blocking ads on {site} again"),
-            (false, false) => format!("Ads allowed on {site}"),
-            (false, true) => format!("Ads allowed on {site} until you quit"),
-        });
+    }
+
+    /// The list of sites where ads are allowed, from the palette.
+    fn open_allowed_sites(&mut self) {
+        self.menu = None;
+        self.link_hints = None;
+        self.finish_arrange(true);
+        self.omnibox = Some(Omnibox::new("", Target::AllowedSites));
+        log::info!("allowed sites open: {:?}", self.blocking.allowed_sites());
+    }
+
+    /// Blocks ads on `site` again, from the allowed-sites list (which stays
+    /// open, its highlight kept in range).
+    fn block_site_again(&mut self, site: &str) {
+        if !self.blocking.block_again(site) {
+            return;
+        }
+        self.reload_site(site, true);
+        self.toast(format!("Blocking ads on {site} again"));
+        let len = self.omnibox.as_ref().map_or(0, |ob| self.list_rows(ob).len());
+        if let Some(ob) = self.omnibox.as_mut() {
+            ob.sel = ob.sel.min(len.saturating_sub(1));
+        }
     }
 
     /// Ctrl+,: the settings panel, a list of settings to step through.
@@ -1896,6 +1926,9 @@ impl App {
             let shown = Settings { live_pages: self.max_live, ..self.settings };
             let status: Vec<_> = self.sandbox.iter().map(|s| (palette::Status::Sandbox, s.summary().to_string())).collect();
             return palette::settings_rows(&ob.text, &shown, &notes, &status);
+        }
+        if ob.target == Target::AllowedSites {
+            return palette::allowed_rows(&ob.text, &self.blocking.allowed_sites(), &self.scene);
         }
         if ob.target == Target::Downloads {
             let missing = |p: &str| std::fs::symlink_metadata(p).is_err();
@@ -2245,6 +2278,7 @@ impl App {
             }
             Command::Welcome => self.show_guide(),
             Command::ToggleBlocking => self.toggle_blocking(self.current()),
+            Command::AllowedSites => self.open_allowed_sites(),
             Command::Quit => {
                 log::info!("quit (palette)");
                 self.quit = true;
@@ -3458,6 +3492,16 @@ impl App {
                     self.step_setting(k, if button == MouseButton::Right { -1 } else { 1 });
                     return;
                 }
+                // An allowed site is blocked again; the list stays.
+                if let Item::AllowedSite(site) = &rows[i].item {
+                    if let Some(ob) = self.omnibox.as_mut() {
+                        ob.sel = i;
+                    }
+                    if button == MouseButton::Left {
+                        self.block_site_again(site);
+                    }
+                    return;
+                }
                 // A status line explains itself; the panel stays.
                 if let Item::Status(st) = rows[i].item {
                     if let Some(ob) = self.omnibox.as_mut() {
@@ -3864,11 +3908,12 @@ impl App {
             let len = self.list_rows(ob).len();
             (len, palette::Panel::new(self.viewport(), self.ui(), len).shown)
         });
-        // The settings panel's highlighted setting, for Enter and ←/→.
+        // The settings panel's highlighted setting, for Enter and ←/→, or the
+        // allowed-sites list's highlighted site.
         let setting_sel = self
             .omnibox
             .as_ref()
-            .filter(|ob| ob.target == Target::Settings)
+            .filter(|ob| matches!(ob.target, Target::Settings | Target::AllowedSites))
             .and_then(|ob| self.list_rows(ob).into_iter().nth(ob.sel).map(|r| r.item));
         if let Some(ob) = self.omnibox.as_mut() {
             if !pressed {
@@ -3919,6 +3964,14 @@ impl App {
                     }
                 }
                 Some(NamedKey::Delete) if shift && ob.target == Target::Downloads => self.drop_selected_download(),
+                // Allowed sites: Enter or Shift+Delete blocks ads there again; the list stays.
+                Some(NamedKey::Enter | NamedKey::Delete) if ob.target == Target::AllowedSites => {
+                    if (ev.named == Some(NamedKey::Enter) || shift)
+                        && let Some(Item::AllowedSite(site)) = &setting_sel
+                    {
+                        self.block_site_again(site);
+                    }
+                }
                 Some(NamedKey::Delete) if shift && ob.target.is_list() => self.forget_selected(),
                 // Downloads: Ctrl+Enter shows the file in its folder.
                 Some(NamedKey::Enter) if ctrl && ob.target == Target::Downloads => {
@@ -4798,6 +4851,7 @@ impl App {
                 Target::History => "Search history",
                 Target::Settings => "Settings · Enter or → changes, ← goes back",
                 Target::Downloads => "Downloads · Enter opens, Ctrl+Enter its folder, Shift+Del cancels or removes",
+                Target::AllowedSites => "Sites with ads allowed · Enter blocks ads there again",
                 _ => "Search or enter address",
             };
             // The list (if this field has one) hangs from the field: one sheet.
@@ -4897,6 +4951,7 @@ impl App {
                     (Target::History, true, _) => "No pages in history",
                     (Target::Settings, _, _) => "No settings match",
                     (Target::Downloads, true, _) => "No downloads yet",
+                    (Target::AllowedSites, true, _) => "Ads are blocked on every site",
                     _ => "Nothing found",
                 };
                 if let Some(rd) = self.renderer.as_mut() {

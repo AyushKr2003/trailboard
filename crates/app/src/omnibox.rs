@@ -23,12 +23,14 @@ pub enum Target {
     Settings,
     /// The downloads view (Ctrl+J): the text filters downloads (`palette::download_rows`).
     Downloads,
+    /// The sites where ads are allowed (`palette::allowed_rows`).
+    AllowedSites,
 }
 
 impl Target {
     /// The field has a list of results under it (the palette, history or settings).
     pub fn is_list(&self) -> bool {
-        matches!(self, Target::Palette | Target::History | Target::Settings | Target::Downloads)
+        matches!(self, Target::Palette | Target::History | Target::Settings | Target::Downloads | Target::AllowedSites)
     }
 }
 

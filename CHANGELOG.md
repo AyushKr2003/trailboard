@@ -7,6 +7,10 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **See the sites where ads are allowed**: *Sites with ads allowed* in
+  Ctrl+K lists every site where you turned blocking off, with how many
+  cards show it and "Until you quit" for those allowed from a private
+  space. Enter, a click or Shift+Delete blocks ads on one again.
 - **Hidden elements are counted**: the shield's menu now says how many
   ad slots and cookie banners Trailboard hid on the page as well as how
   many requests it blocked (*Allow ads on … · 22 blocked · 2 hidden*), and

@@ -155,6 +155,32 @@ impl Blocking {
         } else if private {
             self.unsaved.insert(site.clone());
         }
+        self.save_allowed();
+        log::info!("blocking {} {site}", if on { "back on for" } else { "off for" });
+        Some((site, on))
+    }
+
+    /// The sites where blocking is off, sorted, each with whether it is
+    /// only until quitting (allowed from a private space).
+    pub fn allowed_sites(&self) -> Vec<(String, bool)> {
+        let all = self.allowed.read().unwrap_or_else(|e| e.into_inner());
+        all.sites.iter().map(|s| (s.clone(), self.unsaved.contains(s))).collect()
+    }
+
+    /// Turns blocking back on for `site` (an entry of `allowed_sites`).
+    /// Returns whether it was off there.
+    pub fn block_again(&mut self, site: &str) -> bool {
+        if !self.allowed.write().unwrap_or_else(|e| e.into_inner()).remove(site) {
+            return false;
+        }
+        self.unsaved.remove(site);
+        self.save_allowed();
+        log::info!("blocking back on for {site}");
+        true
+    }
+
+    /// Saves the allowed sites, leaving out those allowed from a private space.
+    fn save_allowed(&self) {
         let saved = {
             let all = self.allowed.read().unwrap_or_else(|e| e.into_inner());
             AllowedSites { sites: all.sites.iter().filter(|s| !self.unsaved.contains(*s)).cloned().collect() }
@@ -162,8 +188,6 @@ impl Blocking {
         if let Err(e) = storage::privacy::save_allowed(&self.data_dir, &saved) {
             log::warn!("blocking: saving allowed sites: {e}");
         }
-        log::info!("blocking {} {site}", if on { "back on for" } else { "off for" });
-        Some((site, on))
     }
 }
 

@@ -7,6 +7,12 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Cookie banners and ad slots hidden**: besides stopping requests, the
+  blocker now hides the page elements its lists name, such as consent
+  pop-ups and the empty boxes ads leave behind, in every frame of a page,
+  including elements that appear later. A third list, the EasyList Cookie
+  List, is downloaded with the others. The per-site toggle and the *Block
+  ads and trackers* setting cover this too.
 - **Ad and tracker blocking**: pages no longer load ads and trackers that
   EasyList and EasyPrivacy know about. The lists are downloaded on the first
   start and kept up to date every few days, in `filters/` in the data

@@ -170,8 +170,10 @@ kept in `downloads.json` in the data folder (downloads made in a private space
 are listed until you quit, not saved). Quitting stops running downloads and
 removes their partial files.
 
-Ads and trackers are blocked with EasyList and EasyPrivacy (Brave's
-`adblock` engine), downloaded to `filters/` in the data folder on the first
+Ads, trackers and cookie banners are blocked with EasyList, EasyPrivacy and
+the EasyList Cookie List (Brave's `adblock` engine): requests the lists name
+are stopped, and page elements they name (ad slots, consent pop-ups) are
+hidden. The lists are downloaded to `filters/` in the data folder on the first
 start and refreshed every 4 days; your own rules in the same syntax go in
 `filters/user.txt` (read at start). The page menu's last row turns blocking
 off for that site and its subdomains (or back on) and says how many requests
@@ -205,9 +207,9 @@ board persistence, spaces (several boards with their own camera and background),
 Read Mode, Tidy, Fold, stack outline, next/previous on a trail, Markdown notes
 with *Add to note*, trail names and colours, save a note or board as Markdown,
 the trails sidebar, the Ctrl+K palette, find in page, per-site page zoom,
-history, downloads, settings and ad blocking.
+history, downloads, settings, ad blocking and hidden cookie banners.
 
-Next: cookie-banner rejection and the Chromium sandbox, then optional semantic search and
+Next: answering cookie banners with "reject" and the Chromium sandbox, then optional semantic search and
 an LLM-backed "Explain" panel.
 
 - Full plan and milestone status: [docs/PLAN.md](docs/PLAN.md)

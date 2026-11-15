@@ -840,9 +840,9 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     lines) before it replaces the saved one; a failure retries after an hour.
     Until the first fetch, nothing is blocked. `filters/user.txt` holds the
     user's own rules in the same syntax (read at start; never fetched).
-  - Network rules only for now (`RuleTypes::NetworkOnly`): cosmetic rules
-    come with the cookie-banner item. Building the engine from both lists
-    (135k lines) takes ~80–140 ms (dependencies build at opt-level 2 even in
+  - Network and cosmetic rules (`RuleTypes::All`, since the cookie-banner
+    item). Building the engine from the three lists (162k lines) takes
+    ~110–120 ms (network rules only from two lists: ~80–140 ms) (dependencies build at opt-level 2 even in
     debug) on a thread of its own; the rules are swapped in whole, and a
     newer build wins over a slower older one.
   - Checked in `OnBeforeResourceLoad` on Chromium's IO thread: the one place
@@ -861,7 +861,45 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   - *Block ads and trackers* in the settings (on by default; `block_ads` in
     `settings.json`) turns it off everywhere at once; open pages keep what
     they loaded until reloaded.
-- ⬜ Cookie-banner auto-reject (cosmetic rules + known CMP actions).
+- 🟡 Cookie-banner auto-reject (cosmetic rules + known CMP actions).
+  - ✅ Cosmetic filtering (`web::cosmetic`, 2026-11-15). Decisions:
+    - A third list, the EasyList Cookie List (CC-BY 3.0, published at
+      `secure.fanboy.co.nz/fanboy-cookiemonster.txt`; easylist.to has no
+      copy), fetched and refreshed like the others. Its network rules stop
+      many consent platforms' scripts outright (OneTrust's `otBannerSdk.js`
+      in the e2e run); its hiding rules catch the rest.
+    - When a frame of a web page starts loading (`OnLoadStart`, any frame),
+      the app asks the engine for the frame's site rules plus the generic
+      selectors that aren't a plain class or id (~880 with all lists) and
+      runs a script there that adopts them as a constructed stylesheet
+      (`document.adoptedStyleSheets`: not in the DOM, so page scripts that
+      rebuild `<head>` don't drop it). One rule per selector, so a selector
+      Chromium can't parse drops only itself; selectors or styles that could
+      spill out of their rule (braces, comments, open quotes or brackets,
+      `url(`) are left out in Rust before that.
+    - Generic class/id rules (most of EasyList) are looked up on demand: the
+      script watches the frame (`MutationObserver`: added nodes, `class`/`id`
+      changes, batched every 30 ms) and reports new names in a console
+      message carrying the frame's identifier; the app answers into that
+      frame with the selectors they could match, minus the site's
+      exceptions (kept per frame, cleared when the main frame navigates).
+      At most 20,000 names per frame. `$generichide` pages (EasyList has it
+      for `127.0.0.1` and `localhost`) get no generic rules.
+    - `:style()` rules that are plain CSS are applied, and `:remove()` ones
+      hide; procedural rules (`:has-text()`, `:upward()`, …) and scriptlets
+      (`+js()`) are not.
+    - The same switches as network blocking: the setting, the per-site
+      toggle (it reloads, so the stylesheet goes) and the first party being
+      the main frame. Notes get nothing. One switch for ads and cookie
+      banners for now.
+    - A page can see the hook (`Symbol.for('trailboard.hide')`) and could
+      send fake reports; at worst it hides list-matched elements in its own
+      frames.
+  - ⬜ Answering banners with "reject" on known consent platforms
+    (Sourcepoint, OneTrust, Didomi, Quantcast…), written from their public
+    DOM, not copied from other extensions. Many of these are already stopped
+    by the cookie list's network rules; this matters for those that aren't
+    (and for sites that wall content until a choice is made).
 - ✅ Per-site toggle (2026-11-15): the page menu's last row ("Allow ads on
   example.com · 12 blocked" / "Block ads on example.com") and *Allow or block
   ads on this site* in Ctrl+K. Decisions:
@@ -997,33 +1035,34 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-15. M8: ad and tracker blocking with a per-site toggle.
+**Last session:** 2026-11-15 (second). M8: cosmetic filtering, which hides cookie banners and ad slots.
 **Repo state:** on `master`, committed; working tree clean.
 **Done this session:**
-- `web::shield`: Brave's `adblock` engine checks every request of a web page
-  on Chromium's IO thread; EasyList and EasyPrivacy are fetched (through
-  CEF) on the first start and every 4 days into `$DATA/filters/`, plus the
-  user's `filters/user.txt`. Pages count the distinct addresses they blocked.
-- *Block ads and trackers* setting; per-site toggle in the page menu ("Allow
-  ads on site · N blocked") and Ctrl+K, kept in `privacy.json` (not saved
-  from a private space). `scene::privacy`, `storage::privacy`,
-  `app::blocking`, with tests. Decisions under M8.
-- Fixed on the way: toggling a site now reloads with `reload_ignore_cache`
-  (a plain reload took the ad script from Blink's memory cache).
+- `web::cosmetic`: the engine now loads cosmetic rules too; each frame of a
+  web page gets its site's hiding rules as an adopted stylesheet when it
+  starts loading, and generic class/id rules as it reports its class and id
+  names (console message → `hidden_class_id_selectors` → answered into the
+  frame). `:style()` rules that are plain CSS apply. Decisions under M8.
+- The EasyList Cookie List is a third fetched list (`easylist-cookie`).
+- `shield::rules_for(page)` is the one check of the switch, allowed sites
+  and loaded rules, for requests and hiding alike.
 **Owner decisions (2026-11-15):** no AppImage, Flatpak or AUR work (the owner
 publishes later, on their own); no UI translations; licence is Apache-2.0
 only (`LICENSE-APACHE`).
-**Next up:** M8 cookie banners: cosmetic filtering first (the `adblock`
-engine's `url_cosmetic_resources` + `hidden_class_id_selectors`, injected as
-a stylesheet per frame; add EasyList Cookie or a similar list), then
-clicking "reject" on known consent platforms (Sourcepoint, OneTrust,
-Didomi, Quantcast…), written from their public DOM, not copied from other
-extensions. Then the Chromium sandbox. Small blocking follow-ups: a shield
+**Next up:** M8 cookie banners, part 2: click "reject" on known consent
+platforms (Sourcepoint, OneTrust, Didomi, Quantcast, Cookiebot…), written
+from their public DOM, not copied from other extensions; it matters where
+the cookie list doesn't already stop the platform's script, and for sites
+that keep content locked until a choice is made (look for a body left with
+`overflow: hidden` after hiding). Then the Chromium sandbox. Small blocking follow-ups: a shield
 mark with the count on the title bar; scriptlets/`$redirect` resources
 (need the `resource-assembler` feature and uBO's resources, check the
 licence); a palette list of allowed sites; reread `user.txt` when it
 changes (the `notify` watcher is already a dependency); serialize the
-compiled engine if startup ever shows it. Other small follow-ups: rename a trail from the
+compiled engine if startup ever shows it; procedural cosmetic rules
+(`:has-text()` and friends, run in the page); a separate *Hide cookie
+banners* switch if one list ever breaks sites the other doesn't; a "N
+hidden" count beside "N blocked". Other small follow-ups: rename a trail from the
 sidebar; auto-scroll the sidebar while dragging; a downloads folder setting (needs a free-text row or a
 folder picker via xdg-desktop-portal); a progress mark on the board while
 downloads run; ask before quitting with downloads running; pause/resume;
@@ -1044,6 +1083,31 @@ Save as Markdown; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out; open `crash.log` from the crash
 toast or a palette command.
 **Notes for the next session:**
+- Cosmetic filtering verified e2e (`~/.cache/trailboard-e2e-cosmetic`,
+  `run.sh N shot…`, `URL=` sets the start page; serve `site/` on
+  127.0.0.1:8771 and 127.0.0.2:8773, `frame/` on localhost:8772 and
+  127.0.0.3:8774, each with `python3 -m http.server P --bind ADDR`).
+  `h.html`/`h2.html` title themselves with what is hidden (H) or shown (S):
+  site rule, generic class, id, attribute selector, a site-unhidden class,
+  a control, a class added 1 s late, `body:style(overflow)`, and a
+  cross-origin iframe. Run 1 (user rules only, then all lists): all as
+  expected with user rules; with EasyList loaded, 127.0.0.1 gets no generic
+  rules (EasyList's own `@@://127.0.0.1$generichide`, so test on
+  127.0.0.2); toggle off → all shown, back on → hidden. Run 2 (all lists,
+  127.0.0.2): `site:H cls:H id:H attr:H unh:S ctrl:S late:H ovf:auto
+  frame:clsH/siteS`; ~880 selectors per frame. Run 3 (`*-cmp.png`, on vs
+  off): OneTrust's and Didomi's banners gone with blocking on, back with it
+  off (Didomi's dimmed backdrop too); the box on cookiebot.com is their
+  product demo, not a real banner, and shows either way; Stack Overflow
+  shows no banner from here at all. OneTrust's was stopped by a network rule
+  (`otBannerSdk.js`); run 4 let it load (`@@||cdn.cookielaw.org^` in
+  `user.txt`) and the hiding rules removed it (`ot4.png`). Rules from all
+  three lists build in 109–116 ms. Not verified: EU-only banners (this
+  machine is outside the EU, so many sites never show one), pages left
+  unscrollable after their banner is hidden, a flash of the banner before
+  the generic rules arrive (screenshots are taken after it settles), memory
+  with cosmetic rules loaded (not measured), very dynamic pages (the
+  observer's cost on long feeds), the light theme (no UI change).
 - Blocking verified e2e (`~/.cache/trailboard-e2e-block`, `run.sh N shot…`;
   serve `site/` with `python3 -m http.server 8771 --bind 127.0.0.1`;
   `a.html` loads `/ads/ad.js`, `/ok.js` and `/ads/pixel.png` and titles

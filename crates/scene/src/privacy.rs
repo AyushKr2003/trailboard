@@ -13,10 +13,13 @@ pub struct FilterList {
     pub url: &'static str,
 }
 
-/// EasyList (ads) and EasyPrivacy (trackers), the lists most blockers start from.
-pub const LISTS: [FilterList; 2] = [
+/// EasyList (ads), EasyPrivacy (trackers) and the EasyList Cookie List
+/// (cookie banners, mostly rules that hide them), the lists most blockers
+/// start from. The cookie list is published on fanboy.co.nz, not easylist.to.
+pub const LISTS: [FilterList; 3] = [
     FilterList { id: "easylist", url: "https://easylist.to/easylist/easylist.txt" },
     FilterList { id: "easyprivacy", url: "https://easylist.to/easylist/easyprivacy.txt" },
+    FilterList { id: "easylist-cookie", url: "https://secure.fanboy.co.nz/fanboy-cookiemonster.txt" },
 ];
 
 /// The user's own rules, never fetched: `filters/user.txt`, in the same syntax.

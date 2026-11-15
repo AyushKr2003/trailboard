@@ -9,6 +9,9 @@
 //! ([`Blocked`]); Chromium may ask twice for one (its preload scanner, then
 //! the parser), so they are counted once.
 //!
+//! The same rules hide page elements (cosmetic rules), on the main thread:
+//! see [`crate::cosmetic`].
+//!
 //! [`fetch`] downloads a URL with Chromium's network stack, for the lists.
 
 use std::cell::RefCell;
@@ -80,10 +83,10 @@ pub fn load_rules(lists: Vec<(String, String)>) {
     }
 }
 
-fn build_rules(lists: Vec<(String, String)>) -> Rules {
+pub(crate) fn build_rules(lists: Vec<(String, String)>) -> Rules {
     let mut set = FilterSet::new(false);
-    // Network rules only: hiding page elements (cosmetic rules) is not done yet.
-    let opts = ParseOptions { rule_types: RuleTypes::NetworkOnly, ..Default::default() };
+    // Network rules for requests, cosmetic rules for hiding page elements.
+    let opts = ParseOptions { rule_types: RuleTypes::All, ..Default::default() };
     for (_, text) in lists {
         set.add_filter_list(text, opts);
     }
@@ -120,16 +123,21 @@ fn blocks(rules: &Rules, url: &str, page: &str, kind: &str) -> bool {
     }
 }
 
-/// Whether a request should be stopped, with the current rules and switches.
-fn should_block(url: &str, page: &str, kind: &str) -> bool {
+/// The rules in force on the page at `page`: none while blocking is off,
+/// on a site the user allowed, or before any list is loaded.
+pub(crate) fn rules_for(page: &str) -> Option<Arc<Rules>> {
     if !ON.load(Ordering::Relaxed) {
-        return false;
+        return None;
     }
     if ALLOWED.read().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|allowed| allowed(page)) {
-        return false;
+        return None;
     }
-    let rules = RULES.read().unwrap_or_else(|e| e.into_inner()).clone();
-    rules.is_some_and(|r| blocks(&r, url, page, kind))
+    RULES.read().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// Whether a request should be stopped, with the current rules and switches.
+fn should_block(url: &str, page: &str, kind: &str) -> bool {
+    rules_for(page).is_some_and(|r| blocks(&r, url, page, kind))
 }
 
 // Checks each request of one page (on the IO thread), so it holds only

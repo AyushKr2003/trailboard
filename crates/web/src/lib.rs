@@ -4,6 +4,7 @@
 //! with `external_message_pump` + [`pump`], so plain `Rc`/`RefCell` are enough.
 //! The one exception is request blocking ([`shield`]), asked on Chromium's IO thread.
 
+pub mod cosmetic;
 pub mod download;
 pub mod keys;
 pub mod links;
@@ -406,6 +407,8 @@ struct Shared {
     kind: PageKind,
     /// The main frame has committed a page (a link that is a file never does).
     committed: std::cell::Cell<bool>,
+    /// The frames hiding elements by the filter lists' cosmetic rules.
+    hide: cosmetic::Frames,
 }
 
 #[derive(Default)]
@@ -816,13 +819,21 @@ wrap_display_handler! {
 
         fn on_console_message(
             &self,
-            _browser: Option<&mut Browser>,
+            browser: Option<&mut Browser>,
             _level: LogSeverity,
             message: Option<&CefString>,
             _source: Option<&CefString>,
             _line: ::std::os::raw::c_int,
         ) -> ::std::os::raw::c_int {
             let Some(message) = message.map(|m| m.to_string()) else { return 0 };
+            if let Some(body) = message.strip_prefix(cosmetic::PREFIX) {
+                if self.shared.kind == PageKind::Web
+                    && let Some(browser) = browser
+                {
+                    cosmetic::answer(&self.shared.hide, browser, body);
+                }
+                return 1;
+            }
             if let Some(body) = message.strip_prefix(links::PREFIX) {
                 if let Some((width, links)) = links::parse(body) {
                     emit(WebEvent::Links { page: self.shared.key, width, links });
@@ -907,9 +918,15 @@ wrap_load_handler! {
             emit(WebEvent::LoadingChanged { page: self.shared.key, loading: is_loading != 0 });
         }
 
-        fn on_load_start(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, _transition_type: TransitionType) {
-            if frame.is_some_and(|f| f.is_main() != 0) {
+        fn on_load_start(&self, browser: Option<&mut Browser>, frame: Option<&mut Frame>, _transition_type: TransitionType) {
+            let Some(frame) = frame else { return };
+            if frame.is_main() != 0 {
                 self.shared.committed.set(true);
+            }
+            if self.shared.kind == PageKind::Web
+                && let Some(browser) = browser
+            {
+                cosmetic::on_load_start(&self.shared.hide, browser, frame);
             }
         }
     }
@@ -1145,6 +1162,7 @@ impl Page {
             icon_url: RefCell::new(String::new()),
             kind,
             committed: std::cell::Cell::new(false),
+            hide: Default::default(),
         });
         let blocked = std::sync::Arc::new(shield::Blocked::default());
         let mut client = PageClient::new(

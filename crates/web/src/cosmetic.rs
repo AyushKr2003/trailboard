@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet};
 use adblock::cosmetic_filter_cache::ProceduralOrActionFilter;
 use cef::*;
 
-use crate::{consent, js_string, shield};
+use crate::{consent, js_string, shield, youtube};
 
 /// Prefix of the console message with a frame's new class and id names:
 /// the frame's identifier, a newline, the classes (space-separated), a
@@ -175,6 +175,10 @@ pub(crate) fn on_load_start(frames: &Frames, browser: &mut Browser, frame: &mut 
         return;
     }
     let page = if frame.is_main() != 0 { url.clone() } else { main_url(browser) };
+    // First, so it is in place before YouTube's own scripts run.
+    if youtube::applies(&url) && shield::active_for(&page) {
+        frame.execute_java_script(Some(&CefString::from(youtube::script().as_str())), Some(&CefString::from(url.as_str())), 0);
+    }
     let Some(rules) = shield::rules_for(&page) else { return };
     let res = rules.url_cosmetic_resources(&url);
     let styled = res.procedural_actions.iter().filter_map(|json| serde_json::from_str::<ProceduralOrActionFilter>(json).ok()?.as_css());

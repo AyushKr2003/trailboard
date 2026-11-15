@@ -123,13 +123,16 @@ fn blocks(rules: &Rules, url: &str, page: &str, kind: &str) -> bool {
     }
 }
 
+/// Whether blocking is on for the page at `page`: on in the settings and
+/// not a site the user allowed (lists loaded or not).
+pub(crate) fn active_for(page: &str) -> bool {
+    ON.load(Ordering::Relaxed) && !ALLOWED.read().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|allowed| allowed(page))
+}
+
 /// The rules in force on the page at `page`: none while blocking is off,
 /// on a site the user allowed, or before any list is loaded.
 pub(crate) fn rules_for(page: &str) -> Option<Arc<Rules>> {
-    if !ON.load(Ordering::Relaxed) {
-        return None;
-    }
-    if ALLOWED.read().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|allowed| allowed(page)) {
+    if !active_for(page) {
         return None;
     }
     RULES.read().unwrap_or_else(|e| e.into_inner()).clone()

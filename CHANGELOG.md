@@ -20,6 +20,15 @@ All notable changes to Trailboard. The format follows
   page* in Ctrl+K opens another one.
 
 ### Added
+- **YouTube ads blocked**: videos start without the ads before and during
+  them, and feed, sidebar and banner ads are gone. YouTube serves ads from
+  the same servers as its videos, so the filter lists couldn't stop them;
+  Trailboard now removes them from the video's data before the player
+  sees them, and skips any that still play (muted and sped through, then
+  your sound and speed come back). YouTube's "ad blockers are not allowed"
+  dialog is taken away and the video plays on. Works on youtube.com,
+  m.youtube.com, music.youtube.com and YouTube videos embedded in other
+  sites, under the same *Block ads and trackers* setting and per-site toggle.
 - **Settings → New card (Ctrl+T) opens**: *Address bar* (the floating bar
   to type an address or search, as before) or *Start page* (a new start
   page card with the search box and engine picker). Also applies to *New

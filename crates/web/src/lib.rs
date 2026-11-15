@@ -14,6 +14,7 @@ pub mod popup;
 pub mod sandbox;
 pub mod shield;
 pub mod text;
+pub mod youtube;
 
 use cef::{args::Args, *};
 use std::cell::RefCell;
@@ -902,6 +903,11 @@ wrap_display_handler! {
                         self.shared.banner_rejected.set(true);
                     }
                 }
+                return 1;
+            }
+            if let Some(what) = message.strip_prefix(youtube::PREFIX) {
+                let url = self.shared.url.borrow();
+                log::info!("youtube: {what} on {}", url.chars().take(100).collect::<String>());
                 return 1;
             }
             if let Some(body) = message.strip_prefix(links::PREFIX) {

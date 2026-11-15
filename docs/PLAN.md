@@ -995,6 +995,27 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
       page (`Page::banner_rejected`, cleared when its main frame starts
       loading); the page menu then has a dim, unclickable "Cookie banner
       rejected" line above the site toggle, while blocking is on there.
+- ✅ YouTube ads (`web::youtube`, 2026-11-15). Network rules can't stop
+  them (same servers as the videos), so a script of our own runs in YouTube
+  frames (youtube.com and subdomains, youtube-nocookie.com embeds) as they
+  start loading, before the cosmetic script. Decisions:
+  - Drops `adPlacements`, `adSlots`, `playerAds`, `adBreakHeartbeatParams`
+    from the player response before the player reads it: an accessor trap
+    on `ytInitialPlayerResponse`/`playerResponse` (first load), and
+    wrappers on `JSON.parse` and on `fetch` for `/youtubei/v1/player` and
+    `get_watch` replies (moving to another video in the page).
+  - Fallback for an ad that plays anyway (script ran late, ad stitched into
+    the stream): every 250 ms, while the player has `ad-showing` /
+    `ad-interrupting`, click the skip button, mute, rate 16 and seek to the
+    end; the user's mute and speed come back when the ad ends.
+  - Hides feed/masthead/sidebar ad slots and the "ad blockers are not
+    allowed" dialog (removed, its backdrop too, and a video it paused
+    plays on).
+  - Switches: the setting and the per-site toggle (`shield::active_for`,
+    which doesn't need the lists loaded). Outcomes (`pruned`, `skipped`,
+    `dialog`) are logged once per frame at info level. Not counted on the
+    shield badge yet. YouTube changes its client often; the key names and
+    selectors are the parts to update when it breaks.
 - ✅ Per-site toggle (2026-11-15): the page menu's last row ("Allow ads on
   example.com · 12 blocked" / "Block ads on example.com") and *Allow or block
   ads on this site* in Ctrl+K. Decisions:

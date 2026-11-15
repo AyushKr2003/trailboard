@@ -171,7 +171,8 @@ impl Panel {
 
     /// Rect of row `index` with the list scrolled to `scroll`, if it is shown whole.
     pub fn row_rect(&self, index: usize, scroll: usize) -> Option<Rect> {
-        if index < scroll || index >= scroll + self.fits(scroll) {
+        // `fits` claims one row even for an empty list, so check the end too.
+        if index >= self.len() || index < scroll || index >= scroll + self.fits(scroll) {
             return None;
         }
         let mut y = self.list.y;
@@ -711,6 +712,15 @@ mod tests {
         assert_eq!(r.w, (500.0 * MAX_SHARE).round());
         let p = Panel::new(Vec2::new(500.0, 60.0), 1.0, &slots(&[header(1, false)]));
         assert!(p.fits(0) >= 1);
+    }
+
+    #[test]
+    fn an_empty_list_has_no_rows_to_hit() {
+        let p = Panel::new(Vec2::new(1000.0, 800.0), 1.0, &[]);
+        assert_eq!(p.row_rect(0, 0), None);
+        assert_eq!(p.label_rect(0, 0), None);
+        assert_eq!(p.row_at(Vec2::new(p.list.x + 10.0, p.list.y + 10.0), 0), None);
+        assert_eq!(p.keep_visible(Some(0), 3), 0);
     }
 
     #[test]

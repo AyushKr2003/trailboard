@@ -21,6 +21,8 @@ All notable changes to Trailboard. The format follows
   shrinks it back into its place. It used to be an instant cut.
 
 ### Fixed
+- **Sidebar**: moving the pointer over the sidebar of a space with no rows
+  (e.g. just after switching spaces) no longer crashes the app.
 - **No squashed pages after a resize**: a page's last frame is drawn at the
   size it was painted at (cropped, or filled out with the page's edge
   colour) until Chromium paints the new size. Leaving Read Mode used to

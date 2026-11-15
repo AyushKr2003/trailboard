@@ -1,7 +1,7 @@
 //! The user's settings (`scene::settings`), shared by every space:
 //! `$DATA/settings.json` =
 //! `{ "version": 1, "search": "duckduckgo", "live_pages": 6, "history": true, "page_colours": "theme",
-//! "scroll_speed": "normal", "block_ads": true }`.
+//! "scroll_speed": "normal", "block_ads": true, "new_card": "address_bar" }`.
 //!
 //! Each field is read on its own: a missing or unknown value (say, an engine
 //! a newer build added) keeps its default and the rest still load.
@@ -9,7 +9,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use scene::settings::{PageColours, ScrollSpeed, SearchEngine, Settings};
+use scene::settings::{NewCard, PageColours, ScrollSpeed, SearchEngine, Settings};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -26,6 +26,7 @@ struct SettingsFile<'a> {
     page_colours: &'a str,
     scroll_speed: &'a str,
     block_ads: bool,
+    new_card: &'a str,
 }
 
 #[derive(Deserialize)]
@@ -72,6 +73,9 @@ pub fn load_settings(data_dir: &Path) -> Settings {
     if let Some(b) = v["block_ads"].as_bool() {
         s.block_ads = b;
     }
+    if let Some(c) = v["new_card"].as_str().and_then(NewCard::from_id) {
+        s.new_card = c;
+    }
     s
 }
 
@@ -84,6 +88,7 @@ pub fn save_settings(data_dir: &Path, s: &Settings) -> std::io::Result<()> {
         page_colours: s.page_colours.id(),
         scroll_speed: s.scroll_speed.id(),
         block_ads: s.block_ads,
+        new_card: s.new_card.id(),
     };
     let json = serde_json::to_vec_pretty(&file).map_err(std::io::Error::other)?;
     write_atomic(&settings_path(data_dir), &json)
@@ -104,6 +109,7 @@ mod tests {
             page_colours: PageColours::Dark,
             scroll_speed: ScrollSpeed::Faster,
             block_ads: false,
+            new_card: NewCard::StartPage,
         };
         save_settings(dir.path(), &s).unwrap();
         assert_eq!(load_settings(dir.path()), s);

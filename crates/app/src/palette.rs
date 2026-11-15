@@ -27,6 +27,7 @@ use crate::theme::{rgb, Theme};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Command {
     NewCard,
+    StartPage,
     NewNote,
     NewSticky,
     Tidy,
@@ -86,6 +87,7 @@ const fn c(cmd: Command, label: &'static str, keys: &'static str, words: &'stati
 
 pub const COMMANDS: &[CommandInfo] = &[
     c(Command::NewCard, "New card", "Ctrl+T", "open address tab page url"),
+    c(Command::StartPage, "New start page", "", "search box engine home blank empty card"),
     c(Command::NewNote, "New note", "N", "markdown write text"),
     c(Command::NewSticky, "New sticky note", "Shift+N", "post-it memo"),
     c(Command::Tidy, "Tidy trails", "T", "arrange layout clean up"),

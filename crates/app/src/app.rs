@@ -1117,6 +1117,18 @@ impl App {
         id
     }
 
+    /// Ctrl+T, *New card*: the floating address bar or a start page card,
+    /// as the *New card opens* setting says.
+    fn new_card(&mut self) {
+        match self.settings.new_card {
+            prefs::NewCard::AddressBar => self.omnibox = Some(Omnibox::new("", Target::NewCard)),
+            prefs::NewCard::StartPage => {
+                let id = self.add_start();
+                self.ensure_visible(id);
+            }
+        }
+    }
+
     /// Whether card `id` is a start page that nothing was typed in yet.
     fn is_start(&self, id: NodeId) -> bool {
         self.scene.node(id).is_some_and(|n| !n.is_note() && n.url == scene::note::START_URL)
@@ -2092,7 +2104,7 @@ impl App {
         log::info!("setting {key:?} = {}", s.value(key));
         match key {
             prefs::Key::Search => self.engine_changed(),
-            prefs::Key::ScrollSpeed => {}
+            prefs::Key::NewCard | prefs::Key::ScrollSpeed => {}
             prefs::Key::LivePages => {
                 self.max_live = s.live_pages;
                 self.live_from_env = false;
@@ -2401,7 +2413,11 @@ impl App {
 
     fn run_command(&mut self, c: Command) {
         match c {
-            Command::NewCard => self.omnibox = Some(Omnibox::new("", Target::NewCard)),
+            Command::NewCard => self.new_card(),
+            Command::StartPage => {
+                let id = self.add_start();
+                self.ensure_visible(id);
+            }
             Command::NewNote => {
                 self.new_note_at_center();
             }
@@ -4410,7 +4426,7 @@ impl App {
                     true
                 }
                 Some(KeyCode::KeyT) if ctrl => {
-                    self.omnibox = Some(Omnibox::new("", Target::NewCard));
+                    self.new_card();
                     true
                 }
                 Some(KeyCode::KeyW) if ctrl => {

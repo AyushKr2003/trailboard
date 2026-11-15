@@ -16,9 +16,15 @@ All notable changes to Trailboard. The format follows
   answers), and a help button opens a **search engine guide** card that
   explains each engine, who it suits and what it trades, with a button to
   use it. Each engine shows its own icon, loaded from the web (its
-  letters on a coloured badge while it loads or if it can't).
+  letters on a coloured badge while it loads or if it can't). *New start
+  page* in Ctrl+K opens another one.
 
 ### Added
+- **Settings → New card (Ctrl+T) opens**: *Address bar* (the floating bar
+  to type an address or search, as before) or *Start page* (a new start
+  page card with the search box and engine picker). Also applies to *New
+  card* in Ctrl+K and on the welcome page. Saved as `new_card` in
+  `settings.json`; older files keep the address bar.
 - **Search engines**: Mojeek, Oscobo, MetaGer, Gibiru, Swisscows,
   WolframAlpha, Qwant and SearXNG (a public instance, searx.be), alongside
   the existing seven.

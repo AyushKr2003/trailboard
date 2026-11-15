@@ -1967,7 +1967,14 @@ toast or a palette command.
   icon, loaded from its site (Google's favicon service for Brave, Startpage,
   WolframAlpha and Google, whose own icon addresses change per release),
   over a coloured monogram that stays when the icon can't load. Gibiru and
-  Oscobo only publish 16 px icons, so theirs look soft. Verified by a scripted run
+  Oscobo only publish 16 px icons, so theirs look soft.
+- ✅ *New start page* in the Ctrl+K palette (`Command::StartPage`) adds a
+  start page card in the middle of the view, taking the keys. Verified by
+  a scripted run (Ctrl+K, "new start", Enter → a second start page card).
+- ✅ Setting *New card (Ctrl+T) opens*: address bar (default) or start page
+  (`prefs::NewCard`, `settings.json` `new_card`). Verified by scripted runs
+  in both modes (start page → a new start card; address bar → the floating
+  bar, screenshot) and a screenshot of the settings panel. Verified by a scripted run
   (picker → Brave saved; help → guide beside the start card) and
   screenshots. Not verified: the light theme, each engine's results page.
 - A note's last keystroke can be lost if its card is closed or put to sleep

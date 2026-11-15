@@ -197,6 +197,37 @@ impl ScrollSpeed {
     }
 }
 
+/// What Ctrl+T (*New card*) opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NewCard {
+    /// The floating bar, to type an address or a search.
+    AddressBar,
+    /// A start page card: the search box and engine picker.
+    StartPage,
+}
+
+impl NewCard {
+    pub const ALL: [NewCard; 2] = [NewCard::AddressBar, NewCard::StartPage];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            NewCard::AddressBar => "address_bar",
+            NewCard::StartPage => "start_page",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<NewCard> {
+        NewCard::ALL.into_iter().find(|c| c.id() == id)
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            NewCard::AddressBar => "Address bar",
+            NewCard::StartPage => "Start page",
+        }
+    }
+}
+
 /// The choices for how many cards keep a live page.
 pub const LIVE_PAGES: [usize; 8] = [2, 3, 4, 6, 8, 10, 12, 16];
 pub const DEFAULT_LIVE_PAGES: usize = 6;
@@ -212,6 +243,7 @@ pub struct Settings {
     pub scroll_speed: ScrollSpeed,
     /// Block ads and trackers (`privacy`, `web::shield`).
     pub block_ads: bool,
+    pub new_card: NewCard,
 }
 
 impl Default for Settings {
@@ -223,6 +255,7 @@ impl Default for Settings {
             page_colours: PageColours::Theme,
             scroll_speed: ScrollSpeed::Normal,
             block_ads: true,
+            new_card: NewCard::AddressBar,
         }
     }
 }
@@ -231,6 +264,7 @@ impl Default for Settings {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Key {
     Search,
+    NewCard,
     LivePages,
     History,
     PageColours,
@@ -240,11 +274,12 @@ pub enum Key {
 
 impl Key {
     /// In the panel's order.
-    pub const ALL: [Key; 6] = [Key::Search, Key::LivePages, Key::History, Key::BlockAds, Key::PageColours, Key::ScrollSpeed];
+    pub const ALL: [Key; 7] = [Key::Search, Key::NewCard, Key::LivePages, Key::History, Key::BlockAds, Key::PageColours, Key::ScrollSpeed];
 
     pub fn label(self) -> &'static str {
         match self {
             Key::Search => "Search engine",
+            Key::NewCard => "New card (Ctrl+T) opens",
             Key::LivePages => "Pages kept awake",
             Key::History => "Keep history",
             Key::PageColours => "Page colours",
@@ -257,6 +292,7 @@ impl Key {
     pub fn words(self) -> String {
         let (words, values): (&str, Vec<&str>) = match self {
             Key::Search => ("web search address bar", SearchEngine::ALL.iter().map(|e| e.name()).collect()),
+            Key::NewCard => ("ctrl+t new tab card page home floating bar", NewCard::ALL.iter().map(|c| c.name()).collect()),
             Key::LivePages => ("live cards memory sleep tabs browsers", Vec::new()),
             Key::History => ("record visited pages privacy pause", vec!["on", "off"]),
             Key::PageColours => ("light dark mode colour color scheme", PageColours::ALL.iter().map(|c| c.name()).collect()),
@@ -284,6 +320,7 @@ impl Settings {
     pub fn value(&self, key: Key) -> String {
         match key {
             Key::Search => self.search.name().to_string(),
+            Key::NewCard => self.new_card.name().to_string(),
             Key::LivePages => self.live_pages.to_string(),
             Key::History => if self.history { "On" } else { "Off" }.to_string(),
             Key::PageColours => self.page_colours.name().to_string(),
@@ -300,6 +337,7 @@ impl Settings {
         let before = *self;
         match key {
             Key::Search => self.search = cycle(&SearchEngine::ALL, self.search, dir),
+            Key::NewCard => self.new_card = cycle(&NewCard::ALL, self.new_card, dir),
             Key::PageColours => self.page_colours = cycle(&PageColours::ALL, self.page_colours, dir),
             Key::ScrollSpeed => self.scroll_speed = cycle(&ScrollSpeed::ALL, self.scroll_speed, dir),
             Key::History => self.history = !self.history,
@@ -362,6 +400,20 @@ mod tests {
         s.live_pages = 40;
         s.step(Key::LivePages, -1);
         assert_eq!(s.live_pages, 16);
+    }
+
+    #[test]
+    fn new_card_toggles_between_bar_and_start_page() {
+        let mut s = Settings::default();
+        assert_eq!(s.new_card, NewCard::AddressBar);
+        assert!(s.step(Key::NewCard, 1));
+        assert_eq!((s.new_card, s.value(Key::NewCard).as_str()), (NewCard::StartPage, "Start page"));
+        assert!(s.step(Key::NewCard, 1));
+        assert_eq!(s.new_card, NewCard::AddressBar);
+        for c in NewCard::ALL {
+            assert_eq!(NewCard::from_id(c.id()), Some(c));
+        }
+        assert!(Key::NewCard.words().contains("Start page"));
     }
 
     #[test]

@@ -5005,7 +5005,9 @@ impl App {
         self.run_script();
         self.follow_desktop();
         self.handle_web_events();
-        self.blocking.tick(Instant::now());
+        if let Some(msg) = self.blocking.tick(Instant::now(), self.settings.block_ads) {
+            self.toast(msg);
+        }
         self.read_due_texts();
         self.sync_find();
         self.autosave();

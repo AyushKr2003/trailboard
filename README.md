@@ -185,7 +185,7 @@ the EasyList Cookie List (Brave's `adblock` engine): requests the lists name
 are stopped, and page elements they name (ad slots, consent pop-ups) are
 hidden. The lists are downloaded to `filters/` in the data folder on the first
 start and refreshed every 4 days; your own rules in the same syntax go in
-`filters/user.txt` (read at start). The page menu's last row turns blocking
+`filters/user.txt` (read again whenever you save it). The page menu's last row turns blocking
 off for that site and its subdomains (or back on) and says how many requests
 it blocked; *Allow or block ads on this site* in Ctrl+K does the same. Sites
 allowed are kept in `privacy.json` (not those allowed from a private space).

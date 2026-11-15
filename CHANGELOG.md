@@ -7,6 +7,10 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Your own filter rules apply as you save them**: edits to
+  `filters/user.txt` take effect a moment after saving, without a restart,
+  and a short message says how many rules it now holds. Reload a page to
+  apply them to what it already loaded.
 - **Blocked count on the title bar**: a page where Trailboard stopped ads
   or trackers shows a small shield and how many requests it blocked, next
   to the close button. Allowing ads on the site removes it.

@@ -44,6 +44,27 @@ pub fn looks_like_list(text: &str) -> bool {
     head.starts_with("[Adblock") && text.lines().count() >= 100
 }
 
+/// How many rules a filter list holds: its lines that aren't blank, a
+/// `!` comment or a `[Adblock …]` header.
+pub fn count_rules(text: &str) -> usize {
+    text.lines()
+        .map(|l| l.trim().trim_start_matches('\u{feff}'))
+        .filter(|l| !l.is_empty() && !l.starts_with('!') && !l.starts_with('['))
+        .count()
+}
+
+/// What the user is told after `filters/user.txt` changed and was read
+/// again: `rules` in it now (`None`: the file is gone), and whether blocking
+/// is `on` in the settings.
+pub fn user_rules_message(rules: Option<usize>, on: bool) -> String {
+    let what = match rules {
+        None => "Your filter rules were removed".to_string(),
+        Some(1) => "Your filter rules reloaded: 1 rule".to_string(),
+        Some(n) => format!("Your filter rules reloaded: {n} rules"),
+    };
+    if on { what } else { format!("{what} (blocking is off in the settings)") }
+}
+
 /// Whether the entry `site` (as [`icon::site`] gives it) covers the page at
 /// `url`: the same site, or a subdomain of it.
 pub fn covers(site: &str, url: &str) -> bool {
@@ -95,6 +116,18 @@ impl AllowedSites {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn counts_rules_and_words_the_reload() {
+        assert_eq!(count_rules(""), 0);
+        let text = "\u{feff}[Adblock Plus 2.0]\n! Title: mine\n\n||ads.example^\n  example.com##.banner  \n!x\n@@||ok.example^\n";
+        assert_eq!(count_rules(text), 3);
+        assert_eq!(user_rules_message(Some(3), true), "Your filter rules reloaded: 3 rules");
+        assert_eq!(user_rules_message(Some(1), true), "Your filter rules reloaded: 1 rule");
+        assert_eq!(user_rules_message(Some(0), true), "Your filter rules reloaded: 0 rules");
+        assert_eq!(user_rules_message(None, true), "Your filter rules were removed");
+        assert_eq!(user_rules_message(Some(2), false), "Your filter rules reloaded: 2 rules (blocking is off in the settings)");
+    }
 
     #[test]
     fn blocked_badge_text() {

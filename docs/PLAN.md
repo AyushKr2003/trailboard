@@ -839,7 +839,17 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     blocked itself) and must look like a list (`[Adblock` header, ≥100
     lines) before it replaces the saved one; a failure retries after an hour.
     Until the first fetch, nothing is blocked. `filters/user.txt` holds the
-    user's own rules in the same syntax (read at start; never fetched).
+    user's own rules in the same syntax (never fetched). It is watched
+    (inotify on `filters/`, made at start so it can be watched; ✅
+    2026-11-15): 300 ms after the last change it is read again and, if its
+    text differs from what the rules were built with, all lists are rebuilt
+    and a toast says "Your filter rules reloaded: N rules" ("… were
+    removed" when deleted; "(blocking is off in the settings)" appended when
+    it is). Decisions: reads (open/close-nowrite) don't count, or reading it
+    would wake the watcher; only the name `user.txt` counts, so editors'
+    temp and swap files don't, and a save through a rename does; pages
+    already open keep what they loaded, the new rules apply to their next
+    requests and loads (no automatic reload).
   - Network and cosmetic rules (`RuleTypes::All`, since the cookie-banner
     item). Building the engine from the three lists (162k lines) takes
     ~110–120 ms (network rules only from two lists: ~80–140 ms) (dependencies build at opt-level 2 even in
@@ -1114,24 +1124,22 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-15 (sixth). Handoff items 1 and 2: the blocked-request count on the title bar, and a "Cookie banner rejected" line in the page menu.
+**Last session:** 2026-11-15 (seventh). Handoff item 1: `filters/user.txt` is reread when it changes.
 **Repo state:** on `master`, committed; working tree clean.
 **Done this session:**
-- Title bar: a small outlined shield and the number of requests blocked on
-  the page, left of ×, while blocking is on for the site
-  (`scene::privacy::blocked_badge`). Decisions under M9 (blocking, count).
-- Page menu: "Cookie banner rejected" (dim, informational) above the site
-  toggle when Trailboard clicked a banner's reject button on the page
-  (`web::Page::banner_rejected`, `menu::Blocking::banner_rejected`).
+- `app::blocking` watches `filters/` with `notify`; a settled change to
+  `user.txt` with new text rebuilds the rules and toasts the rule count
+  (`scene::privacy::{count_rules, user_rules_message}`,
+  `storage::privacy::{is_user_list, load_user_list}`). Decisions under M9
+  (lists, `filters/user.txt`).
 **Owner decisions (2026-11-15):** no AppImage, Flatpak or AUR work (the owner
 publishes later, on their own); no UI translations; licence is Apache-2.0
 only (`LICENSE-APACHE`); all AI features (semantic search, Explain, any
 other AI/ML), imports from other browsers, and password managers and
 passkeys are all on hold until the owner says otherwise (see M10).
-**Next up (owner's order, 2026-11-15):** no M10 work: its items are on
-hold or wait for the owner to pick them.
-1. Reread `filters/user.txt` when it changes, instead of only at start.
-   The `notify` watcher it needs is already a dependency.
+**Next up:** no M10 work: its items are on hold or wait for the owner to
+pick them. Take the small follow-ups below; a good next one is clicking the
+title-bar shield to open the page menu.
 
 After that, the other small follow-ups below. Sandbox follow-ups: verify the setuid path on a kernel without unprivileged user namespaces (needs `kernel.unprivileged_userns_clone=0` or linux-hardened, and the package installed). Consent follow-ups: more platforms as real sites show them (TCF
 `__tcfapi` frames, Ketch, Termly, Borlabs, Axeptio); a separate *Reject cookie banners* switch
@@ -1163,6 +1171,15 @@ Save as Markdown; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out; open `crash.log` from the crash
 toast or a palette command.
 **Notes for the next session:**
+- user.txt reload verified e2e (`~/.cache/trailboard-e2e-userlist`,
+  `run.sh N`, serve its `site/` on 127.0.0.1:8771; the script edits the
+  file at `log edit …` marks): no file → blocked=0; writing a `/ads/` rule
+  toasts "1 rule", Ctrl+R → blocked=2 with the shield (`ul1.png`); `touch`
+  → nothing; a temp-file-and-`mv` save → "2 rules"; `rm` → "were removed"
+  (`ul2.png`), Ctrl+R → the ad loads, blocked=0. Not verified: the
+  "blocking is off" wording in the app (unit-tested only), a filters folder
+  that is itself replaced or deleted while running (the watch would be lost
+  until restart).
 - Title-bar count verified e2e (`~/.cache/trailboard-e2e-badge`, `run.sh N
   shot…`; serve `site/` with `python3 -m http.server 8771 --bind
   127.0.0.1`; `seed/` has a `user.txt` rule blocking `/ads/`): card shows

@@ -75,6 +75,18 @@ pub fn save_list(data_dir: &Path, id: &str, text: &str) -> std::io::Result<()> {
     write_atomic(&list_path(data_dir, id), text.as_bytes())
 }
 
+/// Whether `path`, from a change in the filters folder, is the user's own
+/// list (`filters/user.txt`). Editors that save through a temporary file
+/// and a rename report the final name too, so only that name counts.
+pub fn is_user_list(path: &Path) -> bool {
+    path.file_name().is_some_and(|n| n == format!("{USER_LIST}.txt").as_str())
+}
+
+/// The user's own rules, `None` if `filters/user.txt` isn't there (or can't be read).
+pub fn load_user_list(data_dir: &Path) -> Option<String> {
+    fs::read(list_path(data_dir, USER_LIST)).ok().map(|b| String::from_utf8_lossy(&b).into_owned())
+}
+
 /// The text of every list there is: the fetched ones in [`LISTS`] order, then
 /// the user's own. Missing or unreadable lists are left out.
 pub fn load_lists(data_dir: &Path) -> Vec<(String, String)> {
@@ -129,5 +141,18 @@ mod tests {
         let age = list_age(dir.path(), "easylist", now + Duration::from_secs(100)).unwrap();
         assert!((99..=101).contains(&age), "{age}");
         assert_eq!(list_age(dir.path(), "easylist", now - Duration::from_secs(100)), Some(0), "clock went back");
+    }
+
+    #[test]
+    fn user_list_path_and_text() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(is_user_list(&filters_dir(dir.path()).join("user.txt")));
+        assert!(is_user_list(Path::new("user.txt")));
+        for other in ["user.txt.tmp", ".user.txt.swp", "user.txt~", "easylist.txt", "filters"] {
+            assert!(!is_user_list(&filters_dir(dir.path()).join(other)), "{other}");
+        }
+        assert_eq!(load_user_list(dir.path()), None);
+        save_list(dir.path(), USER_LIST, "||mine.example^").unwrap();
+        assert_eq!(load_user_list(dir.path()).as_deref(), Some("||mine.example^"));
     }
 }

@@ -11,6 +11,7 @@ pub mod keys;
 pub mod links;
 pub mod menu;
 pub mod popup;
+pub mod sandbox;
 pub mod shield;
 pub mod text;
 
@@ -324,10 +325,13 @@ pub fn start(cef_dir: &Path, cache_dir: &Path) -> Result<Startup, String> {
 
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(cache_dir).map_err(|e| e.to_string())?;
+    // Chromium looks for `chrome-sandbox` beside the real executable (a
+    // `/usr/bin` symlink resolves to `/usr/lib/trailboard`).
+    let sandbox = sandbox::detect(exe.parent().unwrap_or(Path::new("/")));
     let settings = Settings {
         windowless_rendering_enabled: 1,
         external_message_pump: 1,
-        no_sandbox: 1,
+        no_sandbox: (!sandbox.is_on()) as i32,
         browser_subprocess_path: CefString::from(exe.to_string_lossy().as_ref()),
         resources_dir_path: CefString::from(cef_dir.to_string_lossy().as_ref()),
         locales_dir_path: CefString::from(cef_dir.join("locales").to_string_lossy().as_ref()),
@@ -343,15 +347,20 @@ pub fn start(cef_dir: &Path, cache_dir: &Path) -> Result<Startup, String> {
         }
         return Err(format!("CEF initialize failed (exit code {})", get_exit_code()));
     }
-    Ok(Startup::Browser(Engine { _private: () }))
+    Ok(Startup::Browser(Engine { sandbox }))
 }
 
 /// Handle to an initialized CEF. Call [`Engine::shutdown`] after every page is dropped.
 pub struct Engine {
-    _private: (),
+    sandbox: sandbox::Sandbox,
 }
 
 impl Engine {
+    /// How Chromium's child processes are confined.
+    pub fn sandbox(&self) -> &sandbox::Sandbox {
+        &self.sandbox
+    }
+
     /// Run pending CEF work. Call often (every loop iteration).
     pub fn pump(&self) {
         do_message_loop_work();

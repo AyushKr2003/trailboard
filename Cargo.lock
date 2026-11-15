@@ -3612,6 +3612,7 @@ version = "0.1.0"
 dependencies = [
  "adblock",
  "cef",
+ "libc",
  "log",
  "regex",
  "serde_json",

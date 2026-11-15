@@ -32,11 +32,11 @@ mkdir -p "$OUT/share/applications" "$OUT/share/icons/hicolor/scalable/apps"
 install -m 755 target/release/trailboard "$OUT/trailboard"
 
 # CEF's runtime: libraries, data files and locales. Not its headers, CMake
-# files or wrapper sources. `chrome-sandbox` is left out: Trailboard runs
-# Chromium without its sandbox (see docs/PLAN.md, M9).
+# files or wrapper sources. `chrome-sandbox` comes along but is only used
+# where user namespaces are off, and only once made setuid root (see README).
 for f in "$CEF"/*; do
     case "$(basename "$f")" in
-        include | cmake | libcef_dll | CMakeLists.txt | archive.json | chrome-sandbox) ;;
+        include | cmake | libcef_dll | CMakeLists.txt | archive.json) ;;
         *) cp -a "$f" "$OUT/" ;;
     esac
 done

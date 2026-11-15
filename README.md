@@ -65,6 +65,16 @@ cd packaging/arch && makepkg -si
 message, backtrace) is appended to `crash.log` in the data folder below, and
 the next start says so once.
 
+Pages run inside Chromium's sandbox, which uses unprivileged user namespaces
+(on by default on Arch and most distributions; `chrome://sandbox` in a card
+shows its state). Where the kernel turns those off (linux-hardened), Chromium
+needs its setuid helper `chrome-sandbox` beside the binary instead: the Arch
+package installs it that way; for a bundle, run
+`pkexec chown root:root chrome-sandbox && pkexec chmod 4755 chrome-sandbox` in
+its folder. With neither, Trailboard still starts but logs a warning and runs
+pages unconfined. `TRAILBOARD_NO_SANDBOX=1` turns the sandbox off for one run
+(for debugging).
+
 Starting Trailboard again while it runs (from the launcher, a shell or a link
 in another app) opens the given pages as new cards in the running window, in
 the space on screen, and exits. Arguments can be URLs, hosts, search words or

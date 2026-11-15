@@ -362,7 +362,7 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     `## Other pages`. Headings in notes move down a level outside code.
   - Not done: a file chooser (xdg-desktop-portal), saving a web page's text.
 
-### M6: Chrome UI 🟡
+### M6: Chrome UI ✅
 - ✅ Trails sidebar (B; `scene::sidebar`, `app::sidebar`). Decisions (2026-11-14):
   - A panel over the left edge of the board (300 px, at most 45% of the
     window, full height), not a resized board: the board, Read Mode and Fit
@@ -938,7 +938,7 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   - Only one switch for now: ads and trackers together. Separate switches
     (trackers only, cookie banners) can come with cosmetic filtering.
 
-### M9: Packaging and release 🟡
+### M9: Packaging and release ✅
 - ✅ Bundle layout (`scripts/bundle.sh [--tar]`): `target/bundle/trailboard-VERSION-ARCH/`
   holds the release binary, CEF's runtime files and locales beside it,
   `share/applications/trailboard.desktop`, the icon, README, CHANGELOG and
@@ -953,8 +953,8 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   - `libcef.so` ships stripped (`strip --strip-unneeded`: 1.4 GB → ~250 MB);
     folder ~384 MB, `.tar.zst` ~152 MB. All locales are kept (for UI
     translations later and Chromium's own pages).
-  - `chrome-sandbox` is left out: Trailboard runs Chromium with `no_sandbox`
-    (as it always has). Turning the sandbox on is its own item (below).
+  - `chrome-sandbox` comes along (not setuid; README says how to make it so).
+    It was left out until the sandbox item below.
   - Default release profile, no LTO: the 7.6 GB machine and build time matter
     more than a smaller 17 MB binary next to 250 MB of CEF. Revisit for the AUR.
 - ✅ `--version` / `-V` (`trailboard 0.1.0 (CEF 156.0.26+…)`) and `--help` / `-h`,
@@ -980,8 +980,8 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     `prepare()` as cef-dll-sys expects (hard links, no copy) and handed to
     the build as `CEF_PATH`. No `.cargo/config.toml`, so the binary's runpath
     is only `$ORIGIN`.
-  - Layout: the bundle in `/usr/lib/trailboard` (binary + CEF runtime, no
-    `chrome-sandbox`), `/usr/bin/trailboard` a symlink (`current_exe` and
+  - Layout: the bundle in `/usr/lib/trailboard` (binary + CEF runtime,
+    `chrome-sandbox` setuid 4755 since the sandbox item), `/usr/bin/trailboard` a symlink (`current_exe` and
     glibc's `$ORIGIN` both resolve it), desktop entry, icon, docs, and
     CEF's `CREDITS.html` in `/usr/share/licenses/trailboard/`.
   - `options=(!lto !debug)`: makepkg's LTO flags would make CEF's C++ wrapper
@@ -993,7 +993,27 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     with `pacman -Qo`, plus what winit/wgpu load at run time (`wayland`,
     `vulkan-icd-loader`) and `ttf-font`; `xdg-utils` and `xdg-user-dirs`
     optional. No licence file of our own yet (see the licence item below).
-- ⬜ Chromium's sandbox (`chrome-sandbox` setuid or user namespaces) instead of `no_sandbox`.
+- ✅ Chromium's sandbox instead of `no_sandbox` (`web::sandbox`). Decisions (2026-11-15):
+  - On by default. Chromium itself prefers user namespaces and falls back to
+    the setuid helper `chrome-sandbox` in the executable's directory; with
+    neither it aborts ("No usable sandbox!"). So before `initialize` we probe
+    the same way (a forked child tries `unshare(NEWUSER|NEWPID|NEWNET)`,
+    which also fails under Ubuntu's AppArmor userns restriction) and check
+    the helper is root-owned, setuid and executable; with neither we set
+    `no_sandbox` and log a warning, rather than not starting at all. The
+    choice is the pure `sandbox::choose` (unit-tested) and is logged at start.
+  - `TRAILBOARD_NO_SANDBOX=1` turns it off for a run (debugging). Not a
+    setting: nobody should need it day to day. Not a `--no-sandbox` flag
+    either, which `launch::target` would read as a search.
+  - The same binary stays the subprocess (zygote, renderers); `main` does
+    nothing before `web::start` that a sandboxed renderer would need (the
+    panic hook can't write `crash.log` from a renderer; stderr still has it).
+  - Packaging: the PKGBUILD installs `chrome-sandbox` 4755 (for
+    linux-hardened, which has no unprivileged user namespaces; Arch's own
+    chromium does the same); `bundle.sh` copies it unprivileged and the
+    README says how to make it setuid.
+  - No toast when the sandbox is off: the log line only. A settings row
+    showing the state is a follow-up.
 - ✅ First-run defaults: the very first start adds a welcome note (Markdown,
   `crates/app/src/guide.md`) to the left of the first page, and the view fits
   both. Decisions (2026-11-14):
@@ -1058,20 +1078,19 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-15 (third). M8: cookie banners answered with "reject" on known consent platforms; M8 is complete.
+**Last session:** 2026-11-15 (fourth). M9: Chromium's sandbox is on; M9 is complete. M6 marked ✅ (its only open item, translations, was dropped), so M0–M9 are all done and only M10 (optional) remains.
 **Repo state:** on `master`, committed; working tree clean.
 **Done this session:**
-- `web::consent`: a script run in each frame of a web page beside the
-  cosmetic one watches for 15 known consent platforms' banners and clicks
-  their reject button, then lets a page left with `overflow: hidden` scroll
-  again. Decisions under M8. `cosmetic`'s script exposes its stylesheet
-  (`window[Symbol.for('trailboard.hide')].sheet`) so the visibility check
-  can ignore our own hiding.
+- `web::sandbox`: before `initialize`, a forked child tries the namespaces
+  Chromium's sandbox needs, and `chrome-sandbox` beside the executable is
+  checked for root/setuid; `no_sandbox` is set only when neither works (or
+  `TRAILBOARD_NO_SANDBOX=1`). The choice is logged at start
+  (`Engine::sandbox`). PKGBUILD ships `chrome-sandbox` 4755, `bundle.sh`
+  copies it, README explains. Decisions under M9.
 **Owner decisions (2026-11-15):** no AppImage, Flatpak or AUR work (the owner
 publishes later, on their own); no UI translations; licence is Apache-2.0
 only (`LICENSE-APACHE`).
-**Next up:** the Chromium sandbox (M9's last ⬜, so M9 is back to 🟡:
-`chrome-sandbox` setuid or user namespaces instead of `no_sandbox`). Consent follow-ups: more platforms as real sites show them (TCF
+**Next up:** M10 starts with the owner: pick from [FUTURE.md](FUTURE.md)'s near-term list (semantic search, Explain with your own LLM key, imports, password managers) — ask which first. Without an answer, take small follow-ups below. Sandbox follow-ups: show the sandbox state in the settings panel (Ctrl+,) and a one-time toast when it is off for lack of support; verify the setuid path on a kernel without unprivileged user namespaces (needs `kernel.unprivileged_userns_clone=0` or linux-hardened, and the package installed). Consent follow-ups: more platforms as real sites show them (TCF
 `__tcfapi` frames, Ketch, Termly, Borlabs, Axeptio); a "cookie banner
 rejected" line in the page menu; a separate *Reject cookie banners* switch
 if clicking ever breaks a site. Small blocking follow-ups: a shield
@@ -1103,6 +1122,30 @@ Save as Markdown; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out; open `crash.log` from the crash
 toast or a palette command.
 **Notes for the next session:**
+- Sandbox verified e2e (`~/.cache/trailboard-e2e-sandbox`, `run.sh N
+  shot…` dumps every `trailboard` process's seccomp mode and user/PID
+  namespace to `procsN.txt` at `log probe`; `URL=` sets the start page,
+  default `chrome://sandbox`). Run 1–2: "sandbox: on (user namespaces)";
+  the browser, utility and first zygote in the host namespaces, the forked
+  zygote and every renderer in a new user namespace with their own PID
+  namespaces and `Seccomp: 2`; Wikipedia loads; `chrome://sandbox` reads
+  "You are adequately sandboxed" (only Yama non-broker ptrace is yellow, as
+  in Chrome). Run 3, `TRAILBOARD_NO_SANDBOX=1`: warning logged, everything
+  in the host namespace, seccomp 0. Run 4 (`run-nons.sh`: inside a user
+  namespace with `max_user_namespaces=1`, so no nested ones, as on
+  linux-hardened): the probe fails, "sandbox: OFF …" warning, the app
+  starts and `chrome://sandbox` says "NOT adequately sandboxed" (without the
+  probe Chromium would abort here). Run 5 (sandboxed, a copy of the
+  cosmetic test's `data2` with all lists): the cosmetic test page
+  `site:H cls:H id:H attr:H unh:S ctrl:S late:H ovf:auto frame:clsH/siteS`
+  and the OneTrust consent page `out:reject ovf:auto`, same as before. Not
+  verified: the setuid helper path (needs root-owned 4755 and userns off
+  system-wide), Ubuntu's AppArmor restriction (reasoned, not run), memory
+  against a no-sandbox baseline (renderers 60–175 MB RSS each, as before by
+  eye), GPU acceleration differences (this iGPU logs a vaapi error either
+  way), downloads and file chooser dialogs under the sandbox (they run in
+  the browser process, so should be unaffected).
+
 - Consent verified e2e (`~/.cache/trailboard-e2e-consent`, `run.sh N
   shot…`, `URL=` sets the start page; serve `site/` with `python3 -m
   http.server 8773 --bind 127.0.0.2` and again on 127.0.0.3:8774 for the

@@ -7,6 +7,13 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Pages run in Chromium's sandbox**: web pages are now confined the way
+  they are in Chrome (user namespaces and seccomp), so a page that exploits
+  a browser bug has a much harder time reaching your files. Where the system doesn't support
+  that, Trailboard still starts, without the sandbox, and says so in its
+  log. The Arch package installs Chromium's `chrome-sandbox` helper for
+  kernels without user namespaces. `TRAILBOARD_NO_SANDBOX=1` turns it off
+  for one run.
 - **Cookie banners answered with "reject"**: on sites using a well-known
   consent platform (OneTrust, Didomi, Cookiebot, Sourcepoint, Quantcast,
   Usercentrics and others), Trailboard clicks the banner's reject button

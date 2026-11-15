@@ -84,17 +84,21 @@ package() {
   install -Dm755 trailboard/target/release/trailboard "$lib/trailboard"
 
   # CEF's runtime beside the binary (its rpath has $ORIGIN and it looks for
-  # resources next to itself). No chrome-sandbox: Trailboard runs Chromium
-  # with no_sandbox. makepkg's strip takes libcef.so from 1.4 GB to ~250 MB.
+  # resources next to itself). makepkg's strip takes libcef.so from 1.4 GB
+  # to ~250 MB.
   local f
   for f in cef/*; do
     case ${f##*/} in
-      include | cmake | libcef_dll | CMakeLists.txt | archive.json | chrome-sandbox | CREDITS.html) ;;
+      include | cmake | libcef_dll | CMakeLists.txt | archive.json | CREDITS.html) ;;
       *) cp -r --no-preserve=ownership "$f" "$lib/" ;;
     esac
   done
   chmod -R u=rwX,go=rX "$lib"
   chmod 755 "$lib/trailboard"
+  # Chromium's setuid sandbox helper, for kernels without unprivileged user
+  # namespaces (linux-hardened); elsewhere Chromium uses namespaces and
+  # never runs it. Arch's own chromium ships it the same way.
+  chmod 4755 "$lib/chrome-sandbox"
 
   install -d "$pkgdir/usr/bin"
   ln -s /usr/lib/trailboard/trailboard "$pkgdir/usr/bin/trailboard"

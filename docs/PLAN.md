@@ -618,8 +618,8 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   - The board darkens slightly towards the window's corners (vignette 0.13
     dark, 0.04 light; `Background::vignette`).
   - The empty board says "An empty board" over its hint, keys as keycaps.
-- ⬜ Translations of the UI strings (needs a string table first; split off the
-  `.desktop` item).
+- ➖ Translations of the UI strings: dropped (owner's decision, 2026-11-15).
+  English only; no string table needed.
 - ✅ Settings panel (Ctrl+,; `scene::settings`, `storage::settings`,
   `palette::settings_rows`). Decisions (2026-11-14):
   - Not a page or a window: the palette's field and list again
@@ -833,7 +833,7 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
 - Cookie-banner auto-reject (cosmetic rules + known CMP actions).
 - Per-site "disable protections" toggle.
 
-### M9: Packaging and release 🟡
+### M9: Packaging and release ✅
 - ✅ Bundle layout (`scripts/bundle.sh [--tar]`): `target/bundle/trailboard-VERSION-ARCH/`
   holds the release binary, CEF's runtime files and locales beside it,
   `share/applications/trailboard.desktop`, the icon, README, CHANGELOG and
@@ -862,8 +862,9 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   message, and leaves `crash-unseen`; the next start shows "Trailboard closed
   unexpectedly last time · report in …" for 8 s and clears the mark. Not
   caught: crashes inside Chromium (signals); those still go to stderr.
-- 🟡 Arch `PKGBUILD` (`packaging/arch/`, `cd packaging/arch && makepkg -si`);
-  AUR upload, AppImage and Flatpak to come. Decisions (2026-11-14):
+- ✅ Arch `PKGBUILD` (`packaging/arch/`, `cd packaging/arch && makepkg -si`).
+  AUR upload, AppImage and Flatpak are out of scope: the owner will publish
+  when and how they see fit (decision 2026-11-15). Decisions (2026-11-14):
   - Source: the git checkout the PKGBUILD sits in (`git+file://`, its last
     commit), or `TRAILBOARD_GIT`. The repo has no public remote yet, so there
     is no `url=` and no `.SRCINFO`; publishing to the AUR needs the public
@@ -911,7 +912,10 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     guide counts as the user's own note, so a fresh copy is added. Typing
     "welcome" ranks the guide card itself (open or recently closed) above
     the command, which is fine: either way the guide comes back.
-- ⬜ Licence files (`LICENSE-MIT`, `LICENSE-APACHE`: the copyright line is the owner's call).
+- ✅ Licence: Apache-2.0 only (owner's decision, 2026-11-15). `LICENSE-APACHE`
+  holds the unmodified standard text; `license = "Apache-2.0"` in `Cargo.toml`
+  and the `PKGBUILD`. No `LICENSE-MIT`. No copyright line is needed in the
+  file itself; one would only go in a `NOTICE` file or source headers.
 
 ### M10: Optional extras ⬜
 See [FUTURE.md](FUTURE.md): semantic search, Explain with your own LLM key, imports, extensions.
@@ -958,11 +962,11 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 - *Welcome note* palette command: goes to the guide, or adds a fresh copy.
 - Fixed on the way: the first view's fit was overridden by the new page's
   `ensure_visible` goal; the startup fit now clears it.
-**Next up:** publishing to the AUR needs the owner's public repository URL
-and a release tag (then `url=`, `source`, `.SRCINFO`); the licence files
-need the owner's copyright line. Without those: M6's translations (needs a
-string table first; the guide note would become per-language) or M8 privacy
-(adblock engine). Small follow-ups: rename a trail from the
+**Owner decisions (2026-11-15):** no AppImage, Flatpak or AUR work (the owner
+publishes later, on their own); no UI translations; licence is Apache-2.0
+only (`LICENSE-APACHE`).
+**Next up:** M8 privacy (adblock engine, cookie banners, per-site toggle), then
+the Chromium sandbox. Small follow-ups: rename a trail from the
 sidebar; auto-scroll the sidebar while dragging; a downloads folder setting (needs a free-text row or a
 folder picker via xdg-desktop-portal); a progress mark on the board while
 downloads run; ask before quitting with downloads running; pause/resume;
@@ -979,7 +983,7 @@ sites without an icon; the name label for a stack could list its size; a zoom
 badge on a zoomed card's title bar; Ctrl+scroll inside a page to zoom it;
 Shift+Enter in the palette to open beside; rename a trail from its tag; keyboard selection of
 several cards; link hints inside iframes; xdg-desktop-portal file chooser for
-Save as Markdown; i18n; animate cards to their Tidy places; a sticky note's
+Save as Markdown; animate cards to their Tidy places; a sticky note's
 strip is hard to hit when zoomed far out; open `crash.log` from the crash
 toast or a palette command.
 **Notes for the next session:**

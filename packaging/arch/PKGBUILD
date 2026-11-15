@@ -13,7 +13,7 @@ pkgver=0.1.0
 pkgrel=1
 pkgdesc='A canvas browser: web pages as live cards on an infinite board'
 arch=('x86_64')
-license=('MIT OR Apache-2.0' 'BSD-3-Clause')
+license=('Apache-2.0' 'BSD-3-Clause')
 
 _cef=156.0.26+g8ea0c73+chromium-156.0.8078.88
 _cefname="cef_binary_${_cef}_linux64_minimal"

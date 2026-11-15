@@ -6,6 +6,9 @@ All notable changes to Trailboard. The format follows
 
 ## [Unreleased]
 
+### Added
+- `LICENSE-APACHE`; the project is licensed Apache-2.0 only (`Cargo.toml`, `PKGBUILD`).
+
 ### Changed
 - **A more polished look**: panels, menus, toasts and labels have softer,
   deeper shadows, a fine edge and a faint top highlight. The Ctrl+K palette

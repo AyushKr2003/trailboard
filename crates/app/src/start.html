@@ -5,44 +5,77 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>New page</title>
 <style>
-/* The start page: one search field, and the pages opened last so the way
-   back is one click. Flat on the card's own level (the card already floats
-   on the board), the field a recess in it, the engine list a panel over it.
-   Colours come from the app (`tbTheme`); corners follow Hyprland. */
+/* The start page, a small board of its own: a clock and greeting, one
+   search field, the pages opened last as small cards (the way back), and
+   the user's pinned sites in named groups, each group a card with a label
+   above it like the cards on the board. Flat on the card level; groups and
+   menus at the panel level; the field a recess. Colours come from the app
+   (`tbTheme`); corners follow Hyprland. The accent only marks focus, a
+   switch that is on, a pinned page's pin and the main button. */
 :root {
   --bg: #1b1c22; --fg: #e6e6e9; --dim: #a0a0a8; --faint: #7a7a83;
   --accent: #ffd60a; --accentfg: #000; --accenttext: #ffd60a; --accentsoft: #4a4426;
   --card: #24252c; --hover: #2c2d35; --well: #16171c; --rule: #34353d; --rulestrong: #4a4b55;
-  --shade: #000;
+  --danger: #e5484d; --shade: #000;
   --radius: 0px;
   --r: min(12px, var(--radius)); --r-sm: min(6px, var(--radius));
   --font: "Inter", "Adwaita Sans", system-ui, sans-serif;
+  --ease: cubic-bezier(.2, .8, .2, 1);
+  --lift: 0 1px 2px color-mix(in srgb, var(--shade) 28%, transparent), 0 6px 18px color-mix(in srgb, var(--shade) 22%, transparent);
+  --float: 0 1px 3px color-mix(in srgb, var(--shade) 30%, transparent), 0 12px 32px color-mix(in srgb, var(--shade) 40%, transparent);
+  --mono-l: 0.80; --mono-c: 0.10; --mono-bg: 16%;
   color-scheme: dark;
 }
-:root.light { color-scheme: light; }
+:root.light {
+  color-scheme: light; --mono-l: 0.48; --mono-c: 0.13; --mono-bg: 12%;
+  --lift: 0 1px 2px color-mix(in srgb, var(--shade) 10%, transparent), 0 6px 18px color-mix(in srgb, var(--shade) 8%, transparent);
+  --float: 0 1px 3px color-mix(in srgb, var(--shade) 14%, transparent), 0 12px 32px color-mix(in srgb, var(--shade) 16%, transparent);
+}
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; }
+html, body { margin: 0; min-height: 100%; }
 body {
   background: var(--bg); color: var(--fg);
   font: 13px/1.5 var(--font); font-feature-settings: "cv11";
-  -webkit-font-smoothing: antialiased; overflow: hidden;
+  -webkit-font-smoothing: antialiased; overflow-x: hidden; scrollbar-width: thin;
 }
-button, input { font: inherit; color: inherit; }
+button, input, select { font: inherit; color: inherit; }
 :focus { outline: none; }
 :focus-visible { outline: 2px solid var(--accenttext); outline-offset: 2px; }
-/* The field shows focus on the whole bar. */
 input:focus-visible { outline: none; }
 ::selection { background: var(--accentsoft); }
+[hidden] { display: none !important; }
 svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5;
   stroke-linecap: round; stroke-linejoin: round; }
 
-/* The column sits a little above the middle, where the eye starts. */
-main { position: absolute; left: 50%; top: 34%; transform: translate(-50%, -30%);
-  width: min(620px, calc(100vw - 48px)); }
+/* a quiet square button: an icon, raised under the pointer */
+.ghost { display: inline-grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0;
+  border-radius: var(--r-sm); background: transparent; color: var(--dim); cursor: pointer; }
+.ghost:hover, .ghost[aria-expanded="true"] { background: var(--hover); color: var(--fg); }
+.ghost.sm { width: 24px; height: 24px; }
 
-.brand { display: flex; align-items: center; gap: 10px; margin: 0 0 20px 2px; font-size: 15px; font-weight: 600;
-  color: var(--dim); letter-spacing: -0.01em; }
-.brand svg { width: 22px; height: 22px; }
+.panel { background: var(--card); border: 1px solid var(--rule); border-radius: var(--r); box-shadow: var(--float); }
+.pop { position: fixed; z-index: 20; opacity: 0; transform: translateY(-4px); pointer-events: none;
+  transition: opacity .16s var(--ease), transform .16s var(--ease); }
+.pop.open { opacity: 1; transform: none; pointer-events: auto; }
+kbd { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px;
+  font: 600 11px/1 var(--font); color: var(--dim); background: var(--hover);
+  border: 1px solid color-mix(in srgb, var(--rulestrong) 55%, transparent); border-radius: min(4px, var(--radius)); }
+
+.corner { position: fixed; top: 16px; right: 16px; z-index: 10; }
+
+/* The column: centred, a little above the middle where the eye starts. */
+main { display: flex; flex-direction: column; justify-content: center; width: min(880px, calc(100vw - 48px));
+  min-height: 100vh; margin: 0 auto; padding: 64px 0 9vh; }
+.narrow { width: min(640px, 100%); margin: 0 auto; }
+
+/* clock and greeting */
+.hello { margin: 0 0 28px; text-align: center; user-select: none; }
+.time { font-size: 72px; font-weight: 600; line-height: 1; letter-spacing: -0.05em;
+  font-variant-numeric: tabular-nums; font-feature-settings: "cv11", "tnum", "ss01"; }
+.time .ampm { margin-left: 6px; font-size: 22px; letter-spacing: 0; color: var(--dim); }
+.greet { margin-top: 12px; font-size: 15px; font-weight: 500; color: var(--dim); }
+.greet b { font-weight: 600; color: var(--fg); }
+.greet .dot { margin: 0 8px; color: var(--faint); }
 
 /* the field */
 .bar { position: relative; display: flex; align-items: center; height: 52px;
@@ -57,15 +90,11 @@ main { position: absolute; left: 50%; top: 34%; transform: translate(-50%, -30%)
 .engine .chev { width: 12px; height: 12px; color: var(--faint); transition: transform .12s; }
 .engine[aria-expanded="true"] .chev { transform: rotate(180deg); }
 .sep { width: 1px; height: 22px; background: var(--rule); margin: 0 4px; }
-input { flex: 1; min-width: 0; height: 100%; padding: 0 12px 0 10px; font-size: 15px; background: transparent; border: 0; }
-input::placeholder { color: var(--faint); }
-/* What Enter will do, once something is typed. */
+#q { flex: 1; min-width: 0; height: 100%; padding: 0 12px 0 10px; font-size: 15px; background: transparent; border: 0; }
+#q::placeholder { color: var(--faint); }
 .enter { display: flex; align-items: center; gap: 8px; margin-right: 12px; font-size: 12px; color: var(--dim);
   white-space: nowrap; opacity: 0; transition: opacity .12s; pointer-events: none; }
 .bar.typed .enter { opacity: 1; }
-kbd { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px;
-  font: 600 11px/1 var(--font); color: var(--dim); background: var(--hover);
-  border: 1px solid color-mix(in srgb, var(--rulestrong) 55%, transparent); border-radius: min(4px, var(--radius)); }
 
 /* an engine's badge: its icon, or its letters on its colour */
 .badge { position: relative; overflow: hidden; display: inline-grid; place-items: center; flex: none;
@@ -75,14 +104,12 @@ kbd { display: inline-grid; place-items: center; min-width: 20px; height: 20px; 
 .badge.img { background: none; color: transparent; }
 .badge.img img { display: block; position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; border-radius: inherit; }
 
-/* the engine list: a panel over the page */
+/* the engine list */
 .menu { position: absolute; top: calc(100% + 8px); left: 0; z-index: 5; width: 360px; max-height: 430px;
-  overflow-y: auto; padding: 4px; background: var(--card); border: 1px solid var(--rule); border-radius: var(--r);
-  box-shadow: 0 1px 3px color-mix(in srgb, var(--shade) 30%, transparent), 0 12px 32px color-mix(in srgb, var(--shade) 40%, transparent);
-  opacity: 0; transform: translateY(-4px); pointer-events: none; transition: opacity .12s, transform .12s; scrollbar-width: thin; }
-:root.light .menu { box-shadow: 0 1px 3px color-mix(in srgb, var(--shade) 14%, transparent), 0 12px 32px color-mix(in srgb, var(--shade) 16%, transparent); }
+  overflow-y: auto; padding: 4px; scrollbar-width: thin;
+  opacity: 0; transform: translateY(-4px); pointer-events: none; transition: opacity .16s, transform .16s; }
 .menu.open { opacity: 1; transform: none; pointer-events: auto; }
-.group { padding: 10px 10px 4px; font-size: 11px; font-weight: 600; color: var(--dim); }
+.group-h { padding: 10px 10px 4px; font-size: 11px; font-weight: 600; color: var(--dim); }
 .item { display: flex; align-items: center; gap: 12px; padding: 6px 10px; border-radius: var(--r-sm); cursor: pointer; }
 .item .badge { width: 24px; height: 24px; font-size: 11px; }
 .item .txt { flex: 1; min-width: 0; }
@@ -95,41 +122,175 @@ kbd { display: inline-grid; place-items: center; min-width: 20px; height: 20px; 
   border-top: 1px solid var(--rule); font-weight: 600; color: var(--dim); cursor: pointer; }
 .foot:hover { color: var(--fg); }
 
-/* recently opened */
-.recent { margin: 28px 0 0; }
-.recent h2 { display: flex; align-items: center; justify-content: space-between; margin: 0 0 6px 10px;
+/* sections */
+section { margin-top: 40px; }
+.sec-h { display: flex; align-items: center; justify-content: space-between; height: 24px; margin: 0 0 10px; padding: 0 2px;
   font-size: 12px; font-weight: 600; color: var(--dim); }
-.recent ul { list-style: none; margin: 0; padding: 0; }
-.recent button { display: flex; align-items: center; gap: 12px; width: 100%; height: 36px; padding: 0 10px; text-align: left;
-  border: 0; border-radius: var(--r-sm); background: transparent; cursor: pointer; }
-.recent button:hover, .recent button:focus-visible { background: var(--hover); outline: none; }
-.tile { display: grid; place-items: center; flex: none; width: 20px; height: 20px; border-radius: min(4px, var(--radius));
-  background: var(--hover); color: var(--dim); font: 700 10px/1 var(--font); text-transform: uppercase; }
-.recent .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.recent .h { flex: none; max-width: 40%; font-size: 12px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.recent button:hover .h { color: var(--dim); }
+.sec-h .aside { font-weight: 500; color: var(--faint); }
 
-.under { display: flex; justify-content: center; margin-top: 24px; }
-.link { font-weight: 500; color: var(--dim); background: none; border: 0; padding: 4px 6px; cursor: pointer; border-radius: var(--r-sm); }
-.link:hover { color: var(--fg); }
+/* a site's mark: its icon, or its letter in a hue of its own */
+.mark { display: grid; place-items: center; flex: none; overflow: hidden; width: 16px; height: 16px;
+  border-radius: min(3px, var(--radius)); font-size: 10px; font-weight: 700; line-height: 1; text-transform: uppercase; }
+.mark img { width: 100%; height: 100%; object-fit: contain; }
+.mark.mono { color: var(--mc); background: var(--mb); }
+/* A site's own icon, loading from the web: an empty box until it comes (no
+   letter flashing first); the letter only if it can't be had. */
+.mark.web { position: relative; color: transparent; background: none; }
+.mark.web img { position: absolute; inset: 0; }
+.mark.web.fb { color: var(--mc); background: var(--mb); }
 
-/* A low card: no recent pages, the column centred. */
-@media (max-height: 420px) { .recent { display: none; } main { top: 50%; transform: translate(-50%, -50%); } }
+/* Recent pages: small cards, as on the board: a label above, the page
+   below with a hairline and a low shadow. */
+.cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; }
+.pc { position: relative; display: block; min-width: 0; cursor: pointer; }
+.pc .lab { display: flex; align-items: center; gap: 6px; height: 22px; margin-bottom: 6px; padding: 0 2px; color: var(--dim); }
+.pc .lab .t { flex: 1; min-width: 0; font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pc:hover .lab, .pc:focus-visible .lab { color: var(--fg); }
+.pc .shot { position: relative; display: block; aspect-ratio: 16 / 9; overflow: hidden; border-radius: var(--r);
+  background: var(--card); border: 1px solid var(--rule); box-shadow: var(--lift);
+  transition: border-color .12s, transform .16s var(--ease); }
+.pc .shot img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: left top; }
+.pc .shot .none { position: absolute; inset: 0; display: grid; place-items: center; background: var(--mb); }
+.pc .shot .none span { font-size: 28px; font-weight: 600; color: var(--mc); text-transform: uppercase; }
+.pc:hover .shot { border-color: var(--rulestrong); transform: translateY(-2px); }
+.pc:focus-visible { outline: none; }
+.pc:focus-visible .shot { outline: 2px solid var(--accenttext); outline-offset: 2px; }
+.pc .host { display: block; margin-top: 6px; padding: 0 2px; font-size: 12px; color: var(--faint);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pc .pin { position: absolute; top: 34px; right: 6px; z-index: 1; width: 28px; height: 28px;
+  background: color-mix(in srgb, var(--card) 92%, transparent); border: 1px solid var(--rule); opacity: 0; transition: opacity .12s; }
+.pc:hover .pin, .pc .pin:focus-visible, .pc .pin.on { opacity: 1; }
+.pc .pin:hover { background: var(--hover); }
+.pc .pin.on { color: var(--accenttext); }
+.pc .pin.on svg { fill: currentColor; }
+
+/* Pinned groups: cards with a label above, links inside. */
+.groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 24px 20px; align-items: start; }
+.grp-h { display: flex; align-items: center; gap: 6px; height: 24px; margin-bottom: 6px; padding: 0 0 0 2px; }
+.grp-h .nm { flex: 1; min-width: 0; font-size: 12px; font-weight: 600; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.grp-h .n { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.grp-h .ghost { opacity: 0; transition: opacity .12s; }
+.grp:hover .grp-h .ghost, .grp-h .ghost:focus-visible, .grp-h .ghost[aria-expanded="true"] { opacity: 1; }
+.grp-b { min-height: 44px; padding: 4px; background: var(--card); border: 1px solid var(--rule); border-radius: var(--r);
+  box-shadow: var(--lift); transition: border-color .12s; }
+.grp:hover .grp-b { border-color: var(--rulestrong); }
+.grp-b.over { border-color: var(--accenttext); }
+.ln { position: relative; display: flex; align-items: center; gap: 10px; width: 100%; height: 32px; padding: 0 8px; border: 0;
+  border-radius: var(--r-sm); background: transparent; text-align: left; cursor: pointer; }
+.ln:hover, .ln:focus-visible, .ln.menu-on { background: var(--hover); outline: none; }
+.ln .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ln kbd { display: none; min-width: 18px; height: 18px; font-size: 10px; }
+body.alt .ln kbd { display: inline-grid; }
+.ln .more { margin-right: -4px; opacity: 0; }
+.ln:hover .more, .ln.menu-on .more { opacity: 1; }
+.ln .more:hover { background: var(--card); }
+.ln.dragging { opacity: .35; }
+.ln.add { color: var(--faint); }
+.ln.add:hover, .ln.add:focus-visible { color: var(--fg); }
+.newgrp { display: flex; align-items: center; justify-content: center; gap: 8px; height: 44px; margin-top: 30px;
+  border: 1px dashed var(--rule); border-radius: var(--r); background: transparent; color: var(--faint); cursor: pointer; }
+.newgrp:hover, .newgrp:focus-visible { border-color: var(--rulestrong); color: var(--fg); outline: none; }
+.empty { display: flex; align-items: center; gap: 16px; padding: 18px 20px; border: 1px dashed var(--rule); border-radius: var(--r); color: var(--dim); }
+.empty .txt { flex: 1; }
+.empty .nm { font-weight: 600; color: var(--fg); }
+.empty .sub { font-size: 12px; }
+
+/* small menus */
+.list { min-width: 200px; padding: 4px; }
+.list button { display: flex; align-items: center; gap: 10px; width: 100%; height: 32px; padding: 0 10px; border: 0;
+  border-radius: var(--r-sm); background: transparent; text-align: left; cursor: pointer; white-space: nowrap; }
+.list button:hover, .list button:focus-visible { background: var(--hover); outline: none; }
+.list button:disabled { color: var(--faint); cursor: default; background: transparent; }
+.list button svg { color: var(--dim); }
+.list button:disabled svg { color: var(--faint); }
+.list button .k { margin-left: auto; padding-left: 16px; font-size: 11px; color: var(--faint); }
+.list .danger, .list .danger svg { color: var(--danger); }
+.list hr { margin: 4px 6px; border: 0; border-top: 1px solid var(--rule); }
+
+/* the customise panel */
+.custom { width: 304px; padding: 6px 0 4px; }
+.custom h3 { margin: 0; padding: 8px 16px 6px; font-size: 13px; font-weight: 600; }
+.opt { display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px 16px; border: 0; background: transparent;
+  text-align: left; cursor: pointer; }
+.opt:hover { background: var(--hover); }
+.opt .txt { flex: 1; min-width: 0; }
+.opt .nm { font-weight: 500; }
+.opt .sub { font-size: 12px; color: var(--dim); }
+.yourname { padding: 0 16px 8px; }
+/* two choices side by side: the chosen one is raised, not coloured */
+.fmt { display: flex; align-items: center; justify-content: space-between; padding: 0 16px 8px; font-size: 12px; color: var(--dim); }
+.seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: var(--r-sm); background: var(--well); border: 1px solid var(--rule); }
+.seg button { height: 24px; padding: 0 10px; border: 0; border-radius: min(4px, var(--radius)); background: transparent;
+  color: var(--dim); font-family: var(--font); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; cursor: pointer; }
+.seg button:hover { color: var(--fg); }
+.seg button[aria-checked="true"] { background: var(--hover); color: var(--fg); box-shadow: 0 1px 2px color-mix(in srgb, var(--shade) 25%, transparent); }
+.yourname input { height: 30px; margin: 0; font-size: 12px; }
+.custom hr { margin: 6px 0; border: 0; border-top: 1px solid var(--rule); }
+.custom .go { display: flex; align-items: center; justify-content: space-between; width: 100%; height: 36px; padding: 0 16px;
+  border: 0; background: transparent; color: var(--dim); font-weight: 500; cursor: pointer; }
+.custom .go:hover { background: var(--hover); color: var(--fg); }
+.custom .go b { font-weight: 500; color: var(--fg); }
+.custom .go:disabled { color: var(--faint); background: transparent; cursor: default; }
+.switch { position: relative; width: 36px; height: 20px; flex: none; border-radius: min(10px, var(--radius));
+  background: var(--rulestrong); transition: background .15s; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+  border-radius: min(8px, var(--radius)); background: var(--fg); transition: transform .15s var(--ease); }
+.on > .switch { background: var(--accent); }
+.on > .switch::after { transform: translateX(16px); background: var(--accentfg); }
+
+/* dialogs: a site, a group's name */
+.scrim { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center;
+  background: color-mix(in srgb, var(--shade) 45%, transparent); opacity: 0; pointer-events: none; transition: opacity .16s; }
+:root.light .scrim { background: color-mix(in srgb, var(--shade) 22%, transparent); }
+.scrim.open { opacity: 1; pointer-events: auto; }
+.editor { width: min(400px, calc(100vw - 32px)); padding: 20px; transform: translateY(6px) scale(.985); transition: transform .16s var(--ease); }
+.scrim.open .editor { transform: none; }
+.editor .head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.editor h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.editor .face { display: grid; place-items: center; width: 40px; height: 40px; flex: none; border-radius: var(--r);
+  background: var(--bg); border: 1px solid var(--rule); color: var(--dim); }
+.editor .face .mark { width: 20px; height: 20px; font-size: 14px; border-radius: min(4px, var(--radius)); }
+label { display: block; margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--dim); }
+label .opt-l { font-weight: 500; color: var(--faint); }
+.field { display: block; width: 100%; height: 36px; margin: 0 0 14px; padding: 0 10px; border: 1px solid var(--rule);
+  border-radius: var(--r-sm); background: var(--well); transition: border-color .12s, box-shadow .12s; }
+.field:hover { border-color: var(--rulestrong); }
+.field:focus { border-color: var(--accenttext); box-shadow: 0 0 0 3px var(--accentsoft); }
+.field::placeholder { color: var(--faint); }
+.field.bad { border-color: var(--danger); }
+select.field { appearance: none; padding-right: 32px; cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, var(--dim) 50%), linear-gradient(135deg, var(--dim) 50%, transparent 50%);
+  background-position: calc(100% - 16px) 15px, calc(100% - 11px) 15px; background-size: 5px 5px; background-repeat: no-repeat; }
+.err { margin: -8px 0 14px; font-size: 12px; color: var(--danger); }
+.err:empty { display: none; }
+.buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.btn { height: 32px; padding: 0 14px; border-radius: var(--r-sm); border: 1px solid var(--rule); background: transparent;
+  font-weight: 600; cursor: pointer; white-space: nowrap; }
+.btn:hover { background: var(--hover); }
+.btn.main { border-color: transparent; background: var(--accent); color: var(--accentfg); }
+.btn.main:hover { background: color-mix(in srgb, var(--accent) 88%, var(--fg)); }
+
+@media (max-width: 760px) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-height: 560px) { section { display: none; } }
+@media (max-height: 380px) { .hello { display: none; } }
 @media (max-width: 460px) { #en, .sep { display: none; } .enter span { display: none; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
 <body>
+<div class="corner">
+  <button class="ghost" id="customise" type="button" title="Customise this page" aria-haspopup="dialog" aria-expanded="false">
+    <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>
+  </button>
+</div>
+
 <main>
-  <div class="brand">
-    <svg viewBox="0 0 26 26" aria-hidden="true">
-      <rect x="1.5" y="3" width="9" height="7" rx="1.5" fill="var(--accent)"/>
-      <rect x="15.5" y="9.5" width="9" height="7" rx="1.5" fill="none" stroke="var(--accent)" stroke-width="1.6"/>
-      <rect x="6" y="18" width="9" height="6" rx="1.5" fill="none" stroke="var(--dim)" stroke-width="1.6"/>
-      <path d="M10.5 6.5 C 14 6.5, 12 13, 15.5 13" fill="none" stroke="var(--accent)" stroke-width="1.6"/>
-    </svg>
-    Trailboard
+  <div class="hello" id="hello">
+    <div class="time" id="time"></div>
+    <div class="greet" id="greet"></div>
   </div>
-  <form id="f" autocomplete="off">
+
+  <form id="f" class="narrow" autocomplete="off">
     <div class="bar" id="bar">
       <button type="button" class="engine" id="engine" aria-haspopup="listbox" aria-expanded="false" title="Choose a search engine">
         <span id="eb" style="display:contents"></span><span id="en"></span>
@@ -138,66 +299,604 @@ kbd { display: inline-grid; place-items: center; min-width: 20px; height: 20px; 
       <span class="sep"></span>
       <input id="q" type="text" autofocus spellcheck="false" aria-label="Search or address">
       <span class="enter"><span id="does">Search</span><kbd>Enter</kbd></span>
-      <div class="menu" id="menu" role="listbox"></div>
+      <div class="menu panel" id="menu" role="listbox"></div>
     </div>
   </form>
-  <div class="recent" id="recent" hidden>
-    <h2>Recently opened</h2>
-    <ul id="rlist"></ul>
-  </div>
-  <div class="under"><button class="link" id="help" type="button">Which search engine is for me?</button></div>
+
+  <section id="recent">
+    <div class="sec-h"><span>Jump back in</span><span class="aside">Ctrl+click opens beside this card</span></div>
+    <div class="cards" id="cards"></div>
+  </section>
+
+  <section id="pinned">
+    <div class="groups" id="groups"></div>
+  </section>
 </main>
+
+<!-- a pinned site's menu -->
+<div class="pop panel list" id="lmenu" role="menu">
+  <button type="button" data-do="beside"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="6" width="8" height="12" rx="1.5"/><rect x="13" y="6" width="8" height="12" rx="1.5"/></svg>Open beside<span class="k">Ctrl+click</span></button>
+  <button type="button" data-do="edit"><svg class="i" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg>Edit…</button>
+  <button type="button" data-do="up"><svg class="i" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></svg>Move up</button>
+  <button type="button" data-do="down"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14m-6-6 6 6 6-6"/></svg>Move down</button>
+  <hr>
+  <button type="button" data-do="unpin" class="danger"><svg class="i" viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2m-7 0 1 12h8l1-12"/></svg>Unpin</button>
+</div>
+
+<!-- a group's menu -->
+<div class="pop panel list" id="gmenu" role="menu">
+  <button type="button" data-do="add"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add a site…</button>
+  <button type="button" data-do="rename"><svg class="i" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg>Rename…</button>
+  <button type="button" data-do="openall"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="6" width="8" height="12" rx="1.5"/><rect x="13" y="6" width="8" height="12" rx="1.5"/></svg>Open all beside</button>
+  <button type="button" data-do="left"><svg class="i" viewBox="0 0 24 24"><path d="M19 12H5m6-6-6 6 6 6"/></svg>Move left</button>
+  <button type="button" data-do="right"><svg class="i" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>Move right</button>
+  <hr>
+  <button type="button" data-do="delete" class="danger"><svg class="i" viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2m-7 0 1 12h8l1-12"/></svg><span id="gdel">Delete group</span></button>
+</div>
+
+<!-- what the page shows -->
+<div class="pop panel custom" id="custom" role="dialog" aria-label="Customise">
+  <h3>Customise</h3>
+  <button type="button" class="opt" role="switch" data-key="show_clock"><span class="txt"><span class="nm">Clock</span><div class="sub">The time above the search field</div></span><span class="switch"></span></button>
+  <div class="fmt" id="fmt"><span>Time format</span><span class="seg" role="radiogroup" aria-label="Time format"><button type="button" role="radio" data-h24="0">12-hour</button><button type="button" role="radio" data-h24="1">24-hour</button></span></div>
+  <button type="button" class="opt" role="switch" data-key="show_greeting"><span class="txt"><span class="nm">Greeting and date</span><div class="sub">“Good evening”, and your name if you like</div></span><span class="switch"></span></button>
+  <div class="yourname" id="yourname"><input class="field" id="uname" type="text" spellcheck="false" maxlength="60" placeholder="Your name (optional)" aria-label="Your name"></div>
+  <button type="button" class="opt" role="switch" data-key="show_recent"><span class="txt"><span class="nm">Jump back in</span><div class="sub">The last pages you opened, as cards</div></span><span class="switch"></span></button>
+  <button type="button" class="opt" role="switch" data-key="show_pins"><span class="txt"><span class="nm">Pinned groups</span><div class="sub">Your sites, grouped your way</div></span><span class="switch"></span></button>
+  <hr>
+  <button type="button" class="go" id="cgroup"><span>New group</span><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+  <button type="button" class="go" id="cengine"><span>Search with <b id="cename"></b></span><span aria-hidden="true">→</span></button>
+</div>
+
+<!-- add or edit a pinned site; name a group -->
+<div class="scrim" id="scrim">
+  <form class="editor panel" id="editor" role="dialog" aria-modal="true" aria-labelledby="etitle" autocomplete="off">
+    <div class="head"><span class="face" id="eface"></span><h3 id="etitle"></h3></div>
+    <div id="sitefields">
+      <label for="eurl">Address</label>
+      <input class="field" id="eurl" type="text" spellcheck="false" placeholder="example.com">
+      <div class="err" id="eerr"></div>
+      <label for="ename">Name <span class="opt-l">(optional)</span></label>
+      <input class="field" id="ename" type="text" spellcheck="false" maxlength="60">
+      <label for="egroup">Group</label>
+      <select class="field" id="egroup"></select>
+    </div>
+    <div id="groupfields">
+      <label for="gname">Name</label>
+      <input class="field" id="gname" type="text" spellcheck="false" maxlength="60" placeholder="Work, Reading, Tools…">
+    </div>
+    <div class="buttons">
+      <button type="button" class="btn" id="ecancel">Cancel</button>
+      <button type="submit" class="btn main" id="esave">Save</button>
+    </div>
+  </form>
+</div>
+
 <script>
 const PREFIX = __PREFIX__;
 const D = __DATA__;
 const RECENT = __RECENT__;
+let S = JSON.parse(__STATE__);
+const MAX_GROUPS = 8, MAX_PER_GROUP = 12, FIRST_GROUP = "Pinned";
 const $ = (id) => document.getElementById(id);
 const byId = (id) => D.engines.find((e) => e.id === id) || D.engines[0];
 function act(msg) { console.log(PREFIX + msg); }
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
-// An engine's badge: its own icon from the web, over its letters, which
-// show while the icon loads or if it can't.
+const ICON = {
+  more: '<svg class="i" viewBox="0 0 24 24"><circle cx="6" cy="12" r=".6"/><circle cx="12" cy="12" r=".6"/><circle cx="18" cy="12" r=".6"/></svg>',
+  plus: '<svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+  pin: '<svg class="i" viewBox="0 0 24 24"><path d="M9 4h6l-1 5 3 3v2H7v-2l3-3z"/><path d="M12 14v6"/></svg>',
+  folder: '<svg class="i" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+  tick: '<svg class="i tick" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 10 17.5 19 7"/></svg>',
+};
+const G = () => S.start.groups;
+
+// ---- sites --------------------------------------------------------------
+
+// The site an icon is kept under, as the app keys it (`pagezoom::site_of`).
+const site = (u) => { try { return new URL(u).host.toLowerCase().replace(/^www\./, ""); } catch { return ""; } };
+const host = (u) => site(u) || u;
+const pinnable = (u) => /^https?:\/\/[^\s/]/.test(u) && !/\s/.test(u);
+// A site's hue, the same every time (its letter's colour when it has no icon).
+function hue(url) {
+  let h = 0;
+  for (const c of host(url)) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  const mc = `oklch(var(--mono-l) var(--mono-c) ${h % 360})`;
+  return `--mc:${mc};--mb:color-mix(in oklab, ${mc} var(--mono-bg), var(--card))`;
+}
+const letter = (url) => (host(url).match(/[a-z0-9]/i) || ["·"])[0];
+// A site's mark: the icon Trailboard keeps for it (seen on a card); else
+// its own icon from the web, the favicon then the touch icon (its logo);
+// else its letter in a hue of its own.
+function mark(url) {
+  const src = S.icons[site(url)];
+  if (src) return `<span class="mark"><img src="${esc(src)}" alt=""></span>`;
+  let origin = "";
+  try { origin = new URL(url).origin; } catch {}
+  if (!/^https?:/.test(origin)) return `<span class="mark mono" style="${hue(url)}">${esc(letter(url))}</span>`;
+  return `<span class="mark mono web" style="${hue(url)}">${esc(letter(url))}<img src="${esc(origin)}/favicon.ico" data-next="${esc(origin)}/apple-touch-icon.png" alt="" onload="iconLoaded(this)" onerror="iconFailed(this)"></span>`;
+}
+// A loaded icon too small to be one (a 1×1 placeholder) counts as missing.
+window.iconLoaded = (img) => { if (img.naturalWidth < 8) iconFailed(img); };
+window.iconFailed = (img) => {
+  const next = img.dataset.next;
+  if (next) { img.removeAttribute("data-next"); img.src = next; return; }
+  img.parentNode.classList.add("fb");
+  img.remove();
+};
+// What a pinned site is called: its name, else its host without the TLD.
+function label(p) {
+  if (p.title) return p.title;
+  const h = host(p.url).split(".");
+  const name = h.length > 1 ? h[h.length - 2] : h[0];
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+const allPins = () => G().flatMap((g) => g.pins);
+const isPinned = (u) => allPins().some((p) => p.url === u);
+// Pins at the end of the first group with room, as `StartPage::pin` does.
+function pinUrl(url, title) {
+  const g = G().find((g) => g.pins.length < MAX_PER_GROUP);
+  if (g) g.pins.push({ title, url });
+  else if (G().length < MAX_GROUPS) G().push({ name: FIRST_GROUP, pins: [{ title, url }] });
+  else return false;
+  return true;
+}
+const unpinUrl = (url) => { for (const g of G()) g.pins = g.pins.filter((p) => p.url !== url); };
+
+// Opens `url` here, or (Ctrl/middle click) in a new card beside this one.
+function open(url, beside) { act(beside ? "beside:" + url : "go:" + url); }
+const besideClick = (e) => e.ctrlKey || e.metaKey || e.button === 1;
+
+function save() {
+  const { groups, show_greeting, name, show_clock, hour24, show_pins, show_recent } = S.start;
+  act("start:" + JSON.stringify({ groups, show_greeting, name, show_clock, hour24, show_pins, show_recent }));
+  render();
+}
+
+// ---- clock and greeting -------------------------------------------------
+
+let tick = 0;
+function greeting(h) {
+  return h >= 5 && h < 12 ? "Good morning" : h >= 12 && h < 18 ? "Good afternoon" : h >= 18 && h < 23 ? "Good evening" : "Good night";
+}
+function clock() {
+  clearTimeout(tick);
+  const now = new Date(), st = S.start;
+  // The hour and minutes large, a day period (AM/PM) small beside them.
+  const parts = new Intl.DateTimeFormat([], { hour: st.hour24 ? "2-digit" : "numeric", minute: "2-digit", hourCycle: st.hour24 ? "h23" : "h12" }).formatToParts(now);
+  $("time").innerHTML = parts.map((p) => p.type === "dayPeriod" ? `<span class="ampm">${esc(p.value)}</span>` : p.type === "literal" && /^\s+$/.test(p.value) ? "" : esc(p.value)).join("");
+  const date = now.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+  const hi = st.name ? `${greeting(now.getHours())}, <b>${esc(st.name)}</b>` : greeting(now.getHours());
+  $("greet").innerHTML = `${hi}<span class="dot">·</span>${esc(date)}`;
+  $("time").hidden = !st.show_clock;
+  $("greet").hidden = !st.show_greeting;
+  $("hello").hidden = !st.show_clock && !st.show_greeting;
+  tick = setTimeout(clock, 60000 - (now.getSeconds() * 1000 + now.getMilliseconds()) + 20);
+}
+
+// ---- drawing ------------------------------------------------------------
+
+function render() {
+  const st = S.start;
+  clock();
+  $("pinned").hidden = !st.show_pins;
+  $("recent").hidden = !st.show_recent || !RECENT.length;
+  for (const o of document.querySelectorAll(".opt")) {
+    const on = !!st[o.dataset.key];
+    o.classList.toggle("on", on);
+    o.setAttribute("aria-checked", String(on));
+  }
+  $("yourname").hidden = !st.show_greeting;
+  $("fmt").hidden = !st.show_clock;
+  for (const b of document.querySelectorAll("#fmt button")) b.setAttribute("aria-checked", String((b.dataset.h24 === "1") === !!st.hour24));
+  if (document.activeElement !== $("uname")) $("uname").value = st.name;
+  $("cgroup").disabled = G().length >= MAX_GROUPS;
+
+  // Jump back in: a small card per page.
+  $("cards").innerHTML = RECENT.map(([title, url, thumb]) => {
+    const on = isPinned(url);
+    const shot = thumb ? `<img src="${esc(thumb)}" alt="">` : `<span class="none" style="${hue(url)}"><span>${esc(letter(url))}</span></span>`;
+    return `<div class="pc" role="link" tabindex="0" data-url="${esc(url)}" title="${esc(url)}">
+      <span class="lab">${mark(url)}<span class="t">${esc(title || host(url))}</span></span>
+      <span class="shot">${shot}</span>
+      <span class="host">${esc(host(url))}</span>
+      <button type="button" class="ghost pin${on ? " on" : ""}" data-title="${esc(title)}" title="${on ? "Unpin" : "Pin to this page"}" aria-pressed="${on}">${ICON.pin}</button>
+    </div>`;
+  }).join("");
+
+  // Pinned groups; the first nine sites have Alt+1–9.
+  let k = 0;
+  let html = G().map((g, gi) => `
+    <div class="grp" data-g="${gi}">
+      <div class="grp-h"><span class="nm">${esc(g.name)}</span><span class="n">${g.pins.length || ""}</span>
+        <button type="button" class="ghost sm gmore" aria-label="Options for ${esc(g.name)}" aria-expanded="false">${ICON.more}</button></div>
+      <div class="grp-b" data-g="${gi}">
+        ${g.pins.map((p, pi) => {
+          k++;
+          return `<div class="ln" role="link" tabindex="0" draggable="true" data-g="${gi}" data-p="${pi}" title="${esc(p.url)}">${mark(p.url)}<span class="t">${esc(label(p))}</span>${k <= 9 ? `<kbd>${k}</kbd>` : ""}<button type="button" class="ghost sm more" tabindex="-1" aria-label="Options for ${esc(label(p))}">${ICON.more}</button></div>`;
+        }).join("")}
+        ${g.pins.length < MAX_PER_GROUP ? `<button type="button" class="ln add" data-g="${gi}">${ICON.plus}<span class="t">Add a site</span></button>` : ""}
+      </div>
+    </div>`).join("");
+  if (!G().length) {
+    html = `<div class="empty" style="grid-column:1/-1">${ICON.folder}<div class="txt"><div class="nm">Pin the sites you use most</div><div class="sub">Group them your way: Work, Reading, Tools. Pages under Jump back in have a pin too.</div></div><button type="button" class="btn main" id="firstadd">Add a site</button></div>`;
+  } else if (G().length < MAX_GROUPS) {
+    html += `<button type="button" class="newgrp" id="newgrp">${ICON.plus}New group</button>`;
+  }
+  $("groups").innerHTML = html;
+}
+
+// The app's word on the groups and parts (another start page changed them).
+window.tbStart = function (s) {
+  S.start = s.start;
+  Object.assign(S.icons, s.icons);
+  closePops();
+  render();
+};
+
+// ---- recent cards -------------------------------------------------------
+
+$("cards").addEventListener("click", (e) => {
+  const c = e.target.closest(".pc");
+  if (!c) return;
+  const url = c.dataset.url;
+  const pin = e.target.closest(".pin");
+  if (!pin) return open(url, besideClick(e));
+  if (isPinned(url)) unpinUrl(url);
+  else if (!pinUrl(url, pin.dataset.title)) return;
+  save();
+  document.querySelector(`.pc[data-url="${CSS.escape(url)}"] .pin`)?.focus();
+});
+$("cards").addEventListener("auxclick", (e) => {
+  const c = e.target.closest(".pc");
+  if (c && e.button === 1 && !e.target.closest(".pin")) { e.preventDefault(); open(c.dataset.url, true); }
+});
+$("cards").addEventListener("keydown", (e) => {
+  const c = e.target.closest(".pc");
+  if (c && e.target === c && e.key === "Enter") { e.preventDefault(); open(c.dataset.url, e.ctrlKey); }
+});
+
+// ---- pinned groups ------------------------------------------------------
+
+const pinAt = (el) => G()[+el.dataset.g].pins[+el.dataset.p];
+$("groups").addEventListener("click", (e) => {
+  if (e.target.closest("#firstadd")) return openSite(-1, -1, 0);
+  if (e.target.closest("#newgrp")) return openGroup(-1);
+  const gm = e.target.closest(".gmore");
+  if (gm) return openGroupMenu(+gm.closest(".grp").dataset.g, gm);
+  const add = e.target.closest(".ln.add");
+  if (add) return openSite(-1, -1, +add.dataset.g);
+  const ln = e.target.closest(".ln");
+  if (!ln) return;
+  const more = e.target.closest(".more");
+  if (more) return openLinkMenu(ln, more);
+  open(pinAt(ln).url, besideClick(e));
+});
+$("groups").addEventListener("auxclick", (e) => {
+  const ln = e.target.closest(".ln[data-p]");
+  if (ln && e.button === 1) { e.preventDefault(); open(pinAt(ln).url, true); }
+});
+$("groups").addEventListener("keydown", (e) => {
+  const ln = e.target.closest(".ln[data-p]");
+  if (!ln || e.target !== ln) return;
+  if (e.key === "Enter") { e.preventDefault(); open(pinAt(ln).url, e.ctrlKey); }
+  else if (e.key === "Delete") { e.preventDefault(); unpinUrl(pinAt(ln).url); save(); }
+  else if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) { e.preventDefault(); openLinkMenu(ln, ln.querySelector(".more")); }
+});
+$("groups").addEventListener("contextmenu", (e) => {
+  const ln = e.target.closest(".ln[data-p]");
+  const grp = e.target.closest(".grp");
+  if (!grp) return;
+  e.preventDefault();
+  const at = { x: e.clientX, y: e.clientY };
+  if (ln) openLinkMenu(ln, at);
+  else openGroupMenu(+grp.dataset.g, at);
+});
+
+function movePin(g, p, d) {
+  const pins = G()[g].pins, q = p + d;
+  if (q < 0 || q >= pins.length) return;
+  [pins[p], pins[q]] = [pins[q], pins[p]];
+  save();
+  document.querySelector(`.ln[data-g="${g}"][data-p="${q}"]`)?.focus();
+}
+function moveGroup(g, d) {
+  const gs = G(), h = g + d;
+  if (h < 0 || h >= gs.length) return;
+  [gs[g], gs[h]] = [gs[h], gs[g]];
+  save();
+}
+
+// Drag a site to reorder it, or into another group; the links make way as
+// it passes; the order is kept when it is dropped.
+let dragged = null;
+$("groups").addEventListener("dragstart", (e) => {
+  dragged = e.target.closest(".ln[data-p]");
+  if (!dragged) return;
+  closePops();
+  e.dataTransfer.effectAllowed = "move";
+  e.dataTransfer.setData("text/uri-list", pinAt(dragged).url);
+  requestAnimationFrame(() => dragged?.classList.add("dragging"));
+});
+$("groups").addEventListener("dragover", (e) => {
+  if (!dragged) return;
+  const body = e.target.closest(".grp")?.querySelector(".grp-b");
+  if (!body) return;
+  e.preventDefault();
+  for (const b of document.querySelectorAll(".grp-b.over")) if (b !== body) b.classList.remove("over");
+  body.classList.add("over");
+  const over = e.target.closest(".ln[data-p]");
+  if (over && over !== dragged) {
+    const r = over.getBoundingClientRect();
+    const ref = e.clientY > r.top + r.height / 2 ? over.nextElementSibling : over;
+    if (ref !== dragged && ref !== dragged.nextElementSibling) body.insertBefore(dragged, ref);
+  } else if (!over && dragged.parentNode !== body) {
+    body.insertBefore(dragged, body.querySelector(".ln.add"));
+  }
+});
+$("groups").addEventListener("drop", (e) => e.preventDefault());
+$("groups").addEventListener("dragend", () => {
+  if (!dragged) return;
+  dragged = null;
+  for (const b of document.querySelectorAll(".grp-b.over")) b.classList.remove("over");
+  const groups = [...document.querySelectorAll(".grp-b")].map((b) => ({
+    name: G()[+b.dataset.g].name,
+    pins: [...b.querySelectorAll(".ln[data-p]")].map(pinAt),
+  }));
+  // A full group takes no more.
+  if (groups.some((g) => g.pins.length > MAX_PER_GROUP)) return render();
+  const before = JSON.stringify(G());
+  S.start.groups = groups;
+  if (JSON.stringify(groups) !== before) save(); else render();
+});
+
+// ---- floating menus -----------------------------------------------------
+
+let menuAt = null; // what the open menu is for: { g, p } or { g }
+function place(pop, at) {
+  // Under a button (right-aligned with it), or at a point; kept on screen.
+  pop.classList.add("open");
+  const w = pop.offsetWidth, h = pop.offsetHeight;
+  let x, y;
+  if (at instanceof Element) {
+    const r = at.getBoundingClientRect();
+    x = r.right - w; y = r.bottom + 6;
+    if (x < 8) x = r.left;
+  } else ({ x, y } = at);
+  pop.style.left = Math.max(8, Math.min(x, innerWidth - w - 8)) + "px";
+  pop.style.top = Math.max(8, Math.min(y, innerHeight - h - 8)) + "px";
+}
+function openLinkMenu(ln, at) {
+  closePops();
+  const g = +ln.dataset.g, p = +ln.dataset.p;
+  menuAt = { g, p };
+  const m = $("lmenu");
+  m.querySelector('[data-do="up"]').disabled = p === 0;
+  m.querySelector('[data-do="down"]').disabled = p === G()[g].pins.length - 1;
+  ln.classList.add("menu-on");
+  place(m, at);
+  m.querySelector("button:not(:disabled)").focus();
+}
+$("lmenu").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b || !menuAt) return;
+  const { g, p } = menuAt;
+  closePops();
+  const pin = G()[g].pins[p];
+  ({
+    beside: () => open(pin.url, true),
+    edit: () => openSite(g, p, g),
+    up: () => movePin(g, p, -1),
+    down: () => movePin(g, p, 1),
+    unpin: () => { G()[g].pins.splice(p, 1); save(); },
+  })[b.dataset.do]();
+});
+function openGroupMenu(g, at) {
+  closePops();
+  menuAt = { g };
+  const m = $("gmenu"), n = G()[g].pins.length;
+  m.querySelector('[data-do="add"]').disabled = n >= MAX_PER_GROUP;
+  m.querySelector('[data-do="openall"]').disabled = n === 0;
+  m.querySelector('[data-do="left"]').disabled = g === 0;
+  m.querySelector('[data-do="right"]').disabled = g === G().length - 1;
+  $("gdel").textContent = n ? `Delete group and its ${n} site${n === 1 ? "" : "s"}` : "Delete group";
+  document.querySelector(`.grp[data-g="${g}"] .gmore`)?.setAttribute("aria-expanded", "true");
+  place(m, at);
+  m.querySelector("button:not(:disabled)").focus();
+}
+$("gmenu").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b || !menuAt) return;
+  const { g } = menuAt;
+  closePops();
+  ({
+    add: () => openSite(-1, -1, g),
+    rename: () => openGroup(g),
+    openall: () => { for (const p of G()[g].pins) open(p.url, true); },
+    left: () => moveGroup(g, -1),
+    right: () => moveGroup(g, 1),
+    delete: () => { G().splice(g, 1); save(); },
+  })[b.dataset.do]();
+});
+
+function openCustom() {
+  closePops();
+  $("cename").textContent = byId(D.current).name;
+  $("customise").setAttribute("aria-expanded", "true");
+  place($("custom"), $("customise"));
+}
+$("customise").addEventListener("click", () => ($("custom").classList.contains("open") ? closePops() : openCustom()));
+for (const o of document.querySelectorAll(".opt")) {
+  o.addEventListener("click", () => {
+    S.start[o.dataset.key] = !S.start[o.dataset.key];
+    save();
+    place($("custom"), $("customise")); // its height changes with the name field
+  });
+}
+for (const b of document.querySelectorAll("#fmt button")) {
+  b.addEventListener("click", () => {
+    const h24 = b.dataset.h24 === "1";
+    if (h24 !== !!S.start.hour24) { S.start.hour24 = h24; save(); }
+  });
+}
+// The name is kept a moment after typing stops, and on leaving the field.
+let nameTimer = 0;
+function saveName() {
+  clearTimeout(nameTimer);
+  const n = $("uname").value.trim();
+  if (n !== S.start.name) { S.start.name = n; save(); }
+}
+$("uname").addEventListener("input", () => { clearTimeout(nameTimer); nameTimer = setTimeout(saveName, 500); });
+$("uname").addEventListener("change", saveName);
+$("uname").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); saveName(); closePops(true); } });
+$("cgroup").addEventListener("click", () => {
+  closePops();
+  if (!S.start.show_pins) { S.start.show_pins = true; save(); }
+  openGroup(-1);
+});
+$("cengine").addEventListener("click", () => { closePops(); act("engines"); });
+
+function closePops(refocus) {
+  const was = document.querySelector(".pop.open");
+  if (was === $("custom")) saveName();
+  for (const p of document.querySelectorAll(".pop.open")) p.classList.remove("open");
+  for (const t of document.querySelectorAll(".menu-on")) t.classList.remove("menu-on");
+  for (const b of document.querySelectorAll('[aria-expanded="true"]:not(#engine)')) b.setAttribute("aria-expanded", "false");
+  if (refocus && was && menuAt) {
+    const sel = "p" in menuAt ? `.ln[data-g="${menuAt.g}"][data-p="${menuAt.p}"]` : `.grp[data-g="${menuAt.g}"] .gmore`;
+    document.querySelector(sel)?.focus();
+  } else if (refocus && was) $("customise").focus();
+  menuAt = null;
+}
+document.addEventListener("mousedown", (e) => {
+  if (!e.target.closest(".pop, #customise, .more, .gmore")) closePops();
+  if (isOpen() && !$("bar").contains(e.target)) openMenu(false);
+});
+
+// ---- dialogs ------------------------------------------------------------
+
+let editing = null; // { kind: "site", g, p } or { kind: "group", g }
+function showDialog(kind, title, saveLabel) {
+  closePops();
+  $("sitefields").hidden = kind !== "site";
+  $("groupfields").hidden = kind !== "group";
+  $("etitle").textContent = title;
+  $("esave").textContent = saveLabel;
+  $("eerr").textContent = "";
+  $("eurl").classList.remove("bad");
+  $("scrim").classList.add("open");
+}
+// Add (p < 0) or edit site p of group g; `into` is the group offered first.
+function openSite(g, p, into) {
+  const pin = p >= 0 ? G()[g].pins[p] : { title: "", url: "" };
+  editing = { kind: "site", g, p };
+  showDialog("site", p >= 0 ? "Edit pinned site" : "Pin a site", p >= 0 ? "Save" : "Pin");
+  $("eurl").value = pin.url;
+  $("ename").value = pin.title;
+  const groups = G().length ? G() : [{ name: FIRST_GROUP, pins: [] }];
+  $("egroup").innerHTML = groups.map((gr, i) => `<option value="${i}"${gr.pins.length >= MAX_PER_GROUP && i !== g ? " disabled" : ""}>${esc(gr.name)}</option>`).join("");
+  $("egroup").value = String(Math.max(0, Math.min(into, groups.length - 1)));
+  preview();
+  $("eurl").focus();
+  $("eurl").select();
+}
+// Rename group g, or make a new one (g < 0).
+function openGroup(g) {
+  editing = { kind: "group", g };
+  showDialog("group", g >= 0 ? "Rename group" : "New group", g >= 0 ? "Save" : "Create");
+  $("eface").innerHTML = ICON.folder;
+  $("gname").value = g >= 0 ? G()[g].name : "";
+  $("gname").focus();
+  $("gname").select();
+}
+function closeDialog() {
+  $("scrim").classList.remove("open");
+  editing = null;
+  $("q").focus();
+}
+// What was typed as an address: a scheme added when there is none.
+function address(t) {
+  t = t.trim();
+  if (!t) return "";
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(t) || /^[^/]+:\d+(\/|$)/.test(t)) t = "https://" + t;
+  try { const u = new URL(t); if (u.pathname === "/" && !t.endsWith("/") && !u.search && !u.hash) return u.origin; return u.href; } catch { return t; }
+}
+function preview() {
+  const u = address($("eurl").value);
+  $("eface").innerHTML = pinnable(u) ? mark(u) : ICON.pin;
+  $("ename").placeholder = pinnable(u) ? label({ title: "", url: u }) : "Shown in the group";
+}
+$("eurl").addEventListener("input", () => { $("eurl").classList.remove("bad"); $("eerr").textContent = ""; preview(); });
+$("editor").addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (!editing) return;
+  if (editing.kind === "group") {
+    const name = $("gname").value.trim() || "Group";
+    if (editing.g >= 0) G()[editing.g].name = name;
+    else G().push({ name, pins: [] });
+    save();
+    return closeDialog();
+  }
+  const url = address($("eurl").value);
+  const bad = (msg) => { $("eerr").textContent = msg; $("eurl").classList.add("bad"); $("eurl").focus(); };
+  if (!url) return bad("Type the site's address.");
+  if (!pinnable(url)) return bad("Only web addresses (http or https) can be pinned.");
+  const { g, p } = editing;
+  const dup = allPins().find((x) => x.url === url);
+  if (dup && !(p >= 0 && G()[g].pins[p] === dup)) return bad("That site is already pinned.");
+  const pin = { title: $("ename").value.trim(), url };
+  if (!G().length) G().push({ name: FIRST_GROUP, pins: [] });
+  const into = +$("egroup").value;
+  if (p >= 0 && into === g) G()[g].pins[p] = pin;
+  else {
+    if (p >= 0) G()[g].pins.splice(p, 1);
+    G()[into].pins.push(pin);
+  }
+  save();
+  closeDialog();
+});
+$("ecancel").addEventListener("click", closeDialog);
+$("scrim").addEventListener("mousedown", (e) => { if (e.target === $("scrim")) closeDialog(); });
+
+// ---- the search field and engine picker ---------------------------------
+
 function badge(e) {
   return `<span class="badge" style="--c:${e.colour}">${e.mark}<img src="${e.icon}" alt="" onload="this.parentNode.classList.add('img')" onerror="this.remove()"></span>`;
 }
-const TICK = '<svg class="i tick" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 10 17.5 19 7"/></svg>';
-
-// The engine in use: the button and the placeholder.
 window.tbEngine = function (id) {
   D.current = id;
   const e = byId(id);
   $("eb").innerHTML = badge(e);
   $("en").textContent = e.name;
+  $("cename").textContent = e.name;
   $("q").placeholder = e.id === "wolframalpha" ? "Ask WolframAlpha or type an address" : `Search ${e.name} or type an address`;
   for (const el of document.querySelectorAll(".item")) el.classList.toggle("on", el.dataset.id === id);
-  $("q").dispatchEvent(new Event("input")); // the Enter hint names the engine
+  $("q").dispatchEvent(new Event("input"));
 };
 
-// The list, by group.
 let html = "";
 for (const g of D.groups) {
   const list = D.engines.filter((e) => e.group === g.id);
   if (!list.length) continue;
-  html += `<div class="group">${g.name}</div>`;
+  html += `<div class="group-h">${g.name}</div>`;
   for (const e of list) {
-    html += `<div class="item" role="option" data-id="${e.id}">${badge(e)}<div class="txt"><div class="nm">${e.name}</div><div class="pt">${e.pitch}</div></div>${TICK}</div>`;
+    html += `<div class="item" role="option" data-id="${e.id}">${badge(e)}<div class="txt"><div class="nm">${e.name}</div><div class="pt">${e.pitch}</div></div>${ICON.tick}</div>`;
   }
 }
 html += `<div class="foot" id="compare"><span>Compare search engines</span><span aria-hidden="true">→</span></div>`;
 $("menu").innerHTML = html;
 const items = [...document.querySelectorAll(".item")];
 let hi = -1;
-
 function highlight(i) {
   hi = (i + items.length) % items.length;
   items.forEach((el, k) => el.classList.toggle("hi", k === hi));
   items[hi].scrollIntoView({ block: "nearest" });
 }
 function openMenu(open) {
+  if (open) closePops();
   $("menu").classList.toggle("open", open);
   $("engine").setAttribute("aria-expanded", String(open));
   if (open) {
-    // Fit the list in the page: it ends a little above the bottom edge.
     const top = $("menu").getBoundingClientRect().top;
     $("menu").style.maxHeight = Math.max(160, Math.min(460, innerHeight - top - 18)) + "px";
     highlight(Math.max(0, items.findIndex((el) => el.dataset.id === D.current)));
@@ -209,7 +908,6 @@ function choose(id) {
   act("engine:" + id);
   openMenu(false);
 }
-
 $("engine").addEventListener("click", () => openMenu(!isOpen()));
 $("engine").addEventListener("mousedown", (e) => e.preventDefault());
 for (const el of items) {
@@ -217,40 +915,7 @@ for (const el of items) {
   el.addEventListener("mousemove", () => { if (items[hi] !== el) highlight(items.indexOf(el)); });
 }
 $("compare").addEventListener("click", () => { openMenu(false); act("engines"); });
-$("help").addEventListener("click", () => act("engines"));
-document.addEventListener("mousedown", (e) => { if (isOpen() && !$("bar").contains(e.target)) openMenu(false); });
 
-// Pages opened last: a click (or Enter on one) loads it in this card.
-const host = (u) => { try { return new URL(u).host.replace(/^www\./, ""); } catch { return u; } };
-if (RECENT.length) {
-  $("rlist").innerHTML = RECENT.map(([title, url]) => {
-    const h = host(url);
-    return `<li><button type="button" data-url="${esc(url)}" title="${esc(url)}"><span class="tile">${esc((h.match(/[a-z0-9]/i) || ["·"])[0])}</span><span class="t">${esc(title || url)}</span><span class="h">${esc(h)}</span></button></li>`;
-  }).join("");
-  $("recent").hidden = false;
-  for (const b of document.querySelectorAll("#rlist button")) b.addEventListener("click", () => act("go:" + b.dataset.url));
-}
-const rows = () => [...document.querySelectorAll("#rlist button")];
-
-document.addEventListener("keydown", (e) => {
-  if (isOpen()) {
-    if (e.key === "ArrowDown") highlight(hi + 1);
-    else if (e.key === "ArrowUp") highlight(hi - 1);
-    else if (e.key === "Enter") choose(items[hi].dataset.id);
-    else if (e.key === "Escape") openMenu(false);
-    else return;
-    e.preventDefault();
-    return;
-  }
-  // ↓ from the field walks into the recent pages, ↑ back out.
-  const r = rows(), at = r.indexOf(document.activeElement);
-  if (e.key === "ArrowDown" && (document.activeElement === $("q") || at >= 0) && r.length) {
-    r[Math.min(at + 1, r.length - 1)].focus();
-  } else if (e.key === "ArrowUp" && at >= 0) {
-    (at === 0 ? $("q") : r[at - 1]).focus();
-  } else return;
-  e.preventDefault();
-});
 // Says whether Enter will search or open an address, by the same rule as
 // the app (`omnibox::resolve`).
 const SCHEMES = ["http://", "https://", "file://", "about:", "chrome://", "data:"];
@@ -261,14 +926,77 @@ $("q").addEventListener("input", () => {
   $("bar").classList.toggle("typed", t !== "");
   if (t) $("does").textContent = looksLikeAddress(t) ? "Go to address" : "Search " + byId(D.current).name;
 });
-
-// Enter asks the app to load what was typed in this card.
 $("f").addEventListener("submit", (e) => {
   e.preventDefault();
   if (isOpen()) return;
   const q = $("q").value.trim();
   if (q) act("go:" + q);
 });
+
+// ---- keys ---------------------------------------------------------------
+
+// The stop nearest in direction (dx, dy) from `from`, by where things are
+// on the page: arrows walk the field, the cards and the links.
+const STOPS = ".pc, .ln, .newgrp, #firstadd";
+function nearest(from, dx, dy) {
+  const stops = [$("q"), ...document.querySelectorAll(STOPS)].filter((el) => el.offsetParent);
+  const a = from.getBoundingClientRect(), ax = a.left + a.width / 2, ay = a.top + a.height / 2;
+  let best = null, bestD = Infinity;
+  for (const el of stops) {
+    if (el === from) continue;
+    const b = el.getBoundingClientRect(), bx = b.left + b.width / 2, by = b.top + b.height / 2;
+    const along = (bx - ax) * dx + (by - ay) * dy;
+    if (along <= 4) continue;
+    const d = along + 2 * (Math.abs((bx - ax) * dy) + Math.abs((by - ay) * dx));
+    if (d < bestD) { bestD = d; best = el; }
+  }
+  return best;
+}
+const ARROWS = { ArrowDown: [0, 1], ArrowUp: [0, -1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Alt") document.body.classList.add("alt");
+  if ($("scrim").classList.contains("open")) {
+    if (e.key === "Escape") { e.preventDefault(); closeDialog(); }
+    return;
+  }
+  if (isOpen()) {
+    if (e.key === "ArrowDown") highlight(hi + 1);
+    else if (e.key === "ArrowUp") highlight(hi - 1);
+    else if (e.key === "Enter") choose(items[hi].dataset.id);
+    else if (e.key === "Escape") openMenu(false);
+    else return;
+    e.preventDefault();
+    return;
+  }
+  const pop = document.querySelector(".pop.open");
+  if (pop) {
+    if (document.activeElement === $("uname") && e.key !== "Escape") return;
+    const bs = [...pop.querySelectorAll("button:not(:disabled)")], at = bs.indexOf(document.activeElement);
+    if (e.key === "Escape") closePops(true);
+    else if (e.key === "ArrowDown") bs[(at + 1) % bs.length].focus();
+    else if (e.key === "ArrowUp") bs[(at - 1 + bs.length) % bs.length].focus();
+    else return;
+    e.preventDefault();
+    return;
+  }
+  // Alt+1–9 opens the first nine pinned sites (with Ctrl, beside).
+  if (e.altKey && /^Digit[1-9]$/.test(e.code)) {
+    const pin = allPins()[+e.code.slice(5) - 1];
+    if (pin) { e.preventDefault(); open(pin.url, e.ctrlKey); }
+    return;
+  }
+  const dir = ARROWS[e.key];
+  if (!dir || e.altKey || e.ctrlKey || e.metaKey) return;
+  const from = document.activeElement;
+  // In the field ←/→ move the caret and ↑ does nothing; ↓ leaves it.
+  if (from === $("q") && dir[1] !== 1) return;
+  if (from !== $("q") && !from.matches(STOPS)) return;
+  const to = nearest(from, dir[0], dir[1]) || (dir[1] === -1 ? $("q") : null);
+  if (to) { e.preventDefault(); to.focus(); to.scrollIntoView({ block: "nearest" }); }
+});
+document.addEventListener("keyup", (e) => { if (e.key === "Alt") document.body.classList.remove("alt"); });
+window.addEventListener("blur", () => document.body.classList.remove("alt"));
 
 // The app sets the theme's colours, now and whenever the theme changes.
 window.tbTheme = function (t) {
@@ -277,6 +1005,7 @@ window.tbTheme = function (t) {
 };
 window.tbTheme(__THEME__);
 window.tbEngine(D.current);
+render();
 $("q").focus();
 </script>
 </body>

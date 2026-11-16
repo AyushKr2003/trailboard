@@ -11,6 +11,7 @@ pub mod pagetext;
 pub mod privacy;
 pub mod settings;
 pub mod sitesettings;
+pub mod start;
 pub mod spaces;
 pub mod thumbs;
 pub mod zoom;

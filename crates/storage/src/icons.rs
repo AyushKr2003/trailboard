@@ -61,6 +61,64 @@ impl Icon {
         let icon = Icon::new(width, height, bytes[HEADER + len..].to_vec())?;
         Some((site.to_string(), icon))
     }
+
+    /// The icon as a PNG (RGBA8, stored without compression: at most
+    /// 64×64, so a few KB), for pages that show it as an image.
+    pub fn png(&self) -> Vec<u8> {
+        let mut raw = Vec::with_capacity((self.height * (self.width * 4 + 1)) as usize);
+        for row in self.pixels.chunks_exact(self.width as usize * 4) {
+            raw.push(0); // no filter
+            for [b, g, r, a] in row.as_chunks::<4>().0 {
+                raw.extend_from_slice(&[*r, *g, *b, *a]);
+            }
+        }
+        // A zlib stream of stored deflate blocks (each at most 65535 bytes).
+        let mut z = vec![0x78, 0x01];
+        let blocks: Vec<&[u8]> = raw.chunks(0xffff).collect();
+        for (i, b) in blocks.iter().enumerate() {
+            z.push(u8::from(i + 1 == blocks.len()));
+            let n = b.len() as u16;
+            z.extend_from_slice(&n.to_le_bytes());
+            z.extend_from_slice(&(!n).to_le_bytes());
+            z.extend_from_slice(b);
+        }
+        z.extend_from_slice(&adler32(&raw).to_be_bytes());
+
+        let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+        let mut ihdr = Vec::with_capacity(13);
+        ihdr.extend_from_slice(&self.width.to_be_bytes());
+        ihdr.extend_from_slice(&self.height.to_be_bytes());
+        ihdr.extend_from_slice(&[8, 6, 0, 0, 0]); // 8-bit RGBA
+        for (kind, data) in [(b"IHDR", &ihdr[..]), (b"IDAT", &z[..]), (b"IEND", &[][..])] {
+            out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+            let start = out.len();
+            out.extend_from_slice(kind);
+            out.extend_from_slice(data);
+            let crc = crc32(&out[start..]);
+            out.extend_from_slice(&crc.to_be_bytes());
+        }
+        out
+    }
+}
+
+fn adler32(data: &[u8]) -> u32 {
+    let (mut a, mut b) = (1u32, 0u32);
+    for &x in data {
+        a = (a + u32::from(x)) % 65521;
+        b = (b + a) % 65521;
+    }
+    (b << 16) | a
+}
+
+fn crc32(data: &[u8]) -> u32 {
+    let mut c = !0u32;
+    for &x in data {
+        c ^= u32::from(x);
+        for _ in 0..8 {
+            c = if c & 1 != 0 { 0xedb8_8320 ^ (c >> 1) } else { c >> 1 };
+        }
+    }
+    !c
 }
 
 pub fn icons_dir(data_dir: &Path) -> PathBuf {
@@ -133,6 +191,20 @@ mod tests {
         assert_eq!(Icon::decode(b"TBIC"), None);
         assert_eq!(Icon::decode(b"TBIC\x01\x01\x00\x01\x00\x09\x00ab"), None, "site cut short");
         assert_eq!(Icon::decode(b"nope\x01\x01\x00\x01\x00\x01\x00aabcd"), None);
+    }
+
+    #[test]
+    fn png_is_well_formed() {
+        assert_eq!(crc32(b"IEND"), 0xae42_6082);
+        assert_eq!(adler32(b"Wikipedia"), 0x11e6_0398);
+        let i = Icon::new(2, 1, vec![1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
+        let png = i.png();
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+        assert_eq!(&png[png.len() - 12..], b"\0\0\0\0IEND\xaeB`\x82");
+        // Pixels go in as RGBA, one filter byte per row.
+        let raw = [0, 3, 2, 1, 4, 7, 6, 5, 8];
+        assert!(png.windows(raw.len()).any(|w| w == raw));
+        assert!(icon(MAX_SIDE, MAX_SIDE).png().len() < 20_000);
     }
 
     #[test]

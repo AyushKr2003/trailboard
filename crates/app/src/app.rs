@@ -407,6 +407,8 @@ pub struct App {
     zooms: Rc<RefCell<SiteZooms>>,
     /// Site icons by `scene::icon::site`, for every space, saved under `icons/`.
     icons: HashMap<String, SiteIcon>,
+    /// The start page's pins and parts, shared by every space (`start.json`).
+    start_page: scene::startpage::StartPage,
     /// Whether the pointer is over the window (for the zoomed-out name label).
     pointer_in: bool,
     /// The page find in page last searched (to stop it when the bar closes).
@@ -567,6 +569,7 @@ impl App {
         zooms.default = settings.default_zoom_factor();
         let zooms = Rc::new(RefCell::new(zooms));
         let sites = storage::sitesettings::load_sites(&data_dir);
+        let start_page = storage::start::load_start(&data_dir);
         let lookup = zooms.clone();
         web::set_page_zoom(move |url| lookup.borrow().get(url));
         let icons = storage::icons::load_icons(&data_dir)
@@ -659,6 +662,7 @@ impl App {
             saved: HashMap::new(),
             zooms,
             icons,
+            start_page,
             pointer_in: false,
             finding: None,
             found: None,
@@ -1206,7 +1210,14 @@ impl App {
                     (Some(index), false) => index.recent(4 * crate::start::RECENT).unwrap_or_default(),
                     _ => Vec::new(),
                 };
-                (crate::start::page_url(&self.theme, self.settings.search, &crate::start::recent(&visits)), web::PageKind::App)
+                let mut recent = crate::start::recent(&visits);
+                if let Some(index) = &self.page_index {
+                    for r in &mut recent {
+                        r.thumb = index.thumb(&r.url).ok().flatten().map(|j| crate::start::data_url("image/jpeg", &j));
+                    }
+                }
+                let icons = self.start_icons(&recent);
+                (crate::start::page_url(&self.theme, self.settings.search, &self.start_page, &recent, &icons), web::PageKind::App)
             }
             None if n.url == scene::note::SETTINGS_URL => (
                 crate::settings_page::page_url(&self.theme, &self.settings_data()),
@@ -1292,6 +1303,15 @@ impl App {
             if self.is_start(id) {
                 self.start_go(id, input);
             }
+        } else if let Some(url) = action.strip_prefix(crate::start::BESIDE) {
+            // Like a link opened in a new card: beside the start page,
+            // joined to it by a trail, which keeps its place.
+            if self.is_start(id) && scene::startpage::pinnable(url)
+                && let Some(new) = self.open_card(Rect::default(), url, Some(id))
+            {
+                log::info!("start page {}: opened {url} beside it as card {}", id.0, new.0);
+                self.ensure_visible(new);
+            }
         } else if let Some(engine) = action.strip_prefix(crate::start::ENGINE) {
             match prefs::SearchEngine::from_id(engine) {
                 Some(e) => self.set_engine(e),
@@ -1299,10 +1319,50 @@ impl App {
             }
         } else if action == crate::start::GUIDE {
             self.show_engines(id);
+        } else if let Some(json) = action.strip_prefix(crate::start::SAVE) {
+            match storage::start::from_json(json) {
+                Some(start) => self.set_start_page(id, start),
+                None => log::warn!("start page {}: unreadable {json:?}", id.0),
+            }
         } else {
             return false;
         }
         true
+    }
+
+    /// The icons a start page shows: its pinned sites' and `recent` pages'.
+    fn start_icons(&self, recent: &[crate::start::Recent]) -> crate::start::Icons {
+        let urls = self.start_page.pins().map(|p| p.url.as_str()).chain(recent.iter().map(|r| r.url.as_str()));
+        crate::start::icons(urls, |site| self.icons.get(site).map(|i| i.icon.png()))
+    }
+
+    /// Start page `from` changed the pins or parts: keep them, and show
+    /// them on the other live start pages.
+    fn set_start_page(&mut self, from: NodeId, start: scene::startpage::StartPage) {
+        if start == self.start_page {
+            return;
+        }
+        log::info!(
+            "start page: groups {:?}, greeting {} {:?}, clock {} (24h {}), pins {}, recent {}",
+            start.groups.iter().map(|g| (g.name.as_str(), g.pins.len())).collect::<Vec<_>>(),
+            start.show_greeting,
+            start.name,
+            start.show_clock,
+            start.hour24,
+            start.show_pins,
+            start.show_recent
+        );
+        self.start_page = start;
+        if let Err(e) = storage::start::save_start(&self.data_dir, &self.start_page) {
+            log::warn!("start page: saving: {e}");
+            self.toast("Couldn't save the start page");
+        }
+        let script = crate::start::state_script(&self.start_page, &self.start_icons(&[]));
+        for (id, card) in &self.cards {
+            if *id != from && self.is_start(*id) && card.page.kind() == web::PageKind::App {
+                card.page.run_script(&script);
+            }
+        }
     }
 
     /// Search with `e` from now on (chosen on a start page or the guide).

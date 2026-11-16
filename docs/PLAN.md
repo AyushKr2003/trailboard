@@ -705,8 +705,38 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
 - ✅ Start page cleaned up (2026-11-16): flat page (no glow, dot grid,
   shadows or gradient badges), accent border on focus, an Enter hint that
   says *Search <engine>* or *Go to address* by `omnibox::resolve`'s rule
-  (kept in step by hand in `start.html`), the guide as a link under the bar. `Target::Settings`, `Target::ProxyServer`,
-  `palette::settings_rows` and the panel's status rows are gone.
+  (kept in step by hand in `start.html`), the guide as a link under the bar.
+- ✅ Start page with pinned groups, recent cards and a Customise panel
+  (2026-11-16; `scene::startpage`, `storage::start`, `start.html`).
+  Looked at the community favourites rather than browsers' own: Bonjourr
+  and Tabliss (the most-starred open-source new tabs: clock first, quiet),
+  Bento from r/startpages and the Homepage/Dashy dashboards (links in
+  named groups), Tilde (number keys). Decisions:
+  - Drawn as a small board: groups and recent pages are cards with a label
+    above, a hairline and a low shadow, like the cards on the board.
+  - Recent pages show history's thumbnails (`pagetext::thumb`, JPEG `data:`
+    URLs), four of them, so the start page is the way back.
+  - Ctrl/middle click opens beside the start page with a trail edge
+    (`start::BESIDE` → `open_card(.., Some(start))`), the browser's own
+    idea of a link; a plain click replaces the start page as before.
+  - Only pins the user chose; no "most visited" filler. Up to 8 groups of
+    12; a URL once on the whole page; titles and names cut to 60.
+  - The page edits a copy and sends the whole state back (`start:` + JSON);
+    `StartPage::cleaned` keeps what is valid. Other live start pages get
+    `tbStart(...)`.
+  - Clock: 12-hour or 24-hour (`hour24`, default 12-hour), a two-way
+    segment under *Clock* in Customise rather than following the locale,
+    so it is the user's choice.
+  - `start.json` version 2 (groups, greeting, name, `hour24`); version 1's flat pins
+    are read as one group, "Pinned".
+  - Icons: our own icon store first, as PNG `data:` URLs (`Icon::png`,
+    stored deflate); else the page loads the site's own `/favicon.ico`,
+    then `/apple-touch-icon.png`, straight from the site (never an icon
+    service, so no third party learns the pins); only then the site's
+    letter in a hue from its host (OKLCH, low chroma). The box stays empty
+    while an icon loads, so no letter flashes first.
+  - No wallpapers, quotes, weather or to-dos (quiet chrome; the board
+    already has notes).
 - ✅ Settings panel (Ctrl+,; `scene::settings`, `storage::settings`,
   `palette::settings_rows`), since replaced by the page above. Decisions (2026-11-14):
   - Not a page or a window: the palette's field and list again
@@ -752,8 +782,7 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     fight sites' own styles and need injecting per frame). Measured while
     choosing: a card scrolls at an even ~60 paints/s, no slow frames, so
     the look, not the frame rate, was the problem. Not a setting.
-  - Not yet settings: a custom start page for an empty board (it opens a
-    blank card with a search box, `app::start`), a custom search URL, the default card size, downloads
+  - Not yet settings: a custom search URL, the default card size, downloads
     folder (downloads use the desktop's folder for now), ad blocking (M8).
 - ✅ Downloads and a downloads list (Ctrl+J; `web::download`,
   `scene::download`, `storage::downloads`, `palette::download_rows`).

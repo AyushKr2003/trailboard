@@ -6,6 +6,38 @@ All notable changes to Trailboard. The format follows
 
 ## [Unreleased]
 
+### Added
+- **A redesigned start page you can make your own**, modelled on the most
+  liked community start pages (Bonjourr and Tabliss for the clock-first
+  calm, Bento and the Homepage/Dashy dashboards for grouped links, Tilde for
+  number keys) and drawn like a small board of its own.
+  - A large clock with a greeting and the date ("Good evening, Sam ·
+    Monday, 16 November"); your name is optional. The clock shows 12-hour
+    (with AM/PM) or 24-hour time, chosen in *Customise*.
+  - **Jump back in**: the last four pages as small cards with what they
+    showed (from history's thumbnails), a label above like the board's.
+  - **Pinned groups**: your sites in named groups (Work, Reading…), each a
+    card with its name above, up to 8 groups of 12. Add a site from a
+    group's *Add a site* row, pin a recent page with the pin on its card,
+    drag sites to reorder them or move them between groups. A site's ⋯ or
+    right-click: *Open beside*, *Edit…*, *Move up/down*, *Unpin*; a group's:
+    *Add a site…*, *Rename…*, *Open all beside*, *Move left/right*, *Delete*.
+  - **Ctrl+click or middle-click** opens a page in a new card beside the
+    start page, joined by a trail, as a link would; a plain click opens it
+    in the start page's card.
+  - **Alt+1–9** opens the first nine pinned sites (holding Alt shows the
+    numbers); arrow keys walk the field, the cards and the links by where
+    they sit.
+  - Each site shows its icon: the one Trailboard kept from a card that
+    showed the site, else the site's own favicon or touch icon (loaded from
+    the site itself, no icon service), and only if neither can be had its
+    letter in a quiet colour of its own.
+  - **Customise** (top right) turns the clock, greeting, recent cards and
+    groups on or off, sets your name, makes a group and opens the search
+    engine guide.
+  - Saved in `$DATA/start.json` (shared by every space); other open start
+    pages update at once.
+
 ### Changed
 - **A card shows its page as a full window would.** Pages on the board now
   lay out at Read Mode's width (the window's) and the card shows that layout

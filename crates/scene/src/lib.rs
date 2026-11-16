@@ -25,6 +25,7 @@ pub mod selection;
 pub mod settings;
 pub mod sidebar;
 pub mod sitesettings;
+pub mod startpage;
 pub mod tidy;
 pub mod trail;
 pub mod when;

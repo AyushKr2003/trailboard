@@ -25,9 +25,15 @@ pub fn modifiers(m: ModifiersState) -> u32 {
 /// carrying that meaning (e.g. "l" on any layout → `KeyL`). Falls back to the
 /// physical key for keys without a logical mapping.
 pub fn shortcut_code(ev: &KeyEvent) -> Option<KeyCode> {
+    // A keypad key means what Num Lock makes it (a digit, or Page Up, Home…),
+    // which the key without modifiers loses: Num Lock is a modifier.
+    let logical = if is_keypad(ev.physical_key) { ev.logical_key.clone() } else { ev.key_without_modifiers() };
+    layout_code(&logical, ev.physical_key)
+}
+
+fn layout_code(logical: &winit::keyboard::Key, physical: PhysicalKey) -> Option<KeyCode> {
     use winit::keyboard::Key as L;
-    let logical = ev.key_without_modifiers();
-    let from_logical = match &logical {
+    let from_logical = match logical {
         L::Character(s) => {
             let mut chars = s.chars();
             match (chars.next().map(|c| c.to_ascii_lowercase()), chars.next()) {
@@ -39,10 +45,38 @@ pub fn shortcut_code(ev: &KeyEvent) -> Option<KeyCode> {
         L::Named(n) => named_code(*n),
         _ => None,
     };
-    from_logical.or(match ev.physical_key {
+    from_logical.or(match physical {
         PhysicalKey::Code(c) => Some(c),
         PhysicalKey::Unidentified(_) => None,
     })
+}
+
+/// A key on the numeric keypad that Num Lock switches (digits and `.`).
+fn is_keypad(physical: PhysicalKey) -> bool {
+    use KeyCode::*;
+    matches!(
+        physical,
+        PhysicalKey::Code(
+            Numpad0 | Numpad1 | Numpad2 | Numpad3 | Numpad4 | Numpad5 | Numpad6 | Numpad7 | Numpad8 | Numpad9 | NumpadDecimal
+        )
+    )
+}
+
+/// The X11/XKB keycode Chromium gets. A keypad key that Num Lock off makes a
+/// moving key (Page Up, Home, an arrow…) is sent as that key's own, so pages
+/// treat it exactly like the dedicated key on keyboards that have one.
+fn native_code(physical: PhysicalKey, named: Option<NamedKey>) -> i32 {
+    use NamedKey as N;
+    let key = match named {
+        Some(n @ (N::PageUp | N::PageDown | N::Home | N::End | N::ArrowLeft | N::ArrowRight | N::ArrowUp | N::ArrowDown | N::Insert | N::Delete))
+            if is_keypad(physical) =>
+        {
+            named_code(n).map_or(physical, PhysicalKey::Code)
+        }
+        _ => physical,
+    };
+    // X11/XKB keycode = evdev scancode + 8.
+    key.to_scancode().map_or(0, |s| s as i32 + 8)
 }
 
 fn letter_code(c: char) -> KeyCode {
@@ -115,16 +149,16 @@ pub struct KeyIn {
 
 impl KeyIn {
     pub fn from_winit(ev: &KeyEvent) -> KeyIn {
+        let named = match &ev.logical_key {
+            winit::keyboard::Key::Named(n) => Some(*n),
+            _ => None,
+        };
         KeyIn {
             pressed: ev.state == ElementState::Pressed,
             code: shortcut_code(ev),
-            named: match &ev.logical_key {
-                winit::keyboard::Key::Named(n) => Some(*n),
-                _ => None,
-            },
+            named,
             text: ev.text.as_ref().map(|t| t.to_string()),
-            // X11/XKB keycode = evdev scancode + 8.
-            native: ev.physical_key.to_scancode().map_or(0, |s| s as i32 + 8),
+            native: native_code(ev.physical_key, named),
         }
     }
 
@@ -329,6 +363,25 @@ fn vk_code(c: KeyCode) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keypad_follows_num_lock() {
+        use winit::keyboard::Key as L;
+        let nine = PhysicalKey::Code(KeyCode::Numpad9);
+        // Num Lock off: the 9 key is Page Up, for shortcuts and for Chromium,
+        // which gets the dedicated Page Up key's keycode (112), not the keypad's (81).
+        assert_eq!(layout_code(&L::Named(NamedKey::PageUp), nine), Some(KeyCode::PageUp));
+        assert_eq!(native_code(nine, Some(NamedKey::PageUp)), 112);
+        assert_eq!(native_code(PhysicalKey::Code(KeyCode::Numpad1), Some(NamedKey::End)), 115);
+        assert_eq!(native_code(PhysicalKey::Code(KeyCode::Numpad7), Some(NamedKey::Home)), 110);
+        assert_eq!(native_code(PhysicalKey::Code(KeyCode::Numpad3), Some(NamedKey::PageDown)), 117);
+        // Num Lock on: a digit, on its own key.
+        assert_eq!(layout_code(&L::Character("9".into()), nine), Some(KeyCode::Digit9));
+        assert_eq!(native_code(nine, None), 81);
+        // Keys that aren't on the keypad keep their own keycode; Enter stays the keypad's.
+        assert_eq!(native_code(PhysicalKey::Code(KeyCode::PageUp), Some(NamedKey::PageUp)), 112);
+        assert_eq!(native_code(PhysicalKey::Code(KeyCode::NumpadEnter), Some(NamedKey::Enter)), 104);
+    }
 
     #[test]
     fn combos_parse() {

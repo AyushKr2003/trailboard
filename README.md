@@ -85,4 +85,4 @@ Everything else is in the **[guide](docs/GUIDE.md)**.
 
 [Guide](docs/GUIDE.md) · [Plan](docs/PLAN.md) · [Ideas](docs/FUTURE.md) · [Design](docs/DESIGN.md) · [Changelog](CHANGELOG.md)
 
-<sub>Inspired by Marble.</sub>
+<sub>Inspired by <a href="https://marble.surf">Marble</a>.</sub>

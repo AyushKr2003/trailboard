@@ -71,6 +71,7 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
 ### M2: Live page cards ✅
 - CEF 156 bootstrap (subprocesses re-exec the same binary), off-screen browsers.
 - Paint → texture upload; rounded cards with title bar, shadow, focus ring, close ×.
+  (2026-11-16: every text is one line, cut with "…" at its clip, so long titles never wrap.)
 - Mouse, wheel and keyboard forwarded to the focused page; logical-key shortcuts.
 - Omnibox (Ctrl+L / Ctrl+T): URL vs search detection (DuckDuckGo; the engine is a setting since M6).
 
@@ -178,7 +179,7 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
 ### M5: Board tools ✅
 - ✅ Read Mode: a card fills the window; Tab toggles board ↔ page
   (`scene::read`: `layout`, `pick`). Decisions (2026-11-14):
-  - The page *reflows* to the window (CSS size = window below a title bar,
+  - The page *reflows* to the window (CSS size = the whole window,
     rastered at the window scale, 1:1) instead of the camera zooming in, so text
     reads at its natural size. The card's board rect and the camera are not
     touched, so leaving shows the board as it was (gliding only if the card
@@ -187,7 +188,8 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     else the nearest to it.
   - Keys: Tab toggles unless keys are going to a page (after a click inside it),
     so Tab still moves between form fields; Esc always leaves (the page sees it
-    too) and keeps the card focused; a double-click on the bar leaves. Other keys
+    too) and keeps the card focused. (2026-11-16: the title bar is gone, so
+    the page fills the whole window; the bar's double-click went with it.) Other keys
     (arrows, Space) reach the page, so it scrolls straight away.
   - Anything that would bring a card on screen while reading (a link opened
     beside, Ctrl+T, Ctrl+Shift+T, undo) reads that card instead; the trail edge
@@ -640,8 +642,31 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   - The empty board says "An empty board" over its hint, keys as keycaps.
 - ➖ Translations of the UI strings: dropped (owner's decision, 2026-11-15).
   English only; no string table needed.
+- ✅ Settings page (2026-11-16, replaces the panel below): Ctrl+, opens
+  `trailboard:settings`, an app page card (`settings_page`, `settings.html`)
+  built like the search engine guide; Ctrl+, again goes to it. Side
+  navigation by section, a filter box, a note under each setting; switches,
+  segmented buttons (≤ 4 choices) or a drop-down; a proxy server field;
+  buttons that run *History*, *Downloads*, *Sites with ads allowed*, *Clear
+  history*, *Clear cookies*, *Keyboard shortcuts*; the sandbox under About.
+  Messages `set:key=value` (`Key::id`, `Settings::choices`/`choose`),
+  `proxy-server:`, `run:`; the app re-sends the data on every save. Corners
+  follow Hyprland's rounding (`--radius` in the page theme; small parts
+  capped at 4px), as do the welcome page, start page, engine guide and
+  notes' code blocks (`welcome::colors`, `note::colors` carry `radius`).
+- ✅ Board panning like page scrolling (2026-11-16, `scene::scroll::Pan`):
+  a notch is 120 px × *Scroll speed*, gliding with an ease-out (τ 70 ms,
+  ~0.2 s), notches add up; touchpad 2.5× surface px, at once, with the
+  page scroller's fling. Stepped every frame (the fling's speed is timed by
+  it); a press, a camera animation or Read Mode stops it. Was: 60 px jumps
+  per notch, touchpad 1:1, no fling, no speed setting.
+- ✅ Start page cleaned up (2026-11-16): flat page (no glow, dot grid,
+  shadows or gradient badges), accent border on focus, an Enter hint that
+  says *Search <engine>* or *Go to address* by `omnibox::resolve`'s rule
+  (kept in step by hand in `start.html`), the guide as a link under the bar. `Target::Settings`, `Target::ProxyServer`,
+  `palette::settings_rows` and the panel's status rows are gone.
 - ✅ Settings panel (Ctrl+,; `scene::settings`, `storage::settings`,
-  `palette::settings_rows`). Decisions (2026-11-14):
+  `palette::settings_rows`), since replaced by the page above. Decisions (2026-11-14):
   - Not a page or a window: the palette's field and list again
     (`Target::Settings`), like the history view, so it looks and works like
     the rest (type to filter, ↑/↓, wheel, Esc). Ctrl+, anywhere, inside pages
@@ -1040,6 +1065,75 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     open, like the settings panel, so several can go in a row; the site's
     live pages reload as with the page-menu toggle. No settings-panel row
     for it yet: the panel has no rows that open other views.
+
+- ✅ Browsing settings (2026-11-16), asked by the owner as "Chromium's
+  settings": CEF draws windowless (Alloy style), so `chrome://settings` and
+  Chrome's browser UI aren't there; each setting is built on a CEF hook.
+  - Profile preferences (`web::prefs`, set on the profile and every private
+    jar): spelling, third-party cookies (`profile.cookie_controls_mode`),
+    proxy. cef-rs passes an empty error `CefString` as a null pointer and
+    CEF then refuses `SetPreference`, so the error starts as `""`.
+  - `Accept-Language`: the `intl.accept_languages` preference is stored but
+    the network stack only reads the language list when a context starts
+    (`CefSettings`/`RequestContextSettings::accept_language_list`), and a
+    header set in `OnBeforeResourceLoad` is overwritten. So a change reaches
+    sites after a restart (private jars made later get it at once).
+  - On requests, in `shield::Guard` (IO thread): `DNT`/`Sec-GPC` headers,
+    and images cancelled per site.
+  - JavaScript per page through DevTools `Emulation.setScriptExecutionDisabled`,
+    sent before each main-frame navigation; a change reloads the pages it
+    affects. App pages (welcome, notes) always run theirs.
+  - Permissions (`web::permission`): `OnRequestMediaAccessPermission` and
+    `OnShowPermissionPrompt`; Ask shows a `Confirm` line (Enter allows), the
+    answer holds per origin and kind for the session. Location gets no
+    position (no provider in CEF); geolocation and camera need a secure origin.
+  - Downloads: Downloads folder, Desktop (`XDG_DESKTOP_DIR`), or a path field
+    (`Target::SaveAs`; closing it drops CEF's callback, which cancels).
+  - Not done: per-site camera/location lists, notification display (Alloy
+    shows none), font sizes, site data other than cookies.
+- ✅ Blocking like uBlock Origin (2026-11-16), asked by the owner: sites that
+  open in Firefox or Chrome with uBlock Origin showed "turn off your ad
+  blocker" walls here, and turning blocking off let every ad in.
+  - Cause: a request the lists stop was cancelled outright, so a page that
+    checks its ad script loaded (`adsbygoogle`, `googletag`, the IMA SDK) saw
+    it fail; and the rules that defeat the walls (`##+js(…)` scriptlets,
+    `$redirect=` stand-ins, mostly in uBlock's own lists) had nothing to run.
+  - Lists (`scene::privacy::LISTS`): uBlock Origin's default set, adding
+    uBlock filters, Badware, Privacy, Unbreak (exceptions for breakage) and
+    Quick fixes (fetched daily), and Peter Lowe's list. `!#include` parts are
+    fetched beside their list (`list--part.txt`) and spliced in on load;
+    `!#if` blocks are kept or dropped as uBlock defines the tokens for a
+    desktop Chromium without HTML filtering. Lists may start with
+    `! Title:` (uBlock's) as well as `[Adblock`. One rebuild per batch of
+    fetches.
+  - Resources (`web::resources`, our own JS in `web/src/surrogates/`):
+    stand-ins under the names the lists use (`noopjs`, `nooptext`, `1x1.gif`,
+    silent MP3/MP4, VAST/VMAP, `googlesyndication_adsbygoogle.js`,
+    `googletagservices_gpt.js`, `google-ima.js` (ad requests fail so the
+    player goes to the video), analytics stubs that still call
+    `hitCallback`/`eventCallback`, BlockAdBlock/FuckAdBlock defusers) and
+    the scriptlets that cover most uses in uBlock's lists (`set`, `aopr`,
+    `aopw`, `acs`, `aost`, `nostif`, `nosiif`, `nano-stb`, `nano-sib`, `aeld`,
+    `nowoif`, `rmnt`, `no-fetch-if`, `no-xhr-if`, `noeval-if`, `json-prune`,
+    `json-prune-fetch-response`, `ra`, `rc`, `set-attr`, storage and cookie
+    setters, `remove-cookie`, `href-sanitizer`, `nowebrtc`). `trusted-*`
+    scriptlets, `rpnt`, `xml-prune`, `m3u-prune` and
+    `json-prune-xhr-response` are not there; their rules are skipped.
+  - Stand-ins are served by `shield::Stand`, a CEF resource handler on the IO
+    thread, with the request's origin allowed (CORS) so `fetch` checks pass.
+    They count as blocked.
+  - Scriptlets must run before the page's scripts; `execute_java_script`
+    from `OnLoadStart` arrives after the first inline ones. The main frame's
+    are registered with DevTools `Page.addScriptToEvaluateOnNewDocument` in
+    `OnBeforeBrowse` (Page domain on), guarded by the host, and the previous
+    page's script removed (`cosmetic::Early`, ids from a DevTools observer).
+    Subframes still get theirs at load start. The YouTube script rides the
+    same early path.
+  - The first rules are built synchronously at start (~120 ms with all nine
+    lists), so pages restored at start don't load unblocked.
+  - Checked with a local page (stand-ins for `<script>` and a credentialed
+    cross-origin `fetch`, `set`, `aopr`, `nostif` before inline scripts) and
+    hindustantimes.com (no wall, 13 blocked, 3 stand-ins).
 
 ### M9: Packaging and release ✅
 - ✅ Bundle layout (`scripts/bundle.sh [--tar]`): `target/bundle/trailboard-VERSION-ARCH/`

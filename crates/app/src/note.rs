@@ -45,8 +45,16 @@ fn colors(th: &Theme, sticky: Option<&str>) -> String {
             ]
         }
     };
-    let body: Vec<String> = vars.iter().map(|(k, c)| format!("\"{k}\":\"{}\"", hex(*c))).collect();
-    format!("{{{}}}", body.join(","))
+    let body: Vec<String> = vars
+        .iter()
+        .map(|(k, c)| format!("\"{k}\":\"{}\"", hex(*c)))
+        .collect();
+    // Hyprland's window rounding, which code blocks follow (capped small).
+    format!(
+        "{{{},\"radius\":\"{}px\"}}",
+        body.join(","),
+        th.rounding.max(0.0)
+    )
 }
 
 /// The editor page for a note holding `text`, a sticky note in colour `sticky`.

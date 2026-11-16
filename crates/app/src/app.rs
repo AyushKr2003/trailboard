@@ -36,9 +36,12 @@
 //! - Ctrl+H history view (`palette::history_rows`): visited pages newest first,
 //!   filtered by words; Shift+Delete forgets one (in Ctrl+K too); *Clear history*
 //!   asks first (`Confirm`).
-//! - Ctrl+, settings (`scene::settings`, saved by `storage::settings`): a list
-//!   under the field like history; Enter, → or a click steps the highlighted
-//!   setting on, Shift+Enter, ← or a right-click back. Each applies at once.
+//! - Ctrl+, settings (`scene::settings`, saved by `storage::settings`): a
+//!   settings page card (`settings_page`, `scene::note::SETTINGS_URL`) with
+//!   sections, switches and drop-downs, found again if it is on the board. Each
+//!   change applies at once
+//!   (browsing ones through `web::prefs`, `web::permission` and the per-site
+//!   JavaScript and images of `scene::sitesettings`).
 //! - Ctrl+J downloads (`palette::download_rows`, `scene::download`): files go
 //!   straight to the Downloads folder; Enter opens one, Ctrl+Enter its folder,
 //!   Shift+Delete cancels or removes. Pages with running downloads are parked.
@@ -66,7 +69,7 @@
 //!   menu has *Save as Markdown* too.
 //! - Tab (unless keys are going to a page) toggles Read Mode: the focused card, or
 //!   the one in the middle of the view, fills the window and its page lays out at
-//!   the window's size. Esc, Tab or a double-click on its bar returns to the board.
+//!   the window's size. Esc or Tab returns to the board.
 //! - Looks follow Omarchy live (see `theme` and `desktop`): the theme's palette,
 //!   light or dark (pages too), Hyprland's rounding and the desktop text size.
 //! - Spaces: Ctrl+Shift+N new space, Ctrl+PageDown / Ctrl+PageUp next / previous,
@@ -130,7 +133,8 @@ const ARRANGE_HELP: &str = "Moving · h j k l move · Shift resize · Ctrl fine 
 const RESIZE_GRIP: f32 = 18.0;
 const CLOSE_W: f32 = 30.0;
 /// Height of the Read Mode title bar, in overlay px (scaled by `ui()`).
-const READ_BAR: f32 = 34.0;
+/// None: the page fills the whole window (Tab or Esc goes back).
+const READ_BAR: f32 = 0.0;
 
 /// A card moving between the board and Read Mode (`scene::read::morph`).
 #[derive(Debug, Clone, Copy)]
@@ -262,6 +266,8 @@ pub struct App {
     /// Wheel and touchpad scrolling inside a page, and flings (`scene::scroll`):
     /// to card, at view px.
     page_scroll: scene::scroll::Scroller<(NodeId, i32, i32)>,
+    /// Wheel and touchpad panning of the board: glides and flings (`scene::scroll::Pan`).
+    board_pan: scene::scroll::Pan,
     /// Live browsers. A card in the scene but not here is asleep.
     cards: HashMap<NodeId, Card>,
     max_live: usize,
@@ -415,6 +421,28 @@ pub struct App {
     /// screen, unrendered) until their downloads end, since Chromium only
     /// reports a download to the page that started it.
     parked: Vec<Page>,
+    /// JavaScript and images per site (page menu), saved in `sites.json`.
+    sites: scene::sitesettings::SiteSettings,
+    /// A download waiting for the user to say where it goes (`Target::SaveAs`).
+    save_as: Option<SaveAs>,
+    /// Sites asking for a permission, waiting for Enter (allow) or Esc; the
+    /// first is the question showing (`Confirm::Permission`).
+    asks: Vec<Ask>,
+}
+
+/// A download waiting for a path (*Save downloads to: Ask each time*).
+struct SaveAs {
+    id: u32,
+    page: u64,
+    url: String,
+    blank: bool,
+}
+
+/// A site's permission request waiting for the user.
+struct Ask {
+    id: u64,
+    origin: String,
+    kinds: Vec<web::permission::Kind>,
 }
 
 /// Last history search (history view or palette, query, results).
@@ -454,6 +482,14 @@ fn visits_for(
 enum Confirm {
     DeleteSpace,
     ClearHistory,
+    ClearCookies,
+    /// The first of `App::asks`: Enter allows, anything else blocks.
+    Permission,
+}
+
+/// The desktop's locale (`en_IN.UTF-8`): `LC_ALL`, `LC_MESSAGES` or `LANG`.
+pub fn system_locale() -> String {
+    ["LC_ALL", "LC_MESSAGES", "LANG"].iter().find_map(|v| std::env::var(v).ok().filter(|l| !l.is_empty())).unwrap_or_default()
 }
 
 /// Local time in ms for a UTC time in ms (the zone's offset then).
@@ -490,7 +526,10 @@ impl App {
     pub fn new(initial_urls: Vec<String>, data_dir: std::path::PathBuf, settings: Settings) -> Self {
         let live_env = max_live_from_env();
         log::info!("settings: {settings:?}");
-        let zooms = Rc::new(RefCell::new(storage::zoom::load_zooms(&data_dir)));
+        let mut zooms = storage::zoom::load_zooms(&data_dir);
+        zooms.default = settings.default_zoom_factor();
+        let zooms = Rc::new(RefCell::new(zooms));
+        let sites = storage::sitesettings::load_sites(&data_dir);
         let lookup = zooms.clone();
         web::set_page_zoom(move |url| lookup.borrow().get(url));
         let icons = storage::icons::load_icons(&data_dir)
@@ -506,12 +545,13 @@ impl App {
                 None
             }
         };
-        Self {
+        let app = Self {
             renderer: None,
             scene: Scene::new(),
             camera: Camera::default(),
             camera_goal: None,
             page_scroll: Default::default(),
+            board_pan: Default::default(),
             cards: HashMap::new(),
             max_live: live_env.unwrap_or(settings.live_pages),
             blocking: crate::blocking::Blocking::start(data_dir.clone(), settings.block_ads),
@@ -595,7 +635,14 @@ impl App {
             downloads: storage::downloads::load_downloads(&data_dir_for_downloads),
             download_ids: HashMap::new(),
             parked: Vec::new(),
-        }
+            sites,
+            save_as: None,
+            asks: Vec::new(),
+        };
+        app.apply_browsing();
+        app.apply_site_content();
+        app.apply_permissions();
+        app
     }
 
     pub fn shutdown(&mut self) {
@@ -739,7 +786,7 @@ impl App {
         self.toast_for(format!("Trailboard closed unexpectedly last time · report in {shown}"), Duration::from_secs(8));
     }
 
-    /// How the sandbox confines pages, for the settings panel. When the system
+    /// How the sandbox confines pages, for the settings page. When the system
     /// can't run it, say so once (the log alone goes unread); the mark is
     /// cleared while it runs, so a later loss of support is told again.
     pub fn note_sandbox(&mut self, sandbox: web::sandbox::Sandbox) {
@@ -752,17 +799,6 @@ impl App {
             self.toast_for("Pages run without Chromium's sandbox: this system doesn't support it · Ctrl+, for more", Duration::from_secs(10));
         }
         self.sandbox = Some(sandbox);
-    }
-
-    /// Enter or a click on a status line of the settings panel: what it means.
-    fn explain_status(&mut self, status: palette::Status) {
-        match status {
-            palette::Status::Sandbox => {
-                if let Some(s) = &self.sandbox {
-                    self.toast(s.explain());
-                }
-            }
-        }
     }
 
     /// "Name (2 of 3)" for the active space, "Name · Private" or
@@ -1073,10 +1109,25 @@ impl App {
         let Some(n) = self.scene.node(id) else { return };
         let r = n.rect;
         let (url, kind) = match &n.note {
-            Some(text) => (crate::note::page_url(text, &self.theme, n.sticky.as_deref()), web::PageKind::Note),
-            None if n.url == scene::note::WELCOME_URL => (crate::welcome::page_url(&self.theme), web::PageKind::App),
-            None if n.url == scene::note::ENGINES_URL => (crate::engines::page_url(&self.theme, self.settings.search), web::PageKind::App),
-            None if n.url == scene::note::START_URL => (crate::start::page_url(&self.theme, self.settings.search), web::PageKind::App),
+            Some(text) => (
+                crate::note::page_url(text, &self.theme, n.sticky.as_deref()),
+                web::PageKind::Note,
+            ),
+            None if n.url == scene::note::WELCOME_URL => {
+                (crate::welcome::page_url(&self.theme), web::PageKind::App)
+            }
+            None if n.url == scene::note::ENGINES_URL => (
+                crate::engines::page_url(&self.theme, self.settings.search),
+                web::PageKind::App,
+            ),
+            None if n.url == scene::note::START_URL => (
+                crate::start::page_url(&self.theme, self.settings.search),
+                web::PageKind::App,
+            ),
+            None if n.url == scene::note::SETTINGS_URL => (
+                crate::settings_page::page_url(&self.theme, &self.settings_data()),
+                web::PageKind::App,
+            ),
             None => (n.url.clone(), web::PageKind::Web),
         };
         let jar = self.jar.as_ref();
@@ -1178,10 +1229,7 @@ impl App {
         }
         self.settings.search = e;
         log::info!("setting Search = {}", e.name());
-        if let Err(err) = storage::settings::save_settings(&self.data_dir, &self.settings) {
-            log::warn!("settings: saving: {err}");
-            self.toast("Couldn't save settings");
-        }
+        self.save_settings();
         self.engine_changed();
     }
 
@@ -1940,7 +1988,7 @@ impl App {
             }
             return;
         };
-        let want = if dir == 0 { 1.0 } else { pagezoom::step(self.zooms.borrow().get(&url), dir) };
+        let want = if dir == 0 { self.zooms.borrow().default } else { pagezoom::step(self.zooms.borrow().get(&url), dir) };
         if self.zooms.borrow_mut().set(&url, want) {
             for c in self.cards.values() {
                 c.page.refresh_zoom();
@@ -2000,9 +2048,7 @@ impl App {
                 self.reopen_closed_card(id);
             }
             Item::Command(c) => self.run_command(c),
-            Item::Setting(k) => self.step_setting(k, 1),
             Item::Download(key) => self.open_download(key),
-            Item::Status(s) => self.explain_status(s),
             Item::AllowedSite(site) => self.block_site_again(&site),
         }
     }
@@ -2017,6 +2063,22 @@ impl App {
         let hidden = card.map_or(0, |c| c.page.hidden());
         let banner_rejected = card.is_some_and(|c| c.page.banner_rejected());
         Some(web::menu::Blocking { site, on: !self.blocking.allows(&n.url), blocked, hidden, banner_rejected })
+    }
+
+    /// JavaScript and images on card `id`'s site, for its page menu: `None`
+    /// for notes and pages that aren't on a web site.
+    fn site_content_state(&self, id: NodeId) -> Option<web::menu::SiteContent> {
+        use scene::sitesettings::Content;
+        let n = self.scene.node(id).filter(|n| !n.is_note())?;
+        if self.cards.get(&id).is_some_and(|c| c.page.kind() != web::PageKind::Web) {
+            return None;
+        }
+        let site = scene::icon::site(&n.url)?;
+        Some(web::menu::SiteContent {
+            site,
+            javascript: self.sites.allows(&n.url, Content::JavaScript, self.settings.javascript),
+            images: self.sites.allows(&n.url, Content::Images, self.settings.images),
+        })
     }
 
     /// Turns ad blocking off on card `id`'s site, or back on, and reloads the
@@ -2081,59 +2143,356 @@ impl App {
         }
     }
 
-    /// Ctrl+,: the settings panel, a list of settings to step through.
+    /// Ctrl+,: the settings page. Go to it if it is on the board (unfolding
+    /// it if needed), else add one in the middle of the view.
     fn open_settings(&mut self) {
         self.menu = None;
         self.link_hints = None;
+        self.omnibox = None;
         self.finish_arrange(true);
-        self.omnibox = Some(Omnibox::new("", Target::Settings));
-        log::info!("settings open");
-    }
-
-    /// Moves setting `key` to its next (`dir` > 0) or previous value, applies
-    /// it at once and saves it.
-    fn step_setting(&mut self, key: prefs::Key, dir: i32) {
-        let mut s = self.settings;
-        if key == prefs::Key::LivePages {
-            s.live_pages = self.max_live; // step from what is in force
-        }
-        if !s.step(key, dir) {
+        if let Some(id) = self.scene.settings_card() {
+            log::info!("settings page {} already on the board", id.0);
+            self.go_to_card(id);
             return;
         }
-        self.settings = s;
-        log::info!("setting {key:?} = {}", s.value(key));
+        let (w, h) = (crate::settings_page::W, crate::settings_page::H);
+        let rect = placement::free_near(&self.scene, self.camera.center, w, h);
+        let id = self.scene.add_settings(rect);
+        self.create_page(id);
+        self.history.opened(id);
+        self.dirty = true;
+        self.focus(Some(id));
+        self.ensure_visible(id);
+        log::info!("settings page {} added", id.0);
+    }
+
+    /// The settings page's data: the settings as in force, where the number
+    /// of live pages comes from, and the sandbox.
+    fn settings_data(&self) -> String {
+        let shown = Settings {
+            live_pages: self.max_live,
+            ..self.settings.clone()
+        };
+        let mut notes = Vec::new();
+        if self.live_from_env {
+            notes.push((prefs::Key::LivePages, "TRAILBOARD_MAX_LIVE".to_string()));
+        }
+        let facts: Vec<(&str, String, String)> = self
+            .sandbox
+            .iter()
+            .map(|s| ("Sandbox", s.summary().to_string(), s.explain().to_string()))
+            .collect();
+        crate::settings_page::data(&shown, &notes, &facts)
+    }
+
+    /// Shows live settings pages the settings as they are now.
+    fn settings_changed(&self) {
+        let script = crate::settings_page::data_script(&self.settings_data());
+        for (id, card) in &self.cards {
+            let ours = self
+                .scene
+                .node(*id)
+                .is_some_and(|n| !n.is_note() && n.url == scene::note::SETTINGS_URL);
+            if ours && card.page.kind() == web::PageKind::App {
+                card.page.run_script(&script);
+            }
+        }
+    }
+
+    /// A message from the settings page (card `id`). Returns whether it was one of its.
+    fn settings_page_action(&mut self, id: NodeId, action: &str) -> bool {
+        use crate::settings_page as sp;
+        if !self
+            .scene
+            .node(id)
+            .is_some_and(|n| !n.is_note() && n.url == scene::note::SETTINGS_URL)
+        {
+            return false;
+        }
+        if let Some(msg) = action.strip_prefix(sp::SET) {
+            match sp::parse_set(msg) {
+                Some((key, value)) => self.choose_setting(key, value),
+                None => log::warn!("settings page: unknown setting {msg:?}"),
+            }
+        } else if let Some(server) = action.strip_prefix(sp::PROXY) {
+            self.set_proxy_server(server);
+        } else if let Some(name) = action.strip_prefix(sp::RUN) {
+            match sp::command(name) {
+                Some(c) => {
+                    self.keys_in_page = false; // the board's own UI takes over
+                    self.run_command(c);
+                }
+                None => log::warn!("settings page: unknown command {name:?}"),
+            }
+        } else if action == crate::start::GUIDE {
+            self.show_engines(id);
+        } else {
+            return false;
+        }
+        true
+    }
+
+    /// Sets `key` to the choice `value` (`Settings::choices`), applies it at
+    /// once and saves it.
+    fn choose_setting(&mut self, key: prefs::Key, value: &str) {
+        let mut s = self.settings.clone();
+        if key == prefs::Key::LivePages {
+            s.live_pages = self.max_live; // compare with what is in force
+        }
+        if !s.choose(key, value) {
+            self.settings_changed(); // the page shows what is really set
+            return;
+        }
+        let before = std::mem::replace(&mut self.settings, s);
+        log::info!("setting {key:?} = {}", self.settings.value(key));
         match key {
             prefs::Key::Search => self.engine_changed(),
-            prefs::Key::NewCard | prefs::Key::ScrollSpeed => {}
+            prefs::Key::NewCard | prefs::Key::ScrollSpeed | prefs::Key::DownloadTo => {}
             prefs::Key::LivePages => {
-                self.max_live = s.live_pages;
+                self.max_live = self.settings.live_pages;
                 self.live_from_env = false;
             }
             prefs::Key::History => {
-                if !s.history {
+                if !self.settings.history {
                     self.text_due.clear();
                 }
             }
             prefs::Key::PageColours => self.apply_page_scheme(),
-            prefs::Key::BlockAds => web::shield::set_enabled(s.block_ads),
+            prefs::Key::BlockAds => web::shield::set_enabled(self.settings.block_ads),
+            prefs::Key::DefaultZoom => {
+                self.zooms.borrow_mut().default = self.settings.default_zoom_factor();
+                for c in self.cards.values() {
+                    c.page.refresh_zoom();
+                }
+            }
+            prefs::Key::Spellcheck | prefs::Key::ThirdPartyCookies | prefs::Key::DoNotTrack => self.apply_browsing(),
+            prefs::Key::Language => {
+                // Spelling follows at once; Chromium's network stack only
+                // reads the languages sites are told when it starts.
+                self.apply_browsing();
+                let name = self.settings.value(key);
+                self.toast(format!("Page language: {name} · sites see it after a restart"));
+            }
+            prefs::Key::Proxy => {
+                self.apply_browsing();
+                if self.settings.proxy == prefs::Proxy::Custom
+                    && self.settings.proxy_server.is_empty()
+                {
+                    self.toast("Type the proxy server under Proxy");
+                }
+            }
+            prefs::Key::JavaScript | prefs::Key::Images => self.site_content_changed(&before),
+            prefs::Key::Camera | prefs::Key::Microphone | prefs::Key::Location | prefs::Key::Notifications => {
+                self.apply_permissions();
+            }
         }
+        self.save_settings();
+    }
+
+    fn save_settings(&mut self) {
         if let Err(e) = storage::settings::save_settings(&self.data_dir, &self.settings) {
             log::warn!("settings: saving: {e}");
             self.toast("Couldn't save settings");
+        }
+        self.settings_changed();
+    }
+
+    /// Hands the language, spelling, cookie, tracking and proxy settings to
+    /// Chromium (the profile and every private space's cookie jar).
+    fn apply_browsing(&self) {
+        let s = &self.settings;
+        let tag = prefs::language_tag(s.language, &system_locale());
+        let proxy = match s.proxy {
+            prefs::Proxy::System => web::prefs::Proxy::System,
+            prefs::Proxy::Direct => web::prefs::Proxy::Direct,
+            prefs::Proxy::Custom => web::prefs::Proxy::Fixed(s.proxy_server.clone()),
+        };
+        let p = web::prefs::Prefs {
+            accept_languages: prefs::accept_languages(&tag),
+            spellcheck: s.spellcheck,
+            dictionary: tag,
+            block_third_party_cookies: s.block_third_party_cookies,
+            proxy,
+        };
+        log::info!("browsing prefs: {p:?}, do not track {}", s.do_not_track);
+        web::prefs::apply(&p);
+        for jar in self.jar.iter().chain(self.sessions.values().filter_map(|s| s.jar.as_ref())) {
+            jar.refresh_prefs();
+        }
+        web::prefs::set_do_not_track(s.do_not_track);
+    }
+
+    /// Hands JavaScript and images (the defaults and each site's own) to the pages.
+    fn apply_site_content(&self) {
+        use scene::sitesettings::Content;
+        let (js, images) = (self.settings.javascript, self.settings.images);
+        let sites = self.sites.clone();
+        web::set_javascript(move |url| sites.allows(url, Content::JavaScript, js));
+        let sites = self.sites.clone();
+        web::prefs::set_images(move |url| sites.allows(url, Content::Images, images));
+    }
+
+    /// After JavaScript or images changed (the setting, from `before`, or a
+    /// site's own): applies it and reloads the live pages it changes.
+    fn site_content_changed(&mut self, before: &Settings) {
+        let old_sites = self.sites.clone();
+        self.site_content_changed_from(&old_sites, before);
+    }
+
+    fn site_content_changed_from(&mut self, old_sites: &scene::sitesettings::SiteSettings, before: &Settings) {
+        use scene::sitesettings::Content;
+        self.apply_site_content();
+        let mut reloaded = 0;
+        for (id, c) in &self.cards {
+            if c.page.kind() != web::PageKind::Web {
+                continue;
+            }
+            let Some(url) = self.scene.node(*id).map(|n| n.url.clone()) else { continue };
+            let images_were = old_sites.allows(&url, Content::Images, before.images);
+            let js_was = old_sites.allows(&url, Content::JavaScript, before.javascript);
+            let images_now = self.sites.allows(&url, Content::Images, self.settings.images);
+            let js_now = self.sites.allows(&url, Content::JavaScript, self.settings.javascript);
+            if js_was != js_now {
+                c.page.refresh_javascript(); // reloads
+                reloaded += 1;
+            } else if images_were != images_now {
+                c.page.reload();
+                reloaded += 1;
+            }
+        }
+        log::info!("site content: {reloaded} page(s) reloaded");
+    }
+
+    /// Hands the camera, microphone, location and notification settings to
+    /// the pages. Answers given this session are forgotten, so a change
+    /// applies to sites already asked.
+    fn apply_permissions(&self) {
+        use web::permission::{Decision, Kind};
+        let s = &self.settings;
+        let decide = |p: prefs::Permission| match p {
+            prefs::Permission::Ask => Decision::Ask,
+            prefs::Permission::Allow => Decision::Allow,
+            prefs::Permission::Block => Decision::Block,
+        };
+        let (camera, mic, location, notes) = (decide(s.camera), decide(s.microphone), decide(s.location), decide(s.notifications));
+        web::permission::set_policy(move |k| match k {
+            Kind::Camera => camera,
+            Kind::Microphone => mic,
+            Kind::Location => location,
+            Kind::Notifications => notes,
+            Kind::Other => Decision::Block,
+        });
+        web::permission::forget_answers();
+    }
+
+    /// Page menu: JavaScript or images on or off for card `id`'s site.
+    fn toggle_site_content(&mut self, id: NodeId, what: scene::sitesettings::Content) {
+        use scene::sitesettings::Content;
+        let Some(url) = self.scene.node(id).filter(|n| !n.is_note()).map(|n| n.url.clone()) else { return };
+        let default = match what {
+            Content::JavaScript => self.settings.javascript,
+            Content::Images => self.settings.images,
+        };
+        let on = !self.sites.allows(&url, what, default);
+        let old = self.sites.clone();
+        if !self.sites.set(&url, what, on, default) {
+            return;
+        }
+        let before = self.settings.clone();
+        self.site_content_changed_from(&old, &before);
+        if self.persist
+            && let Err(e) = storage::sitesettings::save_sites(&self.data_dir, &self.sites)
+        {
+            log::error!("saving site settings: {e}");
+        }
+        let site = pagezoom::site_of(&url);
+        self.toast(format!("{} {} on {site}", what.name(), if on { "on" } else { "off" }));
+    }
+
+    /// Enter in the proxy field: the server for *Proxy: Custom*.
+    fn set_proxy_server(&mut self, text: &str) {
+        let server = text.trim().to_string();
+        if server.is_empty() {
+            self.settings.proxy = prefs::Proxy::System;
+            self.toast("No proxy server given · Proxy follows the system");
+        } else {
+            self.toast(format!("Proxy: {server}"));
+        }
+        self.settings.proxy_server = server;
+        log::info!("setting Proxy = {}", self.settings.value(prefs::Key::Proxy));
+        self.apply_browsing();
+        self.save_settings();
+    }
+
+    // ---------------------------------------------------------------- permissions
+
+    /// A site asks for a permission and the settings say to ask: queue the
+    /// question; the first one shows.
+    fn permission_asked(&mut self, id: u64, origin: String, kinds: Vec<web::permission::Kind>) {
+        self.asks.push(Ask { id, origin, kinds });
+        self.show_next_ask();
+    }
+
+    fn show_next_ask(&mut self) {
+        if self.confirm.is_some() {
+            return; // another question first (it may be this one)
+        }
+        let Some(ask) = self.asks.first() else { return };
+        let what: Vec<&str> = ask.kinds.iter().map(|k| k.name()).collect();
+        let site = pagezoom::site_of(&ask.origin);
+        let msg = format!("{site} wants your {} · Enter allows · Esc blocks", what.join(" and "));
+        log::info!("permission: asking: {msg}");
+        self.confirm = Some(Confirm::Permission);
+        self.toast(msg);
+    }
+
+    /// The user answered the question showing.
+    fn answer_ask(&mut self, allow: bool) {
+        self.confirm = None;
+        if self.asks.is_empty() {
+            return;
+        }
+        let ask = self.asks.remove(0);
+        web::permission::remember(&ask.origin, &ask.kinds, allow);
+        let answered = web::permission::answer(ask.id, allow);
+        log::info!("permission: {} {:?} for {} (still waiting: {answered})", if allow { "allowed" } else { "blocked" }, ask.kinds, ask.origin);
+        let what: Vec<&str> = ask.kinds.iter().map(|k| k.name()).collect();
+        self.toast(format!("{} {} for {}", if allow { "Allowed" } else { "Blocked" }, what.join(" and "), pagezoom::site_of(&ask.origin)));
+        self.show_next_ask();
+    }
+
+    /// Chromium withdrew request `id` (its page went away or navigated).
+    fn permission_withdrawn(&mut self, id: u64) {
+        let Some(i) = self.asks.iter().position(|a| a.id == id) else { return };
+        self.asks.remove(i);
+        if i == 0 && self.confirm == Some(Confirm::Permission) {
+            self.confirm = None;
+            self.toast = None;
+            self.show_next_ask();
+        }
+    }
+
+    // ---------------------------------------------------------------- cookies
+
+    /// *Clear cookies*: asks first, as it signs you out everywhere.
+    fn ask_clear_cookies(&mut self) {
+        self.omnibox = None;
+        self.confirm = Some(Confirm::ClearCookies);
+        self.toast("Delete all cookies? Sites will sign you out · Enter deletes · Esc keeps them");
+    }
+
+    fn clear_cookies(&mut self) {
+        self.confirm = None;
+        if web::prefs::clear_cookies() {
+            log::info!("cookies cleared");
+            self.toast("Cookies deleted");
+        } else {
+            self.toast("Couldn't delete cookies");
         }
     }
 
     /// The rows under a list field: the palette's or the history view's.
     fn list_rows(&self, ob: &Omnibox) -> Vec<palette::Row> {
-        if ob.target == Target::Settings {
-            let mut notes = HashMap::new();
-            if self.live_from_env {
-                notes.insert(prefs::Key::LivePages, "TRAILBOARD_MAX_LIVE".to_string());
-            }
-            let shown = Settings { live_pages: self.max_live, ..self.settings };
-            let status: Vec<_> = self.sandbox.iter().map(|s| (palette::Status::Sandbox, s.summary().to_string())).collect();
-            return palette::settings_rows(&ob.text, &shown, &notes, &status);
-        }
         if ob.target == Target::AllowedSites {
             return palette::allowed_rows(&ob.text, &self.blocking.allowed_sites(), &self.scene);
         }
@@ -2170,9 +2529,10 @@ impl App {
         log::info!("downloads open");
     }
 
-    /// Chromium wants to save a file from page `page`: it goes to the
-    /// downloads folder under a free name, at once (no dialog). A card that
-    /// was opened for the link and never showed a page goes away again.
+    /// Chromium wants to save a file from page `page`: it goes to the folder
+    /// the settings name under a free name, at once; or, set to ask, the
+    /// path waits in a field (`Target::SaveAs`). A card that was opened for
+    /// the link and never showed a page goes away again.
     fn download_asked(&mut self, page: u64, id: u32, url: &str, suggested: &str, blank: bool) {
         // Chromium asks again when it resumes an interrupted download by
         // itself: same download, same file.
@@ -2183,12 +2543,62 @@ impl App {
             web::download::save_to(id, std::path::Path::new(&d.path));
             return;
         }
-        let dir = storage::downloads::download_dir();
-        if let Err(e) = std::fs::create_dir_all(&dir) {
-            log::warn!("downloads: making {}: {e}", dir.display()); // Chromium will fail it
-        }
+        let dir = match self.settings.download_to {
+            prefs::DownloadTo::Desktop => storage::downloads::desktop_dir(),
+            prefs::DownloadTo::Downloads | prefs::DownloadTo::Ask => storage::downloads::download_dir(),
+        };
         let taken: HashSet<std::path::PathBuf> = self.downloads.running_paths().map(std::path::PathBuf::from).collect();
         let path = storage::downloads::target(&dir, suggested, &taken);
+        if self.settings.download_to == prefs::DownloadTo::Ask {
+            // One question at a time: an earlier download still asking is cancelled.
+            if let Some(old) = self.save_as.take() {
+                web::download::refuse(old.id);
+                if old.blank {
+                    self.close_blank_card(old.page);
+                }
+            }
+            log::info!("download {id}: asking where to save {url}");
+            self.save_as = Some(SaveAs { id, page, url: url.to_string(), blank });
+            self.menu = None;
+            self.omnibox = Some(Omnibox::new(&home_relative(&path), Target::SaveAs(id)));
+            return;
+        }
+        self.start_download(page, id, url, &path, blank);
+    }
+
+    /// Enter in the save field: the download goes to the path typed (`~`
+    /// for the home folder; a folder means the suggested name in it).
+    fn save_download_as(&mut self, id: u32, text: &str) {
+        let Some(pending) = self.save_as.take().filter(|s| s.id == id) else { return };
+        let text = text.trim();
+        let home = std::env::var("HOME").unwrap_or_default();
+        let mut path = match text.strip_prefix("~/") {
+            Some(rest) => std::path::Path::new(&home).join(rest),
+            None => std::path::PathBuf::from(text),
+        };
+        if text.is_empty() || path.is_relative() {
+            web::download::refuse(id);
+            self.toast("Download cancelled · give a full path, like ~/Downloads/file.pdf");
+            if pending.blank {
+                self.close_blank_card(pending.page);
+            }
+            return;
+        }
+        if path.is_dir() {
+            let name = pending.url.rsplit('/').next().filter(|n| !n.is_empty()).unwrap_or("download");
+            path = path.join(name);
+        }
+        self.start_download(pending.page, id, &pending.url, &path, pending.blank);
+    }
+
+    /// Saves download `id` of `url` at `path` and lists it (Ctrl+J).
+    fn start_download(&mut self, page: u64, id: u32, url: &str, path: &std::path::Path, blank: bool) {
+        if let Some(dir) = path.parent()
+            && let Err(e) = std::fs::create_dir_all(dir)
+        {
+            log::warn!("downloads: making {}: {e}", dir.display()); // Chromium will fail it
+        }
+        let path = path.to_path_buf();
         if !web::download::save_to(id, &path) {
             return;
         }
@@ -2198,11 +2608,19 @@ impl App {
         self.save_downloads();
         let name = self.downloads.get(key).map(|d| d.name().to_string()).unwrap_or_default();
         self.toast(format!("Downloading {name} · Ctrl+J"));
-        if blank
-            && let Some(card) = self.node_of(page)
+        if blank {
+            self.close_blank_card(page);
+        }
+    }
+
+    /// Closes the card of page `page`, opened for a link that turned out to
+    /// be a file, so it never showed anything (its page stays parked until
+    /// the download ends, if there is one).
+    fn close_blank_card(&mut self, page: u64) {
+        if let Some(card) = self.node_of(page)
             && self.scene.node(card).is_some_and(|n| !n.is_note())
         {
-            // Nothing to show or undo: the page stays parked until the file is in.
+            // Nothing to show or undo.
             log::info!("closing card {} (it only downloaded a file)", card.0);
             let source = self.scene.edges().iter().find(|e| e.to == card).map(|e| e.from);
             let was_current = self.focused == Some(card);
@@ -2408,6 +2826,17 @@ impl App {
         match confirm {
             Confirm::DeleteSpace => format!("Kept {}", self.spaces.active_entry().name),
             Confirm::ClearHistory => "Kept history".to_string(),
+            Confirm::ClearCookies => "Kept cookies".to_string(),
+            Confirm::Permission => String::new(), // `answer_ask` says what happened
+        }
+    }
+
+    /// A question was answered no (any key but Enter, or a click).
+    fn decline(&mut self, confirm: Confirm) {
+        if confirm == Confirm::Permission {
+            self.answer_ask(false);
+        } else {
+            self.toast(self.kept(confirm));
         }
     }
 
@@ -2481,6 +2910,7 @@ impl App {
             Command::DeleteSpace => self.ask_delete_space(),
             Command::History => self.open_history(),
             Command::ClearHistory => self.ask_clear_history(),
+            Command::ClearCookies => self.ask_clear_cookies(),
             Command::Settings => self.open_settings(),
             Command::Downloads => self.open_downloads(),
             Command::Shortcuts => {
@@ -3275,6 +3705,14 @@ impl App {
                 WebEvent::DownloadUpdated { id, received, total, state } => {
                     self.download_updated(id, received, total, state)
                 }
+                WebEvent::PermissionAsked { page, id, origin, kinds } => {
+                    if self.node_of(page).is_some() {
+                        self.permission_asked(id, origin, kinds);
+                    } else {
+                        web::permission::answer(id, false); // a page of another space
+                    }
+                }
+                WebEvent::PermissionWithdrawn { id } => self.permission_withdrawn(id),
                 WebEvent::OpenBeside { source, url } => {
                     let Some(src) = self.node_of(source) else { continue };
                     if self.scene.node(src).is_some()
@@ -3339,7 +3777,8 @@ impl App {
                 }
                 WebEvent::AppAction { page, action } => {
                     if let Some(id) = self.node_of(page)
-                        && self.engine_page_action(id, &action)
+                        && (self.settings_page_action(id, &action)
+                            || self.engine_page_action(id, &action))
                     {
                         continue;
                     }
@@ -3683,6 +4122,9 @@ impl App {
     fn mouse_input(&mut self, state: ElementState, button: MouseButton) {
         let p = self.cursor;
         let mods = keymap::modifiers(self.mods);
+        if state == ElementState::Pressed {
+            self.board_pan.stop(); // a grab holds the board where it is
+        }
         // Any click closes the shortcut sheet, and does nothing else.
         if self.hints {
             if state == ElementState::Pressed {
@@ -3696,7 +4138,7 @@ impl App {
         if let Some(confirm) = self.confirm {
             if state == ElementState::Pressed {
                 self.confirm = None;
-                self.toast(self.kept(confirm));
+                self.decline(confirm);
                 self.menu_pressed = true;
             }
             return;
@@ -3746,14 +4188,6 @@ impl App {
             let scroll = ob.scroll.min(rows.len().saturating_sub(panel.shown));
             if let Some(i) = panel.row_at(p, scroll, rows.len()) {
                 self.menu_pressed = true; // swallow the release
-                // A setting steps on (back with the right button); the panel stays.
-                if let Item::Setting(k) = rows[i].item {
-                    if let Some(ob) = self.omnibox.as_mut() {
-                        ob.sel = i;
-                    }
-                    self.step_setting(k, if button == MouseButton::Right { -1 } else { 1 });
-                    return;
-                }
                 // An allowed site is blocked again; the list stays.
                 if let Item::AllowedSite(site) = &rows[i].item {
                     if let Some(ob) = self.omnibox.as_mut() {
@@ -3762,14 +4196,6 @@ impl App {
                     if button == MouseButton::Left {
                         self.block_site_again(site);
                     }
-                    return;
-                }
-                // A status line explains itself; the panel stays.
-                if let Item::Status(st) = rows[i].item {
-                    if let Some(ob) = self.omnibox.as_mut() {
-                        ob.sel = i;
-                    }
-                    self.explain_status(st);
                     return;
                 }
                 self.omnibox = None;
@@ -4049,13 +4475,18 @@ impl App {
                 let rows = if lines { -dy * 3.0 } else { -dy / panel.row_h };
                 let max = len.saturating_sub(panel.shown) as isize;
                 let ob = self.omnibox.as_mut().expect("palette open");
-                ob.scroll = (ob.scroll.min(max as usize) as isize + rows.round() as isize).clamp(0, max) as usize;
+                ob.scroll = (ob.scroll.min(max as usize) as isize + rows.round() as isize)
+                    .clamp(0, max) as usize;
                 return;
             }
         }
         if self.sidebar_shown() && self.sidebar_rect().contains(self.cursor) {
             let (_, panel) = self.sidebar_layout();
-            let rows = if lines { -dy * 3.0 } else { -dy / (crate::sidebar::ROW_H * self.ui()) };
+            let rows = if lines {
+                -dy * 3.0
+            } else {
+                -dy / (crate::sidebar::ROW_H * self.ui())
+            };
             self.sidebar.scroll = panel.scroll_by(self.sidebar.scroll, rows.round() as isize);
             return;
         }
@@ -4064,36 +4495,77 @@ impl App {
                 return; // the board isn't on screen
             }
             let steps = if lines { dy } else { dy / 60.0 };
-            self.camera.zoom_about(1.15f32.powf(steps), self.cursor, self.viewport(), self.scale());
+            self.camera.zoom_about(
+                1.15f32.powf(steps),
+                self.cursor,
+                self.viewport(),
+                self.scale(),
+            );
             self.camera_moved();
             return;
         }
         if let Hit::Content(id) | Hit::Grip(id) = self.hit(self.cursor)
-            && Some(id) == self.focused {
-                if let (Some(card), Some((x, y))) = (self.cards.get(&id), self.page_point(id, self.cursor)) {
-                    // A wheel notch goes at once and Chromium glides it;
-                    // touchpad movement goes at once, precise, and may
-                    // fling after (`tick`). See `scene::scroll`.
-                    let speed = self.settings.scroll_speed.factor();
-                    let d = Vec2::new(dx, dy);
-                    let now = if lines {
-                        self.page_scroll.wheel((id, x, y), d, speed)
-                    } else {
-                        let ended = matches!(phase, TouchPhase::Ended | TouchPhase::Cancelled);
-                        self.page_scroll.touch((id, x, y), d, speed, ended)
-                    };
-                    if now != Vec2::default() {
-                        card.page.mouse_wheel(x, y, keymap::modifiers(self.mods), now.x as i32, now.y as i32, !lines);
-                    }
+            && Some(id) == self.focused
+        {
+            if let (Some(card), Some((x, y))) =
+                (self.cards.get(&id), self.page_point(id, self.cursor))
+            {
+                // A wheel notch goes at once and Chromium glides it;
+                // touchpad movement goes at once, precise, and may
+                // fling after (`tick`). See `scene::scroll`.
+                let speed = self.settings.scroll_speed.factor();
+                let d = Vec2::new(dx, dy);
+                let now = if lines {
+                    self.page_scroll.wheel((id, x, y), d, speed)
+                } else {
+                    let ended = matches!(phase, TouchPhase::Ended | TouchPhase::Cancelled);
+                    self.page_scroll.touch((id, x, y), d, speed, ended)
+                };
+                if now != Vec2::default() {
+                    card.page.mouse_wheel(
+                        x,
+                        y,
+                        keymap::modifiers(self.mods),
+                        now.x as i32,
+                        now.y as i32,
+                        !lines,
+                    );
                 }
-                return;
             }
+            self.board_pan.stop();
+            return;
+        }
         if self.read.is_some() {
             return;
         }
-        let (px, py) = if lines { (dx * 60.0, dy * 60.0) } else { (dx, dy) };
-        self.camera.pan_pixels(Vec2::new(px, py), self.scale());
-        self.camera_moved();
+        // The board pans like a page scrolls: a notch glides (`step_board_pan`),
+        // the touchpad follows the fingers and flings.
+        let speed = self.settings.scroll_speed.factor();
+        let d = Vec2::new(dx, dy);
+        if lines {
+            self.board_pan.wheel(d, speed);
+        } else {
+            let ended = matches!(phase, TouchPhase::Ended | TouchPhase::Cancelled);
+            let now = self.board_pan.touch(d, speed, ended);
+            if now != Vec2::default() {
+                self.camera.pan_pixels(now, self.scale());
+                self.camera_moved();
+            }
+        }
+    }
+
+    /// This frame's part of a wheel glide or touchpad fling on the board.
+    /// Runs every frame, busy or not: the touchpad's fling speed is timed by it.
+    fn step_board_pan(&mut self, dt: f32) {
+        // The camera is going somewhere else, or the board is off screen.
+        if self.board_pan.busy() && (self.camera_goal.is_some() || self.read.is_some()) {
+            self.board_pan.stop();
+        }
+        let d = self.board_pan.step(dt);
+        if d != Vec2::default() {
+            self.camera.pan_pixels(d, self.scale());
+            self.camera_moved();
+        }
     }
 
     fn key(&mut self, ev: KeyIn) {
@@ -4120,7 +4592,9 @@ impl App {
                 match (ev.named, confirm) {
                     (Some(NamedKey::Enter), Confirm::DeleteSpace) => self.delete_space(),
                     (Some(NamedKey::Enter), Confirm::ClearHistory) => self.clear_history(),
-                    _ => self.toast(self.kept(confirm)),
+                    (Some(NamedKey::Enter), Confirm::ClearCookies) => self.clear_cookies(),
+                    (Some(NamedKey::Enter), Confirm::Permission) => self.answer_ask(true),
+                    _ => self.decline(confirm),
                 }
             }
             return;
@@ -4171,16 +4645,22 @@ impl App {
         }
 
         // The palette's list: its length and how many rows fit, for the keys below.
-        let palette_len = self.omnibox.as_ref().filter(|ob| ob.target.is_list()).map(|ob| {
-            let len = self.list_rows(ob).len();
-            (len, palette::Panel::new(self.viewport(), self.ui(), len).shown)
-        });
-        // The settings panel's highlighted setting, for Enter and ←/→, or the
-        // allowed-sites list's highlighted site.
+        let palette_len = self
+            .omnibox
+            .as_ref()
+            .filter(|ob| ob.target.is_list())
+            .map(|ob| {
+                let len = self.list_rows(ob).len();
+                (
+                    len,
+                    palette::Panel::new(self.viewport(), self.ui(), len).shown,
+                )
+            });
+        // The allowed-sites list's highlighted site.
         let setting_sel = self
             .omnibox
             .as_ref()
-            .filter(|ob| matches!(ob.target, Target::Settings | Target::AllowedSites))
+            .filter(|ob| ob.target == Target::AllowedSites)
             .and_then(|ob| self.list_rows(ob).into_iter().nth(ob.sel).map(|r| r.item));
         if let Some(ob) = self.omnibox.as_mut() {
             if !pressed {
@@ -4219,18 +4699,12 @@ impl App {
                         c.page.find(&ob.text, !shift, true);
                     }
                 }
-                _ if ctrl && code == Some(KeyCode::KeyH) && ob.target == Target::History => self.omnibox = None,
-                _ if ctrl && code == Some(KeyCode::Comma) && ob.target == Target::Settings => self.omnibox = None,
-                // Settings: Enter or → steps the highlighted one on, Shift+Enter or ← back.
-                Some(NamedKey::Enter | NamedKey::ArrowRight | NamedKey::ArrowLeft) if ob.target == Target::Settings => {
-                    let back = ev.named == Some(NamedKey::ArrowLeft) || (shift && ev.named == Some(NamedKey::Enter));
-                    match setting_sel {
-                        Some(Item::Setting(k)) => self.step_setting(k, if back { -1 } else { 1 }),
-                        Some(Item::Status(st)) if ev.named == Some(NamedKey::Enter) => self.explain_status(st),
-                        _ => {}
-                    }
+                _ if ctrl && code == Some(KeyCode::KeyH) && ob.target == Target::History => {
+                    self.omnibox = None
                 }
-                Some(NamedKey::Delete) if shift && ob.target == Target::Downloads => self.drop_selected_download(),
+                Some(NamedKey::Delete) if shift && ob.target == Target::Downloads => {
+                    self.drop_selected_download()
+                }
                 // Allowed sites: Enter or Shift+Delete blocks ads there again; the list stays.
                 Some(NamedKey::Enter | NamedKey::Delete) if ob.target == Target::AllowedSites => {
                     if (ev.named == Some(NamedKey::Enter) || shift)
@@ -4258,6 +4732,8 @@ impl App {
                     let ob = self.omnibox.take().expect("omnibox open");
                     if ob.target == Target::RenameSpace {
                         self.rename_space(&ob.text);
+                    } else if let Target::SaveAs(id) = ob.target {
+                        self.save_download_as(id, &ob.text);
                     } else if let Target::NameTrail(id) = ob.target {
                         self.name_trail(id, &ob.text);
                     } else if let Some(url) = omnibox::resolve(&ob.text, self.settings.search) {
@@ -4934,7 +5410,9 @@ impl App {
                 });
                 title_x += icon_px + 6.0 * k;
             }
-            if font >= 6.0 && sticky.is_none() {
+            // Smaller, the title shows in the name label under the card
+            // instead (`READABLE_TITLE` is both thresholds: never both at once).
+            if font >= scene::icon::READABLE_TITLE && sticky.is_none() {
                 let title = if n.title.is_empty() { n.url.as_str() } else { n.title.as_str() };
                 let title = if asleep { format!("{title} · asleep") } else { title.to_string() };
                 let title = match stack {
@@ -5153,20 +5631,16 @@ impl App {
                 Target::Palette => "Find a card, space or command",
                 Target::Find(_) => "Find in page",
                 Target::History => "Search history",
-                Target::Settings => "Settings · Enter or → changes, ← goes back",
-                Target::Downloads => "Downloads · Enter opens, Ctrl+Enter its folder, Shift+Del cancels or removes",
+                Target::Downloads => {
+                    "Downloads · Enter opens, Ctrl+Enter its folder, Shift+Del cancels or removes"
+                }
                 Target::AllowedSites => "Sites with ads allowed · Enter blocks ads there again",
+                Target::SaveAs(_) => "Save download as · Enter saves, Esc cancels",
                 _ => "Search or enter address",
             };
             // The list (if this field has one) hangs from the field: one sheet.
             let list = ob.target.is_list().then(|| {
-                let mut rows = self.list_rows(ob);
-                // The highlighted setting shows that ← and → change it.
-                if ob.target == Target::Settings
-                    && let Some(row) = rows.get_mut(ob.sel).filter(|r| matches!(r.item, Item::Setting(_)))
-                {
-                    row.detail = format!("‹  {}  ›", row.detail);
-                }
+                let rows = self.list_rows(ob);
                 let panel = palette::Panel::new(vp, ui, rows.len());
                 let scroll = ob.scroll.min(rows.len().saturating_sub(panel.shown));
                 (rows, panel, scroll)
@@ -5253,7 +5727,6 @@ impl App {
                 let empty = match (&ob.target, ob.text.trim().is_empty(), &self.page_index) {
                     (Target::History, _, None) => "History is off",
                     (Target::History, true, _) => "No pages in history",
-                    (Target::Settings, _, _) => "No settings match",
                     (Target::Downloads, true, _) => "No downloads yet",
                     (Target::AllowedSites, true, _) => "Ads are blocked on every site",
                     _ => "Nothing found",
@@ -5311,22 +5784,19 @@ impl App {
             let pos = Vec2::new((vp.x - w) / 2.0 - 16.0 * ui, vp.y - 54.0 * ui);
             layers.push(self.pill(msg, pos, size, None, false));
         }
-        // Over the settings panel a toast hangs below the list (it answers a
-        // row there); other lists hide it.
-        let settings_bottom = self
-            .omnibox
-            .as_ref()
-            .filter(|ob| ob.target == Target::Settings)
-            .map(|ob| palette::Panel::new(vp, ui, self.list_rows(ob).len()).rect.bottom());
         if let Some((msg, at)) = &self.toast {
             if self.confirm.is_some() || Instant::now() < *at {
-                if self.omnibox.is_none() || settings_bottom.is_some() {
+                if self.omnibox.is_none() {
                     let size = 15.0 * ui;
                     let msg = msg.clone();
                     let w = self.renderer.as_mut().map_or(300.0, |r| r.measure(&msg, size, false));
-                    // Below Read Mode's bar, so it doesn't cover the title.
-                    let top = if self.read.is_some() { READ_BAR * ui } else { 0.0 };
-                    let y = settings_bottom.map_or(top + 18.0 * ui, |b| b + 14.0 * ui);
+                    // Below Read Mode's bar (if it has one), so it doesn't cover the title.
+                    let top = if self.read.is_some() {
+                        READ_BAR * ui
+                    } else {
+                        0.0
+                    };
+                    let y = top + 18.0 * ui;
                     let pos = Vec2::new((vp.x - w) / 2.0 - 16.0 * ui, y);
                     let warn = self.confirm.is_some();
                     let came = self.anim.toast.update(Some(anim_key(&msg)), Instant::now());
@@ -5338,7 +5808,7 @@ impl App {
                 self.toast = None;
             }
         }
-        if self.toast.is_none() || (self.omnibox.is_some() && settings_bottom.is_none()) {
+        if self.toast.is_none() || self.omnibox.is_some() {
             self.anim.toast.update(None, Instant::now());
         }
 
@@ -5357,20 +5827,18 @@ impl App {
     }
 
     /// A card growing from its place on the board into Read Mode, or
-    /// shrinking back: the board dims behind it, its corners square off and
-    /// the title fades in as it fills the window. The page's pixels keep
+    /// shrinking back: the board dims behind it and its corners square off
+    /// as it fills the window. The page's pixels keep
     /// their own scale (`read::morph`), so nothing stretches on the way.
     fn read_morph_layer(&mut self, m: ReadMorph) -> Option<Layer> {
         let n = self.scene.node(m.id)?;
         let (header, content) = (self.to_screen_rect(n.header()), self.to_screen_rect(n.rect));
         let card_css = Vec2::new(n.rect.w, n.rect.h);
-        let title = if n.title.is_empty() { n.url.clone() } else { n.title.clone() };
         let p = m.progress();
         let lay = self.read_layout();
         let mo = read::morph(header, content, card_css, &lay, p);
         let th = self.theme.clone();
         let scale = self.scale();
-        let ui = self.ui();
         let vp = self.viewport();
         let k = self.camera.pixels_per_unit(scale);
         let radius = (th.rounding * k).min(th.radius(scale)) * (1.0 - p);
@@ -5397,33 +5865,17 @@ impl App {
             color: if has_tex { [1.0; 4] } else { rgb(th.placeholder(), 1.0) },
             texture: has_tex.then_some(key),
         });
-        // The read bar's title, fading in over the last part of the way.
-        let size = 13.0 * ui;
-        let pad = 14.0 * ui;
-        let fade = ((p - 0.5) * 2.0).clamp(0.0, 1.0);
-        if fade > 0.0 {
-            l.texts.push(Text {
-                text: title,
-                pos: [mo.bar.x + pad, mo.bar.y + (mo.bar.h - size * 1.3) / 2.0],
-                size,
-                color: rgb(th.foreground(), fade),
-                clip: Rect::new(mo.bar.x + pad, mo.bar.y, (mo.bar.w - pad * 2.0).max(1.0), mo.bar.h),
-                bold: true,
-            });
-        }
         Some(l)
     }
 
-    /// Read Mode: card `id`'s page across the window under a title bar.
+    /// Read Mode: card `id`'s page across the whole window.
     fn read_layer(&mut self, id: NodeId) -> Layer {
         let th = self.theme.clone();
-        let ui = self.ui();
         let scale = self.scale();
         let lay = self.read_layout();
         let key = self.page_key(id);
         let has_tex = self.renderer.as_ref().is_some_and(|r| r.has_page(key));
         let loading = self.cards.get(&id).is_some_and(|c| c.loading);
-        let title = self.scene.node(id).map_or(String::new(), |n| if n.title.is_empty() { n.url.clone() } else { n.title.clone() });
         let mut l = Layer::default();
         let extent = self.page_css.get(&id).map_or([1.0, 1.0], |&css| read::extent(Vec2::new(lay.css.0 as f32, lay.css.1 as f32), css));
         l.quads.push(Quad {
@@ -5431,36 +5883,18 @@ impl App {
             color: if has_tex { [1.0; 4] } else { rgb(th.placeholder(), 1.0) },
             texture: has_tex.then_some(key),
         });
-        let bar = lay.bar;
-        l.quads.push(Quad { shape: Shape::Rect { rect: bar, radius: 0.0 }, color: rgb(th.card(true), 1.0), texture: None });
-        l.quads.push(Quad {
-            shape: Shape::Rect { rect: Rect::new(bar.x, bar.bottom() - scale.max(1.0), bar.w, scale.max(1.0)), radius: 0.0 },
-            color: rgb(th.divider(), 1.0),
-            texture: None,
-        });
+        // No title bar: the page fills the window. A loading page shows a
+        // thin moving line across its top edge.
         if loading {
+            let c = lay.content;
             let t = (self.started.elapsed().as_secs_f32() * 0.8).fract();
-            let w = bar.w * 0.25;
+            let w = c.w * 0.25;
             l.quads.push(Quad {
-                shape: Shape::Rect { rect: Rect::new(bar.x + (bar.w - w) * t, bar.bottom() - 2.0 * scale.max(1.0), w, 2.0 * scale.max(1.0)), radius: 0.0 },
+                shape: Shape::Rect { rect: Rect::new(c.x + (c.w - w) * t, c.y, w, 2.0 * scale.max(1.0)), radius: 0.0 },
                 color: rgb(th.accent(), 1.0),
                 texture: None,
             });
         }
-        let size = 13.0 * ui;
-        let pad = 14.0 * ui;
-        let hint = "Tab · Esc  Board";
-        let hint_w = self.renderer.as_mut().map_or(120.0, |r| r.measure(hint, size, false));
-        let y = bar.y + (bar.h - size * 1.3) / 2.0;
-        l.texts.push(Text {
-            text: title,
-            pos: [bar.x + pad, y],
-            size,
-            color: rgb(th.foreground(), 1.0),
-            clip: Rect::new(bar.x + pad, bar.y, (bar.w - hint_w - pad * 3.0).max(1.0), bar.h),
-            bold: true,
-        });
-        l.texts.push(Text { text: hint.into(), pos: [bar.right() - pad - hint_w, y], size, color: rgb(th.dim_text(), 1.0), clip: bar, bold: false });
         l
     }
 
@@ -5514,6 +5948,21 @@ impl App {
         self.run_script();
         self.follow_desktop();
         self.handle_web_events();
+        // The save field closed (Esc, or something else opened): the download is off.
+        if self.save_as.as_ref().is_some_and(|s| self.omnibox.as_ref().is_none_or(|ob| ob.target != Target::SaveAs(s.id))) {
+            let s = self.save_as.take().expect("checked");
+            if web::download::refuse(s.id) {
+                log::info!("download {}: cancelled (no path given)", s.id);
+                self.toast("Download cancelled");
+            }
+            if s.blank {
+                self.close_blank_card(s.page);
+            }
+        }
+        // A permission question dropped by another (a space switch, say) comes back.
+        if self.confirm.is_none() && !self.asks.is_empty() {
+            self.show_next_ask();
+        }
         if let Some(msg) = self.blocking.tick(Instant::now(), self.settings.block_ads) {
             self.toast(msg);
         }
@@ -5523,6 +5972,7 @@ impl App {
         self.autosave();
         self.step_camera(dt);
         self.step_page_scroll(dt);
+        self.step_board_pan(dt);
         self.sync_pages();
         self.sync_ime();
         if let Some(w) = self.window() {
@@ -5644,6 +6094,7 @@ impl App {
         let ctx = web::menu::MenuContext {
             sticky: self.scene.node(id).is_some_and(Node::is_sticky),
             blocking: self.blocking_state(id),
+            site: self.site_content_state(id),
             ..ctx.clone()
         };
         let items = web::menu::items(&ctx).into_iter().map(Entry::Page).collect();
@@ -5763,6 +6214,18 @@ impl App {
             MenuAction::SaveMarkdown => self.save_markdown(Some(id)),
             MenuAction::ToggleSticky => self.toggle_sticky(id),
             MenuAction::ToggleBlocking => self.toggle_blocking(Some(id)),
+            MenuAction::ToggleJavaScript => self.toggle_site_content(id, scene::sitesettings::Content::JavaScript),
+            MenuAction::ToggleImages => self.toggle_site_content(id, scene::sitesettings::Content::Images),
+            MenuAction::ReplaceMisspelling(word) => {
+                if let Some(c) = self.cards.get(&id) {
+                    c.page.replace_misspelling(&word);
+                }
+            }
+            MenuAction::AddToDictionary(word) => {
+                if let Some(c) = self.cards.get(&id) {
+                    c.page.add_to_dictionary(&word);
+                }
+            }
             MenuAction::CopyText(t) => self.clipboard.set_text(&t),
             MenuAction::Copy => self.page_copy(false, None),
             MenuAction::Cut => self.page_copy(true, None),

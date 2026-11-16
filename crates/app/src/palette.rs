@@ -14,8 +14,8 @@ use std::collections::{HashMap, HashSet};
 use compositor::{Layer, Quad, Renderer, Shape, Text};
 use scene::download::{self, Downloads, State};
 use scene::pagetext;
-use scene::settings::{Key, SearchEngine, Settings};
 use scene::palette::{self, Candidate};
+use scene::settings::SearchEngine;
 use scene::{Node, NodeId, Rect, Scene, Vec2};
 use storage::pagetext::Visit;
 use storage::spaces::{SpaceId, SpaceIndex};
@@ -64,6 +64,7 @@ pub enum Command {
     DeleteSpace,
     History,
     ClearHistory,
+    ClearCookies,
     Downloads,
     Settings,
     Shortcuts,
@@ -124,6 +125,7 @@ pub const COMMANDS: &[CommandInfo] = &[
     c(Command::DeleteSpace, "Delete space", "Ctrl+Shift+W", "board workspace remove"),
     c(Command::History, "History", "Ctrl+H", "visited pages browse past recent"),
     c(Command::ClearHistory, "Clear history", "", "forget delete erase visited pages privacy"),
+    c(Command::ClearCookies, "Clear cookies", "", "delete erase site data sign out logins privacy"),
     c(Command::Downloads, "Downloads", "Ctrl+J", "files saved folder download list"),
     c(Command::Settings, "Settings", "Ctrl+,", "preferences options configure search engine history colours"),
     c(Command::Shortcuts, "Keyboard shortcuts", "?", "help keys hints sheet"),
@@ -142,38 +144,12 @@ pub enum Item {
     Open(String),
     /// Bring back this closed card where it was.
     Closed(NodeId),
-    /// A row of the settings panel: Enter or a click steps its value.
-    Setting(Key),
     /// A row of the downloads view (`scene::download::Downloads` key): Enter
     /// opens the file, or tries again if it didn't finish.
     Download(u64),
-    /// A read-only line of the settings panel: Enter or a click explains it.
-    Status(Status),
     /// A row of the allowed-sites list: Enter, a click or Shift+Delete
     /// blocks ads on the site again.
     AllowedSite(String),
-}
-
-/// Facts shown in the settings panel that can't be changed there.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Status {
-    /// Whether Chromium's sandbox confines pages (`web::sandbox`).
-    Sandbox,
-}
-
-impl Status {
-    pub fn label(self) -> &'static str {
-        match self {
-            Status::Sandbox => "Sandbox",
-        }
-    }
-
-    /// Other words it is found by.
-    fn words(self) -> &'static str {
-        match self {
-            Status::Sandbox => "security confinement isolation chromium namespaces seccomp setuid chrome-sandbox",
-        }
-    }
 }
 
 /// A result row.
@@ -244,7 +220,17 @@ fn card_detail(n: &Node) -> (String, String) {
         if n.url == scene::note::START_URL {
             return ("Trailboard".to_string(), String::new());
         }
-        let alt = n.url.split_once("://").map_or(n.url.as_str(), |(_, r)| r).to_string();
+        if n.url == scene::note::SETTINGS_URL {
+            return (
+                "Trailboard".to_string(),
+                "settings preferences options".to_string(),
+            );
+        }
+        let alt = n
+            .url
+            .split_once("://")
+            .map_or(n.url.as_str(), |(_, r)| r)
+            .to_string();
         (host(&n.url).to_string(), alt)
     }
 }
@@ -447,34 +433,6 @@ pub fn allowed_rows(query: &str, sites: &[(String, bool)], scene: &Scene) -> Vec
         return items;
     }
     let cands: Vec<Candidate> = items.iter().map(|r| Candidate { text: &r.label, alt: "" }).collect();
-    palette::rank(query, &cands).into_iter().map(|r| Row { positions: r.positions, ..items[r.index].clone() }).collect()
-}
-
-/// The settings panel's rows (Ctrl+,): each setting with its value on the
-/// right, in the panel's order, or ranked by `query` (which also finds a
-/// setting by its values: "google" finds *Search engine*). `notes` add a word
-/// after a value (where it came from, say).
-/// The settings panel: every setting, then the `status` lines (each with its
-/// value), filtered by `query`.
-pub fn settings_rows(query: &str, settings: &Settings, notes: &HashMap<Key, String>, status: &[(Status, String)]) -> Vec<Row> {
-    let row = |item, label: &str, detail| Row { item, label: label.into(), detail, positions: Vec::new(), dot: None, history: None };
-    let mut items: Vec<Row> = Key::ALL
-        .iter()
-        .map(|&k| {
-            let value = settings.value(k);
-            let detail = match notes.get(&k) {
-                Some(n) => format!("{value} · {n}"),
-                None => value,
-            };
-            row(Item::Setting(k), k.label(), detail)
-        })
-        .collect();
-    let mut alts: Vec<String> = Key::ALL.iter().map(|k| k.words()).collect();
-    for (s, value) in status {
-        items.push(row(Item::Status(*s), s.label(), value.clone()));
-        alts.push(format!("{} {value}", s.words()));
-    }
-    let cands: Vec<Candidate> = items.iter().zip(&alts).map(|(r, alt)| Candidate { text: &r.label, alt }).collect();
     palette::rank(query, &cands).into_iter().map(|r| Row { positions: r.positions, ..items[r.index].clone() }).collect()
 }
 
@@ -854,32 +812,6 @@ mod tests {
         let r2 = rows("hypr", &s2, &used, &closed, &SpaceIndex::default(), &[], SearchEngine::DuckDuckGo);
         assert!(!r2.iter().any(|r| r.item == Item::Closed(d.id)));
         assert!(r2.iter().any(|r| r.item == Item::Card(d.id)));
-    }
-
-    #[test]
-    fn settings_rows_find_by_name_and_value() {
-        let s = Settings::default();
-        let none = HashMap::new();
-        let all = settings_rows("", &s, &none, &[]);
-        assert_eq!(all.iter().map(|r| r.item.clone()).collect::<Vec<_>>(), Key::ALL.map(Item::Setting).to_vec());
-        assert_eq!(all[0].detail, "DuckDuckGo");
-        let r = settings_rows("google", &s, &none, &[]);
-        assert_eq!(r[0].item, Item::Setting(Key::Search));
-        let r = settings_rows("hist", &s, &none, &[]);
-        assert_eq!(r[0].item, Item::Setting(Key::History));
-        assert_eq!(r[0].positions, vec![5, 6, 7, 8]);
-        let notes = HashMap::from([(Key::LivePages, "TRAILBOARD_MAX_LIVE".to_string())]);
-        let r = settings_rows("awake", &s, &notes, &[]);
-        assert_eq!(r[0].detail, "6 · TRAILBOARD_MAX_LIVE");
-        assert!(settings_rows("zzqx", &s, &none, &[]).is_empty());
-
-        // Status lines come last, and are found by their words and value.
-        let status = [(Status::Sandbox, "Off · not supported here".to_string())];
-        let all = settings_rows("", &s, &none, &status);
-        assert_eq!(all.len(), Key::ALL.len() + 1);
-        assert_eq!(all.last().map(|r| (&r.item, r.label.as_str(), r.detail.as_str())), Some((&Item::Status(Status::Sandbox), "Sandbox", "Off · not supported here")));
-        assert_eq!(settings_rows("sandbox", &s, &none, &status)[0].item, Item::Status(Status::Sandbox));
-        assert_eq!(settings_rows("seccomp", &s, &none, &status)[0].item, Item::Status(Status::Sandbox));
     }
 
     #[test]

@@ -167,6 +167,80 @@ impl<T: Copy + PartialEq> Scroller<T> {
     }
 }
 
+/// Board px one wheel notch pans at normal speed.
+pub const BOARD_NOTCH: f32 = 120.0;
+/// Board px per touchpad surface px at normal speed: more than 1:1, which
+/// crawls (the same reason pages take [`TOUCHPAD_GAIN`]), less than a page,
+/// since a board moves under the fingers rather than a page inside a card.
+pub const BOARD_TOUCHPAD_GAIN: f32 = 2.5;
+/// Time constant of a wheel notch's glide on the board, in seconds: it is
+/// nearly all there after 3 × this (about 0.2 s, like a browser's smooth
+/// scrolling).
+pub const GLIDE_TAU: f32 = 0.07;
+
+/// Panning the board, made to feel like scrolling a page (`Scroller`):
+/// a wheel notch glides there, easing out, and notches that come quickly
+/// add up; touchpad movement follows the fingers at once and flings when
+/// they lift after a flick. All of it scaled by *Scroll speed*. The board
+/// takes fractions, so nothing is rounded.
+#[derive(Debug, Clone, Default)]
+pub struct Pan {
+    /// Of a wheel glide: px still to go.
+    glide: Vec2,
+    /// Touchpad movement and its fling (whole px, which is plenty).
+    touch: Scroller<()>,
+}
+
+impl Pan {
+    /// Stops a glide or a fling (the board was grabbed, or the camera
+    /// is going somewhere).
+    pub fn stop(&mut self) {
+        self.glide = Vec2::default();
+        self.touch.stop();
+    }
+
+    /// A glide or a fling is going: call [`Pan::step`] every frame.
+    pub fn busy(&self) -> bool {
+        len(self.glide) > 0.0 || self.touch.busy()
+    }
+
+    /// Wheel notches (`lines`, winit's sign): added to the glide.
+    pub fn wheel(&mut self, lines: Vec2, speed: f32) {
+        self.touch.stop();
+        self.glide = self.glide + lines * (BOARD_NOTCH * speed);
+    }
+
+    /// Touchpad movement `px`: the px to pan now. `ended` is the fingers
+    /// lifting, which may start a fling.
+    pub fn touch(&mut self, px: Vec2, speed: f32, ended: bool) -> Vec2 {
+        self.glide = Vec2::default();
+        self.touch.touch((), px, speed * BOARD_TOUCHPAD_GAIN / TOUCHPAD_GAIN, ended)
+    }
+
+    /// Advances `dt` seconds; returns the px to pan now (glide and fling).
+    /// Call it every frame, also while nothing moves: it times the touchpad
+    /// movement a fling's speed comes from.
+    pub fn step(&mut self, dt: f32) -> Vec2 {
+        let mut out = Vec2::default();
+        if len(self.glide) > 0.0 {
+            let part = self.glide * (1.0 - (-dt / GLIDE_TAU).exp());
+            let left = self.glide - part;
+            // The last half px goes at once rather than creeping.
+            if len(left) < 0.5 {
+                out = self.glide;
+                self.glide = Vec2::default();
+            } else {
+                out = part;
+                self.glide = left;
+            }
+        }
+        if let Some(((), d)) = self.touch.step(dt) {
+            out = out + d;
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,5 +340,49 @@ mod tests {
         flick(&mut s, -10.0);
         s.stop();
         assert!(s.step(1.0 / 60.0).is_none());
+    }
+
+    #[test]
+    fn a_notch_glides_on_the_board_and_notches_add_up() {
+        let mut p = Pan::default();
+        p.wheel(Vec2::new(0.0, -1.0), 1.0);
+        assert!(p.busy());
+        let first = p.step(1.0 / 60.0).y;
+        assert!(first < 0.0 && first > -BOARD_NOTCH / 2.0, "eases: {first}");
+        let mut total = first;
+        p.wheel(Vec2::new(0.0, -1.0), 1.0); // a second notch mid-glide
+        let mut t = 0.0;
+        while p.busy() {
+            total += p.step(1.0 / 60.0).y;
+            t += 1.0 / 60.0;
+            assert!(t < 2.0, "never settles");
+        }
+        assert!((total + 2.0 * BOARD_NOTCH).abs() < 1e-3, "{total}");
+        assert!(t < 0.6, "settles quickly: {t}");
+        p.wheel(Vec2::new(0.0, 1.0), 1.5);
+        assert!(p.step(1.0).y > 0.0);
+        assert!(!p.busy() || p.step(1.0) == Vec2::default());
+    }
+
+    #[test]
+    fn the_touchpad_pans_at_once_and_flings_on_the_board() {
+        let mut p = Pan::default();
+        let mut sent = 0.0;
+        for _ in 0..6 {
+            sent += p.touch(Vec2::new(0.0, -10.0), 1.0, false).y;
+            p.step(1.0 / 60.0);
+        }
+        assert_eq!(sent, -150.0, "10 surface px × 2.5, six times");
+        p.touch(Vec2::default(), 1.0, true);
+        assert!(p.busy(), "a flick flings");
+        let mut fling = 0.0;
+        while p.busy() {
+            fling += p.step(1.0 / 60.0).y;
+        }
+        assert!(fling < -100.0, "{fling}");
+        // A wheel notch stops a fling; grabbing stops a glide.
+        p.wheel(Vec2::new(0.0, 1.0), 1.0);
+        p.stop();
+        assert!(!p.busy());
     }
 }

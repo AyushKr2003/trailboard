@@ -105,12 +105,26 @@ pub fn download_dir() -> PathBuf {
     user_download_dir(&dirs, &home).unwrap_or_else(|| Path::new(&home).join("Downloads"))
 }
 
-/// `XDG_DOWNLOAD_DIR` from the text of `user-dirs.dirs`: a quoted path,
-/// absolute or starting with `$HOME/`. Set to `$HOME` itself means the folder
-/// is turned off (per the spec), which we treat as unset.
+/// The desktop folder: `XDG_DESKTOP_DIR` in `user-dirs.dirs`, else `~/Desktop`.
+pub fn desktop_dir() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    let config = std::env::var("XDG_CONFIG_HOME").ok().filter(|c| c.starts_with('/')).unwrap_or_else(|| format!("{home}/.config"));
+    let dirs = fs::read_to_string(Path::new(&config).join("user-dirs.dirs")).unwrap_or_default();
+    user_dir(&dirs, "XDG_DESKTOP_DIR", &home).unwrap_or_else(|| Path::new(&home).join("Desktop"))
+}
+
+/// `XDG_DOWNLOAD_DIR` from the text of `user-dirs.dirs` (see [`user_dir`]).
 pub fn user_download_dir(dirs: &str, home: &str) -> Option<PathBuf> {
-    let line = dirs.lines().map(str::trim).find(|l| l.starts_with("XDG_DOWNLOAD_DIR="))?;
-    let value = line["XDG_DOWNLOAD_DIR=".len()..].trim().strip_prefix('"')?.strip_suffix('"')?;
+    user_dir(dirs, "XDG_DOWNLOAD_DIR", home)
+}
+
+/// Folder `key` (`XDG_…_DIR`) from the text of `user-dirs.dirs`: a quoted
+/// path, absolute or starting with `$HOME/`. Set to `$HOME` itself means the
+/// folder is turned off (per the spec), which we treat as unset.
+pub fn user_dir(dirs: &str, key: &str, home: &str) -> Option<PathBuf> {
+    let prefix = format!("{key}=");
+    let line = dirs.lines().map(str::trim).find(|l| l.starts_with(&prefix))?;
+    let value = line[prefix.len()..].trim().strip_prefix('"')?.strip_suffix('"')?;
     let value = value.replace("\\\"", "\"");
     let path = if value == "$HOME" || value == "$HOME/" {
         return None;
@@ -152,6 +166,8 @@ mod tests {
         let home = "/home/u";
         let f = "# comment\nXDG_DESKTOP_DIR=\"$HOME/Desktop\"\nXDG_DOWNLOAD_DIR=\"$HOME/Téléchargements\"\n";
         assert_eq!(user_download_dir(f, home), Some(PathBuf::from("/home/u/Téléchargements")));
+        assert_eq!(user_dir(f, "XDG_DESKTOP_DIR", home), Some(PathBuf::from("/home/u/Desktop")));
+        assert_eq!(user_dir(f, "XDG_MUSIC_DIR", home), None);
         assert_eq!(user_download_dir("XDG_DOWNLOAD_DIR=\"/data/dl\"", home), Some(PathBuf::from("/data/dl")));
         assert_eq!(user_download_dir("XDG_DOWNLOAD_DIR=\"$HOME/\"", home), None);
         assert_eq!(user_download_dir("XDG_DOWNLOAD_DIR=\"$HOME\"", home), None);

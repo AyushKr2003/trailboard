@@ -16,6 +16,7 @@ mod note;
 mod omnibox;
 mod palette;
 mod script;
+mod settings_page;
 mod sidebar;
 mod start;
 mod theme;
@@ -67,7 +68,12 @@ fn main() -> ExitCode {
     }
     crash::install(data_dir());
     // CEF helper subprocesses re-run this binary; handle them before anything else.
-    let engine = match web::start(&cef_dir(), &data_dir().join("browser")) {
+    // The languages pages ask for: Chromium's network stack reads them only at start.
+    let languages = || {
+        let s = storage::settings::load_settings(&data_dir());
+        scene::settings::accept_languages(&scene::settings::language_tag(s.language, &app::system_locale()))
+    };
+    let engine = match web::start(&cef_dir(), &data_dir().join("browser"), languages) {
         Ok(web::Startup::Subprocess(code)) => return ExitCode::from(code as u8),
         Ok(web::Startup::Browser(engine)) => engine,
         Ok(web::Startup::Handed) => {

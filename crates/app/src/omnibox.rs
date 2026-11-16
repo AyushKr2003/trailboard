@@ -19,18 +19,22 @@ pub enum Target {
     Find(scene::NodeId),
     /// The history view (Ctrl+H): the text filters visited pages (`palette::history_rows`).
     History,
-    /// The settings panel (Ctrl+,): the text filters the settings (`palette::settings_rows`).
-    Settings,
     /// The downloads view (Ctrl+J): the text filters downloads (`palette::download_rows`).
     Downloads,
     /// The sites where ads are allowed (`palette::allowed_rows`).
     AllowedSites,
+    /// Where to save the download Chromium is waiting about (a path; *Save
+    /// downloads to: Ask each time*). Closing the field cancels the download.
+    SaveAs(u32),
 }
 
 impl Target {
-    /// The field has a list of results under it (the palette, history or settings).
+    /// The field has a list of results under it (the palette, history, downloads or allowed sites).
     pub fn is_list(&self) -> bool {
-        matches!(self, Target::Palette | Target::History | Target::Settings | Target::Downloads | Target::AllowedSites)
+        matches!(
+            self,
+            Target::Palette | Target::History | Target::Downloads | Target::AllowedSites
+        )
     }
 }
 

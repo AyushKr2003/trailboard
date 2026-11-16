@@ -4,9 +4,10 @@
 use crate::geom::{Rect, Vec2};
 use crate::pagezoom::site_of;
 
-/// Title bars smaller than this (px) are not readable: the card under the
-/// pointer, or else the current card, gets a [`name_label`] instead.
-pub const READABLE_TITLE: f32 = 9.0;
+/// Title bars smaller than this (px) draw no title: the card under the
+/// pointer, or else the current card, gets a [`name_label`] instead. One
+/// threshold for both, so a title never shows twice.
+pub const READABLE_TITLE: f32 = 6.0;
 
 /// The site an icon is kept under: the page's site ([`site_of`]) for web
 /// pages with a host, `None` for `file:`, `data:`, `about:` and the like

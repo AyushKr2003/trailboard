@@ -264,21 +264,10 @@ pub fn counts(cards: usize, trails: usize) -> String {
     }
 }
 
-/// `text` cut with "…" to fit `max_w` px at `size` (the renderer wraps
-/// what doesn't fit, so every single-line label goes through this).
+/// `text` cut with "…" to fit `max_w` px at `size`. The renderer does this
+/// for every text at its clip; call it where layout needs the cut text first.
 pub fn fit(r: &mut Renderer, text: &str, size: f32, bold: bool, max_w: f32) -> String {
-    if r.measure(text, size, bold) <= max_w {
-        return text.to_string();
-    }
-    let chars: Vec<char> = text.chars().collect();
-    let (mut lo, mut hi) = (0, chars.len());
-    while lo < hi {
-        let mid = (lo + hi).div_ceil(2);
-        let t: String = chars[..mid].iter().collect::<String>().trim_end().to_string() + "…";
-        if r.measure(&t, size, bold) <= max_w { lo = mid } else { hi = mid - 1 }
-    }
-    let cut: String = chars[..lo].iter().collect();
-    format!("{}…", cut.trim_end())
+    r.ellipsize(text, size, bold, max_w)
 }
 
 /// A one-colour rect.

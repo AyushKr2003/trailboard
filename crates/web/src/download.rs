@@ -45,6 +45,12 @@ pub fn save_to(id: u32, path: &Path) -> bool {
     true
 }
 
+/// Refuses download `id`, which Chromium is waiting to hear where to save:
+/// dropping its callback unanswered cancels it.
+pub fn refuse(id: u32) -> bool {
+    ASKED.with_borrow_mut(|m| m.remove(&id)).is_some()
+}
+
 /// Cancels running download `id`. One that has no controls yet (just
 /// answered) is cancelled with its first update.
 pub fn cancel(id: u32) {

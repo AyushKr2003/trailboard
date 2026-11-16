@@ -6,7 +6,54 @@ All notable changes to Trailboard. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Browsing settings** (Ctrl+,), the parts of Chromium's own settings page
+  that Trailboard can offer: *Default page zoom*, *Page language* (what sites
+  are asked for, and the spelling dictionary), *Check spelling* (with fixes
+  and *Add to dictionary* in the page menu), *Block third-party cookies*,
+  *Ask sites not to track* (`DNT`/`Sec-GPC`), *JavaScript*, *Images*,
+  *Camera*, *Microphone*, *Location*, *Notifications* (Ask, Allow or Block;
+  asked, Enter allows and Esc blocks), *Save downloads to* (Downloads,
+  Desktop, or ask for a path) and *Proxy* (System, None or a server).
+  *Clear cookies* in Ctrl+K deletes every cookie after asking. The page menu
+  turns JavaScript or images on or off for one site (`sites.json`).
+
 ### Changed
+- **Ad blocking works like uBlock Origin**, so sites that open in Firefox or
+  Chrome with uBlock no longer ask you to turn the blocker off here. uBlock
+  Origin's own lists (filters, badware, privacy, Unbreak, Quick fixes) and
+  Peter Lowe's list join EasyList, EasyPrivacy and the cookie list, with
+  their `!#include` parts and `!#if` blocks. A blocked ad or analytics script
+  the lists name a stand-in for is answered with a harmless one (empty
+  scripts, images and media, Google ads, Tag Manager, Analytics and IMA video
+  ads), so pages that check their ads loaded carry on. The lists' scriptlets
+  (`##+js(…)`) run in the page before its own scripts, defusing ad-blocker
+  detection. Blocking is in place before the first page loads.
+- **Settings is a page**: Ctrl+, opens a settings page as a card on the
+  board, like other browsers' settings, instead of the list under the
+  address field. Sections down the side (Search, Appearance, Privacy, Site
+  content, Permissions, Languages, Downloads, Performance and network,
+  About), a search box, a note under each setting, switches for on/off,
+  buttons or a drop-down for choices, a field for the proxy server, and
+  buttons for history, downloads, allowed sites and clearing data.
+- **Smoother board scrolling**: a wheel notch now glides the board about
+  twice as far as before, easing out like a page, and quick notches add up;
+  the touchpad pans faster (2.5× its movement) and keeps going briefly
+  after a flick. Both follow the *Scroll speed* setting. Grabbing the board
+  or a camera move stops a glide.
+- **Cleaner start page**: flat, without the accent glow, the dot grid,
+  drop-shadows or gradient badges; a smaller name over the bar; a plain
+  accent border on focus. Once something is typed, the bar says what Enter
+  will do ("Search DuckDuckGo" or "Go to address", by the address bar's
+  own rule). The floating help button became a "Which engine is for me?"
+  link under the bar.
+- **App pages follow Hyprland's rounding**: the settings page, welcome
+  page, start page, search engine guide and notes' code blocks take their
+  corners from `decoration:rounding`, like Omarchy's apps: sharp on
+  Omarchy's default, small parts capped at 4px, circles stay round.
+- **Read Mode has no title bar**: the page fills the whole window, top
+  to bottom. Tab or Esc goes back to the board; a loading page shows a
+  thin line across its top edge.
 - **Start page**: starting with an empty board and no URL opens a blank
   *New page* card with the Trailboard name and icon over one search box
   (the chosen search engine, or an address) instead of a random Wikipedia
@@ -53,6 +100,14 @@ All notable changes to Trailboard. The format follows
   shrinks it back into its place. It used to be an instant cut.
 
 ### Fixed
+- **Labels stay on one line.** A card's title or address that is too long
+  for its title bar ends in "…" before the × instead of wrapping onto a
+  second line. Every other label (palette, menus, sidebar, trail names,
+  address bar) does the same: the renderer cuts any text at its clip's
+  right edge.
+- **A card's title shows once.** Zoomed out a little, the title showed both
+  in the title bar and in the name label under the card. The label now
+  appears only once the title bar is too small to draw its title.
 - **Sidebar**: moving the pointer over the sidebar of a space with no rows
   (e.g. just after switching spaces) no longer crashes the app.
 - **No squashed pages after a resize**: a page's last frame is drawn at the

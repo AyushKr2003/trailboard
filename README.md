@@ -72,7 +72,7 @@ needs its setuid helper `chrome-sandbox` beside the binary instead: the Arch
 package installs it that way; for a bundle, run
 `pkexec chown root:root chrome-sandbox && pkexec chmod 4755 chrome-sandbox` in
 its folder. With neither, Trailboard still starts, runs pages unconfined and
-says so once; the *Sandbox* line in the settings (Ctrl+,) shows the state. `TRAILBOARD_NO_SANDBOX=1` turns the sandbox off for one run
+says so once; the *About* section of the settings (Ctrl+,) shows the state. `TRAILBOARD_NO_SANDBOX=1` turns the sandbox off for one run
 (for debugging).
 
 Starting Trailboard again while it runs (from the launcher, a shell or a link
@@ -115,7 +115,7 @@ with *Welcome page* in Ctrl+K.
 | Select cards | Shift+drag on the board, Shift+click title bars, Ctrl+A (Esc clears) |
 | Move / close selected cards | drag a selected title bar / Delete |
 | Fill the view with a card | double-click its title bar |
-| Read Mode (page fills the window) | Tab (Tab, Esc or double-click its bar to go back) |
+| Read Mode (page fills the window) | Tab (Tab or Esc to go back) |
 | Close card / reopen closed | × or Ctrl+W / Ctrl+Shift+T |
 | Undo / redo board edits | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y (after clicking the board or a title bar) |
 | Address bar / new card | Ctrl+L / Ctrl+T; Shift+Enter opens what you typed beside the current card instead |
@@ -140,10 +140,10 @@ with *Welcome page* in Ctrl+K.
 | Page menu by keyboard | Menu key or Shift+F10; j/k or ↑/↓, Enter, Esc |
 | History: pages you opened, newest first | Ctrl+H, type to filter by words in them, Enter opens (Shift+Enter beside the current card), Shift+Delete forgets the page; *Clear history* in Ctrl+K forgets all |
 | Downloads: files saved, newest first | Ctrl+J (or *Downloads* in Ctrl+K), type to filter; Enter opens the file (or downloads again one that didn't finish), Ctrl+Enter opens its folder, Shift+Delete cancels a running download or takes a finished one off the list |
-| Settings: search engine, pages kept awake, keep history, page colours | Ctrl+, (or *Settings* in Ctrl+K); type to filter, ↑/↓ pick, Enter or → next value, Shift+Enter or ← previous; a click steps a row (right-click back). Changes apply and save at once |
+| Settings: search engine, default page zoom, page language, spelling, pages kept awake, history, ads, third-party cookies, Do Not Track, JavaScript, images, camera / microphone / location / notifications, where downloads go, proxy, page colours, scroll speed | Ctrl+, (or *Settings* in Ctrl+K) opens the settings page as a card (or goes to it): sections down the side, a search box, switches, buttons and drop-downs. Changes apply and save at once |
 | Find in the current page | Ctrl+F, type (matches show as you type); Enter / Shift+Enter next / previous; Esc closes |
-| Zoom the current page in / out / back to 100% | Ctrl++ / Ctrl+- / Ctrl+0: every card on that site follows, and the zoom is remembered per site |
-| Page context menu | right-click in a page (open link beside, copy or download link, save image, edit, search selection) |
+| Zoom the current page in / out / back to the default | Ctrl++ / Ctrl+- / Ctrl+0: every card on that site follows, and the zoom is remembered per site |
+| Page context menu | right-click in a page (open link beside, copy or download link, save image, edit, search selection, spelling suggestions in a text field, JavaScript or images on / off for the site) |
 | Copy / cut / paste | Ctrl+C / Ctrl+X / Ctrl+V (shared with the desktop clipboard) |
 | Leave the page | Esc |
 | New space / next / previous | Ctrl+Shift+N / Ctrl+PageDown / Ctrl+PageUp |
@@ -175,18 +175,25 @@ restored after a restart until they load again.
 
 Files a page downloads go straight to your Downloads folder (`XDG_DOWNLOAD_DIR`
 from `~/.config/user-dirs.dirs`, else `~/Downloads`; `TRAILBOARD_DOWNLOAD_DIR`
-overrides it), as "name (1).ext" if the name is taken, without asking. A card
+overrides it), as "name (1).ext" if the name is taken, without asking.
+*Save downloads to* in the settings picks the Desktop instead, or *Ask each
+time*: the path waits in a field at the top (Enter saves, Esc cancels). A card
 opened for a link that turns out to be a file closes again and the view goes
 back to the page. Ctrl+J lists the downloads with their progress; the list is
 kept in `downloads.json` in the data folder (downloads made in a private space
 are listed until you quit, not saved). Quitting stops running downloads and
 removes their partial files.
 
-Ads, trackers and cookie banners are blocked with EasyList, EasyPrivacy and
-the EasyList Cookie List (Brave's `adblock` engine): requests the lists name
-are stopped, and page elements they name (ad slots, consent pop-ups) are
-hidden. The lists are downloaded to `filters/` in the data folder on the first
-start and refreshed every 4 days; your own rules in the same syntax go in
+Ads, trackers and cookie banners are blocked with the lists uBlock Origin
+starts with: EasyList, EasyPrivacy, Peter Lowe's list, uBlock's own filters,
+Badware, Privacy, Unbreak and Quick fixes lists, and the EasyList Cookie List
+(Brave's `adblock` engine). Requests the lists name are stopped, or answered
+with a harmless stand-in where the lists say so (so pages that check their ad
+script loaded don't ask you to turn the blocker off); page elements they name
+(ad slots, consent pop-ups) are hidden; and their scriptlets run in the page
+before its own scripts to defuse ad-blocker detection. The lists are
+downloaded to `filters/` in the data folder on the first start and refreshed
+every 4 days (Quick fixes daily); your own rules in the same syntax go in
 `filters/user.txt` (read again whenever you save it). The page menu's last row turns blocking
 off for that site and its subdomains (or back on) and says how many requests
 it blocked; *Allow or block ads on this site* in Ctrl+K does the same. Sites
@@ -194,6 +201,26 @@ allowed are kept in `privacy.json` (not those allowed from a private space).
 *Sites with ads allowed* in Ctrl+K lists them; Enter, a click or
 Shift+Delete on one blocks ads there again.
 *Block ads and trackers* in the settings turns it off everywhere.
+
+The settings also cover what Chromium's own settings page would (Trailboard
+draws pages off screen, so `chrome://settings` isn't there):
+- *Default page zoom* for sites without their own (Ctrl+0 goes back to it).
+- *Page language*: the languages sites are asked for, and the spelling
+  dictionary. *System* follows `$LANG`. Sites see a change after a restart;
+  spelling follows at once. *Check spelling* turns the red underlines off;
+  right-click a misspelt word for fixes or *Add to dictionary*.
+- *Block third-party cookies*, *Ask sites not to track* (`DNT` and `Sec-GPC`
+  headers), and *Clear cookies* in Ctrl+K (asks first).
+- *JavaScript* and *Images* on or off everywhere; the page menu turns either
+  on or off for one site (kept in `sites.json`) and reloads its pages.
+- *Camera*, *Microphone*, *Location*, *Notifications*: Ask, Allow or Block.
+  Asked, a line at the top says which site wants what: Enter allows, Esc
+  blocks, and the answer holds for that site until you quit. Pages only get
+  location and the camera on secure sites (`https:` or `localhost`), and
+  location has no position source in this Chromium build, so an allowed
+  site still hears "position unavailable".
+- *Proxy*: System, None, or Custom (asks for `host:port`, or
+  `socks5://host:port`); it applies at once.
 
 On [Omarchy](https://omarchy.org/), Trailboard follows the current theme live
 (colours, light or dark, including the pages' `prefers-color-scheme`, unless

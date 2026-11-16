@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings</title>
+<style>
+:root {
+  --bg: #16161a; --fg: #e8e8ea; --dim: #9a9aa2; --accent: #ffd60a; --accentfg: #16161a;
+  --card: #222228; --rule: #34343c;
+  --tile: color-mix(in srgb, var(--fg) 4%, var(--bg));
+  --tile-hi: color-mix(in srgb, var(--fg) 7%, var(--bg));
+  --edge: color-mix(in srgb, var(--fg) 10%, transparent);
+  --off: color-mix(in srgb, var(--fg) 22%, var(--bg));
+  /* Corners follow Hyprland's window rounding (sharp on Omarchy's default);
+     small things are capped at 4px, true circles stay round. */
+  --radius: 0px; --r-sm: min(4px, var(--radius));
+  color-scheme: dark;
+}
+:root.light { color-scheme: light; --tile: color-mix(in srgb, var(--fg) 3%, var(--bg)); --edge: color-mix(in srgb, var(--fg) 12%, transparent);
+  --off: color-mix(in srgb, var(--fg) 25%, var(--bg)); }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg); color: var(--fg);
+  font: 14.5px/1.5 system-ui, -apple-system, "Segoe UI", "Inter", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  display: grid; grid-template-columns: 230px 1fr; overflow: hidden;
+}
+button, input, select { font: inherit; color: inherit; }
+
+/* side navigation */
+nav { border-right: 1px solid var(--edge); padding: 28px 14px; overflow-y: auto; background: var(--tile); }
+nav h1 { margin: 0 10px 18px; font-size: 22px; font-weight: 720; letter-spacing: -0.02em; }
+nav a { display: block; padding: 7px 10px; margin: 1px 0; border-radius: var(--radius); color: var(--dim);
+  text-decoration: none; font-size: 13.5px; font-weight: 550; cursor: pointer; }
+nav a:hover { color: var(--fg); background: var(--tile-hi); }
+nav a.on { color: var(--fg); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+nav a.on::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent); margin: 0 8px 1px -2px; }
+
+/* main column */
+main { overflow-y: auto; scroll-behavior: smooth; }
+.wrap { max-width: 720px; margin: 0 auto; padding: 28px 36px 120px; }
+.find { position: sticky; top: 0; z-index: 2; padding: 0 0 18px; background: var(--bg); }
+.find input { width: 100%; padding: 11px 14px 11px 38px; border-radius: var(--radius); border: 1px solid var(--edge);
+  background: var(--tile) no-repeat 13px 50% / 16px;
+  outline: none; }
+.find input:focus { border-color: color-mix(in srgb, var(--accent) 60%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent); }
+.find svg { position: absolute; left: 13px; top: 13px; width: 16px; height: 16px; color: var(--dim); pointer-events: none; }
+.find { position: sticky; }
+section { margin: 0 0 26px; scroll-margin-top: 70px; }
+section h2 { margin: 0 0 10px 4px; font-size: 12px; font-weight: 680; letter-spacing: .09em; text-transform: uppercase; color: var(--dim); }
+.box { background: var(--tile); border: 1px solid var(--edge); border-radius: var(--radius); overflow: hidden; }
+.row { display: flex; align-items: center; gap: 20px; padding: 14px 18px; }
+.row + .row { border-top: 1px solid var(--edge); }
+.row .text { flex: 1; min-width: 0; }
+.row .label { font-weight: 620; }
+.row .note { margin-left: 8px; font-size: 11.5px; font-weight: 600; padding: 1px 7px; border-radius: var(--r-sm);
+  color: var(--dim); border: 1px solid var(--edge); }
+.row .help { margin-top: 2px; font-size: 13px; color: var(--dim); }
+.row .ctl { flex: none; display: flex; align-items: center; gap: 8px; }
+.sub { padding: 0 18px 14px; display: flex; gap: 8px; margin-top: -4px; }
+.sub input { flex: 1; padding: 8px 11px; border-radius: var(--radius); border: 1px solid var(--edge); background: var(--bg); outline: none; }
+.sub input:focus { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
+
+/* switch */
+.switch { position: relative; width: 42px; height: 24px; border-radius: min(12px, var(--radius)); border: 0; padding: 0; cursor: pointer;
+  background: var(--off); transition: background .15s; }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: min(9px, var(--radius));
+  background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: transform .15s; }
+.switch.on { background: var(--accent); }
+.switch.on::after { transform: translateX(18px); background: var(--accentfg); }
+
+/* buttons side by side */
+.seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: var(--radius); background: var(--bg); border: 1px solid var(--edge); }
+.seg button { border: 0; background: transparent; padding: 5px 11px; border-radius: max(0px, min(var(--radius) - 3px, 4px)); cursor: pointer;
+  font-size: 13px; font-weight: 600; color: var(--dim); white-space: nowrap; }
+.seg button:hover { color: var(--fg); }
+.seg button.on { background: var(--accent); color: var(--accentfg); }
+
+select { padding: 7px 30px 7px 11px; border-radius: var(--radius); border: 1px solid var(--edge); background: var(--bg);
+  cursor: pointer; outline: none; min-width: 170px; font-size: 13.5px;
+  appearance: none; -webkit-appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--dim) 50%), linear-gradient(-45deg, transparent 50%, var(--dim) 50%);
+  background-position: calc(100% - 15px) 52%, calc(100% - 10px) 52%; background-size: 5px 5px; background-repeat: no-repeat; }
+select:focus { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
+
+.btn { padding: 7px 12px; border-radius: var(--radius); border: 1px solid var(--edge); background: var(--bg); cursor: pointer;
+  font-size: 13px; font-weight: 600; white-space: nowrap; }
+.btn:hover { background: var(--tile-hi); }
+.btn.primary { background: var(--accent); color: var(--accentfg); border-color: transparent; }
+.links { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--edge); }
+
+.fact .value { font-size: 13px; font-weight: 600; color: var(--dim); text-align: right; max-width: 260px; }
+.empty { padding: 40px 0; text-align: center; color: var(--dim); }
+mark { background: color-mix(in srgb, var(--accent) 35%, transparent); color: inherit; border-radius: var(--r-sm); }
+</style>
+</head>
+<body>
+<nav id="nav"><h1>Settings</h1></nav>
+<main id="main">
+  <div class="wrap">
+    <div class="find">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="find" type="search" placeholder="Search settings" autocomplete="off" spellcheck="false">
+    </div>
+    <div id="body"></div>
+  </div>
+</main>
+<script>
+const PREFIX = __PREFIX__;
+let D = __DATA__;
+const $ = (id) => document.getElementById(id);
+function act(msg, rest) { console.log(PREFIX + msg + (rest || "")); }
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+let query = "";
+let proxyDraft = null;
+
+function hit(it) {
+  if (!query) return true;
+  const hay = (it.label + " " + it.help + " " + it.words + " " + it.choices.map((c) => c[1]).join(" ")).toLowerCase();
+  return query.split(/\s+/).every((w) => hay.includes(w));
+}
+function mark(s) {
+  if (!query) return esc(s);
+  let out = esc(s);
+  for (const w of query.split(/\s+/).filter(Boolean)) {
+    out = out.replace(new RegExp("(" + w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")(?![^<]*>)", "gi"), "<mark>$1</mark>");
+  }
+  return out;
+}
+
+function control(it) {
+  if (it.kind === "switch") {
+    const on = it.value === "on";
+    return `<button class="switch${on ? " on" : ""}" role="switch" aria-checked="${on}" aria-label="${esc(it.label)}" data-key="${it.key}" data-v="${on ? "off" : "on"}"></button>`;
+  }
+  if (it.kind === "segment") {
+    return `<div class="seg">${it.choices.map(([id, name]) => `<button class="${id === it.value ? "on" : ""}" data-key="${it.key}" data-v="${esc(id)}">${esc(name)}</button>`).join("")}</div>`;
+  }
+  return `<select data-key="${it.key}" aria-label="${esc(it.label)}">${it.choices.map(([id, name]) => `<option value="${esc(id)}"${id === it.value ? " selected" : ""}>${esc(name)}</option>`).join("")}</select>`;
+}
+
+function row(it) {
+  let extra = "";
+  if (it.key === "search") extra = `<button class="btn" data-act="engines">Compare</button>`;
+  let html = `<div class="row" data-k="${it.key}"><div class="text"><div class="label">${mark(it.label)}${it.note ? `<span class="note">${esc(it.note)}</span>` : ""}</div><div class="help">${mark(it.help)}</div></div><div class="ctl">${extra}${control(it)}</div></div>`;
+  if (it.key === "proxy" && it.value === "custom") {
+    const v = proxyDraft ?? D.proxyServer;
+    html += `<div class="sub"><input id="proxy" placeholder="127.0.0.1:8080 or socks5://host:1080" value="${esc(v)}" spellcheck="false"><button class="btn primary" id="proxySave">Save</button></div>`;
+  }
+  return html;
+}
+
+function render() {
+  const keepFocus = document.activeElement && document.activeElement.id;
+  let html = "";
+  const shown = [];
+  for (const sec of D.sections) {
+    const items = sec.items.filter(hit);
+    const secHit = query && sec.name.toLowerCase().includes(query);
+    if (!items.length && !secHit) continue;
+    shown.push(sec);
+    const list = items.length ? items : sec.items;
+    const links = !query || secHit ? sec.buttons : [];
+    html += `<section id="s-${sec.id}"><h2>${esc(sec.name)}</h2><div class="box">${list.map(row).join("")}${
+      links.length ? `<div class="links">${links.map(([l, c]) => `<button class="btn" data-run="${c}">${esc(l)}</button>`).join("")}</div>` : ""}</div></section>`;
+  }
+  const facts = D.facts.filter(([l, v, m]) => !query || (l + " " + v + " " + m).toLowerCase().includes(query));
+  if (facts.length) {
+    shown.push({ id: "about", name: "About" });
+    html += `<section id="s-about"><h2>About</h2><div class="box">${facts.map(([l, v, m]) =>
+      `<div class="row fact"><div class="text"><div class="label">${esc(l)}</div><div class="help">${esc(m)}</div></div><div class="value">${esc(v)}</div></div>`).join("")}</div></section>`;
+  }
+  $("body").innerHTML = html || `<div class="empty">No settings match “${esc(query)}”</div>`;
+  $("nav").innerHTML = `<h1>Settings</h1>` + shown.map((s) => `<a data-s="${s.id}">${esc(s.name)}</a>`).join("");
+  for (const a of document.querySelectorAll("nav a")) a.onclick = () => $("s-" + a.dataset.s)?.scrollIntoView();
+  for (const b of document.querySelectorAll("[data-key][data-v]")) b.onclick = () => set(b.dataset.key, b.dataset.v);
+  for (const s of document.querySelectorAll("select[data-key]")) s.onchange = () => set(s.dataset.key, s.value);
+  for (const b of document.querySelectorAll("[data-run]")) b.onclick = () => act("run:", b.dataset.run);
+  for (const b of document.querySelectorAll("[data-act=engines]")) b.onclick = () => act("engines");
+  const px = $("proxy");
+  if (px) {
+    const save = () => { proxyDraft = null; act("proxy-server:", px.value); };
+    px.oninput = () => { proxyDraft = px.value; };
+    px.onkeydown = (e) => { if (e.key === "Enter") save(); };
+    $("proxySave").onclick = save;
+  }
+  if (keepFocus && $(keepFocus)) $(keepFocus).focus();
+  spy();
+}
+
+// Shows the change at once; the app saves it and sends the data back.
+function set(key, v) {
+  for (const sec of D.sections) for (const it of sec.items) if (it.key === key) it.value = v;
+  render();
+  act("set:", key + "=" + v);
+}
+
+// The section in view is lit in the navigation.
+function spy() {
+  const top = $("main").getBoundingClientRect().top + 90;
+  let cur = null;
+  for (const s of document.querySelectorAll("section")) if (s.getBoundingClientRect().top <= top) cur = s.id;
+  if (!cur) cur = document.querySelector("section")?.id;
+  for (const a of document.querySelectorAll("nav a")) a.classList.toggle("on", "s-" + a.dataset.s === cur);
+}
+$("main").addEventListener("scroll", spy, { passive: true });
+$("find").addEventListener("input", (e) => { query = e.target.value.trim().toLowerCase(); render(); });
+
+// The app sends new data whenever a setting changes (here or elsewhere).
+window.tbSettings = function (d) { D = d; render(); };
+// The app sets the theme's colours, now and whenever the theme changes.
+window.tbTheme = function (t) {
+  for (const k in t) if (k !== "light") document.documentElement.style.setProperty("--" + k, t[k]);
+  document.documentElement.classList.toggle("light", !!t.light);
+};
+window.tbTheme(__THEME__);
+render();
+</script>
+</body>
+</html>

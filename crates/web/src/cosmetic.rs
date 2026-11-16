@@ -11,12 +11,20 @@
 //!   reports new ones in a console message ([`PREFIX`]); [`answer`] looks
 //!   them up and hands back only the selectors they could match.
 //!
-//! Procedural rules (`:has-text()`, `:upward()`, …) and scriptlets are not
-//! applied; `:style()` and `:remove()` rules that are plain CSS are (a
-//! `:remove()` element is hidden rather than removed).
+//! - The site's scriptlets (`##+js(…)`, see [`crate::resources`]) must run
+//!   before the page's own scripts, and a script sent when the frame starts
+//!   loading arrives too late for the first ones. So for the main frame they
+//!   are registered with Chromium ([`Early`]) as the navigation starts, to
+//!   run as the new document is made; other frames get them when they start
+//!   loading (late, but most of what they guard runs later still).
+//!
+//! Procedural rules (`:has-text()`, `:upward()`, …) are not applied;
+//! `:style()` and `:remove()` rules that are plain CSS are (a `:remove()`
+//! element is hidden rather than removed).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use adblock::cosmetic_filter_cache::ProceduralOrActionFilter;
 use cef::*;
@@ -181,6 +189,11 @@ pub(crate) fn on_load_start(frames: &Frames, browser: &mut Browser, frame: &mut 
     }
     let Some(rules) = shield::rules_for(&page) else { return };
     let res = rules.url_cosmetic_resources(&url);
+    // The site's scriptlets (`##+js(…)`), before the page's own scripts run.
+    if let Some(script) = scriptlets(&res.injected_script) {
+        log::debug!("scriptlets: {} in frame {id} ({})", res.injected_script.matches("try {").count(), url.chars().take(100).collect::<String>());
+        frame.execute_java_script(Some(&CefString::from(script.as_str())), Some(&CefString::from(url.as_str())), 0);
+    }
     let styled = res.procedural_actions.iter().filter_map(|json| serde_json::from_str::<ProceduralOrActionFilter>(json).ok()?.as_css());
     let css = stylesheet(res.hide_selectors.iter().map(String::as_str), styled);
     log::debug!(
@@ -200,6 +213,127 @@ pub(crate) fn on_load_start(frames: &Frames, browser: &mut Browser, frame: &mut 
         .replace("__GENERIC__", if generic { "true" } else { "false" });
     frame.execute_java_script(Some(&CefString::from(script.as_str())), Some(&CefString::from(url.as_str())), 0);
     frame.execute_java_script(Some(&CefString::from(consent::script().as_str())), Some(&CefString::from(url.as_str())), 0);
+}
+
+/// The engine's scriptlet code for a frame, wrapped so its helpers stay
+/// out of the page's globals and it runs once per document; `None` if
+/// there is none.
+fn scriptlets(injected: &str) -> Option<String> {
+    if injected.trim().is_empty() {
+        return None;
+    }
+    Some(format!(
+        "(function() {{\n  const key = Symbol.for('trailboard.scriptlets');\n  if (window[key]) return;\n  window[key] = true;\n{injected}\n}})();"
+    ))
+}
+
+/// The script registered to run first in a main frame going to `url`: the
+/// YouTube script and the site's scriptlets, under a check that the new
+/// document is the main frame of that site. `None` if there's nothing to run.
+fn early_script(url: &str) -> Option<String> {
+    if !is_web(url) || !shield::active_for(url) {
+        return None;
+    }
+    let mut body = String::new();
+    if youtube::applies(url) {
+        body.push_str(&youtube::script());
+        body.push('\n');
+    }
+    if let Some(rules) = shield::rules_for(url)
+        && let Some(s) = scriptlets(&rules.url_cosmetic_resources(url).injected_script)
+    {
+        body.push_str(&s);
+    }
+    if body.is_empty() {
+        return None;
+    }
+    let host = url.split("://").nth(1)?.split(['/', '?', '#']).next()?.rsplit('@').next()?;
+    let host = host.strip_prefix('[').map_or_else(|| host.split(':').next().unwrap_or(host), |h| h.split(']').next().unwrap_or(h));
+    Some(format!(
+        "if (window.top === window && location.hostname === {}) {{\n{body}\n}}",
+        js_string(&host.to_ascii_lowercase())
+    ))
+}
+
+/// One page's main-frame scriptlets, registered with Chromium to run as each
+/// new document is made (DevTools `Page.addScriptToEvaluateOnNewDocument`).
+/// Each navigation replaces the previous page's script with its own.
+#[derive(Default)]
+pub(crate) struct Early(Rc<EarlyState>);
+
+#[derive(Default)]
+struct EarlyState {
+    /// The add sent last, until its result names the script.
+    pending: Cell<Option<i32>>,
+    /// Adds whose result hasn't come yet (older ones are removed when it does).
+    sent: RefCell<HashSet<i32>>,
+    /// The script now registered.
+    current: RefCell<Option<String>>,
+    /// Keeps the results coming.
+    registration: RefCell<Option<Registration>>,
+}
+
+impl Early {
+    /// Listens for the page's DevTools results (to learn each script's id).
+    pub(crate) fn watch(&self, host: &BrowserHost) {
+        let mut observer = EarlyResults::new(self.0.clone());
+        *self.0.registration.borrow_mut() = host.add_dev_tools_message_observer(Some(&mut observer));
+        // Registered scripts only run while the Page domain is on.
+        crate::send_dev_tools(host, "Page.enable", "{}");
+    }
+
+    /// The main frame starts going to `url`: drop the last page's script and
+    /// register this one's.
+    pub(crate) fn before_navigation(&self, host: &BrowserHost, url: &str) {
+        if let Some(id) = self.0.current.borrow_mut().take() {
+            remove_script(host, &id);
+        }
+        self.0.pending.set(None);
+        let Some(source) = early_script(url) else { return };
+        let params = serde_json::json!({ "source": source }).to_string();
+        log::debug!("scriptlets: registering {} bytes to run first on {}", source.len(), url.chars().take(100).collect::<String>());
+        if let Some(msg) = crate::send_dev_tools_id(host, "Page.addScriptToEvaluateOnNewDocument", &params) {
+            self.0.pending.set(Some(msg));
+            self.0.sent.borrow_mut().insert(msg);
+        }
+    }
+}
+
+fn remove_script(host: &BrowserHost, id: &str) {
+    let params = serde_json::json!({ "identifier": id }).to_string();
+    crate::send_dev_tools(host, "Page.removeScriptToEvaluateOnNewDocument", &params);
+}
+
+wrap_dev_tools_message_observer! {
+    struct EarlyResults {
+        state: Rc<EarlyState>,
+    }
+
+    impl DevToolsMessageObserver {
+        fn on_dev_tools_method_result(
+            &self,
+            browser: Option<&mut Browser>,
+            message_id: ::std::os::raw::c_int,
+            success: ::std::os::raw::c_int,
+            result: Option<&[u8]>,
+        ) {
+            if !self.state.sent.borrow_mut().remove(&message_id) {
+                return; // not one of ours
+            }
+            let id = (success != 0)
+                .then(|| serde_json::from_slice::<serde_json::Value>(result.unwrap_or_default()).ok())
+                .flatten()
+                .and_then(|v| v.get("identifier")?.as_str().map(str::to_string));
+            log::debug!("scriptlets: registered as {id:?} (message {message_id}, success {success})");
+            let Some(id) = id else { return };
+            if self.state.pending.get() == Some(message_id) {
+                self.state.pending.set(None);
+                *self.state.current.borrow_mut() = Some(id);
+            } else if let Some(host) = browser.and_then(|b| b.host()) {
+                remove_script(&host, &id); // for a page already left
+            }
+        }
+    }
 }
 
 /// Splits a message body (after [`PREFIX`]) into the frame, its classes and its ids.

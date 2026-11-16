@@ -10,7 +10,10 @@ pub mod download;
 pub mod keys;
 pub mod links;
 pub mod menu;
+pub mod permission;
 pub mod popup;
+pub mod prefs;
+pub(crate) mod resources;
 pub mod sandbox;
 pub mod shield;
 pub mod text;
@@ -70,6 +73,11 @@ pub enum WebEvent {
     /// A [`shield::fetch`] tagged `tag` ended: `ok` with the whole body of an
     /// HTTP 200 answer, else failed (`body` empty).
     Fetched { tag: String, ok: bool, body: Vec<u8> },
+    /// The site at `origin` on page `page` wants `kinds` and the settings say
+    /// to ask. Answer with [`permission::answer`].
+    PermissionAsked { page: u64, id: u64, origin: String, kinds: Vec<permission::Kind> },
+    /// Chromium withdrew permission request `id` (the page navigated or closed).
+    PermissionWithdrawn { id: u64 },
 }
 
 /// Largest favicon side asked of Chromium, px (title bars draw 16 px icons, sharp at 2×).
@@ -235,6 +243,38 @@ pub fn set_color_scheme(dark: bool) {
     DARK.set(Some(dark));
 }
 
+type ScriptLookup = StdRc<dyn Fn(&str) -> bool>;
+
+thread_local! {
+    /// Whether a page at a URL runs JavaScript (see [`set_javascript`]).
+    static JAVASCRIPT: RefCell<Option<ScriptLookup>> = const { RefCell::new(None) };
+}
+
+/// Sets how web pages find whether they run JavaScript, from their URL.
+/// Pages ask before each navigation of their main frame; after changing
+/// what it answers, call [`Page::refresh_javascript`] on live pages.
+pub fn set_javascript(lookup: impl Fn(&str) -> bool + 'static) {
+    JAVASCRIPT.with_borrow_mut(|j| *j = Some(StdRc::new(lookup)));
+}
+
+fn javascript_on(url: &str) -> bool {
+    let lookup = JAVASCRIPT.with_borrow(|j| j.clone());
+    lookup.is_none_or(|f| f(url))
+}
+
+/// Sends one DevTools protocol command to a page (its answer is ignored).
+fn send_dev_tools(host: &BrowserHost, method: &str, params: &str) -> bool {
+    send_dev_tools_id(host, method, params).is_some()
+}
+
+/// [`send_dev_tools`], giving the message's id (its result carries it).
+pub(crate) fn send_dev_tools_id(host: &BrowserHost, method: &str, params: &str) -> Option<i32> {
+    let id = DEVTOOLS_ID.get() + 1;
+    DEVTOOLS_ID.set(id);
+    let msg = format!(r#"{{"id":{id},"method":"{method}","params":{params}}}"#);
+    (host.send_dev_tools_message(Some(msg.as_bytes())) != 0).then_some(id)
+}
+
 type ZoomLookup = StdRc<dyn Fn(&str) -> f64>;
 
 thread_local! {
@@ -290,6 +330,11 @@ wrap_browser_process_handler! {
     struct TrailProcess;
 
     impl BrowserProcessHandler {
+        fn on_context_initialized(&self) {
+            log::info!("chromium context ready");
+            prefs::context_ready();
+        }
+
         fn on_already_running_app_relaunch(
             &self,
             command_line: Option<&mut CommandLine>,
@@ -324,8 +369,10 @@ pub fn engine_version() -> &'static str {
 }
 
 /// Must run first in `main`. Handles CEF helper subprocesses (which re-execute
-/// this same binary) and initializes CEF in the browser process.
-pub fn start(cef_dir: &Path, cache_dir: &Path) -> Result<Startup, String> {
+/// this same binary) and initializes CEF in the browser process, where
+/// `accept_language` gives the languages pages ask for (`hi-IN,hi,en`; empty
+/// for Chromium's own), which Chromium's network stack reads only now.
+pub fn start(cef_dir: &Path, cache_dir: &Path, accept_language: impl FnOnce() -> String) -> Result<Startup, String> {
     let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
     let args = Args::new();
     let cmd = args.as_cmd_line().ok_or("no command line")?;
@@ -356,6 +403,7 @@ pub fn start(cef_dir: &Path, cache_dir: &Path) -> Result<Startup, String> {
         root_cache_path: CefString::from(cache_dir.to_string_lossy().as_ref()),
         cache_path: CefString::from(cache_dir.join("Default").to_string_lossy().as_ref()),
         persist_session_cookies: 1,
+        accept_language_list: CefString::from(accept_language().as_str()),
         log_severity: LogSeverity::WARNING,
         ..Default::default()
     };
@@ -459,9 +507,13 @@ struct Shared {
     committed: std::cell::Cell<bool>,
     /// The frames hiding elements by the filter lists' cosmetic rules.
     hide: cosmetic::Frames,
+    /// The main frame's scriptlets, registered to run before its page's scripts.
+    early: cosmetic::Early,
     /// A frame clicked a cookie banner's reject button ([`consent`]) since
     /// the main frame last started loading.
     banner_rejected: std::cell::Cell<bool>,
+    /// JavaScript is off in this page (last sent with [`Shared::apply_javascript`]).
+    script_off: std::cell::Cell<bool>,
 }
 
 #[derive(Default)]
@@ -497,6 +549,21 @@ impl Shared {
             PageKind::Web => page_zoom(&self.url.borrow()),
             PageKind::Note | PageKind::App => 1.0,
         }
+    }
+
+    /// Turns JavaScript on or off in the page as [`set_javascript`] says for
+    /// `url` (where it is going). Web pages only: the app's own pages need theirs.
+    fn apply_javascript(&self, host: &BrowserHost, url: &str) {
+        if self.kind != PageKind::Web {
+            return;
+        }
+        let off = !javascript_on(url);
+        if off == self.script_off.get() {
+            return;
+        }
+        self.script_off.set(off);
+        log::info!("page {}: JavaScript {}", self.key, if off { "off" } else { "on" });
+        send_dev_tools(host, "Emulation.setScriptExecutionDisabled", &format!(r#"{{"value":{off}}}"#));
     }
 
     /// Re-assert our page zoom; Chromium keeps zoom per origin, so a navigation can reset it.
@@ -752,12 +819,23 @@ wrap_request_handler! {
 
         fn on_before_browse(
             &self,
-            _browser: Option<&mut Browser>,
+            browser: Option<&mut Browser>,
             frame: Option<&mut Frame>,
             request: Option<&mut Request>,
             user_gesture: ::std::os::raw::c_int,
             is_redirect: ::std::os::raw::c_int,
         ) -> ::std::os::raw::c_int {
+            // JavaScript on or off as the site it goes to has it, before it loads.
+            if frame.as_ref().is_some_and(|f| f.is_main() != 0)
+                && let (Some(host), Some(r)) = (browser.and_then(|b| b.host()), request.as_ref())
+            {
+                let url = CefString::from(&r.url()).to_string();
+                self.shared.apply_javascript(&host, &url);
+                // The site's scriptlets, in place before its first script runs.
+                if self.shared.kind == PageKind::Web {
+                    self.shared.early.before_navigation(&host, &url);
+                }
+            }
             // "Open links beside the page": a user-clicked link in the main frame
             // becomes a new card next to this one instead of replacing it.
             log::debug!(
@@ -1101,6 +1179,13 @@ wrap_context_menu_handler! {
                 note: self.shared.kind == PageKind::Note,
                 sticky: false,
                 blocking: None,
+                misspelled: CefString::from(&p.misspelled_word()).to_string(),
+                suggestions: {
+                    let mut list = CefStringList::new();
+                    p.dictionary_suggestions(Some(&mut list));
+                    list.into_iter().collect()
+                },
+                site: None,
             };
             // Params are view px; the app works in CSS px.
             let s = *self.shared.scale.borrow();
@@ -1150,9 +1235,13 @@ wrap_client! {
         menu: ContextMenuHandler,
         find: FindHandler,
         downloads: DownloadHandler,
+        permissions: PermissionHandler,
     }
 
     impl Client {
+        fn permission_handler(&self) -> Option<PermissionHandler> {
+            Some(self.permissions.clone())
+        }
         fn render_handler(&self) -> Option<RenderHandler> {
             Some(self.render.clone())
         }
@@ -1215,8 +1304,19 @@ pub struct Jar(RequestContext);
 impl Jar {
     pub fn in_memory() -> Option<Jar> {
         // An empty cache path makes an "incognito" context.
-        let settings = RequestContextSettings { persist_session_cookies: 0, ..Default::default() };
-        request_context_create_context(Some(&settings), None).map(Jar)
+        let settings = RequestContextSettings {
+            persist_session_cookies: 0,
+            accept_language_list: CefString::from(prefs::accept_language().as_str()),
+            ..Default::default()
+        };
+        let ctx = request_context_create_context(Some(&settings), None)?;
+        prefs::apply_to(&ctx);
+        Some(Jar(ctx))
+    }
+
+    /// Sets the current browsing preferences ([`prefs::apply`]) on this jar.
+    pub fn refresh_prefs(&self) {
+        prefs::apply_to(&self.0);
     }
 }
 
@@ -1248,7 +1348,9 @@ impl Page {
             kind,
             committed: std::cell::Cell::new(false),
             hide: Default::default(),
+            early: Default::default(),
             banner_rejected: std::cell::Cell::new(false),
+            script_off: std::cell::Cell::new(false),
         });
         let blocked = std::sync::Arc::new(shield::Blocked::default());
         let mut client = PageClient::new(
@@ -1260,6 +1362,7 @@ impl Page {
             PageMenu::new(shared.clone()),
             PageFind::new(shared.clone()),
             PageDownloads::new(shared.clone()),
+            permission::handler(key),
         );
         let window_info = WindowInfo { windowless_rendering_enabled: 1, ..Default::default() };
         let browser_settings = BrowserSettings {
@@ -1277,6 +1380,10 @@ impl Page {
         )?;
         if let Some(h) = browser.host() {
             shared.apply_zoom(&h);
+            shared.apply_javascript(&h, url);
+            if kind == PageKind::Web {
+                shared.early.watch(&h);
+            }
         }
         let page = Page { browser, shared, blocked };
         page.apply_color_scheme();
@@ -1286,14 +1393,37 @@ impl Page {
     /// Sends the colour scheme set with `set_color_scheme` to this page.
     pub fn apply_color_scheme(&self) {
         let (Some(dark), Some(host)) = (DARK.get(), self.browser.host()) else { return };
-        let id = DEVTOOLS_ID.get() + 1;
-        DEVTOOLS_ID.set(id);
         let scheme = if dark { "dark" } else { "light" };
-        let msg = format!(
-            r#"{{"id":{id},"method":"Emulation.setEmulatedMedia","params":{{"features":[{{"name":"prefers-color-scheme","value":"{scheme}"}}]}}}}"#
-        );
-        if host.send_dev_tools_message(Some(msg.as_bytes())) == 0 {
+        let params = format!(r#"{{"features":[{{"name":"prefers-color-scheme","value":"{scheme}"}}]}}"#);
+        if !send_dev_tools(&host, "Emulation.setEmulatedMedia", &params) {
             log::warn!("page {}: couldn't set colour scheme", self.shared.key);
+        }
+    }
+
+    /// Asks [`set_javascript`] again for the page's address; if the answer
+    /// changed, applies it and reloads (scripts that ran can't be taken back,
+    /// and ones that didn't need a new load to run).
+    pub fn refresh_javascript(&self) {
+        let Some(host) = self.browser.host() else { return };
+        let was = self.shared.script_off.get();
+        let url = self.shared.url.borrow().clone();
+        self.shared.apply_javascript(&host, &url);
+        if self.shared.script_off.get() != was {
+            self.browser.reload();
+        }
+    }
+
+    /// Puts `word` in place of the misspelt word the menu was opened on.
+    pub fn replace_misspelling(&self, word: &str) {
+        if let Some(h) = self.browser.host() {
+            h.replace_misspelling(Some(&CefString::from(word)));
+        }
+    }
+
+    /// Stops marking `word` as misspelt.
+    pub fn add_to_dictionary(&self, word: &str) {
+        if let Some(h) = self.browser.host() {
+            h.add_word_to_dictionary(Some(&CefString::from(word)));
         }
     }
 

@@ -13,6 +13,9 @@
   --edge: color-mix(in srgb, var(--fg) 10%, transparent);
   --glow: color-mix(in srgb, var(--accent) 13%, transparent);
   --good: #3fb950; --warn: #f0883e;
+  /* Corners follow Hyprland's window rounding (sharp on Omarchy's default);
+     small things are capped at 4px, true circles stay round. */
+  --radius: 0px; --r-sm: min(4px, var(--radius));
   color-scheme: dark;
 }
 :root.light { color-scheme: light; --tile: color-mix(in srgb, var(--fg) 3%, var(--bg)); --edge: color-mix(in srgb, var(--fg) 12%, transparent);
@@ -44,9 +47,9 @@ h1 em { font-style: normal; color: var(--accent); }
 
 /* filters */
 .bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; margin: 30px 0 18px; }
-.chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px; background: var(--tile); border: 1px solid var(--edge); border-radius: 12px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px; background: var(--tile); border: 1px solid var(--edge); border-radius: var(--radius); }
 .chip { font: inherit; font-size: 13px; font-weight: 600; color: var(--dim); cursor: pointer;
-  padding: 6px 12px; border: 0; border-radius: 8px; background: transparent; }
+  padding: 6px 12px; border: 0; border-radius: var(--r-sm); background: transparent; }
 .chip:hover { color: var(--fg); }
 .chip.on { color: var(--fg); background: var(--card); box-shadow: 0 1px 3px rgba(0, 0, 0, .25); }
 .now { display: inline-flex; align-items: center; gap: 10px; font-size: 13px; color: var(--dim); }
@@ -56,7 +59,7 @@ h1 em { font-style: normal; color: var(--accent); }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
 .card {
   position: relative; display: flex; flex-direction: column; padding: 18px 18px 16px;
-  background: var(--tile); border: 1px solid var(--edge); border-radius: 16px; overflow: hidden;
+  background: var(--tile); border: 1px solid var(--edge); border-radius: var(--radius); overflow: hidden;
   transition: background .15s, border-color .15s, transform .15s;
 }
 .card::before { content: ""; position: absolute; inset: 0 0 auto; height: 70px;
@@ -65,7 +68,7 @@ h1 em { font-style: normal; color: var(--accent); }
 .card.on { border-color: color-mix(in srgb, var(--accent) 60%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent); }
 .head { position: relative; display: flex; align-items: center; gap: 13px; }
 .badge {
-  display: grid; place-items: center; flex: none; width: 46px; height: 46px; border-radius: 13px;
+  display: grid; place-items: center; flex: none; width: 46px; height: 46px; border-radius: var(--r-sm);
   font: 760 18px/1 system-ui, sans-serif; letter-spacing: -0.03em; color: #fff;
   background: linear-gradient(140deg, color-mix(in srgb, var(--c) 82%, #fff), var(--c) 55%, color-mix(in srgb, var(--c) 75%, #000));
   box-shadow: 0 1px 0 rgba(255, 255, 255, .28) inset, 0 6px 16px color-mix(in srgb, var(--c) 30%, transparent);
@@ -79,19 +82,19 @@ h1 em { font-style: normal; color: var(--accent); }
 .site { font-size: 12.5px; color: var(--dim); }
 .pitch { position: relative; margin: 14px 0 6px; font-size: 14.5px; font-weight: 650; color: color-mix(in srgb, var(--c) 45%, var(--fg)); }
 .about { margin: 0; color: color-mix(in srgb, var(--fg) 80%, var(--bg)); font-size: 13.5px; }
-.best { margin: 12px 0 0; padding: 9px 11px; font-size: 13px; border-radius: 10px;
+.best { margin: 12px 0 0; padding: 9px 11px; font-size: 13px; border-radius: var(--radius);
   background: color-mix(in srgb, var(--fg) 4%, transparent); color: color-mix(in srgb, var(--fg) 85%, var(--bg)); }
 .best b { display: block; font-size: 11px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); margin-bottom: 1px; }
 .tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 0; }
 .tag { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; font-size: 12px; font-weight: 600;
-  border-radius: 999px; border: 1px solid var(--edge); color: color-mix(in srgb, var(--fg) 80%, var(--bg)); }
+  border-radius: var(--r-sm); border: 1px solid var(--edge); color: color-mix(in srgb, var(--fg) 80%, var(--bg)); }
 .tag.good { color: var(--good); border-color: color-mix(in srgb, var(--good) 35%, transparent); background: color-mix(in srgb, var(--good) 9%, transparent); }
 .tag.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 35%, transparent); background: color-mix(in srgb, var(--warn) 9%, transparent); }
 .spacer { flex: 1; min-height: 14px; }
 .use {
   align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; margin-top: 4px;
   font: inherit; font-size: 13px; font-weight: 650; cursor: pointer; padding: 8px 13px;
-  color: var(--fg); background: var(--card); border: 1px solid var(--edge); border-radius: 10px;
+  color: var(--fg); background: var(--card); border: 1px solid var(--edge); border-radius: var(--radius);
 }
 .use:hover { border-color: color-mix(in srgb, var(--c) 55%, var(--edge)); }
 .card.on .use { cursor: default; color: var(--accentfg); background: var(--accent); border-color: transparent; }
@@ -148,7 +151,7 @@ function render() {
     .join("");
   for (const b of document.querySelectorAll(".chip")) b.onclick = () => { filter = b.dataset.g; render(); };
   const cur = D.engines.find((e) => e.id === D.current) || D.engines[0];
-  $("now").innerHTML = `Using ${badge(cur, "width:22px;height:22px;border-radius:6px;font-size:10.5px")}<b>${cur.name}</b>`;
+  $("now").innerHTML = `Using ${badge(cur, "width:22px;height:22px;border-radius:var(--r-sm);font-size:10.5px")}<b>${cur.name}</b>`;
   const order = (e) => D.groups.findIndex((g) => g.id === e.group);
   $("grid").innerHTML = D.engines
     .filter((e) => filter === "all" || e.group === filter)

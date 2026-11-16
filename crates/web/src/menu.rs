@@ -28,7 +28,24 @@ pub struct MenuContext {
     /// Ad blocking on the page's site (set by the app for web pages while
     /// blocking is on in the settings).
     pub blocking: Option<Blocking>,
+    /// The misspelt word right-clicked in a text field, if any.
+    pub misspelled: String,
+    /// Chromium's spelling suggestions for it.
+    pub suggestions: Vec<String>,
+    /// JavaScript and images on the page's site (set by the app for web pages).
+    pub site: Option<SiteContent>,
 }
+
+/// Whether JavaScript and images are on for a page's site, for its menu.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SiteContent {
+    pub site: String,
+    pub javascript: bool,
+    pub images: bool,
+}
+
+/// Most spelling suggestions offered.
+const MAX_SUGGESTIONS: usize = 5;
 
 /// Ad blocking on the site of a page, for its menu.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -59,6 +76,14 @@ pub enum MenuAction {
     ToggleSticky,
     /// Turn ad blocking off on the page's site, or back on.
     ToggleBlocking,
+    /// Turn JavaScript on or off on the page's site (and reload).
+    ToggleJavaScript,
+    /// Turn images on or off on the page's site (and reload).
+    ToggleImages,
+    /// Put this word in place of the misspelt one.
+    ReplaceMisspelling(String),
+    /// Stop marking this word as misspelt.
+    AddToDictionary(String),
     Undo,
     Redo,
     Cut,
@@ -115,6 +140,23 @@ pub fn items(ctx: &MenuContext) -> Vec<MenuItem> {
         ]);
     }
     let selection = ctx.selection.trim();
+    if ctx.editable && !ctx.misspelled.is_empty() {
+        let mut fixes: Vec<MenuItem> = ctx
+            .suggestions
+            .iter()
+            .take(MAX_SUGGESTIONS)
+            .map(|s| MenuItem::new(s.clone(), MenuAction::ReplaceMisspelling(s.clone()), true))
+            .collect();
+        if fixes.is_empty() {
+            fixes.push(MenuItem::new("No spelling suggestions", MenuAction::ReplaceMisspelling(String::new()), false));
+        }
+        fixes.push(MenuItem::new(
+            format!("Add “{}” to dictionary", quote(&ctx.misspelled)),
+            MenuAction::AddToDictionary(ctx.misspelled.clone()),
+            true,
+        ));
+        sections.push(fixes);
+    }
     if ctx.editable {
         sections.push(vec![
             MenuItem::new("Undo", MenuAction::Undo, ctx.can_undo),
@@ -156,6 +198,13 @@ pub fn items(ctx: &MenuContext) -> Vec<MenuItem> {
             MenuItem::new("Reload", MenuAction::Reload, true),
         ]);
         sections.push(vec![MenuItem::new("Select all", MenuAction::SelectAll, true)]);
+        if let Some(s) = &ctx.site {
+            let word = |on: bool| if on { "Turn off" } else { "Turn on" };
+            sections.push(vec![
+                MenuItem::new(format!("{} JavaScript on {}", word(s.javascript), s.site), MenuAction::ToggleJavaScript, true),
+                MenuItem::new(format!("{} images on {}", word(s.images), s.site), MenuAction::ToggleImages, true),
+            ]);
+        }
         if let Some(b) = &ctx.blocking {
             sections.push(blocking_items(b));
         }
@@ -292,6 +341,39 @@ mod tests {
         assert_eq!(labels(&items), ["Undo", "Redo", "-", "Cut", "Copy", "Paste", "Select all"]);
         let enabled: Vec<bool> = items.iter().map(MenuItem::is_enabled).collect();
         assert_eq!(enabled, [false, false, false, false, false, true, true]);
+    }
+
+    #[test]
+    fn misspelt_words_offer_fixes_first() {
+        let ctx = MenuContext {
+            editable: true,
+            misspelled: "teh".into(),
+            suggestions: ["the", "tea", "ten", "tech", "eh", "te"].map(String::from).to_vec(),
+            ..Default::default()
+        };
+        let got = items(&ctx);
+        assert_eq!(labels(&got)[..7], ["the", "tea", "ten", "tech", "eh", "Add “teh” to dictionary", "-"]);
+        let MenuItem::Action { action, .. } = &got[0] else { panic!() };
+        assert_eq!(*action, MenuAction::ReplaceMisspelling("the".into()));
+        let MenuItem::Action { action, .. } = &got[5] else { panic!() };
+        assert_eq!(*action, MenuAction::AddToDictionary("teh".into()));
+        let ctx = MenuContext { editable: true, misspelled: "qzxv".into(), ..Default::default() };
+        let got = items(&ctx);
+        assert_eq!(labels(&got)[..2], ["No spelling suggestions", "Add “qzxv” to dictionary"]);
+        assert!(!got[0].is_enabled());
+        // Outside a text field there is nothing to fix.
+        let ctx = MenuContext { misspelled: "teh".into(), ..Default::default() };
+        assert_eq!(labels(&items(&ctx))[0], "Back");
+    }
+
+    #[test]
+    fn plain_page_offers_javascript_and_images_on_its_site() {
+        let s = SiteContent { site: "a.example".into(), javascript: true, images: false };
+        let ctx = MenuContext { site: Some(s), ..Default::default() };
+        let got = items(&ctx);
+        assert_eq!(labels(&got)[5..], ["-", "Turn off JavaScript on a.example", "Turn on images on a.example"]);
+        let MenuItem::Action { action, .. } = &got[7] else { panic!() };
+        assert_eq!(*action, MenuAction::ToggleImages);
     }
 
     #[test]

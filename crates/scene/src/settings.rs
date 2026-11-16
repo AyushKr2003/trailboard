@@ -1,4 +1,4 @@
-//! The user's settings (the settings panel, Ctrl+,): what each can be, how a
+//! The user's settings (the settings page, Ctrl+,): what each can be, how a
 //! value steps to the next, and how it reads. Saved by `storage::settings`.
 
 /// Where the address bar and the palette send a search.
@@ -228,11 +228,181 @@ impl NewCard {
     }
 }
 
+/// What a site gets when it asks for a permission (camera, location, …).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Permission {
+    /// The app asks each time (Enter allows, Esc blocks), once per site and session.
+    Ask,
+    Allow,
+    Block,
+}
+
+impl Permission {
+    pub const ALL: [Permission; 3] = [Permission::Ask, Permission::Allow, Permission::Block];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Permission::Ask => "ask",
+            Permission::Allow => "allow",
+            Permission::Block => "block",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Permission> {
+        Permission::ALL.into_iter().find(|c| c.id() == id)
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Permission::Ask => "Ask",
+            Permission::Allow => "Allow",
+            Permission::Block => "Block",
+        }
+    }
+}
+
+/// Where downloads are saved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DownloadTo {
+    /// The desktop's Downloads folder (`XDG_DOWNLOAD_DIR`).
+    Downloads,
+    /// The desktop folder (`XDG_DESKTOP_DIR`).
+    Desktop,
+    /// A save dialog for each file.
+    Ask,
+}
+
+impl DownloadTo {
+    pub const ALL: [DownloadTo; 3] = [DownloadTo::Downloads, DownloadTo::Desktop, DownloadTo::Ask];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            DownloadTo::Downloads => "downloads",
+            DownloadTo::Desktop => "desktop",
+            DownloadTo::Ask => "ask",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<DownloadTo> {
+        DownloadTo::ALL.into_iter().find(|c| c.id() == id)
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            DownloadTo::Downloads => "Downloads folder",
+            DownloadTo::Desktop => "Desktop",
+            DownloadTo::Ask => "Ask each time",
+        }
+    }
+}
+
+/// How pages reach the network.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Proxy {
+    /// As the desktop says (`http_proxy`, GNOME/KDE settings).
+    System,
+    /// No proxy.
+    Direct,
+    /// The server in `Settings::proxy_server`.
+    Custom,
+}
+
+impl Proxy {
+    pub const ALL: [Proxy; 3] = [Proxy::System, Proxy::Direct, Proxy::Custom];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Proxy::System => "system",
+            Proxy::Direct => "direct",
+            Proxy::Custom => "custom",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Proxy> {
+        Proxy::ALL.into_iter().find(|c| c.id() == id)
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Proxy::System => "System",
+            Proxy::Direct => "None",
+            Proxy::Custom => "Custom",
+        }
+    }
+}
+
+/// The languages pages are asked for, as (id, name). `system` follows `$LANG`.
+pub const LANGUAGES: [(&str, &str); 22] = [
+    ("system", "System"),
+    ("en-US", "English (US)"),
+    ("en-GB", "English (UK)"),
+    ("en-IN", "English (India)"),
+    ("hi-IN", "Hindi"),
+    ("bn-IN", "Bengali"),
+    ("de-DE", "German"),
+    ("fr-FR", "French"),
+    ("es-ES", "Spanish"),
+    ("pt-BR", "Portuguese (Brazil)"),
+    ("pt-PT", "Portuguese (Portugal)"),
+    ("it-IT", "Italian"),
+    ("nl-NL", "Dutch"),
+    ("pl-PL", "Polish"),
+    ("sv-SE", "Swedish"),
+    ("ru-RU", "Russian"),
+    ("uk-UA", "Ukrainian"),
+    ("tr-TR", "Turkish"),
+    ("ja-JP", "Japanese"),
+    ("ko-KR", "Korean"),
+    ("zh-CN", "Chinese (Simplified)"),
+    ("zh-TW", "Chinese (Traditional)"),
+];
+
+/// The language id `id` names, if it is one of [`LANGUAGES`].
+pub fn language_from_id(id: &str) -> Option<&'static str> {
+    LANGUAGES.iter().find(|(i, _)| *i == id).map(|(i, _)| *i)
+}
+
+fn language_name(id: &str) -> &'static str {
+    LANGUAGES.iter().find(|(i, _)| *i == id).map_or("System", |(_, n)| n)
+}
+
+/// A BCP 47 tag from a POSIX locale (`$LANG`): `en_IN.UTF-8` → `en-IN`.
+/// `C`, `POSIX` or nothing give `en-US`.
+pub fn locale_tag(posix: &str) -> String {
+    let base = posix.split(['.', '@']).next().unwrap_or("").trim();
+    if base.is_empty() || base == "C" || base == "POSIX" {
+        return "en-US".into();
+    }
+    base.replace('_', "-")
+}
+
+/// The language tag `language` stands for (`system`: from `posix`, `$LANG`).
+pub fn language_tag(language: &str, posix: &str) -> String {
+    if language == "system" { locale_tag(posix) } else { language.to_string() }
+}
+
+/// The `Accept-Language` list for language tag `tag`: it, its base language,
+/// then English (so a site without the language still answers in one most
+/// people read). `hi-IN` → `hi-IN,hi,en-US,en`.
+pub fn accept_languages(tag: &str) -> String {
+    let base = tag.split('-').next().unwrap_or(tag);
+    let mut list: Vec<&str> = vec![tag];
+    for t in [base, "en-US", "en"] {
+        if !list.iter().any(|l| l.eq_ignore_ascii_case(t)) {
+            list.push(t);
+        }
+    }
+    list.join(",")
+}
+
+/// The choices for a page zoom when a site has none of its own, in percent.
+pub const DEFAULT_ZOOMS: [u16; 11] = [50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200];
+
 /// The choices for how many cards keep a live page.
 pub const LIVE_PAGES: [usize; 8] = [2, 3, 4, 6, 8, 10, 12, 16];
 pub const DEFAULT_LIVE_PAGES: usize = 6;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
     pub search: SearchEngine,
     /// Cards that keep a live browser; the rest sleep (`liveness`).
@@ -244,6 +414,27 @@ pub struct Settings {
     /// Block ads and trackers (`privacy`, `web::shield`).
     pub block_ads: bool,
     pub new_card: NewCard,
+    /// Page zoom (percent) on sites without one of their own (Ctrl +/−).
+    pub default_zoom: u16,
+    /// Language pages are asked for: an id of [`LANGUAGES`].
+    pub language: &'static str,
+    /// Underline misspelt words (in the page's language) and suggest fixes.
+    pub spellcheck: bool,
+    /// Refuse cookies set by other sites than the page's.
+    pub block_third_party_cookies: bool,
+    /// Send `DNT: 1` and `Sec-GPC: 1` with every request.
+    pub do_not_track: bool,
+    /// Defaults for sites without their own rule (`sitesettings`).
+    pub javascript: bool,
+    pub images: bool,
+    pub camera: Permission,
+    pub microphone: Permission,
+    pub location: Permission,
+    pub notifications: Permission,
+    pub download_to: DownloadTo,
+    pub proxy: Proxy,
+    /// `host:port` (or `scheme://host:port`) for [`Proxy::Custom`].
+    pub proxy_server: String,
 }
 
 impl Default for Settings {
@@ -256,6 +447,38 @@ impl Default for Settings {
             scroll_speed: ScrollSpeed::Normal,
             block_ads: true,
             new_card: NewCard::AddressBar,
+            default_zoom: 100,
+            language: "system",
+            spellcheck: true,
+            block_third_party_cookies: false,
+            do_not_track: false,
+            javascript: true,
+            images: true,
+            camera: Permission::Ask,
+            microphone: Permission::Ask,
+            location: Permission::Ask,
+            notifications: Permission::Ask,
+            download_to: DownloadTo::Downloads,
+            proxy: Proxy::System,
+            proxy_server: String::new(),
+        }
+    }
+}
+
+impl Settings {
+    /// The page zoom factor for sites without their own.
+    pub fn default_zoom_factor(&self) -> f64 {
+        f64::from(self.default_zoom) / 100.0
+    }
+
+    /// What a site asking for `kind` gets.
+    pub fn permission(&self, kind: Key) -> Option<Permission> {
+        match kind {
+            Key::Camera => Some(self.camera),
+            Key::Microphone => Some(self.microphone),
+            Key::Location => Some(self.location),
+            Key::Notifications => Some(self.notifications),
+            _ => None,
         }
     }
 }
@@ -270,11 +493,45 @@ pub enum Key {
     PageColours,
     ScrollSpeed,
     BlockAds,
+    DefaultZoom,
+    Language,
+    Spellcheck,
+    ThirdPartyCookies,
+    DoNotTrack,
+    JavaScript,
+    Images,
+    Camera,
+    Microphone,
+    Location,
+    Notifications,
+    DownloadTo,
+    Proxy,
 }
 
 impl Key {
     /// In the panel's order.
-    pub const ALL: [Key; 7] = [Key::Search, Key::NewCard, Key::LivePages, Key::History, Key::BlockAds, Key::PageColours, Key::ScrollSpeed];
+    pub const ALL: [Key; 20] = [
+        Key::Search,
+        Key::NewCard,
+        Key::DefaultZoom,
+        Key::Language,
+        Key::Spellcheck,
+        Key::LivePages,
+        Key::History,
+        Key::BlockAds,
+        Key::ThirdPartyCookies,
+        Key::DoNotTrack,
+        Key::JavaScript,
+        Key::Images,
+        Key::Camera,
+        Key::Microphone,
+        Key::Location,
+        Key::Notifications,
+        Key::DownloadTo,
+        Key::Proxy,
+        Key::PageColours,
+        Key::ScrollSpeed,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -285,6 +542,19 @@ impl Key {
             Key::PageColours => "Page colours",
             Key::ScrollSpeed => "Scroll speed",
             Key::BlockAds => "Block ads and trackers",
+            Key::DefaultZoom => "Default page zoom",
+            Key::Language => "Page language",
+            Key::Spellcheck => "Check spelling",
+            Key::ThirdPartyCookies => "Block third-party cookies",
+            Key::DoNotTrack => "Ask sites not to track",
+            Key::JavaScript => "JavaScript",
+            Key::Images => "Images",
+            Key::Camera => "Camera",
+            Key::Microphone => "Microphone",
+            Key::Location => "Location",
+            Key::Notifications => "Notifications",
+            Key::DownloadTo => "Save downloads to",
+            Key::Proxy => "Proxy",
         }
     }
 
@@ -298,6 +568,18 @@ impl Key {
             Key::PageColours => ("light dark mode colour color scheme", PageColours::ALL.iter().map(|c| c.name()).collect()),
             Key::ScrollSpeed => ("wheel touchpad mouse smooth", ScrollSpeed::ALL.iter().map(|c| c.name()).collect()),
             Key::BlockAds => ("adblock privacy easylist tracking content blocker", vec!["on", "off"]),
+            Key::DefaultZoom => ("page zoom size scale text bigger smaller percent", Vec::new()),
+            Key::Language => ("languages accept-language locale translate", LANGUAGES.iter().map(|(_, n)| *n).collect()),
+            Key::Spellcheck => ("spell checker spelling dictionary typos", vec!["on", "off"]),
+            Key::ThirdPartyCookies => ("cookies privacy tracking site data", vec!["on", "off"]),
+            Key::DoNotTrack => ("do not track dnt gpc global privacy control", vec!["on", "off"]),
+            Key::JavaScript => ("javascript js scripts site settings", vec!["on", "off"]),
+            Key::Images => ("images pictures site settings", vec!["on", "off"]),
+            Key::Camera | Key::Microphone | Key::Location | Key::Notifications => {
+                ("site permissions privacy webcam mic geolocation", Permission::ALL.iter().map(|p| p.name()).collect())
+            }
+            Key::DownloadTo => ("downloads folder save location directory", DownloadTo::ALL.iter().map(|d| d.name()).collect()),
+            Key::Proxy => ("proxy server network socks http", Proxy::ALL.iter().map(|p| p.name()).collect()),
         };
         let mut s = words.to_string();
         for v in values {
@@ -322,10 +604,26 @@ impl Settings {
             Key::Search => self.search.name().to_string(),
             Key::NewCard => self.new_card.name().to_string(),
             Key::LivePages => self.live_pages.to_string(),
-            Key::History => if self.history { "On" } else { "Off" }.to_string(),
+            Key::History => on_off(self.history),
             Key::PageColours => self.page_colours.name().to_string(),
             Key::ScrollSpeed => self.scroll_speed.name().to_string(),
-            Key::BlockAds => if self.block_ads { "On" } else { "Off" }.to_string(),
+            Key::BlockAds => on_off(self.block_ads),
+            Key::DefaultZoom => format!("{}%", self.default_zoom),
+            Key::Language => language_name(self.language).to_string(),
+            Key::Spellcheck => on_off(self.spellcheck),
+            Key::ThirdPartyCookies => on_off(self.block_third_party_cookies),
+            Key::DoNotTrack => on_off(self.do_not_track),
+            Key::JavaScript => on_off(self.javascript),
+            Key::Images => on_off(self.images),
+            Key::Camera => self.camera.name().to_string(),
+            Key::Microphone => self.microphone.name().to_string(),
+            Key::Location => self.location.name().to_string(),
+            Key::Notifications => self.notifications.name().to_string(),
+            Key::DownloadTo => self.download_to.name().to_string(),
+            Key::Proxy => match self.proxy {
+                Proxy::Custom if !self.proxy_server.is_empty() => format!("Custom · {}", self.proxy_server),
+                p => p.name().to_string(),
+            },
         }
     }
 
@@ -334,7 +632,7 @@ impl Settings {
     /// between two choices (from `TRAILBOARD_MAX_LIVE`) goes to the nearer
     /// one that way. Returns whether anything changed.
     pub fn step(&mut self, key: Key, dir: i32) -> bool {
-        let before = *self;
+        let before = self.clone();
         match key {
             Key::Search => self.search = cycle(&SearchEngine::ALL, self.search, dir),
             Key::NewCard => self.new_card = cycle(&NewCard::ALL, self.new_card, dir),
@@ -342,6 +640,33 @@ impl Settings {
             Key::ScrollSpeed => self.scroll_speed = cycle(&ScrollSpeed::ALL, self.scroll_speed, dir),
             Key::History => self.history = !self.history,
             Key::BlockAds => self.block_ads = !self.block_ads,
+            Key::Spellcheck => self.spellcheck = !self.spellcheck,
+            Key::ThirdPartyCookies => self.block_third_party_cookies = !self.block_third_party_cookies,
+            Key::DoNotTrack => self.do_not_track = !self.do_not_track,
+            Key::JavaScript => self.javascript = !self.javascript,
+            Key::Images => self.images = !self.images,
+            Key::Camera => self.camera = cycle(&Permission::ALL, self.camera, dir),
+            Key::Microphone => self.microphone = cycle(&Permission::ALL, self.microphone, dir),
+            Key::Location => self.location = cycle(&Permission::ALL, self.location, dir),
+            Key::Notifications => self.notifications = cycle(&Permission::ALL, self.notifications, dir),
+            Key::DownloadTo => self.download_to = cycle(&DownloadTo::ALL, self.download_to, dir),
+            Key::Proxy => self.proxy = cycle(&Proxy::ALL, self.proxy, dir),
+            Key::Language => {
+                let ids: Vec<&'static str> = LANGUAGES.iter().map(|(i, _)| *i).collect();
+                self.language = cycle(&ids, self.language, dir);
+            }
+            Key::DefaultZoom => {
+                // Stops at the ends, like the number of live pages.
+                let z = self.default_zoom;
+                let next = if dir > 0 {
+                    DEFAULT_ZOOMS.iter().copied().find(|&v| v > z)
+                } else {
+                    DEFAULT_ZOOMS.iter().rev().copied().find(|&v| v < z)
+                };
+                if let Some(v) = next {
+                    self.default_zoom = v;
+                }
+            }
             Key::LivePages => {
                 let n = self.live_pages;
                 let next = if dir > 0 {
@@ -356,6 +681,161 @@ impl Settings {
         }
         *self != before
     }
+}
+
+impl Key {
+    /// Its name in the settings page's messages.
+    pub fn id(self) -> &'static str {
+        match self {
+            Key::Search => "search",
+            Key::NewCard => "new_card",
+            Key::LivePages => "live_pages",
+            Key::History => "history",
+            Key::PageColours => "page_colours",
+            Key::ScrollSpeed => "scroll_speed",
+            Key::BlockAds => "block_ads",
+            Key::DefaultZoom => "default_zoom",
+            Key::Language => "language",
+            Key::Spellcheck => "spellcheck",
+            Key::ThirdPartyCookies => "third_party_cookies",
+            Key::DoNotTrack => "do_not_track",
+            Key::JavaScript => "javascript",
+            Key::Images => "images",
+            Key::Camera => "camera",
+            Key::Microphone => "microphone",
+            Key::Location => "location",
+            Key::Notifications => "notifications",
+            Key::DownloadTo => "download_to",
+            Key::Proxy => "proxy",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Key> {
+        Key::ALL.into_iter().find(|k| k.id() == id)
+    }
+
+    /// Whether it is on or off (a switch rather than a list of choices).
+    pub fn is_switch(self) -> bool {
+        matches!(
+            self,
+            Key::History | Key::BlockAds | Key::Spellcheck | Key::ThirdPartyCookies | Key::DoNotTrack | Key::JavaScript | Key::Images
+        )
+    }
+}
+
+fn ids<T: Copy>(all: &[T], id: fn(T) -> &'static str, name: fn(T) -> &'static str) -> Vec<(String, String)> {
+    all.iter().map(|&v| (id(v).to_string(), name(v).to_string())).collect()
+}
+
+impl Settings {
+    /// Every value `key` can take, as (id, name), in order. A number set
+    /// outside the usual choices (by `TRAILBOARD_MAX_LIVE` or by hand) is
+    /// among them, so it can be shown.
+    pub fn choices(&self, key: Key) -> Vec<(String, String)> {
+        if key.is_switch() {
+            return vec![("on".into(), "On".into()), ("off".into(), "Off".into())];
+        }
+        match key {
+            Key::Search => ids(&SearchEngine::ALL, SearchEngine::id, SearchEngine::name),
+            Key::NewCard => ids(&NewCard::ALL, NewCard::id, NewCard::name),
+            Key::PageColours => ids(&PageColours::ALL, PageColours::id, PageColours::name),
+            Key::ScrollSpeed => ids(&ScrollSpeed::ALL, ScrollSpeed::id, ScrollSpeed::name),
+            Key::Camera | Key::Microphone | Key::Location | Key::Notifications => ids(&Permission::ALL, Permission::id, Permission::name),
+            Key::DownloadTo => ids(&DownloadTo::ALL, DownloadTo::id, DownloadTo::name),
+            Key::Proxy => ids(&Proxy::ALL, Proxy::id, Proxy::name),
+            Key::Language => LANGUAGES.iter().map(|(i, n)| (i.to_string(), n.to_string())).collect(),
+            Key::DefaultZoom => {
+                let mut v: Vec<u16> = DEFAULT_ZOOMS.to_vec();
+                if !v.contains(&self.default_zoom) {
+                    v.push(self.default_zoom);
+                    v.sort_unstable();
+                }
+                v.into_iter().map(|z| (z.to_string(), format!("{z}%"))).collect()
+            }
+            Key::LivePages => {
+                let mut v: Vec<usize> = LIVE_PAGES.to_vec();
+                if !v.contains(&self.live_pages) {
+                    v.push(self.live_pages);
+                    v.sort_unstable();
+                }
+                v.into_iter().map(|n| (n.to_string(), n.to_string())).collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// The id (in [`Settings::choices`]) of what `key` is set to.
+    pub fn choice(&self, key: Key) -> String {
+        let on = |b: bool| if b { "on" } else { "off" }.to_string();
+        match key {
+            Key::Search => self.search.id().into(),
+            Key::NewCard => self.new_card.id().into(),
+            Key::LivePages => self.live_pages.to_string(),
+            Key::History => on(self.history),
+            Key::PageColours => self.page_colours.id().into(),
+            Key::ScrollSpeed => self.scroll_speed.id().into(),
+            Key::BlockAds => on(self.block_ads),
+            Key::DefaultZoom => self.default_zoom.to_string(),
+            Key::Language => self.language.into(),
+            Key::Spellcheck => on(self.spellcheck),
+            Key::ThirdPartyCookies => on(self.block_third_party_cookies),
+            Key::DoNotTrack => on(self.do_not_track),
+            Key::JavaScript => on(self.javascript),
+            Key::Images => on(self.images),
+            Key::Camera => self.camera.id().into(),
+            Key::Microphone => self.microphone.id().into(),
+            Key::Location => self.location.id().into(),
+            Key::Notifications => self.notifications.id().into(),
+            Key::DownloadTo => self.download_to.id().into(),
+            Key::Proxy => self.proxy.id().into(),
+        }
+    }
+
+    /// Sets `key` to the choice `id`. Returns whether anything changed; an
+    /// unknown id changes nothing.
+    pub fn choose(&mut self, key: Key, id: &str) -> bool {
+        let before = self.clone();
+        let flag = match id {
+            "on" => Some(true),
+            "off" => Some(false),
+            _ => None,
+        };
+        match key {
+            Key::Search => SearchEngine::from_id(id).into_iter().for_each(|v| self.search = v),
+            Key::NewCard => NewCard::from_id(id).into_iter().for_each(|v| self.new_card = v),
+            Key::PageColours => PageColours::from_id(id).into_iter().for_each(|v| self.page_colours = v),
+            Key::ScrollSpeed => ScrollSpeed::from_id(id).into_iter().for_each(|v| self.scroll_speed = v),
+            Key::Camera => Permission::from_id(id).into_iter().for_each(|v| self.camera = v),
+            Key::Microphone => Permission::from_id(id).into_iter().for_each(|v| self.microphone = v),
+            Key::Location => Permission::from_id(id).into_iter().for_each(|v| self.location = v),
+            Key::Notifications => Permission::from_id(id).into_iter().for_each(|v| self.notifications = v),
+            Key::DownloadTo => DownloadTo::from_id(id).into_iter().for_each(|v| self.download_to = v),
+            Key::Proxy => Proxy::from_id(id).into_iter().for_each(|v| self.proxy = v),
+            Key::Language => language_from_id(id).into_iter().for_each(|v| self.language = v),
+            Key::DefaultZoom => {
+                if let Some(z) = id.parse::<u16>().ok().filter(|z| (25..=500).contains(z)) {
+                    self.default_zoom = z;
+                }
+            }
+            Key::LivePages => {
+                if let Some(n) = id.parse::<usize>().ok().filter(|n| (1..=64).contains(n)) {
+                    self.live_pages = n;
+                }
+            }
+            Key::History => flag.into_iter().for_each(|v| self.history = v),
+            Key::BlockAds => flag.into_iter().for_each(|v| self.block_ads = v),
+            Key::Spellcheck => flag.into_iter().for_each(|v| self.spellcheck = v),
+            Key::ThirdPartyCookies => flag.into_iter().for_each(|v| self.block_third_party_cookies = v),
+            Key::DoNotTrack => flag.into_iter().for_each(|v| self.do_not_track = v),
+            Key::JavaScript => flag.into_iter().for_each(|v| self.javascript = v),
+            Key::Images => flag.into_iter().for_each(|v| self.images = v),
+        }
+        *self != before
+    }
+}
+
+fn on_off(on: bool) -> String {
+    if on { "On" } else { "Off" }.to_string()
 }
 
 #[cfg(test)]
@@ -414,6 +894,110 @@ mod tests {
             assert_eq!(NewCard::from_id(c.id()), Some(c));
         }
         assert!(Key::NewCard.words().contains("Start page"));
+    }
+
+    #[test]
+    fn browsing_settings_step_and_read() {
+        let mut s = Settings::default();
+        assert_eq!(s.value(Key::DefaultZoom), "100%");
+        assert!(s.step(Key::DefaultZoom, 1));
+        assert_eq!(s.default_zoom_factor(), 1.1);
+        s.default_zoom = 200;
+        assert!(!s.step(Key::DefaultZoom, 1), "stops at the top");
+        s.default_zoom = 50;
+        assert!(!s.step(Key::DefaultZoom, -1), "and the bottom");
+        // A value between choices (edited by hand) goes to the nearer one that way.
+        s.default_zoom = 105;
+        s.step(Key::DefaultZoom, -1);
+        assert_eq!(s.default_zoom, 100);
+
+        assert_eq!(s.value(Key::Language), "System");
+        assert!(s.step(Key::Language, 1));
+        assert_eq!((s.language, s.value(Key::Language).as_str()), ("en-US", "English (US)"));
+        assert!(s.step(Key::Language, -1));
+        assert!(s.step(Key::Language, -1));
+        assert_eq!(s.language, "zh-TW", "wraps");
+
+        assert_eq!(s.permission(Key::Camera), Some(Permission::Ask));
+        assert!(s.step(Key::Camera, 1));
+        assert_eq!(s.value(Key::Camera), "Allow");
+        assert_eq!(s.permission(Key::Microphone), Some(Permission::Ask), "each on its own");
+        assert_eq!(s.permission(Key::Images), None);
+
+        assert!(s.step(Key::DownloadTo, -1));
+        assert_eq!(s.download_to, DownloadTo::Ask);
+        assert!(s.step(Key::Proxy, -1));
+        assert_eq!(s.value(Key::Proxy), "Custom");
+        s.proxy_server = "127.0.0.1:8080".into();
+        assert_eq!(s.value(Key::Proxy), "Custom · 127.0.0.1:8080");
+
+        for k in [Key::Spellcheck, Key::JavaScript, Key::Images] {
+            assert_eq!(s.value(k), "On");
+            assert!(s.step(k, 1));
+            assert_eq!(s.value(k), "Off");
+        }
+        for k in [Key::ThirdPartyCookies, Key::DoNotTrack] {
+            assert_eq!(s.value(k), "Off");
+            assert!(s.step(k, 1));
+            assert_eq!(s.value(k), "On");
+        }
+        assert!(Key::ALL.iter().all(|k| !k.label().is_empty()));
+        assert!(Key::Camera.words().contains("Block"));
+        assert!(Key::Language.words().contains("Hindi"));
+    }
+
+    #[test]
+    fn every_setting_can_be_chosen_by_id() {
+        for k in Key::ALL {
+            assert_eq!(Key::from_id(k.id()), Some(k));
+            let mut s = Settings::default();
+            let choices = s.choices(k);
+            assert!(choices.len() >= 2, "{k:?}");
+            assert!(choices.iter().any(|(id, _)| *id == s.choice(k)), "{k:?}: current is a choice");
+            for (id, _) in &choices {
+                s.choose(k, id);
+                assert_eq!(&s.choice(k), id, "{k:?}");
+            }
+            let before = s.clone();
+            assert!(!s.choose(k, "no-such-value"), "{k:?}");
+            assert_eq!(s, before);
+        }
+        let mut s = Settings::default();
+        assert!(s.choose(Key::Search, "kagi"));
+        assert_eq!(s.search, SearchEngine::Kagi);
+        assert!(!s.choose(Key::Search, "kagi"), "unchanged");
+        assert!(s.choose(Key::BlockAds, "off"));
+        assert!(!s.block_ads);
+        assert!(!s.choose(Key::LivePages, "0"), "out of range");
+        // A number outside the usual choices is offered too.
+        s.live_pages = 5;
+        assert!(s.choices(Key::LivePages).iter().any(|(id, _)| id == "5"));
+        assert!(Key::History.is_switch() && !Key::Proxy.is_switch());
+    }
+
+    #[test]
+    fn languages_become_accept_language_lists() {
+        assert_eq!(locale_tag("en_IN.UTF-8"), "en-IN");
+        assert_eq!(locale_tag("de_DE@euro"), "de-DE");
+        assert_eq!(locale_tag("C"), "en-US");
+        assert_eq!(locale_tag(""), "en-US");
+        assert_eq!(language_tag("system", "fr_FR.UTF-8"), "fr-FR");
+        assert_eq!(language_tag("hi-IN", "fr_FR.UTF-8"), "hi-IN");
+        assert_eq!(accept_languages("hi-IN"), "hi-IN,hi,en-US,en");
+        assert_eq!(accept_languages("en-US"), "en-US,en");
+        assert_eq!(accept_languages("en-GB"), "en-GB,en,en-US");
+        assert_eq!(accept_languages("ja"), "ja,en-US,en");
+        assert_eq!(language_from_id("pt-BR"), Some("pt-BR"));
+        assert_eq!(language_from_id("xx"), None);
+        for p in Permission::ALL {
+            assert_eq!(Permission::from_id(p.id()), Some(p));
+        }
+        for d in DownloadTo::ALL {
+            assert_eq!(DownloadTo::from_id(d.id()), Some(d));
+        }
+        for p in Proxy::ALL {
+            assert_eq!(Proxy::from_id(p.id()), Some(p));
+        }
     }
 
     #[test]

@@ -24,6 +24,11 @@ pub const ENGINES_URL: &str = "trailboard:engines";
 /// The search engine guide's title.
 pub const ENGINES_TITLE: &str = "Search engines";
 
+/// The `url` of the settings page card (the app builds its page).
+pub const SETTINGS_URL: &str = "trailboard:settings";
+/// The settings page's title.
+pub const SETTINGS_TITLE: &str = "Settings";
+
 /// Title shown for a note without any text.
 pub const UNTITLED: &str = "Note";
 
@@ -217,6 +222,18 @@ impl Scene {
         self.all_nodes().find(|n| n.note.is_none() && n.url == ENGINES_URL).map(|n| n.id)
     }
 
+    /// The settings page card, if the board has one.
+    pub fn settings_card(&self) -> Option<NodeId> {
+        self.all_nodes().find(|n| n.note.is_none() && n.url == SETTINGS_URL).map(|n| n.id)
+    }
+
+    /// Adds the settings page as a card at `rect`.
+    pub fn add_settings(&mut self, rect: Rect) -> NodeId {
+        let id = self.add_page(rect, SETTINGS_URL);
+        self.nodes.get_mut(&id).expect("just added").title = SETTINGS_TITLE.to_string();
+        id
+    }
+
     /// Adds a start page as a card at `rect`.
     pub fn add_start(&mut self, rect: Rect) -> NodeId {
         let id = self.add_page(rect, START_URL);
@@ -372,6 +389,17 @@ mod tests {
         let n = s.node(w).unwrap();
         assert!(!n.is_note());
         assert_eq!((n.url.as_str(), n.title.as_str()), (WELCOME_URL, WELCOME_TITLE));
+    }
+
+    #[test]
+    fn the_settings_page_is_a_card_found_by_its_address() {
+        let mut s = Scene::new();
+        assert_eq!(s.settings_card(), None);
+        let id = s.add_settings(Rect::new(0.0, 0.0, 980.0, 780.0));
+        assert_eq!(s.settings_card(), Some(id));
+        let n = s.node(id).unwrap();
+        assert!(!n.is_note());
+        assert_eq!((n.url.as_str(), n.title.as_str()), (SETTINGS_URL, SETTINGS_TITLE));
     }
 
     #[test]

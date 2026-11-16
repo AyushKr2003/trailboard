@@ -10,7 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use scene::privacy::{AllowedSites, LISTS, USER_LIST};
+use scene::privacy::{self, AllowedSites, LISTS, USER_LIST};
 use serde::{Deserialize, Serialize};
 
 use crate::write_atomic;
@@ -87,22 +87,31 @@ pub fn load_user_list(data_dir: &Path) -> Option<String> {
     fs::read(list_path(data_dir, USER_LIST)).ok().map(|b| String::from_utf8_lossy(&b).into_owned())
 }
 
-/// The text of every list there is: the fetched ones in [`LISTS`] order, then
-/// the user's own. Missing or unreadable lists are left out.
-pub fn load_lists(data_dir: &Path) -> Vec<(String, String)> {
-    let ids = LISTS.iter().map(|l| l.id).chain([USER_LIST]);
-    ids.filter_map(|id| {
-        let path = list_path(data_dir, id);
-        match fs::read(&path) {
-            Ok(bytes) => Some((id.to_string(), String::from_utf8_lossy(&bytes).into_owned())),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => {
-                log::warn!("{}: {e}", path.display());
-                None
-            }
+/// The saved text of list (or part) `id`, `None` if missing or unreadable.
+pub fn load_list(data_dir: &Path, id: &str) -> Option<String> {
+    let path = list_path(data_dir, id);
+    match fs::read(&path) {
+        Ok(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            log::warn!("{}: {e}", path.display());
+            None
         }
-    })
-    .collect()
+    }
+}
+
+/// The text of every list there is, ready for the engine: the fetched ones
+/// in [`LISTS`] order (with their saved `!#include` parts spliced in and the
+/// `!#if` blocks that don't apply dropped, see [`privacy::preprocess`]),
+/// then the user's own, as written. Missing or unreadable lists are left out.
+pub fn load_lists(data_dir: &Path) -> Vec<(String, String)> {
+    let fetched = LISTS.iter().filter_map(|l| {
+        let text = load_list(data_dir, l.id)?;
+        let part = |name: &str| load_list(data_dir, &privacy::include_id(l.id, name));
+        Some((l.id.to_string(), privacy::preprocess(&text, &part)))
+    });
+    let user = load_list(data_dir, USER_LIST).map(|t| (USER_LIST.to_string(), t));
+    fetched.chain(user).collect()
 }
 
 #[cfg(test)]
@@ -141,6 +150,18 @@ mod tests {
         let age = list_age(dir.path(), "easylist", now + Duration::from_secs(100)).unwrap();
         assert!((99..=101).contains(&age), "{age}");
         assert_eq!(list_age(dir.path(), "easylist", now - Duration::from_secs(100)), Some(0), "clock went back");
+    }
+
+    #[test]
+    fn lists_come_with_their_parts() {
+        let dir = tempfile::tempdir().unwrap();
+        save_list(dir.path(), "ublock-filters", "! Title: uBlock filters\n||a^\n!#include filters-2024.txt\n!#if env_firefox\n||ff^\n!#endif\n").unwrap();
+        let lists = load_lists(dir.path());
+        assert_eq!(lists[0].1, "! Title: uBlock filters\n||a^\n", "a part not fetched yet is left out");
+        save_list(dir.path(), &scene::privacy::include_id("ublock-filters", "filters-2024.txt"), "! part\n||b^").unwrap();
+        let lists = load_lists(dir.path());
+        assert_eq!(lists.len(), 1, "a part is not a list of its own");
+        assert_eq!(lists[0].1, "! Title: uBlock filters\n||a^\n! part\n||b^\n");
     }
 
     #[test]

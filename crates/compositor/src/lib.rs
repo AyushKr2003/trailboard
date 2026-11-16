@@ -61,6 +61,9 @@ pub struct Quad {
     pub texture: Option<u64>,
 }
 
+/// Shaping width for a single line: wide enough that nothing wraps.
+const LINE: f32 = 100_000.0;
+
 #[derive(Clone, Debug)]
 pub struct Text {
     pub text: String,
@@ -400,8 +403,26 @@ impl Renderer {
 
     /// Width in px of `text` at `size` (single line), for layout.
     pub fn measure(&mut self, text: &str, size: f32, bold: bool) -> f32 {
-        let key = self.shape(text, size, 100_000.0, bold);
+        let key = self.shape(text, size, LINE, bold);
         self.text_cache[&key].layout_runs().map(|r| r.line_w).fold(0.0, f32::max)
+    }
+
+    /// `text` cut with "…" to fit `max_w` px at `size`, or as is if it fits.
+    /// Every text is drawn this way, so a label never wraps or stops mid-letter.
+    pub fn ellipsize(&mut self, text: &str, size: f32, bold: bool, max_w: f32) -> String {
+        // Half a pixel of slack: rounding mustn't cut a label that fits.
+        let max_w = max_w + 0.5;
+        if self.measure(text, size, bold) <= max_w {
+            return text.to_string();
+        }
+        let chars: Vec<char> = text.chars().collect();
+        let cut = |n: usize| format!("{}…", chars[..n].iter().collect::<String>().trim_end());
+        let (mut lo, mut hi) = (0, chars.len());
+        while lo < hi {
+            let mid = (lo + hi).div_ceil(2);
+            if self.measure(&cut(mid), size, bold) <= max_w { lo = mid } else { hi = mid - 1 }
+        }
+        if lo == 0 { String::new() } else { cut(lo) }
     }
 
     /// Shapes `text` into the cache (if not already there) and returns its key.
@@ -504,10 +525,16 @@ impl Renderer {
             self.text_layers.push(r);
         }
         for (i, layer) in layers.iter().enumerate() {
-            let keys: Vec<TextKey> = layer
-                .texts
-                .iter()
-                .map(|t| self.shape(&t.text, t.size, t.clip.w.max(1.0).ceil(), t.bold))
+            // One line each, cut with "…" at the clip's right edge (an input
+            // scrolled left has its start before the clip, so it is measured
+            // from where the text starts, not from the clip).
+            let keys: Vec<TextKey> = (0..layer.texts.len())
+                .map(|j| {
+                    let t = &layer.texts[j];
+                    let room = t.clip.right() - t.pos[0];
+                    let text = if room > 0.0 { self.ellipsize(&t.text, t.size, t.bold, room) } else { t.text.clone() };
+                    self.shape(&text, t.size, LINE, t.bold)
+                })
                 .collect();
             let areas: Vec<TextArea> = layer
                 .texts

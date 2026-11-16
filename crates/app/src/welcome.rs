@@ -33,7 +33,8 @@ pub fn action(name: &str) -> Option<Action> {
     })
 }
 
-/// The theme as the page's CSS variables (and a `light` flag), a JSON object.
+/// The theme as the page's CSS variables (colours and `radius`, Hyprland's
+/// window rounding) and a `light` flag, a JSON object.
 pub(crate) fn colors(th: &Theme) -> String {
     let bg = th.placeholder();
     let vars = [
@@ -46,8 +47,17 @@ pub(crate) fn colors(th: &Theme) -> String {
         ("rule", th.divider()),
         ("board", mix(th.board(None), bg, 0.5)),
     ];
-    let body: Vec<String> = vars.iter().map(|(k, c)| format!("\"{k}\":\"{}\"", hex(*c))).collect();
-    format!("{{{},\"light\":{}}}", body.join(","), th.light())
+    let body: Vec<String> = vars
+        .iter()
+        .map(|(k, c)| format!("\"{k}\":\"{}\"", hex(*c)))
+        .collect();
+    // Hyprland's window rounding, so app pages' corners match the windows'.
+    format!(
+        "{{{},\"radius\":\"{}px\",\"light\":{}}}",
+        body.join(","),
+        th.rounding.max(0.0),
+        th.light()
+    )
 }
 
 /// The welcome page for theme `th`.

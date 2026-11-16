@@ -97,9 +97,12 @@ All notable changes to Trailboard. The format follows
 - **Pages no longer start at a stale zoom.** Chromium saved our raster
   zoom per site (and whole `data:` pages as keys, ~420 KB in `Preferences`),
   so a card opening a site it had seen first laid out at an old board scale,
-  then jumped. Those saved zooms are dropped at launch, Chromium's default
-  zoom follows the raster scale (it takes effect from the next launch), and
-  cards that start or wake get the settled scale before they are made.
+  then jumped. Those saved zooms (and a saved default zoom) are dropped at
+  launch, Chromium's default zoom stays at 100%, and cards that start or
+  wake get the settled scale before they are made. Moving the default zoom
+  with the board's scale was tried and dropped: Chromium only reads it at
+  startup, so a page asked for the new default snapped back to the old one,
+  and Read Mode sometimes showed pages at 75%.
   Leaving Read Mode puts pages straight back at the board's scale instead
   of 1:1 first and the board's scale a moment later.
 - **Every new card is the same size**, 1024×720 (`scene::CARD_W`/`CARD_H`):

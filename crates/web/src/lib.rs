@@ -1325,7 +1325,6 @@ impl Jar {
         };
         let ctx = request_context_create_context(Some(&settings), None)?;
         prefs::apply_to(&ctx);
-        prefs::set_default_zoom(&ctx);
         Some(Jar(ctx))
     }
 
@@ -1498,8 +1497,8 @@ impl Page {
         1.2f64.powf(level) / *self.shared.scale.borrow() as f64
     }
 
-    /// Chromium's default zoom as a factor over the raster scale: 1.0 once
-    /// [`prefs::set_raster_scale`] has reached this page's context.
+    /// Chromium's default zoom as a factor over the raster scale (its default
+    /// stays 100%, so this is 1 / scale).
     pub fn default_zoom_factor(&self) -> f64 {
         let level = self.host().map_or(0.0, |h| h.default_zoom_level());
         1.2f64.powf(level) / *self.shared.scale.borrow() as f64

@@ -1203,7 +1203,6 @@ impl App {
             ),
             None => (n.url.clone(), web::PageKind::Web),
         };
-        self.sync_default_zoom();
         let jar = self.jar.as_ref();
         match Page::new(self.page_key(id), &url, kind, (r.w as i32, r.h as i32), self.page_scale, &self.spawn_beside, jar) {
             Some(page) => {
@@ -3688,8 +3687,6 @@ impl App {
             self.page_scale = self.settled_page_scale();
         }
         self.sync_liveness(settled && !matches!(self.drag, Drag::Pan { .. }));
-        // Before the pages: those without a zoom of their own follow it at once.
-        self.sync_default_zoom();
         let vp = self.viewport();
         let screen = Rect::new(0.0, 0.0, vp.x, vp.y);
         let page_scale = self.page_scale;
@@ -3724,13 +3721,6 @@ impl App {
     /// The raster scale for camera `zoom` on a window of `scale`.
     fn page_scale_for(zoom: f32, scale: f32) -> f32 {
         ((zoom * scale) * 4.0).round().clamp(2.0, 8.0) / 4.0
-    }
-
-    /// Makes the raster scale Chromium's default zoom (in every cookie jar),
-    /// so pages open at it rather than at 100% and then shrink or grow.
-    fn sync_default_zoom(&self) {
-        let jars: Vec<&web::Jar> = self.jar.iter().chain(self.sessions.values().filter_map(|s| s.jar.as_ref())).collect();
-        web::prefs::set_raster_scale(self.page_scale, &jars);
     }
 
     /// Keep at most `max_live` live browsers. Sleeping cards on screen wake only

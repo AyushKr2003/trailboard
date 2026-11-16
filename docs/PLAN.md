@@ -100,9 +100,10 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
 - ✅ Zoom on card start, board zoom and Read Mode (2026-11-16). Chromium
   saved our raster zooms per site (stale scales, `data:` pages keyed by their
   text), so pages first laid out at an old scale: `web::prefs::forget_saved_zooms`
-  drops them at launch; `prefs::set_raster_scale` keeps
-  `partition.default_zoom_level` at the raster scale (Chromium reads it only
-  at startup, so it helps from the next launch); `page_scale` is settled
+  drops them at launch, with `partition.default_zoom_level`, which stays 100%
+  (Chromium reads it only at startup; moving it at run time made a page
+  asked for the new default fall back to the startup one, so Read Mode
+  showed pages at 75%); `page_scale` is settled
   before pages are made or woken, and leaving Read Mode goes straight to the
   board's scale. Still open: Chromium shares zoom per site and applies zoom
   and size as two updates, so same-site cards can lay out once at a

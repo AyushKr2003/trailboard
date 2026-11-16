@@ -19,6 +19,15 @@ All notable changes to Trailboard. The format follows
   turns JavaScript or images on or off for one site (`sites.json`).
 
 ### Changed
+- **A redesigned welcome page**: the title on one line, the buttons
+  (with *All shortcuts*), then a wide picture of a board drawn the way
+  Trailboard draws one: trails leave a card's right edge and enter the
+  next one's left at title-bar height, the current card has its ring and
+  glow, a trail's name sits on its tag, a sticky note has its strip, and
+  every corner follows Hyprland's rounding. A key under it says what each
+  part is. Keys show as one keycap each, as in the shortcut sheet, the
+  "where your keys go" cards show the thin and the heavy ring, and the
+  four first steps sit in one row.
 - **A new shortcut sheet** (`?` or F1): a panel at most three quarters of
   the window (smaller when it needs less) instead of one filling it, with
   the sections in one to three balanced columns as the width allows. What

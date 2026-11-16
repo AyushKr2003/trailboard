@@ -46,6 +46,14 @@ pub(crate) fn colors(th: &Theme) -> String {
         ("card", th.card(false)),
         ("rule", th.divider()),
         ("board", mix(th.board(None), bg, 0.5)),
+        // For drawing the board as the app does: its colour and dots, a
+        // sticky note (paper, strip, ink) and a second trail colour.
+        ("boardbg", th.board(None)),
+        ("dots", th.dots()),
+        ("sticky", th.sticky_paper("yellow")),
+        ("stickystrip", th.sticky_strip("yellow", false)),
+        ("stickyink", th.sticky_ink("yellow")),
+        ("trail2", th.trail(Some("green"))),
     ];
     let body: Vec<String> = vars
         .iter()

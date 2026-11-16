@@ -1228,7 +1228,11 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     than replace it.
 - ✅ First-run defaults: the very first start adds the welcome page
   (`crates/app/src/welcome.html`; a Markdown note, `guide.md`, until
-  2026-11-15) to the left of the first page, and the view fits both. Decisions (2026-11-14):
+  2026-11-15) to the left of the first page, and the view fits both. Redesigned
+  2026-11-16: its board picture is drawn by script from card data with the
+  app's own geometry (trail anchors at 0.6 of the title bar, S-curve handles
+  halfway, rings, tags, sticky strip) and the theme's board, dot and sticky
+  colours (`welcome::colors`). Decisions (2026-11-14):
   - "First run" means nothing was ever saved in the data folder: no
     `spaces.json`, no space boards, no old `board.json`
     (`storage::spaces::is_first_run`, asked before `open_spaces` writes the

@@ -39,7 +39,9 @@ All notable changes to Trailboard. The format follows
     pages update at once.
 
 ### Changed
-- **A short README**: what Trailboard is, install, the ten keys you need.
+- **A new README** built around real screenshots (`docs/images/`): the board
+  with a trail, how it works in three steps, the palette and sidebar, install
+  for Arch and other distros, and the ten keys you need.
   The full reference (every shortcut, cards, history, downloads, blocking,
   settings, data folders, tests) moved to `docs/GUIDE.md`, which the Arch
   package and the bundle now ship.

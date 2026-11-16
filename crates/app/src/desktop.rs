@@ -5,7 +5,10 @@
 //!   later works without a restart);
 //! - Hyprland's window rounding, asked of `hyprctl` at start and again whenever
 //!   Hyprland's event socket announces `configreloaded` (it reconnects with
-//!   back-off if the socket drops).
+//!   back-off if the socket drops);
+//! - the size a full window gets on an empty workspace of the focused
+//!   monitor (new cards take its shape), asked at start and again on a
+//!   reload or when monitors come, go or take the focus.
 //!
 //! Watchers run off the main thread and report through a channel that the app
 //! drains once per frame; they never touch app or CEF state.
@@ -27,6 +30,8 @@ pub enum Event {
     Files,
     /// Hyprland's `decoration:rounding`.
     Rounding(f32),
+    /// The size of a full window on an empty workspace, logical px.
+    FullWindow(f32, f32),
 }
 
 /// Theme files settle this long after the last change before they are read.
@@ -40,6 +45,8 @@ pub struct Desktop {
     watcher: Option<RecommendedWatcher>,
     /// A file change waiting for the debounce to pass.
     pending: Option<Instant>,
+    /// The size of a full window on an empty workspace, once Hyprland said.
+    full_window: Option<(f32, f32)>,
 }
 
 impl Desktop {
@@ -56,11 +63,13 @@ impl Desktop {
             .map_err(|e| log::warn!("can't watch the Omarchy theme: {e}"))
             .ok()
         };
-        let mut d = Desktop { state, user_shell, tx, rx, watcher, pending: None };
+        let mut d = Desktop { state, user_shell, tx, rx, watcher, pending: None, full_window: None };
         d.arm();
         if start_hyprland
             && let Some(socket) = hyprland_socket()
         {
+            // Asked now as well, so the first cards already have its shape.
+            d.full_window = ask_full_window(Path::new("hyprctl"));
             let tx = d.tx.clone();
             std::thread::Builder::new()
                 .name("hyprland-events".into())
@@ -100,6 +109,12 @@ impl Desktop {
         }
     }
 
+    /// The size a full window gets on an empty workspace (logical px), as
+    /// Hyprland last said; `None` without Hyprland. Updated by [`Desktop::poll`].
+    pub fn full_window(&self) -> Option<(f32, f32)> {
+        self.full_window
+    }
+
     /// New values since the last call: a new theme when files settled, or a new rounding.
     pub fn poll(&mut self, current: &Theme) -> Option<Theme> {
         let mut rounding = None;
@@ -107,6 +122,7 @@ impl Desktop {
             match ev {
                 Event::Files => self.pending = Some(Instant::now()),
                 Event::Rounding(r) => rounding = Some(r),
+                Event::FullWindow(w, h) => self.full_window = Some((w, h)),
             }
         }
         let mut next = None;
@@ -148,12 +164,69 @@ fn ask_rounding(hyprctl: &Path) -> Option<f32> {
     theme::parse_rounding(&String::from_utf8_lossy(&out.stdout))
 }
 
-/// Runs until the app goes away: reports the rounding on every connection to
-/// the event socket and after every `configreloaded`.
+/// Asks `hyprctl` what size a full window gets on an empty workspace.
+fn ask_full_window(hyprctl: &Path) -> Option<(f32, f32)> {
+    let ask = |args: &[&str]| -> Option<String> {
+        let out = Command::new(hyprctl).args(args).output().ok()?;
+        out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+    full_window(
+        &ask(&["-j", "monitors"])?,
+        &ask(&["-j", "getoption", "general:gaps_out"]).unwrap_or_default(),
+        &ask(&["-j", "getoption", "general:border_size"]).unwrap_or_default(),
+    )
+}
+
+/// The size (logical px) of a full window on an empty workspace of the
+/// focused monitor (else the first), from `hyprctl -j monitors` and the
+/// `general:gaps_out` and `general:border_size` options: the monitor, turned
+/// as it is and at its scale, less what bars reserve, the outer gaps and the
+/// window's border on each side. A missing gap or border counts as none.
+pub fn full_window(monitors: &str, gaps_out: &str, border_size: &str) -> Option<(f32, f32)> {
+    let list: Vec<serde_json::Value> = serde_json::from_str(monitors).ok()?;
+    let m = list.iter().find(|m| m["focused"].as_bool() == Some(true)).or_else(|| list.first())?;
+    let scale = m["scale"].as_f64().filter(|s| *s > 0.0).unwrap_or(1.0);
+    let (mut w, mut h) = (m["width"].as_f64()? / scale, m["height"].as_f64()? / scale);
+    if m["transform"].as_i64().unwrap_or(0) % 2 == 1 {
+        std::mem::swap(&mut w, &mut h);
+    }
+    let reserved: Vec<f64> = m["reserved"].as_array().map(|r| r.iter().filter_map(|v| v.as_f64()).collect()).unwrap_or_default();
+    let r = |i: usize| reserved.get(i).copied().unwrap_or(0.0);
+    // Gaps: one value for all sides, or CSS order (top right bottom left).
+    let g: serde_json::Value = serde_json::from_str(gaps_out).unwrap_or_default();
+    let gaps: Vec<f64> = match (g["css"].as_str(), g["int"].as_f64()) {
+        (Some(css), _) => css.split_whitespace().filter_map(|v| v.parse().ok()).collect(),
+        (None, Some(n)) => vec![n],
+        _ => Vec::new(),
+    };
+    let gap = |side: usize| match gaps.len() {
+        0 => 0.0,
+        1 => gaps[0],
+        2 => gaps[side % 2],
+        3 => gaps[if side == 3 { 1 } else { side }],
+        _ => gaps[side],
+    };
+    let b: serde_json::Value = serde_json::from_str(border_size).unwrap_or_default();
+    let border = b["int"].as_f64().unwrap_or(0.0).max(0.0);
+    let w = w - r(0) - r(2) - gap(1) - gap(3) - 2.0 * border;
+    let h = h - r(1) - r(3) - gap(0) - gap(2) - 2.0 * border;
+    (w > 0.0 && h > 0.0).then_some((w as f32, h as f32))
+}
+
+/// Runs until the app goes away: reports the rounding and the full window's
+/// size on every connection to the event socket, after every
+/// `configreloaded`, and (the size) when monitors change.
 fn follow_hyprland(tx: Sender<Event>, hyprctl: &Path, socket: &Path) {
-    let report = |tx: &Sender<Event>| match ask_rounding(hyprctl) {
-        Some(r) => tx.send(Event::Rounding(r)).is_ok(),
+    let size = |tx: &Sender<Event>| match ask_full_window(hyprctl) {
+        Some((w, h)) => tx.send(Event::FullWindow(w, h)).is_ok(),
         None => true,
+    };
+    let report = |tx: &Sender<Event>| {
+        let ok = match ask_rounding(hyprctl) {
+            Some(r) => tx.send(Event::Rounding(r)).is_ok(),
+            None => true,
+        };
+        ok && size(tx)
     };
     let mut backoff = Duration::from_secs(1);
     let mut asked = false;
@@ -168,6 +241,10 @@ fn follow_hyprland(tx: Sender<Event>, hyprctl: &Path, socket: &Path) {
             for line in BufReader::new(stream).lines() {
                 let Ok(line) = line else { break };
                 if line.starts_with("configreloaded>>") && !report(&tx) {
+                    return;
+                }
+                let monitors = ["monitoraddedv2>>", "monitorremovedv2>>", "focusedmonv2>>"];
+                if monitors.iter().any(|e| line.starts_with(e)) && !size(&tx) {
                     return;
                 }
             }
@@ -188,6 +265,26 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn a_full_window_is_the_screen_less_bars_gaps_and_borders() {
+        let mon = r#"[{"name":"DP-1","width":2560,"height":1440,"scale":1.0,"transform":0,"reserved":[0,0,0,0],"focused":false},
+                     {"name":"eDP-1","width":1920,"height":1080,"scale":1.0,"transform":0,"reserved":[0,26,0,0],"focused":true}]"#;
+        let gaps = r#"{"option": "general:gaps_out", "css": "10 10 10 10", "set": true }"#;
+        let border = r#"{"option": "general:border_size", "int": 2, "set": true }"#;
+        // As Hyprland sizes a lone window on this machine: 1896×1030.
+        assert_eq!(full_window(mon, gaps, border), Some((1896.0, 1030.0)));
+        // Without gap or border options, only the bar comes off.
+        assert_eq!(full_window(mon, "", "garbage"), Some((1920.0, 1054.0)));
+        // One gap for all sides, a scaled monitor turned on its side.
+        let turned = r#"[{"width":2880,"height":1800,"scale":2.0,"transform":1,"reserved":[0,0,0,30]}]"#;
+        assert_eq!(full_window(turned, r#"{"int":5}"#, r#"{"int":0}"#), Some((890.0, 1400.0)));
+        // Two values: top and bottom, then left and right.
+        let plain = r#"[{"width":1000,"height":800,"scale":1.0,"reserved":[0,0,0,0]}]"#;
+        assert_eq!(full_window(plain, r#"{"css":"20 40"}"#, ""), Some((920.0, 760.0)));
+        assert_eq!(full_window("[]", gaps, border), None);
+        assert_eq!(full_window("not json", gaps, border), None);
+    }
     use std::os::unix::net::UnixListener;
 
     fn fake_hyprctl(dir: &Path, rounding: i32) -> PathBuf {

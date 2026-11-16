@@ -17,6 +17,7 @@
 //! press 10 10          # left press only (then `move`s, `release`): to look mid-drag
 //! release 300 200      # left release
 //! sclick 400 300       # Shift+click (add/remove a card from the selection)
+//! rclick 400 300       # right-click (on the empty board: its menu)
 //! key ctrl+shift+z     # press + release a key combo (US layout names, see keymap::KeyIn::from_name)
 //! type hello world     (no comment: the rest of the line is typed, `#` included, one key press per character)
 //! ime-preedit 你好       # IME composition text (empty cancels it)
@@ -47,6 +48,8 @@ pub enum Cmd {
     Wait(u64),
     Move(f32, f32),
     Click(f32, f32, bool),
+    /// Right press + release at a point.
+    RightClick(f32, f32),
     /// Click inside card `id`'s page at CSS px; `right` uses the right button.
     PageClick { id: u64, x: f32, y: f32, right: bool },
     Wheel(f32, f32),
@@ -132,6 +135,7 @@ fn parse(line: &str) -> Option<Cmd> {
         "wait" => Cmd::Wait(num(0) as u64),
         "move" => Cmd::Move(num(0), num(1)),
         "click" | "sclick" => Cmd::Click(num(0), num(1), word == "sclick"),
+        "rclick" => Cmd::RightClick(num(0), num(1)),
         "pclick" | "prclick" => Cmd::PageClick { id: num(0) as u64, x: num(1), y: num(2), right: word == "prclick" },
         "wheel" => Cmd::Wheel(num(0), num(1)),
         "touchpad" => Cmd::Touchpad { dx: num(0), dy: num(1), end: rest.split_whitespace().nth(2) == Some("end") },

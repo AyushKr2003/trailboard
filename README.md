@@ -111,14 +111,19 @@ with *Welcome page* in Ctrl+K.
 | Follow a link by keyboard | f labels the links in the current card's page; type a label to open it beside (Esc cancels) |
 | Close the current card / quit | Delete / Q (Ctrl+Q works everywhere) |
 | Focus a page | click it (keyboard and scroll then go to the page) |
-| Move / resize a card | drag its title bar / bottom-right corner |
-| Select cards | Shift+drag on the board, Shift+click title bars, Ctrl+A (Esc clears) |
-| Move / close selected cards | drag a selected title bar / Delete |
-| Fill the view with a card | double-click its title bar |
+| Move / resize a card | drag the label above it / its bottom-right corner |
+| Select cards | Shift+drag on the board, Shift+click labels, Ctrl+A (Esc clears) |
+| Move / close selected cards | drag a selected card's label / Delete |
+| Fill the view with a card | double-click its label |
 | Read Mode (page fills the window) | Tab (Tab or Esc to go back) |
-| Close card / reopen closed | × or Ctrl+W / Ctrl+Shift+T |
-| Undo / redo board edits | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y (after clicking the board or a title bar) |
+| Close card / reopen closed | × on its label or Ctrl+W / Ctrl+Shift+T |
+| Back / forward / reload with the pointer | the arrows on the label of the card under the pointer |
+| Board menu: new page, note, tidy, fold, fit, history, settings | right-click the empty board |
+| Spaces menu | click the space's name, top left (the button beside it opens the sidebar); *Show the space panel* in the settings hides both |
+| Undo / redo board edits | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y (after clicking the board or a card's label) |
 | Address bar / new card | Ctrl+L / Ctrl+T; Shift+Enter opens what you typed beside the current card instead |
+| Start page: a search box and the pages you opened last (none in a private space) | *New start page* in Ctrl+K, or *New card opens: Start page* in the settings for Ctrl+T; ↓ from the box walks the pages, Enter opens one in the card |
+| Settings search | `/` in the settings page, Enter goes to the first match |
 | Palette: find a card (folded ones too, or by words in its page), a card you closed, a page from history, another space or a command | Ctrl+K, type a few letters, ↑/↓ (or Ctrl+N/P) and Enter, or click a row; the last row searches the web or opens what you typed. Shift+Enter (or Shift+click) opens a page from history or the last row beside the current card, joined to it like a link |
 | New note (Markdown) | N (while no page has the keys); click a note to edit, Esc or click away to see it rendered |
 | New sticky note / its next colour | Shift+N / C on it (while no page has the keys); drag its coloured strip to move it; *Make sticky note* / *Make note card* in a note's right-click menu |
@@ -155,11 +160,21 @@ with *Welcome page* in Ctrl+K.
 
 Input methods (e.g. fcitx5) work in pages and in the address bar.
 
-Each card's title bar shows its site's icon (kept per site under
-`icons/` in the data folder, so sleeping cards and restored boards keep theirs)
-and a moving bar while the page loads. Zoomed out too far to read titles, the
-card under the pointer (or else the current card) shows its icon and title in
-a label below it.
+New cards are shaped like a full window on an empty workspace (asked of
+Hyprland), else like the screen, else 16:9, at 1024 wide.
+
+A card is its page and nothing else. Its name sits on a label above it, the
+same size on screen at any zoom: the site's icon (kept per site under
+`icons/` in the data folder, so sleeping cards and restored boards keep
+theirs) and the title. On the card under the pointer and on the current card
+the label also shows the site's address, a shield with what the blocker
+stopped, and back, forward, reload and close. A line glides along the card's
+top edge while the page loads, and a sleeping card's label ends in a moon.
+When no card is in view, a line at the foot of the window offers *Fit
+everything*; an empty board offers *Open a page*.
+
+The interface is set in Inter (bundled, SIL OFL). Its design rules (levels,
+text strengths, type scale, icons) are in [docs/DESIGN.md](docs/DESIGN.md).
 
 Pages you open are remembered with their text in `page-text.db` in the data
 folder (the newest 5000), so Ctrl+K can find them by any word on them.
@@ -214,7 +229,7 @@ draws pages off screen, so `chrome://settings` isn't there):
 - *JavaScript* and *Images* on or off everywhere; the page menu turns either
   on or off for one site (kept in `sites.json`) and reloads its pages.
 - *Camera*, *Microphone*, *Location*, *Notifications*: Ask, Allow or Block.
-  Asked, a line at the top says which site wants what: Enter allows, Esc
+  Asked, a line at the foot of the window says which site wants what: Enter allows, Esc
   blocks, and the answer holds for that site until you quit. Pages only get
   location and the camera on secure sites (`https:` or `localhost`), and
   location has no position source in this Chromium build, so an allowed

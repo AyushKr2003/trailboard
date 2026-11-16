@@ -4,7 +4,7 @@
 //! (`web::APP_ACTION`); [`action`] says which names exist.
 
 use crate::note::{hex, percent_encode};
-use crate::theme::{Theme, mix};
+use crate::theme::{Rgb, Theme, mix};
 
 const PAGE: &str = include_str!("welcome.html");
 
@@ -28,18 +28,35 @@ pub fn action(name: &str) -> Option<Action> {
     })
 }
 
+/// The colour of the theme's shadows, opaque (pages add their own transparency).
+pub(crate) fn shade(th: &Theme) -> Rgb {
+    let c = th.shadow(1.0);
+    [(c[0] * 255.0).round() as u8, (c[1] * 255.0).round() as u8, (c[2] * 255.0).round() as u8]
+}
+
 /// The theme as the page's CSS variables (colours and `radius`, Hyprland's
 /// window rounding) and a `light` flag, a JSON object.
 pub(crate) fn colors(th: &Theme) -> String {
-    let bg = th.placeholder();
+    // An app page is a card: its ground is the card level, the boxes on it
+    // the panel level, its text the same three strengths as the chrome.
+    let bg = th.card(false);
     let vars = [
         ("bg", bg),
-        ("fg", th.foreground()),
-        ("dim", th.dim_text()),
+        ("fg", th.text()),
+        ("dim", th.text2()),
+        ("faint", th.text3()),
         ("accent", th.accent()),
         ("accentfg", th.accent_foreground()),
-        ("card", th.card(false)),
-        ("rule", th.divider()),
+        ("accenttext", th.accent_text()),
+        ("card", th.panel()),
+        ("hover", th.hover()),
+        ("well", th.well()),
+        ("rule", th.line()),
+        ("rulestrong", th.line_strong()),
+        ("accentsoft", th.accent_soft()),
+        ("danger", th.danger()),
+        // The hue shadows are made of (used with transparency).
+        ("shade", shade(th)),
         ("board", mix(th.board(None), bg, 0.5)),
         // For drawing the board as the app does: its colour and dots, a
         // sticky note (paper, strip, ink) and a second trail colour.

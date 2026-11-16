@@ -31,8 +31,9 @@ pub struct Background {
     /// Distance between dots, px (dots hidden below ~4px).
     pub grid_spacing: f32,
     pub dot_radius: f32,
-    /// How much darker the window's corners are than its middle (0 none).
-    pub vignette: f32,
+    /// Opacity (0–1) of the dots halfway between the main ones: they fade in
+    /// as the board zooms in, so the grid never jumps from one density to the next.
+    pub fine: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -43,6 +44,8 @@ pub enum Shape {
     RoundBottom { rect: Rect, radius: f32 },
     /// Soft shadow under a rounded rectangle.
     Shadow { rect: Rect, radius: f32, blur: f32 },
+    /// The outline of a rounded rectangle, `width` px wide, drawn inside `rect`.
+    Ring { rect: Rect, radius: f32, width: f32 },
     /// Thick line segment in screen px.
     Segment { from: [f32; 2], to: [f32; 2], width: f32 },
     /// A page texture shown at its own size from the top-left: `extent` is
@@ -99,7 +102,7 @@ struct Globals {
     grid_origin: [f32; 2],
     grid_spacing: f32,
     dot_radius: f32,
-    vignette: f32,
+    fine: f32,
     _pad: f32,
     bg: [f32; 4],
     dot: [f32; 4],
@@ -308,7 +311,12 @@ impl Renderer {
         );
         let white = make_tex_bind_group(&device, &tex_layout, &white_tex, &sampler);
 
-        let font_system = FontSystem::new();
+        // The interface is set in Inter (bundled, SIL OFL), so it looks the
+        // same on every desktop; other scripts fall back to the system's fonts.
+        let mut font_system = FontSystem::new();
+        for face in [&include_bytes!("../fonts/Inter-Regular.ttf")[..], &include_bytes!("../fonts/Inter-SemiBold.ttf")[..]] {
+            font_system.db_mut().load_font_data(face.to_vec());
+        }
         let swash = SwashCache::new();
         let cache = Cache::new(&device);
         let text_viewport = Viewport::new(&device, &cache);
@@ -432,10 +440,10 @@ impl Renderer {
             let fs = &mut self.font_system;
             let mut b = Buffer::new(fs, Metrics::new(size, size * 1.3));
             b.set_size(Some(width), Some(size * 1.6));
-            // BOLD, not SEMIBOLD: common sans fonts (e.g. Liberation Sans) ship no semibold
-            // face, and the fallback picked a serif face with broken digits and wide spaces.
-            let weight = if bold { Weight::BOLD } else { Weight::NORMAL };
-            b.set_text(text, &Attrs::new().family(Family::SansSerif).weight(weight), Shaping::Advanced, None);
+            // Emphasis is Inter's semibold: clear at small sizes without the
+            // heaviness of a bold.
+            let weight = if bold { Weight::SEMIBOLD } else { Weight::NORMAL };
+            b.set_text(text, &Attrs::new().family(Family::Name("Inter")).weight(weight), Shaping::Advanced, None);
             b.shape_until_scroll(fs, false);
             self.text_cache.insert(key.clone(), b);
         }
@@ -454,7 +462,7 @@ impl Renderer {
             grid_origin: bg.grid_origin,
             grid_spacing: bg.grid_spacing,
             dot_radius: bg.dot_radius,
-            vignette: bg.vignette,
+            fine: bg.fine,
             _pad: 0.0,
             bg: bg.color,
             dot: bg.dot,
@@ -492,6 +500,12 @@ impl Renderer {
                         a: [rect.x, rect.y, rect.w, rect.h],
                         color: q.color,
                         params: [0.0, radius, blur.max(0.5), 0.0],
+                        uv: FULL,
+                    },
+                    Shape::Ring { rect, radius, width } => Instance {
+                        a: [rect.x, rect.y, rect.w, rect.h],
+                        color: q.color,
+                        params: [3.0, radius, width.max(0.5), 0.0],
                         uv: FULL,
                     },
                     Shape::Segment { from, to, width } => Instance {

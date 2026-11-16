@@ -95,7 +95,6 @@ use scene::arrange::Arrange;
 use scene::hint;
 use scene::nav::{self, Dir};
 use scene::pagezoom::{self, SiteZooms};
-use scene::{CARD_H, CARD_W};
 use scene::settings::{self as prefs, Settings};
 use scene::{liveness, placement, read, selection, tidy, Camera, Change, Edge, History, Node, NodeId, Rect, Scene, Selection, TrailStep, Vec2};
 use storage::spaces::{self, SpaceId, SpaceIndex};
@@ -130,7 +129,19 @@ const ARRANGE_STEP: f32 = 40.0;
 const ARRANGE_FINE: f32 = 8.0;
 const ARRANGE_HELP: &str = "Moving · h j k l move · Shift resize · Ctrl fine · Enter done · Esc cancel";
 const RESIZE_GRIP: f32 = 18.0;
-const CLOSE_W: f32 = 30.0;
+/// A card's name sits on a label above it, the same size on screen at any
+/// zoom: its site's icon and title, and under the pointer (or on the current
+/// card) its buttons. The label is the card's handle: drag it to move the
+/// card. Sizes in px, times the UI scale.
+const BAR_H: f32 = 26.0;
+/// Between the label and the card.
+const BAR_GAP: f32 = 6.0;
+/// Width of a label button (close, reload, forward, back).
+const BAR_BTN: f32 = 24.0;
+/// A card narrower than this on screen has no room for back, forward and
+/// reload on its label; narrower than `BAR_CLOSE_MIN`, none for close either.
+const BAR_NAV_MIN: f32 = 280.0;
+const BAR_CLOSE_MIN: f32 = 96.0;
 /// Height of the Read Mode title bar, in overlay px (scaled by `ui()`).
 /// None: the page fills the whole window (Tab or Esc goes back).
 const READ_BAR: f32 = 0.0;
@@ -235,6 +246,9 @@ struct LinkHints {
 struct Card {
     page: Page,
     loading: bool,
+    /// The page has history to go back / forward to (its title bar's arrows).
+    can_back: bool,
+    can_forward: bool,
     hidden: bool,
     /// Cursor the page asked for, shown while the pointer is over its content.
     cursor: web::Cursor,
@@ -243,6 +257,7 @@ struct Card {
 /// Appear animations of the overlays.
 #[derive(Default)]
 struct Anims {
+    tip: crate::chrome::Appear,
     omnibox: crate::chrome::Appear,
     menu: crate::chrome::Appear,
     toast: crate::chrome::Appear,
@@ -424,6 +439,27 @@ pub struct App {
     parked: Vec<Page>,
     /// JavaScript and images per site (page menu), saved in `sites.json`.
     sites: scene::sitesettings::SiteSettings,
+    /// The controls over the board, as laid out last frame (for the pointer).
+    hud: crate::hud::Hud,
+    /// The control under the pointer, and since when (for its tooltip).
+    hud_hover: Option<(crate::hud::Control, Instant)>,
+    /// The left button is held on a control.
+    hud_down: bool,
+    /// The control whose menu is open.
+    hud_open: Option<crate::hud::Control>,
+    /// The size of a new card, shaped like the screen (`placement::card_size`).
+    card_size: Vec2,
+    /// What the pointer is over on the board (a label's buttons light up).
+    hover: Hit,
+    /// Where each card's label was drawn last frame (screen px), in draw
+    /// order, and the buttons on them, for the pointer.
+    bars: Vec<(NodeId, Rect)>,
+    bar_buttons: Vec<(Hit, Rect)>,
+    /// The button of the guidance line drawn last frame (an empty board, a
+    /// view with no card in it), and what it runs.
+    nudge: Option<(Rect, Command)>,
+    /// Read Mode's "back to the board" button, while it shows.
+    read_exit: Option<Rect>,
     /// A download waiting for the user to say where it goes (`Target::SaveAs`).
     save_as: Option<SaveAs>,
     /// Sites asking for a permission, waiting for Enter (allow) or Esc; the
@@ -638,6 +674,16 @@ impl App {
             download_ids: HashMap::new(),
             parked: Vec::new(),
             sites,
+            hud: crate::hud::Hud::default(),
+            hud_hover: None,
+            hud_down: false,
+            hud_open: None,
+            card_size: Vec2::new(scene::CARD_W, scene::CARD_H),
+            hover: Hit::Board,
+            bars: Vec::new(),
+            bar_buttons: Vec::new(),
+            nudge: None,
+            read_exit: None,
             save_as: None,
             asks: Vec::new(),
         };
@@ -985,8 +1031,29 @@ impl App {
     }
 
     fn follow_desktop(&mut self) {
+        let before = self.desktop.as_ref().and_then(Desktop::full_window);
         if let Some(t) = self.desktop.as_mut().and_then(|d| d.poll(&self.theme)) {
             self.set_theme(t);
+        }
+        if self.desktop.as_ref().and_then(Desktop::full_window) != before {
+            self.update_card_size();
+        }
+    }
+
+    /// New cards take the shape of a full window on an empty workspace
+    /// (from Hyprland), else of the monitor the window is on, else 16:9.
+    fn update_card_size(&mut self) {
+        let full = self.desktop.as_ref().and_then(Desktop::full_window).map(|(w, h)| Vec2::new(w, h));
+        // Wayland names the window's monitor only once it is shown: until
+        // then, the first monitor.
+        let screen = self.window().and_then(|w| w.current_monitor().or_else(|| w.available_monitors().next())).map(|m| {
+            let s = m.size().to_logical::<f32>(m.scale_factor());
+            Vec2::new(s.width, s.height)
+        });
+        let size = placement::card_size(full, screen);
+        if size != self.card_size {
+            log::info!("new cards: {}×{} (full window {full:?}, screen {screen:?})", size.x, size.y);
+            self.card_size = size;
         }
     }
 
@@ -1087,7 +1154,7 @@ impl App {
 
     fn open_card(&mut self, rect: Rect, url: &str, from: Option<NodeId>) -> Option<NodeId> {
         let id = match from {
-            Some(src) => self.scene.spawn_beside(src, url)?,
+            Some(src) => self.scene.spawn_beside_sized(src, url, self.card_size)?,
             None => self.scene.add_page(rect, url),
         };
         self.create_page(id);
@@ -1122,10 +1189,14 @@ impl App {
                 crate::engines::page_url(&self.theme, self.settings.search),
                 web::PageKind::App,
             ),
-            None if n.url == scene::note::START_URL => (
-                crate::start::page_url(&self.theme, self.settings.search),
-                web::PageKind::App,
-            ),
+            None if n.url == scene::note::START_URL => {
+                // A private space shows no history.
+                let visits = match (&self.page_index, self.is_private()) {
+                    (Some(index), false) => index.recent(4 * crate::start::RECENT).unwrap_or_default(),
+                    _ => Vec::new(),
+                };
+                (crate::start::page_url(&self.theme, self.settings.search, &crate::start::recent(&visits)), web::PageKind::App)
+            }
             None if n.url == scene::note::SETTINGS_URL => (
                 crate::settings_page::page_url(&self.theme, &self.settings_data()),
                 web::PageKind::App,
@@ -1136,7 +1207,7 @@ impl App {
         let jar = self.jar.as_ref();
         match Page::new(self.page_key(id), &url, kind, (r.w as i32, r.h as i32), self.page_scale, &self.spawn_beside, jar) {
             Some(page) => {
-                self.cards.insert(id, Card { page, loading: true, hidden: false, cursor: web::Cursor::Default });
+                self.cards.insert(id, Card { page, loading: true, can_back: false, can_forward: false, hidden: false, cursor: web::Cursor::Default });
             }
             None => log::error!("failed to create browser for card {}", id.0),
         }
@@ -1146,8 +1217,8 @@ impl App {
     /// Not focused, so the page keeps the keys.
     fn add_guide(&mut self, beside: Option<NodeId>) -> NodeId {
         let rect = match beside.and_then(|id| self.scene.node(id)) {
-            Some(src) => placement::left_of(&self.scene, src, CARD_W, CARD_H),
-            None => placement::free_near(&self.scene, self.camera.center, CARD_W, CARD_H),
+            Some(src) => placement::left_of(&self.scene, src, self.card_size.x, self.card_size.y),
+            None => placement::free_near(&self.scene, self.camera.center, self.card_size.x, self.card_size.y),
         };
         let id = self.scene.add_welcome(rect);
         self.create_page(id);
@@ -1159,7 +1230,7 @@ impl App {
     /// Nothing to show: an empty card with a search box in the middle of the
     /// view, taking the keys.
     fn add_start(&mut self) -> NodeId {
-        let rect = placement::free_near(&self.scene, self.camera.center, CARD_W, CARD_H);
+        let rect = placement::free_near(&self.scene, self.camera.center, self.card_size.x, self.card_size.y);
         let id = self.scene.add_start(rect);
         self.create_page(id);
         self.history.opened(id);
@@ -1286,7 +1357,7 @@ impl App {
             self.go_to_card(id);
             return;
         }
-        let rect = placement::free_near(&self.scene, self.camera.center, CARD_W, CARD_H);
+        let rect = placement::free_near(&self.scene, self.camera.center, self.card_size.x, self.card_size.y);
         let id = self.scene.add_welcome(rect);
         self.create_page(id);
         self.history.opened(id);
@@ -1298,7 +1369,7 @@ impl App {
 
     /// N: a new, empty note in the middle of the view, ready to type in.
     fn new_note_at_center(&mut self) -> NodeId {
-        let rect = placement::free_near(&self.scene, self.camera.center, CARD_W, CARD_H);
+        let rect = placement::free_near(&self.scene, self.camera.center, self.card_size.x, self.card_size.y);
         let id = self.scene.add_note(rect, "");
         self.create_page(id);
         self.history.opened(id);
@@ -1408,7 +1479,7 @@ impl App {
                 t
             }
             None => {
-                let Some(t) = self.scene.note_beside(src, quote, CARD_W, CARD_H) else { return };
+                let Some(t) = self.scene.note_beside(src, quote, self.card_size.x, self.card_size.y) else { return };
                 self.create_page(t);
                 self.history.opened(t);
                 // While reading, the new note waits on the board (not read next).
@@ -1448,7 +1519,7 @@ impl App {
 
     fn new_card_at_center(&mut self, url: &str) -> Option<NodeId> {
         let center = self.camera.center;
-        let rect = placement::free_near(&self.scene, center, CARD_W, CARD_H);
+        let rect = placement::free_near(&self.scene, center, self.card_size.x, self.card_size.y);
         let id = self.open_card(rect, url, None)?;
         self.focus(Some(id));
         self.ensure_visible(id);
@@ -2151,7 +2222,7 @@ impl App {
             self.go_to_card(id);
             return;
         }
-        let rect = placement::free_near(&self.scene, self.camera.center, CARD_W, CARD_H);
+        let rect = placement::free_near(&self.scene, self.camera.center, self.card_size.x, self.card_size.y);
         let id = self.scene.add_settings(rect);
         self.create_page(id);
         self.history.opened(id);
@@ -2242,7 +2313,7 @@ impl App {
         log::info!("setting {key:?} = {}", self.settings.value(key));
         match key {
             prefs::Key::Search => self.engine_changed(),
-            prefs::Key::NewCard | prefs::Key::ScrollSpeed | prefs::Key::DownloadTo => {}
+            prefs::Key::NewCard | prefs::Key::ScrollSpeed | prefs::Key::DownloadTo | prefs::Key::SpacePanel => {}
             prefs::Key::LivePages => {
                 self.max_live = self.settings.live_pages;
                 self.live_from_env = false;
@@ -3818,10 +3889,12 @@ impl App {
                         self.set_icon(&page_url, width, height, pixels);
                     }
                 }
-                WebEvent::LoadingChanged { page, loading } => {
+                WebEvent::LoadingChanged { page, loading, can_back, can_forward } => {
                     let Some(id) = self.node_of(page) else { continue };
                     if let Some(c) = self.cards.get_mut(&id) {
                         c.loading = loading;
+                        c.can_back = can_back;
+                        c.can_forward = can_forward;
                     }
                     if loading {
                         self.text_due.remove(&id);
@@ -4027,57 +4100,6 @@ impl App {
         entry.serial += 1;
     }
 
-    /// The card whose name shows when titles are too small to read: the one
-    /// under the pointer, or else the current card. None while something else
-    /// has the pointer's attention (a drag, a menu, the palette, link hints).
-    fn named_card(&self) -> Option<NodeId> {
-        if !matches!(self.drag, Drag::None) || self.menu.is_some() || self.omnibox.is_some() || self.link_hints.is_some() || self.hints {
-            return None;
-        }
-        let over_panel = self.sidebar_shown() && self.sidebar_rect().contains(self.cursor);
-        let hovered = if self.pointer_in && !over_panel { self.hit(self.cursor).id() } else { None };
-        hovered.or(self.focused).filter(|id| self.scene.node(*id).is_some())
-    }
-
-    /// A screen-sized label with the named card's icon and title, under the card.
-    fn name_label_layer(&mut self) -> Option<Layer> {
-        let id = self.named_card()?;
-        let n = self.scene.node(id)?;
-        let th = self.theme.clone();
-        let (ui, vp) = (self.ui(), self.viewport());
-        let size = 13.0 * ui;
-        let pad = 9.0 * ui;
-        let h = size * 2.0;
-        let icon_px = 16.0 * ui;
-        let icon = self.icon_key(&n.url);
-        let title = if n.title.is_empty() { n.url.clone() } else { n.title.clone() };
-        let title = if self.cards.contains_key(&id) { title } else { format!("{title} · asleep") };
-        let frame = self.to_screen_rect(n.frame());
-        let tw = self.renderer.as_mut().map_or(200.0, |r| r.measure(&title, size, true));
-        let lead = if icon.is_some() { icon_px + 7.0 * ui } else { 0.0 };
-        let w = (pad * 2.0 + lead + tw).min(480.0 * ui).min(vp.x - 16.0 * ui);
-        let rect = scene::icon::name_label(frame, Vec2::new(w, h), vp, 6.0 * ui, 8.0 * ui);
-        let mut l = Layer::default();
-        crate::chrome::panel(&mut l, rect, th.radius(ui), &th, ui, crate::chrome::Lift::Low, th.card(true));
-        if let Some(key) = icon {
-            l.quads.push(Quad {
-                shape: Shape::Rect { rect: Rect::new(rect.x + pad, rect.y + (h - icon_px) / 2.0, icon_px, icon_px), radius: 0.0 },
-                color: [1.0; 4],
-                texture: Some(key),
-            });
-        }
-        let x = rect.x + pad + lead;
-        l.texts.push(Text {
-            text: title,
-            pos: [x, rect.y + (h - size * 1.3) / 2.0],
-            size,
-            color: rgb(th.foreground(), 1.0),
-            clip: Rect::new(x, rect.y, (rect.right() - pad - x).max(1.0), h),
-            bold: true,
-        });
-        Some(l)
-    }
-
     /// The texture key of `url`'s site icon, if there is one.
     fn icon_key(&self, url: &str) -> Option<u64> {
         let key = self.icons.get(&scene::icon::site(url)?)?.key;
@@ -4114,18 +4136,24 @@ impl App {
         if let Some(&(id, _)) = tag {
             return Hit::Tag(id);
         }
+        // A card's label sits above it, off the card: its buttons, then the
+        // label itself (the card's handle). A card drawn above covers them.
+        let shown = |id: NodeId| self.scene.node(id).is_some_and(|n| top_z.is_none_or(|z| n.z >= z));
+        if let Some(&(hit, _)) = self.bar_buttons.iter().rfind(|(h, r)| r.contains(screen) && h.id().is_some_and(shown)) {
+            return hit;
+        }
+        if let Some(&(id, _)) = self.shields.iter().rfind(|(id, r)| r.contains(screen) && shown(*id)) {
+            return Hit::Shield(id);
+        }
+        if let Some(&(id, _)) = self.bars.iter().rfind(|(id, r)| r.contains(screen) && shown(*id)) {
+            return Hit::Header(id);
+        }
         let Some(id) = top else { return Hit::Board };
         let n = self.scene.node(id).expect("hit node exists");
         let k = self.camera.pixels_per_unit(self.scale());
         let grip = RESIZE_GRIP / k.min(1.0);
         if w.y < n.rect.y {
-            // A sticky note's strip only moves it; it has no ×.
-            if !n.is_sticky() && w.x > n.rect.right() - CLOSE_W {
-                return Hit::Close(id);
-            }
-            if self.shields.iter().any(|(s, r)| *s == id && r.contains(screen)) {
-                return Hit::Shield(id);
-            }
+            // A sticky note's strip moves it.
             return Hit::Header(id);
         }
         if w.x > n.rect.right() - grip.min(n.rect.w / 4.0) && w.y > n.rect.bottom() - grip.min(n.rect.h / 4.0) {
@@ -4234,6 +4262,37 @@ impl App {
             }
             self.sidebar_keys = false;
         }
+        // Read Mode's way back, while it shows.
+        if state == ElementState::Pressed && button == MouseButton::Left && self.read_exit.is_some_and(|r| r.contains(p)) {
+            self.leave_read();
+            self.menu_pressed = true; // swallow the release
+            return;
+        }
+        // The board's own controls take clicks before the board does: a
+        // press runs one; a press between them does nothing.
+        if self.read.is_none() && button == MouseButton::Left {
+            if state == ElementState::Released && std::mem::take(&mut self.hud_down) {
+                return;
+            }
+            if state == ElementState::Pressed {
+                if let Some((_, cmd)) = self.nudge.filter(|(r, _)| r.contains(p)) {
+                    self.hud_down = true;
+                    self.omnibox = None;
+                    self.run_command(cmd);
+                    return;
+                }
+                if let Some(c) = self.hud.at(p) {
+                    self.hud_down = true;
+                    self.omnibox = None;
+                    self.hud_press(c);
+                    return;
+                }
+                if self.hud.covers(p) {
+                    self.hud_down = true;
+                    return;
+                }
+            }
+        }
         log::debug!("mouse {state:?} {button:?} at {p:?} hit={:?}", self.hit(p));
         if state == ElementState::Pressed {
             // Track multi-clicks for the page and for double-click on title bars.
@@ -4277,6 +4336,12 @@ impl App {
                     self.focus(None);
                     self.drag = Drag::Band { anchor: self.to_world(p) };
                 }
+                Hit::Board if button == MouseButton::Right => {
+                    // What can be done on the board, where the pointer is.
+                    self.keys_in_page = false;
+                    self.focus(None);
+                    self.open_board_menu(p);
+                }
                 Hit::Board => {
                     self.keys_in_page = false;
                     self.focus(None);
@@ -4290,6 +4355,18 @@ impl App {
                     }
                 }
                 Hit::Close(id) => self.close_card(id),
+                Hit::Back(id) | Hit::Forward(id) | Hit::Reload(id) => {
+                    self.keys_in_page = false;
+                    self.focus(Some(id));
+                    if let Some(c) = self.cards.get(&id) {
+                        match self.hit(p) {
+                            Hit::Back(_) => c.page.back(),
+                            Hit::Forward(_) => c.page.forward(),
+                            _ => c.page.reload(),
+                        }
+                    }
+                    self.menu_pressed = true; // swallow the release
+                }
                 Hit::Shield(id) => {
                     self.keys_in_page = false;
                     self.focus(Some(id));
@@ -4390,6 +4467,28 @@ impl App {
         }
         self.sidebar_hover = None;
         self.sidebar_chip_hover = None;
+        // Over one of the board's own controls: it lights up, and after a
+        // moment says its name and key.
+        let over = if matches!(self.drag, Drag::None) && self.read.is_none() && self.sidebar_press.is_none() && self.omnibox.as_ref().is_none_or(|ob| !ob.target.is_list()) {
+            self.hud.at(p)
+        } else {
+            None
+        };
+        let on_chrome = over.is_some()
+            || (matches!(self.drag, Drag::None) && self.read.is_none() && (self.hud.covers(p) || self.nudge.is_some_and(|(r, _)| r.contains(p))))
+            || self.read_exit.is_some_and(|r| r.contains(p));
+        match (over, self.hud_hover) {
+            (Some(c), Some((old, _))) if c == old => {}
+            (Some(c), _) => self.hud_hover = Some((c, Instant::now())),
+            (None, _) => self.hud_hover = None,
+        }
+        if on_chrome {
+            self.hover = Hit::Board;
+            self.cursor = p;
+            let button = over.is_some() || self.nudge.is_some_and(|(r, _)| r.contains(p)) || self.read_exit.is_some_and(|r| r.contains(p));
+            self.set_cursor(if button { web::Cursor::Pointer } else { web::Cursor::Default });
+            return;
+        }
         if self.sidebar_press.is_some() {
             self.sidebar_press_moved(p);
             self.cursor = p;
@@ -4452,10 +4551,11 @@ impl App {
                     && let (Some(card), Some((x, y))) = (self.cards.get(&old), self.page_point(old, p)) {
                         card.page.mouse_move(x, y, mods, true);
                     }
+                self.hover = hit;
                 let cursor = match hit {
                     Hit::Header(_) => web::Cursor::Grab,
                     Hit::Grip(_) => web::Cursor::ResizeSE,
-                    Hit::Close(_) | Hit::Badge(_) | Hit::Shield(_) | Hit::Tag(_) => web::Cursor::Pointer,
+                    Hit::Close(_) | Hit::Back(_) | Hit::Forward(_) | Hit::Reload(_) | Hit::Badge(_) | Hit::Shield(_) | Hit::Tag(_) => web::Cursor::Pointer,
                     Hit::Content(id) => self.cards.get(&id).map_or(web::Cursor::Default, |c| c.cursor),
                     Hit::Board | Hit::ReadBar(_) => web::Cursor::Default,
                 };
@@ -5230,55 +5330,79 @@ impl App {
         let preview = self.load_preview(preview_url);
 
         let origin = self.camera.world_to_screen(Vec2::default(), vp, scale);
-        let spacing = 32.0 * k;
         let th = self.theme.clone();
         let ui = self.ui();
         let tint = self.spaces.active_entry().tint.clone();
+        // The grid keeps its dots 20 to 40 px apart at any zoom. Zooming in,
+        // dots fade in halfway between them, and at 40 px those become the
+        // grid: its density never jumps.
+        let base = (32.0 * k).max(1e-3);
+        let spacing = base * 2f32.powf((20.0 * scale / base).log2().ceil());
         let bg = Background {
             color: rgb(th.board(tint.as_deref()), 1.0),
-            dot: rgb(th.dots(), (spacing / 24.0).clamp(0.0, 1.0)),
+            dot: rgb(th.dots(), 1.0),
             grid_origin: [origin.x, origin.y],
             grid_spacing: spacing,
-            dot_radius: (1.1 * scale).max(0.8),
-            vignette: if th.light() { 0.04 } else { 0.13 },
+            dot_radius: (1.0 * scale).max(0.75),
+            fine: ((spacing / (20.0 * scale)) - 1.0).clamp(0.0, 1.0),
         };
 
         let mut layers: Vec<Layer> = Vec::new();
+        let line = crate::chrome::hair(scale);
+        // What the pointer is over lights up, unless something else has the pointer.
+        let hover = if matches!(self.drag, Drag::None) && self.menu.is_none() && self.omnibox.is_none() && !self.hints && self.pointer_in {
+            self.hover
+        } else {
+            Hit::Board
+        };
 
-        // Trail edges under everything: a gentle S-curve from source's right edge to target's left edge.
+        // Trail edges under everything: a gentle S-curve from the source's
+        // title bar to the target's. A trail is drawn in its own colour, or a
+        // quiet neutral if it has none; the current card's trail is brought
+        // out, so its path can be followed through a busy board.
         let mut edges = Layer::default();
         let labels: HashMap<NodeId, scene::TrailMark> =
             if board_hidden { HashMap::new() } else { self.scene.trail_labels().into_iter().collect() };
         let mut edge_colour: HashMap<NodeId, [u8; 3]> = HashMap::new();
         for (head, mark) in &labels {
-            let c = th.trail(mark.colour.as_deref());
-            edge_colour.extend(self.scene.trail_of(*head).into_iter().map(|id| (id, c)));
+            if let Some(c) = mark.colour.as_deref() {
+                let c = th.color(c);
+                edge_colour.extend(self.scene.trail_of(*head).into_iter().map(|id| (id, c)));
+            }
         }
+        let current_trail: HashSet<NodeId> = self.focused.map(|f| self.scene.trail_of(f).into_iter().collect()).unwrap_or_default();
         let board_edges: Vec<Edge> = if board_hidden { Vec::new() } else { self.scene.visible_edges().copied().collect() };
         for e in &board_edges {
             let (Some(a), Some(b)) = (self.scene.node(e.from), self.scene.node(e.to)) else { continue };
             let fa = self.to_screen_rect(a.frame());
             let fb = self.to_screen_rect(b.frame());
-            let (p0, p3) = if fb.x >= fa.right() {
-                ([fa.right(), fa.y + 18.0 * k], [fb.x, fb.y + 18.0 * k])
-            } else {
-                ([fa.x, fa.y + 18.0 * k], [fb.right(), fb.y + 18.0 * k])
-            };
+            // Near the top of each card, where its name is.
+            let (ya, yb) = (fa.y + (28.0 * k).min(fa.h / 2.0), fb.y + (28.0 * k).min(fb.h / 2.0));
+            let (p0, p3) = if fb.x >= fa.right() { ([fa.right(), ya], [fb.x, yb]) } else { ([fa.x, ya], [fb.right(), yb]) };
             let dx = (p3[0] - p0[0]) * 0.5;
             let (p1, p2) = ([p0[0] + dx, p0[1]], [p3[0] - dx, p3[1]]);
-            let colour = edge_colour.get(&e.from).copied().unwrap_or(th.accent());
+            let hot = current_trail.contains(&e.from) && current_trail.contains(&e.to);
+            let marked = edge_colour.get(&e.from).copied();
+            let (colour, alpha) = match (marked, hot) {
+                (Some(c), true) => (c, 1.0),
+                (Some(c), false) => (c, 0.7),
+                (None, true) => (th.accent(), 0.9),
+                (None, false) => (th.line_strong(), 1.0),
+            };
+            let width = ((if hot { 2.0 } else { 1.5 }) * k).clamp(scale.max(1.0), 3.0 * scale);
             let mut prev = p0;
-            for i in 1..=24 {
-                let t = i as f32 / 24.0;
+            for i in 1..=28 {
+                let t = i as f32 / 28.0;
                 let u = 1.0 - t;
                 let x = u * u * u * p0[0] + 3.0 * u * u * t * p1[0] + 3.0 * u * t * t * p2[0] + t * t * t * p3[0];
                 let y = u * u * u * p0[1] + 3.0 * u * u * t * p1[1] + 3.0 * u * t * t * p2[1] + t * t * t * p3[1];
-                edges.quads.push(Quad {
-                    shape: Shape::Segment { from: prev, to: [x, y], width: (2.0 * k).clamp(1.0, 4.0) },
-                    color: rgb(colour, 0.7),
-                    texture: None,
-                });
+                edges.quads.push(Quad { shape: Shape::Segment { from: prev, to: [x, y], width }, color: rgb(colour, alpha), texture: None });
                 prev = [x, y];
+            }
+            // A dot where the line leaves a card and where it arrives.
+            let d = (7.0 * k).clamp(3.0 * scale, 8.0 * scale);
+            for p in [p0, p3] {
+                crate::chrome::fill(&mut edges, Rect::new(p[0] - d / 2.0, p[1] - d / 2.0, d, d), d / 2.0, rgb(colour, 1.0));
             }
         }
         layers.push(edges);
@@ -5291,111 +5415,63 @@ impl App {
         let morphing = self.read_morph.map(|m| m.id);
         self.shields.clear();
         self.tags.clear();
+        self.bars.clear();
+        self.bar_buttons.clear();
+        let mut in_view = false;
         for n in board_cards {
             // The card on its way to or from Read Mode is drawn by `read_morph_layer`.
             if morphing == Some(n.id) {
+                in_view = true;
                 continue;
             }
             let frame = self.to_screen_rect(n.frame());
-            if !frame.inflate(40.0).intersects(&screen) {
+            in_view |= frame.intersects(&screen);
+            if !frame.inflate(64.0 * scale).intersects(&screen) {
                 continue;
             }
             let content = self.to_screen_rect(n.rect);
-            let header = self.to_screen_rect(n.header());
             // Cards are windows on the board: Hyprland's rounding, scaled with the zoom.
             let radius = (th.rounding * k).min(th.radius(scale));
-            let ring = |m: f32| if radius > 0.0 { radius + m } else { 0.0 };
             let focused = self.focused == Some(n.id);
+            let hovered = hover.id() == Some(n.id);
+            let selected = self.selection.contains(n.id) || in_band.contains(&n.id);
             let card = self.cards.get(&n.id);
+            let asleep = card.is_none();
+            let sticky = n.sticky.as_deref().filter(|_| n.is_sticky());
             let mut l = Layer::default();
+
             // A stack shows the edges of up to three cards behind its front, down and to the right.
             let stack = self.scene.stack_of(n.id).map(|s| (s.front_index() + 1, s.members.len()));
             if let Some((_, len)) = stack {
                 // At least a few px apart, so a stack still reads when zoomed far out.
-                let step = (16.0 * k).max(6.0 * scale);
-                for i in (1..len.min(4)).rev() {
+                let step = (12.0 * k).max(5.0 * scale);
+                let behind = len.min(4) - 1;
+                let last = frame.translate(Vec2::new(step * behind as f32, step * behind as f32));
+                l.quads.push(Quad {
+                    shape: Shape::Shadow { rect: last.translate(Vec2::new(0.0, 6.0 * k)), radius, blur: (20.0 * k).max(2.0) },
+                    color: th.shadow(0.24),
+                    texture: None,
+                });
+                for i in (1..=behind).rev() {
                     let back = frame.translate(Vec2::new(step * i as f32, step * i as f32));
-                    l.quads.push(Quad {
-                        shape: Shape::Shadow { rect: back.translate(Vec2::new(0.0, 4.0 * k)), radius, blur: (14.0 * k).max(2.0) },
-                        color: th.shadow(0.3),
-                        texture: None,
-                    });
-                    l.quads.push(Quad {
-                        shape: Shape::Rect { rect: back, radius },
-                        color: rgb(th.stack_edge(), 1.0),
-                        texture: None,
-                    });
-                    l.quads.push(Quad {
-                        shape: Shape::Rect { rect: back.inflate(-(1.0 * scale).max(1.0)), radius: (radius - 1.0).max(0.0) },
-                        color: rgb(th.card(false), 1.0),
-                        texture: None,
-                    });
+                    crate::chrome::fill(&mut l, back, radius, rgb(th.card(false), 1.0));
+                    crate::chrome::outline(&mut l, back, radius, line, rgb(th.line_strong(), 1.0));
                 }
             }
-            // Two shadows, scaled with the zoom: a wide ambient one and a tight
-            // contact one under the edge. The focused card floats a little higher.
-            let lift = if focused { 1.35 } else { 1.0 };
-            l.quads.push(Quad {
-                shape: Shape::Shadow { rect: frame.translate(Vec2::new(0.0, 12.0 * k * lift)), radius, blur: (36.0 * k * lift).max(3.0) },
-                color: th.shadow(if focused { 0.5 } else { 0.38 }),
-                texture: None,
-            });
-            l.quads.push(Quad {
-                shape: Shape::Shadow { rect: frame.translate(Vec2::new(0.0, 2.0 * k)), radius, blur: (5.0 * k).max(1.5) },
-                color: th.shadow(0.35),
-                texture: None,
-            });
-            if focused {
-                // A soft glow of the accent around the current card, brighter
-                // while it has the keys.
-                let glow = if typing { 0.32 } else { 0.16 };
+            // One light from above: a soft shadow around the card and a tight
+            // one under its edge. The current card floats a little higher.
+            let (ambient, key) = if focused { ((14.0, 40.0, 0.34), (2.0, 5.0, 0.30)) } else { ((6.0, 20.0, 0.24), (1.0, 3.0, 0.24)) };
+            for (dy, blur, a) in [ambient, key] {
                 l.quads.push(Quad {
-                    shape: Shape::Shadow { rect: frame, radius: ring(2.0 * scale), blur: 16.0 * scale.max(1.0) },
-                    color: rgb(th.accent(), glow),
-                    texture: None,
-                });
-            } else if !(self.selection.contains(n.id) || in_band.contains(&n.id)) {
-                // A hairline edge keeps cards crisp against the board.
-                let bw = scale.max(1.0);
-                l.quads.push(Quad {
-                    shape: Shape::Rect { rect: frame.inflate(bw), radius: ring(bw) },
-                    color: rgb(crate::chrome::edge(&th), 0.9),
-                    texture: None,
-                });
-            }
-            if self.selection.contains(n.id) || in_band.contains(&n.id) {
-                // Selection ring outside the focus ring, so both can show.
-                let m = if focused { 6.0 } else { 3.0 };
-                l.quads.push(Quad {
-                    shape: Shape::Rect { rect: frame.inflate(m * scale), radius: ring(m * scale) },
-                    color: rgb(th.marked(), 1.0),
-                    texture: None,
-                });
-            }
-            if focused {
-                // The page with the keys gets a heavier ring than a card that is only current.
-                // The page with the keys gets a heavy, solid ring; a card that is
-                // only current (board keys) a thin, softer one.
-                // A card being moved by keyboard (M) gets the heavy ring too.
-                let arranging = self.arrange.as_ref().is_some_and(|a| a.id == n.id);
-                let (w, alpha) = if typing || arranging { (3.5, 1.0) } else { (2.0, 0.6) };
-                let w = w * scale.max(1.0);
-                l.quads.push(Quad {
-                    shape: Shape::Rect { rect: frame.inflate(w), radius: ring(w) },
-                    color: rgb(th.accent(), alpha),
+                    shape: Shape::Shadow { rect: frame.translate(Vec2::new(0.0, dy * k)), radius, blur: (blur * k).max(1.5) },
+                    color: th.shadow(a),
                     texture: None,
                 });
             }
             // A sticky note's frame is its strip, in its colour.
-            let sticky = n.sticky.as_deref().filter(|_| n.is_sticky());
-            l.quads.push(Quad {
-                shape: Shape::Rect { rect: frame, radius },
-                color: rgb(sticky.map_or_else(|| th.card(focused), |c| th.sticky_strip(c, focused)), 1.0),
-                texture: None,
-            });
+            crate::chrome::fill(&mut l, frame, radius, rgb(sticky.map_or_else(|| th.card(focused), |c| th.sticky_strip(c, focused)), 1.0));
             let key = page_key(epoch, n.id);
             let has_tex = self.renderer.as_ref().is_some_and(|r| r.has_page(key));
-            let asleep = card.is_none();
             // A live page's last frame at its own size: right after a resize
             // (leaving Read Mode, resizing the card) it is cropped or filled
             // out, never squashed, until the page paints at the new size.
@@ -5408,193 +5484,206 @@ impl App {
                 shape: Shape::Page { rect: content, radius, round_bottom: true, extent },
                 color: match (has_tex, asleep) {
                     (true, false) => [1.0; 4],
-                    (true, true) => [0.78, 0.78, 0.8, 1.0], // dimmed snapshot
+                    (true, true) => [0.72, 0.72, 0.74, 1.0], // a sleeping card's last frame, dimmed
                     // First paint pending, or asleep and never painted.
                     (false, _) => rgb(sticky.map_or_else(|| th.placeholder(), |c| th.sticky_paper(c)), 1.0),
                 },
                 texture: has_tex.then_some(key),
             });
             if asleep && !has_tex {
-                let size = 15.0 * k;
-                if size >= 6.0 {
-                    let msg = "Click to load";
+                let size = 13.0 * k;
+                if size >= 9.0 {
+                    let msg = "Asleep · click to load";
                     let w = self.renderer.as_mut().map_or(100.0, |r| r.measure(msg, size, false));
-                    l.texts.push(Text {
-                        text: msg.into(),
-                        pos: [content.x + (content.w - w) / 2.0, content.y + (content.h - size * 1.3) / 2.0],
-                        size,
-                        color: rgb(th.dim_text(), 1.0),
-                        clip: content,
-                        bold: false,
-                    });
+                    crate::chrome::text(&mut l, msg, content.x + (content.w - w) / 2.0, content.center().y, size, rgb(th.text3(), 1.0), content, false);
                 }
             }
-            // Loading bar along the bottom of the title bar (a sticky note has none).
+            if sticky.is_none() {
+                // The hairline that keeps a card crisp against the board, over
+                // the page's own edge too (a white page on a light board).
+                crate::chrome::outline(&mut l, frame, radius, line, rgb(th.line(), 1.0));
+            }
+            // Loading: a bar gliding along the card's top edge.
             if sticky.is_none() && card.is_some_and(|c| c.loading) {
-                let t = (self.started.elapsed().as_secs_f32() * 0.8).fract();
-                let w = header.w * 0.25;
-                let x = header.x + (header.w - w) * t;
-                l.quads.push(Quad {
-                    shape: Shape::Rect { rect: Rect::new(x, header.bottom() - 2.0, w, 2.0), radius: th.small_radius(1.0).min(1.0) },
-                    color: rgb(th.accent(), 1.0),
-                    texture: None,
-                });
+                let t = (self.started.elapsed().as_secs_f32() * 0.7).fract();
+                // Eased, so it gathers and lets go rather than sliding at one speed.
+                let t = t * t * (3.0 - 2.0 * t);
+                let w = frame.w * 0.3;
+                let x = frame.x - w + (frame.w + w) * t;
+                let (x0, x1) = (x.max(frame.x + radius), (x + w).min(frame.right() - radius));
+                if x1 > x0 {
+                    crate::chrome::fill(&mut l, Rect::new(x0, frame.y, x1 - x0, 2.0 * scale.max(1.0)), 0.0, rgb(th.accent(), 1.0));
+                }
             }
-            if sticky.is_none() && header.h >= 6.0 {
-                // A faint highlight along the title bar's top and a hairline
-                // where it meets the page.
-                let hair = scale.max(1.0).min(header.h / 6.0);
-                l.quads.push(Quad {
-                    shape: Shape::Rect { rect: Rect::new(header.x + radius, header.y, (header.w - 2.0 * radius).max(0.0), hair), radius: 0.0 },
-                    color: if th.light() { rgb([255, 255, 255], 0.6) } else { rgb(th.foreground(), if focused { 0.09 } else { 0.05 }) },
-                    texture: None,
-                });
-                l.quads.push(Quad {
-                    shape: Shape::Rect { rect: Rect::new(header.x, header.bottom() - hair, header.w, hair), radius: 0.0 },
-                    color: th.shadow(0.35),
-                    texture: None,
-                });
+            // The corner that resizes shows itself under the pointer.
+            if hover == Hit::Grip(n.id) {
+                let s = 14.0 * scale;
+                let at = Rect::new(content.right() - s - 3.0 * scale, content.bottom() - s - 3.0 * scale, s, s);
+                crate::chrome::fill(&mut l, at.inflate(2.0 * scale), th.small_radius(scale), rgb(th.panel(), 0.92));
+                if let Some(r) = self.renderer.as_mut() {
+                    crate::icons::draw_scaled(&mut l, r, crate::icons::Icon::Grip, at, rgb(th.text(), 1.0));
+                }
             }
-            let font = 13.0 * k;
-            let pad = 10.0 * k;
-            // The site's icon at the start of the title bar; it stays a little
-            // further out than the title, so cards can be told apart by it.
-            let icon = if sticky.is_none() { self.icon_key(&n.url) } else { None };
-            let icon_px = 16.0 * k;
-            let mut title_x = header.x + pad;
-            if let Some(key) = icon.filter(|_| icon_px >= 4.0) {
-                l.quads.push(Quad {
-                    shape: Shape::Rect { rect: Rect::new(title_x, header.y + (header.h - icon_px) / 2.0, icon_px, icon_px), radius: 0.0 },
-                    color: if asleep { [0.78, 0.78, 0.8, 1.0] } else { [1.0; 4] },
-                    texture: Some(key),
-                });
-                title_x += icon_px + 6.0 * k;
+            // Rings sit outside the frame: the selection's, then the current
+            // card's. The page with the keys (or a card being moved by
+            // keyboard) gets a heavy, solid ring; a card that is only current
+            // a thin, softer one.
+            let arranging = self.arrange.as_ref().is_some_and(|a| a.id == n.id);
+            let ring_w = if !focused { 0.0 } else if typing || arranging { 3.0 * scale.max(1.0) } else { 2.0 * scale.max(1.0) };
+            if focused {
+                let alpha = if typing || arranging { 1.0 } else { 0.7 };
+                crate::chrome::outline(&mut l, frame.inflate(ring_w), if radius > 0.0 { radius + ring_w } else { 0.0 }, ring_w, rgb(th.accent(), alpha));
             }
-            // Smaller, the title shows in the name label under the card
-            // instead (`READABLE_TITLE` is both thresholds: never both at once).
-            if font >= scene::icon::READABLE_TITLE && sticky.is_none() {
-                let title = if n.title.is_empty() { n.url.as_str() } else { n.title.as_str() };
-                let title = if asleep { format!("{title} · asleep") } else { title.to_string() };
+            if selected {
+                let w = 2.0 * scale.max(1.0);
+                let m = ring_w + w + scale.max(1.0);
+                crate::chrome::outline(&mut l, frame.inflate(m), if radius > 0.0 { radius + m } else { 0.0 }, w, rgb(th.marked(), 1.0));
+            }
+
+            // The label above the card, left to right: a stack's size, a
+            // marked trail's tag, the site's icon and the title; at its right
+            // end, on the card under the pointer or the current one, what the
+            // blocker stopped and the buttons.
+            let bar_h = BAR_H * ui;
+            let bar = Rect::new(frame.x, frame.y - BAR_GAP * ui - bar_h, frame.w, bar_h);
+            let mid = bar.center().y;
+            let small = th.small_radius(ui / th.text_scale);
+            let mut lead = 0.0;
+            // A stack's size on its top-left corner, readable at any zoom.
+            if let (Some((_, len)), Some(pill)) = (stack, self.stack_badge(n)) {
+                let size = 11.0 * ui;
+                let text = len.to_string();
+                let tw = self.renderer.as_mut().map_or(size * 0.6, |r| r.measure(&text, size, true));
+                let over = hover == Hit::Badge(n.id);
+                crate::chrome::fill(&mut l, pill, if th.rounding > 0.0 { pill.h / 2.0 } else { 0.0 }, rgb(if over { th.accent() } else { th.text() }, 1.0));
+                crate::chrome::text(&mut l, text, pill.x + (pill.w - tw) / 2.0, pill.center().y, size, rgb(if over { th.accent_foreground() } else { th.panel() }, 1.0), pill, true);
+                lead = pill.right() + 6.0 * ui - frame.x;
+            }
+            // A marked trail's name before its first card's own, in the
+            // trail's colour (just a dot for a colour without a name).
+            if let Some(mark) = labels.get(&n.id) {
+                let size = 11.0 * ui;
+                let pad = 8.0 * ui;
+                let h = 20.0 * ui;
+                let colour = th.trail(mark.colour.as_deref());
+                let name = mark.name.clone().unwrap_or_default();
+                let tw = if name.is_empty() { 0.0 } else { self.renderer.as_mut().map_or(100.0, |r| r.measure(&name, size, true)) };
+                let w = if name.is_empty() { h } else { (tw + 2.0 * pad).min((frame.w - lead).max(h)) };
+                let tag = Rect::new(frame.x + lead, (mid - h / 2.0).round(), w, h);
+                let round = if th.rounding > 0.0 || name.is_empty() { h / 2.0 } else { 0.0 };
+                let face = if hover == Hit::Tag(n.id) { crate::theme::blend(colour, text_on(colour), 0.12) } else { colour };
+                crate::chrome::fill(&mut l, if name.is_empty() { tag.inflate(-4.0 * ui) } else { tag }, round, rgb(face, 1.0));
+                self.tags.push((n.id, tag));
+                if !name.is_empty() {
+                    crate::chrome::text(&mut l, name, tag.x + pad, tag.center().y, size, rgb(text_on(colour), 1.0), tag.inflate(-pad * 0.5), true);
+                }
+                lead += w + 8.0 * ui;
+            }
+            if sticky.is_none() && frame.w - lead >= 40.0 * ui {
+                self.bars.push((n.id, bar));
+                let mut right = bar.right();
+                let controls = hovered || focused;
+                if controls && frame.w >= BAR_CLOSE_MIN * ui {
+                    // Close always; back, forward and reload on a live web
+                    // page whose card is wide enough on screen.
+                    let btn = BAR_BTN * ui;
+                    let mut buttons: Vec<(Hit, crate::icons::Icon, bool)> = vec![(Hit::Close(n.id), crate::icons::Icon::Close, true)];
+                    if let Some(c) = card.filter(|c| c.page.kind() == web::PageKind::Web && frame.w >= BAR_NAV_MIN * ui) {
+                        buttons.push((Hit::Reload(n.id), crate::icons::Icon::Reload, true));
+                        buttons.push((Hit::Forward(n.id), crate::icons::Icon::Forward, c.can_forward));
+                        buttons.push((Hit::Back(n.id), crate::icons::Icon::Back, c.can_back));
+                    }
+                    for (hit, icon, enabled) in buttons {
+                        let cell = Rect::new(right - btn, bar.y, btn, bar.h);
+                        right -= btn;
+                        let hot = hover == hit && enabled;
+                        if hot {
+                            let face = if hit == Hit::Close(n.id) { crate::theme::blend(th.panel(), th.danger(), 0.32) } else { th.active() };
+                            crate::chrome::fill(&mut l, cell.inflate(-ui), small, rgb(face, 1.0));
+                        }
+                        let ink = match (enabled, hot) {
+                            (false, _) => rgb(th.text3(), 0.55),
+                            (true, true) => rgb(th.text(), 1.0),
+                            (true, false) => rgb(th.text2(), 1.0),
+                        };
+                        if enabled {
+                            self.bar_buttons.push((hit, cell));
+                        }
+                        if let Some(r) = self.renderer.as_mut() {
+                            crate::icons::draw(&mut l, r, icon, cell.center().x, mid, 14.0 * ui, ink);
+                        }
+                    }
+                    right -= 4.0 * ui;
+                    // What the blocker stopped on this page (requests blocked
+                    // and elements hidden): a shield with the count. Not on
+                    // an allowed site.
+                    let badge = self
+                        .blocking_state(n.id)
+                        .filter(|b| b.on)
+                        .and_then(|b| scene::privacy::blocked_badge(b.blocked.saturating_add(b.hidden)));
+                    if let Some(count) = badge {
+                        let size = 11.0 * ui;
+                        let tw = self.renderer.as_mut().map_or(size * 1.2, |r| r.measure(&count, size, true));
+                        let s = 13.0 * ui;
+                        let w = 5.0 * ui + s + 3.0 * ui + tw + 5.0 * ui;
+                        // Only while the title keeps some room.
+                        if right - w - (frame.x + lead) >= 96.0 * ui {
+                            let cell = Rect::new(right - w, bar.y, w, bar.h);
+                            self.shields.push((n.id, cell));
+                            let over = hover == Hit::Shield(n.id);
+                            if over {
+                                crate::chrome::fill(&mut l, cell.inflate(-ui), small, rgb(th.active(), 1.0));
+                            }
+                            let ink = rgb(if over { th.text() } else { th.text2() }, 1.0);
+                            if let Some(r) = self.renderer.as_mut() {
+                                crate::icons::draw(&mut l, r, crate::icons::Icon::Shield, cell.x + 5.0 * ui + s / 2.0, mid, s, ink);
+                            }
+                            crate::chrome::text(&mut l, count, cell.x + 5.0 * ui + s + 3.0 * ui, mid, size, ink, cell, true);
+                            right = cell.x - 4.0 * ui;
+                        }
+                    }
+                } else if asleep && frame.w - lead >= 72.0 * ui {
+                    // A sleeping card says so with a moon at the end of its label.
+                    if let Some(r) = self.renderer.as_mut() {
+                        crate::icons::draw(&mut l, r, crate::icons::Icon::Moon, right - 8.0 * ui, mid, 13.0 * ui, rgb(th.text3(), 1.0));
+                    }
+                    right -= 22.0 * ui;
+                }
+                let mut x = frame.x + lead;
+                let size = 12.0 * ui;
+                let icon = self.icon_key(&n.url);
+                if let Some(key) = icon {
+                    let s = 14.0 * ui;
+                    l.quads.push(Quad {
+                        shape: Shape::Rect { rect: Rect::new(x.round(), (mid - s / 2.0).round(), s, s), radius: 0.0 },
+                        color: if asleep { [0.72, 0.72, 0.74, 1.0] } else { [1.0; 4] },
+                        texture: Some(key),
+                    });
+                    x += s + 6.0 * ui;
+                }
+                let title = if n.title.trim().is_empty() { n.url.clone() } else { n.title.trim().to_string() };
                 let title = match stack {
                     Some((i, len)) => format!("{i}/{len} · {title}"),
                     None => title,
                 };
-                // What the blocker stopped on this page (requests blocked
-                // and elements hidden): a small shield with the count, just
-                // left of ×. Not on an allowed site.
-                let mut title_right = header.right() - CLOSE_W * k;
-                let badge = self
-                    .blocking_state(n.id)
-                    .filter(|b| b.on)
-                    .and_then(|b| scene::privacy::blocked_badge(b.blocked.saturating_add(b.hidden)));
-                if let Some(count) = badge {
-                    let size = 11.5 * k;
-                    let tw = self.renderer.as_mut().map_or(size * 1.2, |r| r.measure(&count, size, true));
-                    let (sw, sh) = (9.0 * k, 11.0 * k);
-                    let w = sw + 3.5 * k + tw;
-                    // Only while the title keeps some room.
-                    if title_right - w - 4.0 * k - title_x >= 48.0 * k {
-                        let x = title_right - w;
-                        let sy = header.y + (header.h - sh) / 2.0;
-                        let shield = Rect::new(x, sy, sw, sh);
-                        // The whole badge, title bar high, is the target.
-                        let pad = 3.0 * k;
-                        self.shields.push((n.id, Rect::new(x - pad, header.y, w + 2.0 * pad, header.h)));
-                        let ink = if focused { th.foreground() } else { th.dim_text() };
-                        l.quads.push(Quad {
-                            shape: Shape::RoundBottom { rect: shield, radius: sw / 2.0 },
-                            color: rgb(ink, 0.85),
-                            texture: None,
-                        });
-                        // Hollow it out where that stays visible, so it reads as an outline.
-                        let edge = 1.4 * k;
-                        if edge >= 1.0 {
-                            let inner = Rect::new(shield.x + edge, shield.y + edge, sw - 2.0 * edge, sh - 2.0 * edge);
-                            l.quads.push(Quad {
-                                shape: Shape::RoundBottom { rect: inner, radius: inner.w / 2.0 },
-                                color: rgb(th.card(focused), 1.0),
-                                texture: None,
-                            });
-                        }
-                        l.texts.push(Text {
-                            text: count,
-                            pos: [x + sw + 3.5 * k, header.y + (header.h - size * 1.3) / 2.0],
-                            size,
-                            color: rgb(ink, 0.85),
-                            clip: header,
-                            bold: true,
-                        });
-                        title_right = x - 4.0 * k;
+                let ink = match (focused || hovered, asleep) {
+                    (true, _) => th.text(),
+                    (false, false) => th.text2(),
+                    (false, true) => th.text3(),
+                };
+                let room = (right - 6.0 * ui - x).max(1.0);
+                let tw = self.renderer.as_mut().map_or(room, |r| r.measure(&title, size, focused)).min(room);
+                crate::chrome::text(&mut l, title, x, mid, size, rgb(ink, 1.0), Rect::new(x, bar.y, room, bar.h), focused);
+                // Where the page is from, quietly, after the title of the card
+                // in hand: a title can say anything, the address can't.
+                let host = palette::host(&n.url);
+                if controls && !n.is_note() && scene::icon::site(&n.url).is_some() && !host.is_empty() {
+                    let hs = 11.0 * ui;
+                    let hw = self.renderer.as_mut().map_or(0.0, |r| r.measure(host, hs, false));
+                    let hx = x + tw + 10.0 * ui;
+                    if hx + hw <= right - 6.0 * ui {
+                        crate::chrome::text(&mut l, host, hx, mid, hs, rgb(th.text3(), 1.0), bar, false);
                     }
-                }
-                let clip = Rect::new(title_x, header.y, (title_right - pad - title_x).max(1.0), header.h);
-                l.texts.push(Text {
-                    text: title,
-                    pos: [title_x, header.y + (header.h - font * 1.3) / 2.0],
-                    size: font,
-                    color: match (focused, asleep) {
-                        (true, _) => rgb(th.foreground(), 1.0),
-                        (false, false) => rgb(crate::theme::mix(th.foreground(), th.dim_text(), 0.4), 1.0),
-                        (false, true) => rgb(th.dim_text(), 1.0),
-                    },
-                    clip,
-                    bold: true,
-                });
-                let close_size = 16.0 * k;
-                l.texts.push(Text {
-                    text: "×".into(),
-                    pos: [header.right() - CLOSE_W * k + (CLOSE_W * k - close_size * 0.6) / 2.0, header.y + (header.h - close_size * 1.3) / 2.0],
-                    size: close_size,
-                    color: rgb(th.dim_text(), 1.0),
-                    clip: header,
-                    bold: false,
-                });
-            }
-            // A stack's size on its top-left corner (clear of ×), readable at any zoom.
-            if let (Some((_, len)), Some(pill)) = (stack, self.stack_badge(n)) {
-                let size = 11.0 * self.ui();
-                let text = len.to_string();
-                let tw = self.renderer.as_mut().map_or(size * 0.6, |r| r.measure(&text, size, true));
-                let (w, h) = (pill.w, pill.h);
-                l.quads.push(Quad {
-                    shape: Shape::Rect { rect: pill, radius: if th.rounding > 0.0 { h / 2.0 } else { 0.0 } },
-                    color: rgb(th.accent(), 1.0),
-                    texture: None,
-                });
-                l.texts.push(Text {
-                    text,
-                    pos: [pill.x + (w - tw) / 2.0, pill.y + (h - size * 1.3) / 2.0],
-                    size,
-                    color: rgb(th.accent_foreground(), 1.0),
-                    clip: pill,
-                    bold: true,
-                });
-            }
-            // A marked trail's name above its first card, in its colour (just a
-            // dot for a colour without a name). Screen-sized, like the badge.
-            if let Some(mark) = labels.get(&n.id) {
-                let size = 12.0 * ui;
-                let h = size * 1.7;
-                let pad = size * 0.7;
-                let colour = th.trail(mark.colour.as_deref());
-                let name = mark.name.clone().unwrap_or_default();
-                let tw = if name.is_empty() { 0.0 } else { self.renderer.as_mut().map_or(100.0, |r| r.measure(&name, size, true)) };
-                let w = if name.is_empty() { h } else { (tw + 2.0 * pad).min(frame.w.max(h)) };
-                // Clear of a stack's badge, which sticks out above the corner.
-                let gap = if stack.is_some() { 9.0 } else { 5.0 } * ui;
-                let tag = Rect::new(frame.x, frame.y - gap - h, w, h);
-                let round = if th.rounding > 0.0 || name.is_empty() { h / 2.0 } else { 0.0 };
-                l.quads.push(Quad { shape: Shape::Rect { rect: tag, radius: round }, color: rgb(colour, 1.0), texture: None });
-                self.tags.push((n.id, tag));
-                if !name.is_empty() {
-                    l.texts.push(Text {
-                        text: name,
-                        pos: [tag.x + pad, tag.y + (h - size * 1.3) / 2.0],
-                        size,
-                        color: rgb(text_on(colour), 1.0),
-                        clip: tag.inflate(-pad * 0.5),
-                        bold: true,
-                    });
                 }
             }
             layers.push(l);
@@ -5609,24 +5698,17 @@ impl App {
             layers.push(l);
         }
 
-        // Empty-board hint: a quiet heading, then the keys as keycaps.
-        if self.scene.is_empty() && self.omnibox.is_none()
-            && let Some(r) = self.renderer.as_mut()
-        {
-            layers.push(empty_hint(r, vp, &th, ui));
-        }
-
         if self.read.is_none()
-            && self.read_morph.is_none()
-            && 13.0 * k < scene::icon::READABLE_TITLE
-            && let Some(l) = self.name_label_layer()
+            && let Some(l) = self.link_hint_layer()
         {
             layers.push(l);
         }
 
-        if self.read.is_none()
-            && let Some(l) = self.link_hint_layer()
-        {
+        if let Some(b) = band {
+            let r = self.to_screen_rect(b);
+            let mut l = Layer::default();
+            crate::chrome::fill(&mut l, r, 0.0, rgb(th.marked(), 0.10));
+            crate::chrome::outline(&mut l, r, 0.0, line, rgb(th.marked(), 0.9));
             layers.push(l);
         }
 
@@ -5648,7 +5730,7 @@ impl App {
                 .spaces
                 .spaces
                 .iter()
-                .map(|e| crate::sidebar::SpaceChip { name: e.name.clone(), colour: e.tint.as_deref().map(|t| th.trail(Some(t))), private: e.private })
+                .map(|e| crate::sidebar::SpaceChip { name: e.name.clone(), colour: e.tint.as_deref().map(|t| th.color(t)), private: e.private })
                 .collect();
             let space = self.spaces.active_entry().name.clone();
             let marks = crate::sidebar::View {
@@ -5676,27 +5758,90 @@ impl App {
             0.0
         };
 
+        // The board's own control: the sidebar's button and the space. Read Mode
+        // is the page alone, with a way back that shows when the pointer
+        // nears the top of the window.
+        let chrome_shown = self.read.is_none() && self.read_morph.is_none();
+        self.nudge = None;
+        self.read_exit = None;
+        let mut tip_shown = None;
+        if chrome_shown {
+            let entry = self.spaces.active_entry();
+            let (space, private, swatch) = (entry.name.clone(), entry.private, th.swatch(tint.as_deref()));
+            let space_w = self.renderer.as_mut().map_or(80.0, |r| r.measure(&space, crate::chrome::type_::BODY * ui, true));
+            // The panel can be turned off in the settings (*Show the space panel*).
+            self.hud = if self.settings.space_panel { crate::hud::layout(vp, ui, sidebar_w, space_w) } else { crate::hud::Hud::default() };
+            let free = self.menu.is_none() && self.omnibox.is_none() && !self.hints && self.confirm.is_none();
+            let hud_hover = self.hud_hover.filter(|_| free && self.pointer_in);
+            let view = crate::hud::View {
+                space: &space,
+                swatch,
+                private,
+                sidebar_open: self.sidebar_open && !self.sidebar_peek,
+                hover: hud_hover.map(|(c, _)| c),
+                down: self.hud_down,
+                open: self.hud_open.filter(|_| self.menu.is_some()),
+            };
+            let mid_x = sidebar_w + (vp.x - sidebar_w) / 2.0;
+            if let Some(r) = self.renderer.as_mut() {
+                layers.push(crate::hud::layer(r, &self.hud, &view, &th, ui));
+                // Guidance where the board has nothing to show: an empty
+                // board says how to start; a view with no card in it (the
+                // board is somewhere else) offers the way back.
+                let hot = |rect: Rect| free && rect.contains(self.cursor);
+                if self.scene.is_empty() && self.omnibox.is_none() {
+                    let probe = crate::hud::nudge(r, "This board is empty.", "Open a page", "Ctrl+T", mid_x, vp.y / 2.0, false, &th, ui).1;
+                    let (l, button) = crate::hud::nudge(r, "This board is empty.", "Open a page", "Ctrl+T", mid_x, vp.y / 2.0, hot(probe), &th, ui);
+                    layers.push(l);
+                    self.nudge = Some((button, Command::NewCard));
+                } else if !in_view && !board_hidden && self.camera_goal.is_none() && matches!(self.drag, Drag::None) {
+                    let bottom = vp.y - 16.0 * ui;
+                    let probe = crate::hud::nudge(r, "No cards in view.", "Fit everything", "Shift+F", mid_x, bottom, false, &th, ui).1;
+                    let (l, button) = crate::hud::nudge(r, "No cards in view.", "Fit everything", "Shift+F", mid_x, bottom, hot(probe), &th, ui);
+                    layers.push(l);
+                    self.nudge = Some((button, Command::Fit));
+                }
+            }
+            tip_shown = hud_hover.filter(|(_, since)| !self.hud_down && since.elapsed() >= crate::hud::TIP_DWELL).map(|(c, _)| c);
+        } else if self.read.is_some() && self.pointer_in && self.cursor.y < 72.0 * ui && self.omnibox.is_none() && self.menu.is_none() {
+            let mid_x = vp.x / 2.0;
+            if let Some(r) = self.renderer.as_mut() {
+                let probe = crate::hud::nudge(r, "Read Mode", "Back to the board", "Esc", mid_x, 56.0 * ui, false, &th, ui).1;
+                let (l, button) = crate::hud::nudge(r, "Read Mode", "Back to the board", "Esc", mid_x, 56.0 * ui, probe.contains(self.cursor), &th, ui);
+                layers.push(l);
+                self.read_exit = Some(button);
+            }
+        }
+
         let shown = self.omnibox.as_ref().map(|ob| anim_key(std::mem::discriminant(&ob.target)));
         let came = self.anim.omnibox.update(shown, Instant::now());
         if let Some(ob) = &self.omnibox {
             // The lists are centred sheets over everything; a lone box (a
             // name, an address, find) sits clear of an open sidebar.
             let r = if ob.target.is_list() { palette::field_rect(vp, ui) } else { palette::field_rect_from(vp, ui, sidebar_w) };
-            let h = r.h;
-            let size = 17.0 * ui;
-            let pad = 18.0 * ui;
-            let placeholder = match ob.target {
-                Target::RenameSpace => "Space name",
-                Target::NameTrail(_) => "Trail name (empty to clear)",
-                Target::Palette => "Find a card, space or command",
-                Target::Find(_) => "Find in page",
-                Target::History => "Search history",
-                Target::Downloads => {
-                    "Downloads · Enter opens, Ctrl+Enter its folder, Shift+Del cancels or removes"
-                }
-                Target::AllowedSites => "Sites with ads allowed · Enter blocks ads there again",
-                Target::SaveAs(_) => "Save download as · Enter saves, Esc cancels",
-                _ => "Search or enter address",
+            use crate::icons::Icon;
+            let (icon, placeholder, hint): (Icon, &str, &[(&str, &str)]) = match ob.target {
+                Target::RenameSpace => (Icon::Board, "Space name", &[("Enter", "Rename")]),
+                Target::NameTrail(_) => (Icon::Trail, "Trail name (empty to clear)", &[("Enter", "Name")]),
+                Target::Palette => (
+                    Icon::Search,
+                    "Find a card, space or command",
+                    &[("↑", ""), ("↓", "Move"), ("Enter", "Open"), ("Shift+Enter", "Open beside"), ("Esc", "Close")],
+                ),
+                Target::Find(_) => (Icon::Find, "Find in page", &[("Enter", "Next"), ("Shift+Enter", "Previous")]),
+                Target::History => (
+                    Icon::History,
+                    "Search history",
+                    &[("Enter", "Open"), ("Shift+Enter", "Open beside"), ("Shift+Del", "Forget"), ("Esc", "Close")],
+                ),
+                Target::Downloads => (
+                    Icon::Download,
+                    "Search downloads",
+                    &[("Enter", "Open file"), ("Ctrl+Enter", "Show folder"), ("Shift+Del", "Cancel or remove"), ("Esc", "Close")],
+                ),
+                Target::AllowedSites => (Icon::Shield, "Sites with ads allowed", &[("Enter", "Block ads again"), ("Esc", "Close")]),
+                Target::SaveAs(_) => (Icon::Download, "Save download as", &[("Enter", "Save"), ("Esc", "Cancel")]),
+                _ => (Icon::Globe, "Search or enter address", &[("Enter", "Open"), ("Shift+Enter", "Open beside")]),
             };
             // The list (if this field has one) hangs from the field: one sheet.
             let list = ob.target.is_list().then(|| {
@@ -5705,17 +5850,27 @@ impl App {
                 let scroll = ob.scroll.min(rows.len().saturating_sub(panel.shown));
                 (rows, panel, scroll)
             });
-            let selected = ob.select_all && !ob.text.is_empty();
-            let (shown, color) = if ob.text.is_empty() {
-                (placeholder.to_string(), rgb(th.dim_text(), 1.0))
-            } else if selected {
-                // Drawn on the accent, so in the colour that reads on it.
-                (ob.text.clone(), rgb(th.accent_foreground(), 1.0))
-            } else {
-                (ob.text.clone(), rgb(th.foreground(), 1.0))
+            // Find in page: "3 of 17" (or "No matches") at the right end.
+            let note = match (&ob.target, self.found) {
+                (Target::Find(_), Some((count, active))) if !ob.text.is_empty() => Some(match (count, active) {
+                    // Chromium picks an active match only once Enter steps to one.
+                    (0, _) => "No matches".to_string(),
+                    (1, 0) => "1 match".to_string(),
+                    (n, 0) => format!("{n} matches"),
+                    (n, a) => format!("{a} of {n}"),
+                }),
+                _ => None,
             };
-            let caret_x = self.renderer.as_mut().map_or(0.0, |rd| rd.measure(ob.before_caret(), size, false));
-            let text_w = self.renderer.as_mut().map_or(0.0, |rd| rd.measure(&ob.text, size, false));
+            let field = palette::Field {
+                icon,
+                text: &ob.text,
+                before_caret: ob.before_caret(),
+                placeholder,
+                selected: ob.select_all && !ob.text.is_empty(),
+                note,
+                // A lone box says what Enter does at its end; a list says it in its foot.
+                hint: if list.is_some() { &[] } else { hint },
+            };
             // Lists are modal: the board dims behind them.
             let mut fading: Vec<Layer> = Vec::new();
             if list.is_some() {
@@ -5725,74 +5880,41 @@ impl App {
             let mut l = Layer::default();
             let radius = th.radius(scale);
             let sheet = match &list {
-                Some((_, panel, _)) => Rect::new(r.x, r.y, r.w, panel.rect.bottom() - r.y),
+                Some((_, panel, _)) => Rect::new(r.x, r.y, r.w, panel.foot.bottom() - r.y),
                 None => r,
             };
             crate::chrome::panel(&mut l, sheet, radius, &th, ui, crate::chrome::Lift::High, th.panel());
             if list.is_some() {
                 // A hairline between the field and its results.
-                let line = ui.max(1.0);
-                l.quads.push(Quad {
-                    shape: Shape::Rect { rect: Rect::new(r.x, r.bottom() - line, r.w, line), radius: 0.0 },
-                    color: rgb(crate::chrome::edge(&th), 1.0),
-                    texture: None,
-                });
-            }
-            let caret_h = size * 1.35;
-            let caret_y = r.y + (h - caret_h) / 2.0;
-            if selected {
-                l.quads.push(Quad {
-                    shape: Shape::Rect { rect: Rect::new(r.x + pad, caret_y, text_w, caret_h), radius: th.small_radius(scale) },
-                    color: rgb(th.accent(), 1.0),
-                    texture: None,
-                });
-            } else {
-                l.quads.push(Quad {
-                    shape: Shape::Rect { rect: Rect::new(r.x + pad + caret_x, caret_y, 2.0 * scale.max(1.0), caret_h), radius: 0.0 },
-                    color: rgb(th.accent(), 1.0),
-                    texture: None,
-                });
-            }
-            l.texts.push(Text {
-                text: shown,
-                pos: [r.x + pad, r.y + (h - size * 1.3) / 2.0],
-                size,
-                color,
-                clip: r,
-                bold: false,
-            });
-            // Find in page: "3 of 17" (or "No matches") at the right end.
-            if matches!(ob.target, Target::Find(_)) && !ob.text.is_empty()
-                && let Some((count, active)) = self.found
-            {
-                // Chromium picks an active match only once Enter steps to one.
-                let msg = match (count, active) {
-                    (0, _) => "No matches".to_string(),
-                    (1, 0) => "1 match".to_string(),
-                    (n, 0) => format!("{n} matches"),
-                    (n, a) => format!("{a} of {n}"),
-                };
-                let w = self.renderer.as_mut().map_or(0.0, |rd| rd.measure(&msg, size, false));
-                l.texts.push(Text {
-                    text: msg,
-                    pos: [r.right() - pad - w, r.y + (h - size * 1.3) / 2.0],
-                    size,
-                    color: rgb(th.dim_text(), 1.0),
-                    clip: r,
-                    bold: false,
-                });
+                crate::chrome::fill(&mut l, Rect::new(r.x + line, r.bottom() - line, r.w - 2.0 * line, line), 0.0, rgb(th.line(), 1.0));
             }
             fading.push(l);
+            if let Some(rd) = self.renderer.as_mut() {
+                fading.push(palette::field_layer(rd, r, &field, &th, ui));
+            }
             if let Some((rows, panel, scroll)) = list {
                 let empty = match (&ob.target, ob.text.trim().is_empty(), &self.page_index) {
-                    (Target::History, _, None) => "History is off",
-                    (Target::History, true, _) => "No pages in history",
+                    (Target::History, _, None) => "History is off. Turn it on in the settings.",
+                    (Target::History, true, _) => "No pages in history yet",
                     (Target::Downloads, true, _) => "No downloads yet",
                     (Target::AllowedSites, true, _) => "Ads are blocked on every site",
                     _ => "Nothing found",
                 };
+                // Site icons are looked up before the renderer is borrowed to draw.
+                let icons: Vec<Option<u64>> = rows
+                    .iter()
+                    .map(|row| {
+                        let url = match &row.item {
+                            Item::Card(id) => self.scene.all_nodes().find(|n| n.id == *id).filter(|n| !n.is_note()).map(|n| n.url.clone()),
+                            Item::Open(url) => Some(url.clone()),
+                            _ => None,
+                        };
+                        url.and_then(|u| self.icon_key(&u))
+                    })
+                    .collect();
                 if let Some(rd) = self.renderer.as_mut() {
-                    fading.push(palette::layer(rd, &panel, &rows, ob.sel, scroll, empty, &th, ui));
+                    fading.push(palette::layer(rd, &panel, &rows, &icons, ob.sel, scroll, empty, &th, ui));
+                    fading.push(palette::foot_layer(rd, panel.foot, hint, rows.len(), &th, ui));
                 }
                 if let Some(size) = preview
                     && let Some(at) = panel.preview_rect(vp, size, ui)
@@ -5801,74 +5923,47 @@ impl App {
                 }
             }
             for mut l in fading {
-                crate::chrome::arrive(&mut l, came, 8.0 * ui);
+                crate::chrome::arrive(&mut l, came, 6.0 * ui);
                 layers.push(l);
             }
         }
 
-        if let Some(b) = band {
-            let r = self.to_screen_rect(b);
-            let t = scale.max(1.0);
-            let line = rgb(th.marked(), 0.9);
-            let mut l = Layer::default();
-            l.quads.push(Quad { shape: Shape::Rect { rect: r, radius: 0.0 }, color: rgb(th.marked(), 0.12), texture: None });
-            for edge in [
-                Rect::new(r.x, r.y, r.w, t),
-                Rect::new(r.x, r.bottom() - t, r.w, t),
-                Rect::new(r.x, r.y, t, r.h),
-                Rect::new(r.right() - t, r.y, t, r.h),
-            ] {
-                l.quads.push(Quad { shape: Shape::Rect { rect: edge, radius: 0.0 }, color: line, texture: None });
-            }
-            layers.push(l);
+        if self.menu.is_none() {
+            self.hud_open = None;
         }
-
         let came = self.anim.menu.update(self.menu.as_ref().map(|m| anim_key((m.rect.x as i32, m.rect.y as i32))), Instant::now());
-        if let Some(m) = &self.menu {
-            let mut l = menu_layer(m, ui, &th);
+        if let (Some(m), Some(r)) = (&self.menu, self.renderer.as_mut()) {
+            let mut l = menu_layer(r, m, ui, &th);
             crate::chrome::arrive(&mut l, came, 4.0 * ui);
             layers.push(l);
         }
 
-        // Space name in the top-left corner once there is more than one space.
-        if (self.spaces.spaces.len() > 1 || self.is_private()) && self.omnibox.is_none() && self.read.is_none() {
-            let label = self.space_label();
-            let color = th.swatch(tint.as_deref());
-            layers.push(self.pill(&label, Vec2::new(sidebar_w + 12.0 * ui, 12.0 * ui), 13.0 * ui, Some(color), false));
+        // Messages sit at the foot of the board, in its middle: a key guide
+        // while arranging by keyboard, then whatever was just said.
+        let mid_x = sidebar_w + (vp.x - sidebar_w) / 2.0;
+        let mut bottom = vp.y - 16.0 * ui;
+        if self.nudge.is_some_and(|(_, c)| c == Command::Fit) {
+            bottom -= 52.0 * ui;
         }
-        // While arranging by keyboard, the keys stay on screen at the bottom.
         if self.arrange.is_some() && self.omnibox.is_none() {
-            let size = 14.0 * ui;
-            let msg = ARRANGE_HELP;
-            let w = self.renderer.as_mut().map_or(300.0, |r| r.measure(msg, size, false));
-            let pos = Vec2::new((vp.x - w) / 2.0 - 16.0 * ui, vp.y - 54.0 * ui);
-            layers.push(self.pill(msg, pos, size, None, false));
+            let l = self.message(ARRANGE_HELP, mid_x, bottom, false);
+            bottom -= 48.0 * ui;
+            layers.push(l);
         }
         if let Some((msg, at)) = &self.toast {
             if self.confirm.is_some() || Instant::now() < *at {
-                if self.omnibox.is_none() {
-                    let size = 15.0 * ui;
-                    let msg = msg.clone();
-                    let w = self.renderer.as_mut().map_or(300.0, |r| r.measure(&msg, size, false));
-                    // Below Read Mode's bar (if it has one), so it doesn't cover the title.
-                    let top = if self.read.is_some() {
-                        READ_BAR * ui
-                    } else {
-                        0.0
-                    };
-                    let y = top + 18.0 * ui;
-                    let pos = Vec2::new((vp.x - w) / 2.0 - 16.0 * ui, y);
-                    let warn = self.confirm.is_some();
-                    let came = self.anim.toast.update(Some(anim_key(&msg)), Instant::now());
-                    let mut l = self.pill(&msg, pos, size, None, warn);
-                    crate::chrome::arrive(&mut l, came, 10.0 * ui);
-                    layers.push(l);
-                }
+                let msg = msg.clone();
+                let warn = self.confirm.is_some();
+                let came = self.anim.toast.update(Some(anim_key(&msg)), Instant::now());
+                let mut l = self.message(&msg, mid_x, bottom, warn);
+                // It rises into place.
+                crate::chrome::arrive(&mut l, came, -8.0 * ui);
+                layers.push(l);
             } else {
                 self.toast = None;
             }
         }
-        if self.toast.is_none() || self.omnibox.is_some() {
+        if self.toast.is_none() {
             self.anim.toast.update(None, Instant::now());
         }
 
@@ -5880,6 +5975,15 @@ impl App {
                 crate::chrome::fade(&mut l, came, Vec2::new(0.0, 0.0));
                 layers.push(l);
             }
+        }
+
+        // The name and key of the control the pointer rests on.
+        let came = self.anim.tip.update(tip_shown.map(anim_key), Instant::now());
+        if let (Some(c), Some(r)) = (tip_shown, self.renderer.as_mut())
+            && let Some(mut l) = crate::hud::tip(r, &self.hud, c, vp, &th, ui)
+        {
+            crate::chrome::fade(&mut l, came, Vec2::new(0.0, 0.0));
+            layers.push(l);
         }
 
         if let Some(r) = self.renderer.as_mut() {
@@ -5959,38 +6063,23 @@ impl App {
         l
     }
 
-    /// A rounded label with its top-left at `pos` (screen px). `swatch` draws a
-    /// colour dot before the text; `warn` uses a red outline.
-    fn pill(&mut self, text: &str, pos: Vec2, size: f32, swatch: Option<[u8; 3]>, warn: bool) -> Layer {
+    /// A message centred on `mid_x` with its bottom at `bottom` (screen px):
+    /// a toast, or a question. `warn` gives it a red edge: answering it
+    /// loses something.
+    fn message(&mut self, text: &str, mid_x: f32, bottom: f32, warn: bool) -> Layer {
         let th = &self.theme;
-        let scale = self.scale();
-        let radius = th.radius(scale);
-        let pad = size * 1.05;
-        let h = size * 2.3;
-        let dot = if swatch.is_some() { size * 0.8 + size * 0.6 } else { 0.0 };
-        let w = self.renderer.as_mut().map_or(200.0, |r| r.measure(text, size, false)) + pad * 2.0 + dot;
-        let r = Rect::new(pos.x, pos.y, w, h);
+        let ui = self.scale() * th.text_scale;
+        let size = crate::chrome::type_::BODY * ui;
+        let (pad, h) = (14.0 * ui, 36.0 * ui);
+        let vp = self.viewport();
+        let max_w = (vp.x - 32.0 * ui).max(80.0);
+        let tw = self.renderer.as_mut().map_or(200.0, |r| r.measure(text, size, false));
+        let w = (tw + 2.0 * pad).min(max_w);
+        let r = Rect::new((mid_x - w / 2.0).clamp(16.0 * ui, (vp.x - w - 16.0 * ui).max(16.0 * ui)).round(), (bottom - h).round(), w.round(), h);
         let mut l = Layer::default();
-        // A question that loses data gets a red edge.
-        let (rim, bw) = if warn { (th.danger(), 1.5 * scale.max(1.0)) } else { (crate::chrome::edge(th), scale.max(1.0)) };
-        crate::chrome::panel_edged(&mut l, r, radius, th, scale, crate::chrome::Lift::Mid, th.panel(), rim, bw);
-        if let Some(c) = swatch {
-            // A true circle keeps its round shape whatever the rounding.
-            let d = size * 0.8;
-            l.quads.push(Quad {
-                shape: Shape::Rect { rect: Rect::new(r.x + pad, r.y + (h - d) / 2.0, d, d), radius: d / 2.0 },
-                color: rgb(c, 1.0),
-                texture: None,
-            });
-        }
-        l.texts.push(Text {
-            text: text.into(),
-            pos: [r.x + pad + dot, r.y + (h - size * 1.3) / 2.0],
-            size,
-            color: rgb(self.theme.foreground(), 1.0),
-            clip: r,
-            bold: false,
-        });
+        let (rim, bw) = if warn { (th.danger(), (1.5 * ui).max(1.0)) } else { (crate::chrome::edge(th), crate::chrome::hair(ui)) };
+        crate::chrome::panel_edged(&mut l, r, th.radius(self.scale()), th, ui, crate::chrome::Lift::Mid, th.panel(), rim, bw);
+        crate::chrome::text(&mut l, text, r.x + pad, r.center().y, size, rgb(th.text(), 1.0), r.inflate(-pad * 0.5), false);
         l
     }
 
@@ -6175,18 +6264,92 @@ impl App {
 
     fn layout_menu(&mut self, id: NodeId, items: Vec<Entry>, anchor: Vec2) -> ContextMenu {
         let scale = self.ui();
+        let ksize = crate::chrome::type_::CAPTION * scale;
         let label_w = match self.renderer.as_mut() {
             Some(r) => items
                 .iter()
                 .filter(|e| !e.is_separator())
-                .map(|e| r.measure(e.label(), menu::FONT * scale, false))
+                .map(|e| {
+                    let keys = crate::chrome::keycaps(e.keys()).unwrap_or_default();
+                    let widths: Vec<f32> = keys.iter().map(|k| r.measure(k, ksize, false)).collect();
+                    let kw = if keys.is_empty() { 0.0 } else { crate::chrome::keycaps_width(&widths, ksize) + 24.0 * scale };
+                    r.measure(e.label(), menu::FONT * scale, e.is_current()) + kw
+                })
                 .fold(0.0, f32::max),
             None => 0.0,
         };
         ContextMenu::new(id, items, anchor, label_w, self.viewport(), scale)
     }
 
-    /// A click on the title bar's shield: the site's blocking entries (the
+    /// A press on one of the board's own controls.
+    fn hud_press(&mut self, c: crate::hud::Control) {
+        use crate::hud::Control;
+        log::info!("control: {c:?}");
+        self.keys_in_page = false;
+        match c {
+            Control::Space => {
+                let active = self.spaces.active;
+                let mut items: Vec<Entry> = self
+                    .spaces
+                    .spaces
+                    .iter()
+                    .map(|e| Entry::Space { id: e.id, label: if e.private { format!("{} · private", e.name) } else { e.name.clone() }, current: e.id == active })
+                    .collect();
+                items.push(Entry::separator());
+                items.extend([Command::NewSpace, Command::NewPrivateSpace].map(Entry::command));
+                items.push(Entry::separator());
+                items.extend([Command::RenameSpace, Command::NextTint, Command::PrivateSpace, Command::DeleteSpace].map(Entry::command));
+                self.open_hud_menu(c, items);
+            }
+            _ => {
+                if let Some(cmd) = c.command() {
+                    self.run_command(cmd);
+                }
+            }
+        }
+    }
+
+    /// Opens `items` as the menu of control `c`, under it. A second press
+    /// on the control closes it.
+    fn open_hud_menu(&mut self, c: crate::hud::Control, items: Vec<Entry>) {
+        if self.hud_open == Some(c) && self.menu.is_some() {
+            self.menu = None;
+            self.hud_open = None;
+            return;
+        }
+        let Some(at) = self.hud.rect(c) else { return };
+        let anchor = Vec2::new(at.x, at.bottom() + 8.0 * self.ui());
+        let m = self.layout_menu(menu::NO_CARD, items, anchor);
+        log::info!("menu of {c:?}: {:?}", menu_labels(&m.items));
+        self.menu = Some(m);
+        self.hud_open = Some(c);
+        self.menu_pressed = false;
+    }
+
+    /// A right-click on the empty board: what can be made and done there,
+    /// each with its key.
+    fn open_board_menu(&mut self, at: Vec2) {
+        let groups: [&[Command]; 4] = [
+            &[Command::NewCard, Command::NewNote, Command::NewSticky],
+            &[Command::Tidy, Command::Fold, Command::Fit],
+            &[Command::Reopen, Command::Undo, Command::Redo],
+            &[Command::History, Command::Downloads, Command::Settings, Command::Shortcuts],
+        ];
+        let mut items: Vec<Entry> = Vec::new();
+        for (i, g) in groups.iter().enumerate() {
+            if i > 0 {
+                items.push(Entry::separator());
+            }
+            items.extend(g.iter().copied().map(Entry::command));
+        }
+        let m = self.layout_menu(menu::NO_CARD, items, at);
+        log::info!("board menu: {:?}", menu_labels(&m.items));
+        self.menu = Some(m);
+        self.hud_open = None;
+        self.menu_pressed = false;
+    }
+
+    /// A click on a label's shield: the site's blocking entries (the
     /// end of the page menu), under the shield.
     fn open_shield_menu(&mut self, id: NodeId) {
         let Some(b) = self.blocking_state(id) else { return };
@@ -6204,9 +6367,11 @@ impl App {
         let len = self.scene.stack_of(n.id)?.members.len();
         let size = 11.0 * self.ui();
         let frame = self.to_screen_rect(n.frame());
-        let h = size * 1.6;
+        let h = (size * 1.7).round();
         let w = (size * (0.62 * len.to_string().len() as f32 + 1.0)).max(h);
-        Some(Rect::new(frame.x - w * 0.4, frame.y - h * 0.4, w, h))
+        // At the start of the card's label.
+        let ui = self.ui();
+        Some(Rect::new(frame.x, (frame.y - BAR_GAP * ui - BAR_H * ui / 2.0 - h / 2.0).round(), w, h))
     }
 
     /// O, or a click on the count badge: list the stack's members under its
@@ -6247,6 +6412,18 @@ impl App {
             Some(Entry::Unfold) => {
                 log::info!("outline: unfold");
                 self.unfold_stack(id);
+                return;
+            }
+            Some(Entry::Command { cmd, label, .. }) => {
+                log::info!("menu: {label}");
+                self.run_command(cmd);
+                return;
+            }
+            Some(Entry::Space { id: space, label, .. }) => {
+                log::info!("menu: space {label}");
+                if space != self.spaces.active {
+                    self.switch_space(space);
+                }
                 return;
             }
             _ => return,
@@ -6331,94 +6508,40 @@ fn menu_labels(items: &[Entry]) -> Vec<&str> {
     items.iter().map(Entry::label).collect()
 }
 
-/// What an empty board says: a heading and how to start, keys as keycaps.
-fn empty_hint(r: &mut compositor::Renderer, vp: Vec2, th: &Theme, ui: f32) -> Layer {
-    enum Part {
-        Words(&'static str),
-        Keys(&'static [&'static str]),
-    }
-    use Part::*;
-    let parts = [Words("Press"), Keys(&["N"]), Words("or"), Keys(&["Ctrl", "T"]), Words("to open a page  ·"), Keys(&["?"]), Words("for shortcuts")];
-    let (size, ksize, space) = (15.0 * ui, 12.5 * ui, 7.0 * ui);
-    let widths: Vec<Vec<f32>> = parts
-        .iter()
-        .map(|p| match p {
-            Words(w) => vec![r.measure(w, size, false)],
-            Keys(keys) => keys.iter().map(|k| r.measure(k, ksize, false)).collect(),
-        })
-        .collect();
-    let part_w = |p: &Part, w: &[f32]| match p {
-        Words(_) => w[0],
-        Keys(_) => crate::chrome::keycaps_width(w, ksize),
-    };
-    let total: f32 = parts.iter().zip(&widths).map(|(p, w)| part_w(p, w)).sum::<f32>() + space * (parts.len() - 1) as f32;
-    let screen = Rect::new(0.0, 0.0, vp.x, vp.y);
+fn menu_layer(r: &mut Renderer, m: &ContextMenu, ui: f32, th: &Theme) -> Layer {
     let mut l = Layer::default();
-    let title = "An empty board";
-    let tsize = 22.0 * ui;
-    let tw = r.measure(title, tsize, true);
-    let mid = vp.y / 2.0;
-    l.texts.push(Text {
-        text: title.into(),
-        pos: [(vp.x - tw) / 2.0, mid - tsize * 2.4],
-        size: tsize,
-        color: rgb(crate::theme::mix(th.foreground(), th.dim_text(), 0.45), 1.0),
-        clip: screen,
-        bold: true,
-    });
-    let mut x = (vp.x - total) / 2.0;
-    for (p, w) in parts.iter().zip(&widths) {
-        match p {
-            Words(text) => l.texts.push(Text {
-                text: (*text).into(),
-                pos: [x, mid - size * 1.3 / 2.0],
-                size,
-                color: rgb(th.dim_text(), 1.0),
-                clip: screen,
-                bold: false,
-            }),
-            Keys(keys) => {
-                let right = x + crate::chrome::keycaps_width(w, ksize);
-                crate::chrome::draw_keycaps(&mut l, keys, w, right, mid, ksize, th, ui, screen);
-            }
-        }
-        x += part_w(p, w) + space;
-    }
-    l
-}
-
-fn menu_layer(m: &ContextMenu, scale: f32, th: &Theme) -> Layer {
-    let mut l = Layer::default();
-    let radius = th.radius(scale / th.text_scale);
-    crate::chrome::panel(&mut l, m.rect, radius, th, scale, crate::chrome::Lift::Mid, th.panel());
-    let size = menu::FONT * scale;
+    let radius = th.radius(ui / th.text_scale);
+    let small = th.small_radius(ui / th.text_scale);
+    crate::chrome::panel(&mut l, m.rect, radius, th, ui, crate::chrome::Lift::Mid, th.panel());
+    let size = menu::FONT * ui;
+    let ksize = crate::chrome::type_::CAPTION * ui;
     for (i, (item, row)) in m.items.iter().zip(&m.rows).enumerate() {
         if item.is_separator() {
-                let y = row.y + row.h / 2.0;
-                l.quads.push(Quad {
-                    shape: Shape::Rect { rect: Rect::new(row.x + 4.0 * scale, y, row.w - 8.0 * scale, scale.max(1.0)), radius: 0.0 },
-                    color: rgb(th.divider(), 1.0),
-                    texture: None,
-                });
-                continue;
+            let line = crate::chrome::hair(ui);
+            crate::chrome::fill(&mut l, Rect::new(m.rect.x + line, (row.center().y - line / 2.0).round(), m.rect.w - 2.0 * line, line), 0.0, rgb(th.line(), 1.0));
+            continue;
         }
-        if m.hover == Some(i) {
-            l.quads.push(Quad { shape: Shape::Rect { rect: *row, radius: th.small_radius(scale / th.text_scale) }, color: rgb(th.selection(), 1.0), texture: None });
+        let hot = m.hover == Some(i);
+        if hot {
+            crate::chrome::fill(&mut l, *row, small, rgb(th.active(), 1.0));
         }
-        let current = matches!(item, Entry::Member { current: true, .. });
-        if current {
-            // A short accent bar marks the card in front.
-            let bar = Rect::new(row.x + 2.0 * scale, row.y + row.h * 0.25, (2.0 * scale).max(1.0), row.h * 0.5);
-            l.quads.push(Quad { shape: Shape::Rect { rect: bar, radius: 0.0 }, color: rgb(th.accent(), 1.0), texture: None });
+        let mid = row.center().y;
+        if item.is_current() {
+            // A tick marks the card in front, or the space showing.
+            crate::icons::draw(&mut l, r, crate::icons::Icon::Check, row.x + 14.0 * ui, mid, 14.0 * ui, rgb(th.accent_text(), 1.0));
         }
-        l.texts.push(Text {
-            text: item.label().to_string(),
-            pos: [row.x + (menu::TEXT_PAD - menu::PAD) * scale, row.y + (row.h - size * 1.3) / 2.0],
-            size,
-            color: rgb(if item.is_enabled() { th.foreground() } else { th.dim_text() }, 1.0),
-            clip: *row,
-            bold: current,
-        });
+        let mut right = row.right() - 8.0 * ui;
+        if let Some(keys) = crate::chrome::keycaps(item.keys()) {
+            let widths: Vec<f32> = keys.iter().map(|k| r.measure(k, ksize, false)).collect();
+            right = crate::chrome::draw_keycaps(&mut l, &keys, &widths, right, mid, ksize, th, ui, *row) - 12.0 * ui;
+        }
+        let x = row.x + (menu::TEXT_PAD - menu::PAD) * ui;
+        let ink = match (item.is_enabled(), hot) {
+            (false, _) => th.text3(),
+            (true, true) => th.text(),
+            (true, false) => crate::theme::blend(th.text(), th.text2(), 0.35),
+        };
+        crate::chrome::text(&mut l, item.label(), x, mid, size, rgb(ink, 1.0), Rect::new(x, row.y, (right - x).max(1.0), row.h), item.is_current());
     }
     l
 }
@@ -6442,6 +6565,11 @@ impl App {
                     self.mouse_input(ElementState::Pressed, MouseButton::Left);
                     self.mouse_input(ElementState::Released, MouseButton::Left);
                     self.mods = saved;
+                }
+                Cmd::RightClick(x, y) => {
+                    self.cursor_moved(Vec2::new(x, y));
+                    self.mouse_input(ElementState::Pressed, MouseButton::Right);
+                    self.mouse_input(ElementState::Released, MouseButton::Right);
                 }
                 Cmd::PageClick { id, x, y, right } => {
                     let Some(at) = self.page_rect_to_screen(NodeId(id), Rect::new(x, y, 0.0, 0.0)) else {
@@ -6630,7 +6758,7 @@ impl App {
                 Cmd::Icons => {
                     let mut sites: Vec<_> = self.icons.iter().map(|(s, i)| format!("{s}={}x{}", i.icon.width, i.icon.height)).collect();
                     sites.sort();
-                    log::info!("script icons: sites={sites:?} named={:?}", self.named_card().map(|id| id.0));
+                    log::info!("script icons: sites={sites:?} named={:?}", self.focused.map(|id| id.0));
                     for n in self.scene.nodes() {
                         let site = scene::icon::site(&n.url);
                         let drawn = self.icon_key(&n.url).is_some();
@@ -6765,6 +6893,10 @@ enum Hit {
     Board,
     Header(NodeId),
     Close(NodeId),
+    /// The title bar's back, forward and reload buttons.
+    Back(NodeId),
+    Forward(NodeId),
+    Reload(NodeId),
     Grip(NodeId),
     Content(NodeId),
     /// Read Mode's title bar.
@@ -6781,7 +6913,7 @@ impl Hit {
     fn id(&self) -> Option<NodeId> {
         match *self {
             Hit::Board => None,
-            Hit::Header(id) | Hit::Close(id) | Hit::Grip(id) | Hit::Content(id) | Hit::ReadBar(id) | Hit::Badge(id) | Hit::Shield(id) | Hit::Tag(id) => Some(id),
+            Hit::Header(id) | Hit::Close(id) | Hit::Back(id) | Hit::Forward(id) | Hit::Reload(id) | Hit::Grip(id) | Hit::Content(id) | Hit::ReadBar(id) | Hit::Badge(id) | Hit::Shield(id) | Hit::Tag(id) => Some(id),
         }
     }
 }
@@ -6806,6 +6938,7 @@ impl ApplicationHandler for App {
             }
         }
         self.start_desktop();
+        self.update_card_size();
         let first_run = spaces::is_first_run(&self.data_dir);
         let restored = self.restore();
         // At the restored camera's resolution, so pages don't lay out twice.
@@ -6838,12 +6971,16 @@ impl ApplicationHandler for App {
                 if let Some(r) = self.renderer.as_mut() {
                     r.resize(size.width, size.height);
                 }
+                // The window may have moved to another monitor.
+                self.update_card_size();
             }
             WindowEvent::ScaleFactorChanged { .. } => self.camera_moved(),
             WindowEvent::ModifiersChanged(m) => self.mods = m.state(),
             WindowEvent::CursorMoved { position, .. } => self.cursor_moved(Vec2::new(position.x as f32, position.y as f32)),
             WindowEvent::CursorLeft { .. } => {
                 self.pointer_in = false;
+                self.hud_hover = None;
+                self.hover = Hit::Board;
                 if let Some(id) = self.hit(self.cursor).id()
                     && let (Some(card), Some((x, y))) = (self.cards.get(&id), self.page_point(id, self.cursor)) {
                         card.page.mouse_move(x, y, 0, true);

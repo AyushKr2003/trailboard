@@ -1,34 +1,64 @@
-//! The look shared by everything drawn over the board: panels with a layered
-//! shadow, a hairline edge and a faint top sheen; the dimmed backdrop behind
-//! modal lists; keycap chips; and the short ease-in that overlays appear with.
-//! Corners still follow the theme's rounding (sharp on Omarchy's default).
+//! The look shared by everything drawn over the board.
+//!
+//! One model of depth: a surface is its level's colour (`theme`), a hairline
+//! just inside its edge, and a two-part shadow whose size says how far it
+//! floats. Nothing glows, shines or fades to a gradient. Sizes sit on a 4 px
+//! grid and text on one scale ([`type_`]); corners follow the theme's
+//! rounding (sharp on Omarchy's default).
 
 use std::time::{Duration, Instant};
 
-use compositor::{Layer, Quad, Shape, Text};
+use compositor::{Layer, Quad, Renderer, Shape, Text};
 use scene::{Rect, Vec2};
 
-use crate::theme::{Rgb, Theme, mix, rgb};
+use crate::icons::{self, Icon};
+use crate::theme::{Rgb, Theme, rgb};
+
+/// The type scale, in logical px (multiply by the UI scale). Every text in
+/// the chrome is one of these.
+pub mod type_ {
+    /// Keycaps, counts, section labels.
+    pub const CAPTION: f32 = 11.0;
+    /// Secondary lines: hosts, hints, tooltips.
+    pub const SMALL: f32 = 12.0;
+    /// Rows, menus, buttons, titles of cards.
+    pub const BODY: f32 = 13.0;
+    /// What you type into.
+    pub const INPUT: f32 = 15.0;
+    /// A sheet's heading.
+    pub const TITLE: f32 = 18.0;
+}
+
+/// Line height the renderer gives a text of `size`.
+pub fn line_h(size: f32) -> f32 {
+    size * 1.3
+}
+
+/// The y to draw a text of `size` at so it is centred on `mid_y`.
+pub fn text_y(mid_y: f32, size: f32) -> f32 {
+    mid_y - line_h(size) / 2.0
+}
 
 /// How far a surface floats above the board: the size of its shadow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lift {
     /// Labels and chips that sit on the board.
     Low,
-    /// Menus, the sidebar, toasts.
+    /// The dock, menus, the sidebar, toasts.
     Mid,
     /// The palette, the shortcut sheet: modal surfaces.
     High,
 }
 
-/// A two-part shadow under `rect`: a tight, darker contact shadow and a wide,
-/// soft ambient one, which together read as depth rather than a smudge.
+/// A two-part shadow under `rect`, lit from above: a tight one where the
+/// surface meets what is under it and a wide, soft one around it. Offset and
+/// blur grow together with the lift, as real shadows do.
 pub fn lift(l: &mut Layer, rect: Rect, radius: f32, th: &Theme, ui: f32, lift: Lift) {
     let (key, ambient) = match lift {
         // (offset y, blur, strength)
-        Lift::Low => ((1.0, 3.0, 0.30), (4.0, 12.0, 0.22)),
-        Lift::Mid => ((2.0, 5.0, 0.32), (10.0, 28.0, 0.34)),
-        Lift::High => ((3.0, 8.0, 0.36), (20.0, 52.0, 0.46)),
+        Lift::Low => ((1.0, 2.0, 0.22), (3.0, 8.0, 0.16)),
+        Lift::Mid => ((1.0, 3.0, 0.26), (8.0, 24.0, 0.28)),
+        Lift::High => ((2.0, 6.0, 0.28), (24.0, 60.0, 0.42)),
     };
     for (dy, blur, a) in [ambient, key] {
         l.quads.push(Quad {
@@ -39,43 +69,117 @@ pub fn lift(l: &mut Layer, rect: Rect, radius: f32, th: &Theme, ui: f32, lift: L
     }
 }
 
-/// The hairline around a panel: a step lighter than the panel on dark
-/// themes, a step darker on light ones.
+/// The hairline around a panel.
 pub fn edge(th: &Theme) -> Rgb {
-    if th.light() { mix(th.panel(), [0, 0, 0], 0.13) } else { mix(th.panel(), th.foreground(), 0.13) }
+    th.line()
 }
 
-/// A surface over the board: shadow, hairline edge, `fill`, and a faint
-/// highlight along its top edge.
+/// One device pixel at least: the width of every hairline.
+pub fn hair(ui: f32) -> f32 {
+    ui.round().max(1.0)
+}
+
+/// A filled rounded rectangle.
+pub fn fill(l: &mut Layer, rect: Rect, radius: f32, colour: [f32; 4]) {
+    l.quads.push(Quad { shape: Shape::Rect { rect, radius }, color: colour, texture: None });
+}
+
+/// An outline `width` px wide just inside `rect`.
+pub fn outline(l: &mut Layer, rect: Rect, radius: f32, width: f32, colour: [f32; 4]) {
+    l.quads.push(Quad { shape: Shape::Ring { rect, radius, width }, color: colour, texture: None });
+}
+
+/// A surface over the board: its shadow, `fill`, and a hairline inside its edge.
 pub fn panel(l: &mut Layer, rect: Rect, radius: f32, th: &Theme, ui: f32, level: Lift, fill: Rgb) {
-    panel_edged(l, rect, radius, th, ui, level, fill, edge(th), ui.max(1.0));
+    panel_edged(l, rect, radius, th, ui, level, fill, edge(th), hair(ui));
 }
 
 /// [`panel`] with an edge of colour `rim`, `bw` px wide (a warning's red, say).
 #[allow(clippy::too_many_arguments)]
 pub fn panel_edged(l: &mut Layer, rect: Rect, radius: f32, th: &Theme, ui: f32, level: Lift, fill: Rgb, rim: Rgb, bw: f32) {
     lift(l, rect, radius, th, ui, level);
-    let outer = if radius > 0.0 { radius + bw } else { 0.0 };
-    l.quads.push(Quad { shape: Shape::Rect { rect: rect.inflate(bw), radius: outer }, color: rgb(rim, 1.0), texture: None });
-    l.quads.push(Quad { shape: Shape::Rect { rect, radius }, color: rgb(fill, 1.0), texture: None });
-    sheen(l, rect, radius, th, ui);
-}
-
-/// The 1 px highlight along the top of a surface (kept inside rounded corners).
-pub fn sheen(l: &mut Layer, rect: Rect, radius: f32, th: &Theme, ui: f32) {
-    let bw = ui.max(1.0);
-    let colour = if th.light() { rgb([255, 255, 255], 0.7) } else { rgb(th.foreground(), 0.06) };
-    l.quads.push(Quad {
-        shape: Shape::Rect { rect: Rect::new(rect.x + radius, rect.y, (rect.w - 2.0 * radius).max(0.0), bw), radius: 0.0 },
-        color: colour,
-        texture: None,
-    });
+    self::fill(l, rect, radius, rgb(fill, 1.0));
+    outline(l, rect, radius, bw, rgb(rim, 1.0));
 }
 
 /// A dim veil over the whole window, behind a modal surface.
 pub fn scrim(screen: Rect, th: &Theme, strength: f32) -> Layer {
-    let a = if th.light() { 0.16 } else { 0.34 } * strength;
-    Layer { quads: vec![Quad { shape: Shape::Rect { rect: screen, radius: 0.0 }, color: [0.0, 0.0, 0.0, a], texture: None }], texts: vec![] }
+    let a = if th.light() { 0.18 } else { 0.42 } * strength;
+    let mut c = th.shadow(1.0);
+    c[3] = a;
+    Layer { quads: vec![Quad { shape: Shape::Rect { rect: screen, radius: 0.0 }, color: c, texture: None }], texts: vec![] }
+}
+
+/// One line of text centred on `mid_y`, starting at `x`.
+#[allow(clippy::too_many_arguments)]
+pub fn text(l: &mut Layer, s: impl Into<String>, x: f32, mid_y: f32, size: f32, colour: [f32; 4], clip: Rect, bold: bool) {
+    l.texts.push(Text { text: s.into(), pos: [x, text_y(mid_y, size)], size, color: colour, clip, bold });
+}
+
+/// How a button looks for what the pointer is doing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Press {
+    Idle,
+    Hover,
+    /// Held down, or switched on (an open sidebar's button).
+    Down,
+}
+
+/// A square icon button: nothing behind it at rest, a fill under the
+/// pointer, a stronger one while pressed or on. `on` tints the icon with the
+/// accent (a mode that is switched on); `enabled: false` greys it out.
+#[allow(clippy::too_many_arguments)]
+pub fn icon_button(l: &mut Layer, r: &mut Renderer, rect: Rect, icon: Icon, press: Press, on: bool, enabled: bool, th: &Theme, ui: f32) {
+    let radius = th.small_radius(ui / th.text_scale);
+    match press {
+        Press::Hover if enabled => fill(l, rect, radius, rgb(th.hover(), 1.0)),
+        Press::Down if enabled => fill(l, rect, radius, rgb(th.active(), 1.0)),
+        _ => {}
+    }
+    let ink = match (enabled, on, press) {
+        (false, ..) => th.text3(),
+        (true, true, _) => th.accent_text(),
+        (true, false, Press::Idle) => th.text2(),
+        (true, false, _) => th.text(),
+    };
+    let c = rect.center();
+    icons::draw(l, r, icon, c.x, c.y, 16.0 * ui, rgb(ink, 1.0));
+}
+
+/// A small label that names a control and its key, floating `gap` px from
+/// `anchor`: above it when `above`, else below; kept inside the window.
+#[allow(clippy::too_many_arguments)]
+pub fn tooltip(r: &mut Renderer, label: &str, keys: &str, anchor: Rect, above: bool, viewport: Vec2, th: &Theme, ui: f32) -> Layer {
+    let mut l = Layer::default();
+    let size = type_::SMALL * ui;
+    let ksize = type_::CAPTION * ui;
+    let (pad, gap, h) = (8.0 * ui, 8.0 * ui, 28.0 * ui);
+    let lw = r.measure(label, size, false);
+    let caps = keycaps(keys);
+    let widths: Vec<f32> = caps.iter().flatten().map(|k| r.measure(k, ksize, false)).collect();
+    let kw = if widths.is_empty() { 0.0 } else { keycaps_width(&widths, ksize) + 8.0 * ui };
+    let w = pad + lw + kw + if widths.is_empty() { pad } else { 5.0 * ui };
+    let x = (anchor.center().x - w / 2.0).clamp(6.0 * ui, (viewport.x - w - 6.0 * ui).max(6.0 * ui));
+    let y = if above { anchor.y - gap - h } else { anchor.bottom() + gap };
+    let rect = Rect::new(x.round(), y.round(), w.round(), h);
+    // A step above a panel, with a firmer edge: it floats over anything.
+    let (face, ink) = (th.active(), th.text());
+    let radius = th.small_radius(ui / th.text_scale);
+    lift(&mut l, rect, radius, th, ui, Lift::Low);
+    fill(&mut l, rect, radius, rgb(face, 1.0));
+    outline(&mut l, rect, radius, hair(ui), rgb(th.line_strong(), 0.7));
+    text(&mut l, label, rect.x + pad, rect.center().y, size, rgb(ink, 1.0), rect, false);
+    if let Some(keys) = caps {
+        let mut kx = rect.right() - 5.0 * ui - keycaps_width(&widths, ksize);
+        for (k, kwid) in keys.iter().zip(&widths) {
+            let cw = cap_w(*kwid, ksize);
+            let cap = Rect::new(kx.round(), (rect.center().y - ksize * 0.85).round(), cw.round(), (ksize * 1.7).round());
+            fill(&mut l, cap, radius.min(4.0 * ui), rgb(th.panel(), 1.0));
+            text(&mut l, *k, cap.x + (cap.w - kwid) / 2.0, cap.center().y, ksize, rgb(th.text2(), 1.0), cap, true);
+            kx += cw + ksize * 0.3;
+        }
+    }
+    l
 }
 
 /// The keys of a shortcut as written in the palette ("Ctrl+Shift+N", "Ctrl++",
@@ -108,40 +212,39 @@ pub fn keycaps(detail: &str) -> Option<Vec<&str>> {
     Some(keys)
 }
 
+/// Width of one keycap around a key `w` px wide at text `size`.
+fn cap_w(w: f32, size: f32) -> f32 {
+    (w + 2.0 * size * 0.5).max(size * 1.7)
+}
+
 /// Size of a row of keycaps for `keys` at text `size`, given each key's text width.
 pub fn keycaps_width(widths: &[f32], size: f32) -> f32 {
-    let (pad, gap) = (size * 0.45, size * 0.3);
-    widths.iter().map(|w| (w + 2.0 * pad).max(size * 1.6)).sum::<f32>() + gap * widths.len().saturating_sub(1) as f32
+    widths.iter().map(|w| cap_w(*w, size)).sum::<f32>() + size * 0.3 * widths.len().saturating_sub(1) as f32
 }
 
 /// Draws `keys` (with text widths `widths`) as keycaps ending at `right`,
-/// centred on `mid_y`; returns the left edge.
+/// centred on `mid_y`; returns the left edge. A keycap is flat: a raised
+/// fill with a hairline, the key in secondary text.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_keycaps(l: &mut Layer, keys: &[&str], widths: &[f32], right: f32, mid_y: f32, size: f32, th: &Theme, ui: f32, clip: Rect) -> f32 {
-    let (pad, gap) = (size * 0.45, size * 0.3);
+    let gap = size * 0.3;
     let h = size * 1.7;
-    let bw = ui.max(1.0);
-    let radius = th.small_radius(ui);
-    let face = if th.light() { mix(th.panel(), [255, 255, 255], 0.6) } else { mix(th.panel(), th.foreground(), 0.07) };
-    let rim = edge(th);
-    let base = if th.light() { mix(th.panel(), [0, 0, 0], 0.22) } else { mix(th.panel(), [0, 0, 0], 0.45) };
+    let radius = th.small_radius(ui / th.text_scale).min(4.0 * ui);
     let total = keycaps_width(widths, size);
     let mut x = right - total;
     let left = x;
     for (k, w) in keys.iter().zip(widths) {
-        let cw = (w + 2.0 * pad).max(size * 1.6);
-        let cap = Rect::new(x, mid_y - h / 2.0, cw, h);
-        // A darker lip under the cap, then its rim and face.
-        l.quads.push(Quad { shape: Shape::Rect { rect: cap.translate(Vec2::new(0.0, bw)).inflate(bw), radius: radius + bw }, color: rgb(base, 1.0), texture: None });
-        l.quads.push(Quad { shape: Shape::Rect { rect: cap.inflate(bw), radius: if radius > 0.0 { radius + bw } else { 0.0 } }, color: rgb(rim, 1.0), texture: None });
-        l.quads.push(Quad { shape: Shape::Rect { rect: cap, radius }, color: rgb(face, 1.0), texture: None });
+        let cw = cap_w(*w, size);
+        let cap = Rect::new(x.round(), (mid_y - h / 2.0).round(), cw.round(), h.round());
+        fill(l, cap, radius, rgb(th.hover(), 1.0));
+        outline(l, cap, radius, hair(ui), rgb(th.line_strong(), 0.55));
         l.texts.push(Text {
             text: (*k).to_string(),
-            pos: [x + (cw - w) / 2.0, mid_y - size * 1.3 / 2.0],
+            pos: [cap.x + (cap.w - w) / 2.0, text_y(cap.center().y, size)],
             size,
-            color: rgb(mix(th.foreground(), th.dim_text(), 0.35), 1.0),
+            color: rgb(th.text2(), 1.0),
             clip,
-            bold: false,
+            bold: true,
         });
         x += cw + gap;
     }
@@ -149,7 +252,7 @@ pub fn draw_keycaps(l: &mut Layer, keys: &[&str], widths: &[f32], right: f32, mi
 }
 
 /// How long overlays take to appear.
-pub const APPEAR: Duration = Duration::from_millis(150);
+pub const APPEAR: Duration = Duration::from_millis(160);
 
 /// Progress (0 → 1, eased) of something that appears when it is first shown,
 /// or when what it shows changes (`key`).
@@ -195,6 +298,7 @@ pub fn fade(l: &mut Layer, alpha: f32, shift: Vec2) {
             Shape::RoundBottom { rect, radius } => Shape::RoundBottom { rect: rect.translate(d), radius },
             Shape::Page { rect, radius, round_bottom, extent } => Shape::Page { rect: rect.translate(d), radius, round_bottom, extent },
             Shape::Shadow { rect, radius, blur } => Shape::Shadow { rect: rect.translate(d), radius, blur },
+            Shape::Ring { rect, radius, width } => Shape::Ring { rect: rect.translate(d), radius, width },
             Shape::Segment { from, to, width } => Shape::Segment { from: [from[0] + d.x, from[1] + d.y], to: [to[0] + d.x, to[1] + d.y], width },
         };
     }
@@ -237,9 +341,9 @@ mod tests {
     fn keycap_row_width_adds_caps_and_gaps() {
         // Narrow keys keep a square-ish minimum width.
         let one = keycaps_width(&[5.0], 10.0);
-        assert_eq!(one, 16.0);
+        assert_eq!(one, 17.0);
         let two = keycaps_width(&[5.0, 30.0], 10.0);
-        assert_eq!(two, 16.0 + 39.0 + 3.0);
+        assert_eq!(two, 17.0 + 40.0 + 3.0);
     }
 
     #[test]

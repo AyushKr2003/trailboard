@@ -17,7 +17,9 @@ use compositor::{Layer, Quad, Renderer, Shape, Text};
 use scene::sidebar::{Group, Row};
 use scene::{Node, NodeId, Rect, Scene, Vec2};
 
-use crate::theme::{Rgb, Theme, mix, rgb};
+use crate::chrome::type_;
+use crate::icons::{self, Icon};
+use crate::theme::{Rgb, Theme, blend, rgb};
 
 /// Sizes in logical px; multiplied by the UI scale.
 pub const WIDTH: f32 = 280.0;
@@ -280,28 +282,29 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], v: &View, scene: &Sc
     let scroll = v.scroll;
     let mut l = Layer::default();
     let p = panel.rect;
-    let line = ui.max(1.0);
+    let line = crate::chrome::hair(ui);
     let radius = th.radius(ui / th.text_scale);
     let small = th.small_radius(ui / th.text_scale);
     let surface = th.panel();
     crate::chrome::panel(&mut l, p, radius, th, ui, crate::chrome::Lift::Mid, surface);
 
-    let fg = th.foreground();
-    let dim = th.dim_text();
-    let soft = mix(fg, dim, 0.3);
+    let fg = th.text();
+    let dim = th.text2();
+    let soft = blend(fg, dim, 0.45);
     let size = FONT * ui;
     let pad = PAD * ui;
     let text_h = |s: f32| s * 1.3;
 
-    // Head: the space's name, the counts under it, the key on the right.
-    let name_size = 15.0 * ui;
-    let sub_size = 11.5 * ui;
+    // Head: what this is, the board's counts under it, the key on the right.
+    // (The space's name is on the board's own chrome, beside the sidebar.)
+    let _ = v.space;
+    let name_size = type_::INPUT * ui;
+    let sub_size = type_::SMALL * ui;
     let head = Rect::new(p.x, p.y, p.w, panel.list.y - p.y);
     let block = text_h(name_size) + 2.0 * ui + text_h(sub_size);
     let top = head.y + (head.h - block) / 2.0;
     let name_clip = Rect::new(p.x + pad, head.y, p.w - 2.0 * pad - 40.0 * ui, head.h);
-    let name = fit(r, v.space, name_size, true, name_clip.w);
-    l.texts.push(Text { text: name, pos: [p.x + pad, top], size: name_size, color: rgb(fg, 1.0), clip: name_clip, bold: true });
+    l.texts.push(Text { text: "Trails".into(), pos: [p.x + pad, top], size: name_size, color: rgb(fg, 1.0), clip: name_clip, bold: true });
     let trails = scene::sidebar::groups(scene).iter().filter(|(g, _)| matches!(g, Group::Trail(_))).count();
     l.texts.push(Text {
         text: counts(scene.all_nodes().count(), trails),
@@ -311,12 +314,12 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], v: &View, scene: &Sc
         clip: name_clip,
         bold: false,
     });
-    let key_size = 11.0 * ui;
+    let key_size = type_::CAPTION * ui;
     let kw = r.measure("B", key_size, false);
     crate::chrome::draw_keycaps(&mut l, &["B"], &[kw], p.right() - pad, top + text_h(name_size) / 2.0, key_size, th, ui, head);
     // A hairline under the head only while rows are scrolled under it.
     if scroll > 0 {
-        fill(&mut l, Rect::new(p.x, panel.list.y - line, p.w, line), 0.0, rgb(crate::chrome::edge(th), 1.0));
+        fill(&mut l, Rect::new(p.x + line, panel.list.y - line, p.w - 2.0 * line, line), 0.0, rgb(crate::chrome::edge(th), 1.0));
     }
 
     if rows.is_empty() {
@@ -326,7 +329,7 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], v: &View, scene: &Sc
         let tw = r.measure(t, size, true);
         l.texts.push(Text { text: t.into(), pos: [p.x + (p.w - tw) / 2.0, mid - text_h(size)], size, color: rgb(soft, 1.0), clip: panel.list, bold: true });
         let hint = "opens a page";
-        let ks = 10.5 * ui;
+        let ks = type_::CAPTION * ui;
         let widths = [r.measure("Ctrl", ks, false), r.measure("T", ks, false)];
         let hw = r.measure(hint, sub_size, false);
         let total = crate::chrome::keycaps_width(&widths, ks) + 6.0 * ui + hw;
@@ -343,8 +346,8 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], v: &View, scene: &Sc
         });
     }
 
-    let hover_fill = mix(surface, fg, if th.light() { 0.05 } else { 0.06 });
-    let current_fill = mix(surface, fg, if th.light() { 0.08 } else { 0.10 });
+    let hover_fill = th.hover();
+    let current_fill = th.active();
     let inset = 6.0 * ui;
     let icon = ICON * ui;
     // Where a card's icon starts at depth 0: under its trail's colour mark.
@@ -354,12 +357,12 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], v: &View, scene: &Sc
     for (i, row) in rows.iter().enumerate() {
         let Some(rect) = panel.row_rect(i, scroll) else { continue };
         if let Some((lr, label)) = panel.label_rect(i, scroll) {
-            let ls = 10.0 * ui;
+            let ls = type_::CAPTION * ui;
             l.texts.push(Text {
                 text: label.into(),
                 pos: [p.x + pad, lr.bottom() - text_h(ls) - 3.0 * ui],
                 size: ls,
-                color: rgb(dim, 0.85),
+                color: rgb(dim, 1.0),
                 clip: lr,
                 bold: true,
             });
@@ -369,7 +372,7 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], v: &View, scene: &Sc
         let selected = v.sel == Some(i);
         let current = matches!(row, Row::Card { id, .. } if v.current == Some(*id));
         if selected {
-            fill(&mut l, inner, small, rgb(th.selection(), 0.9));
+            fill(&mut l, inner, small, rgb(th.accent_soft(), 1.0));
         } else if current {
             fill(&mut l, inner, small, rgb(current_fill, 1.0));
         } else if hovered {
@@ -385,9 +388,8 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], v: &View, scene: &Sc
             Row::Header { group, label, mark, count, collapsed } => {
                 // A chevron only when it says something: collapsed, or pointed at.
                 if *collapsed || hovered || selected {
-                    let cs = 10.0 * ui;
-                    let chevron = if *collapsed { "▸" } else { "▾" };
-                    l.texts.push(Text { text: chevron.into(), pos: [p.x + pad - 2.0 * ui, text_y(rect, cs)], size: cs, color: rgb(dim, 1.0), clip: inner, bold: false });
+                    let chevron = if *collapsed { Icon::ChevronRight } else { Icon::ChevronDown };
+                    icons::draw(&mut l, r, chevron, p.x + pad + 2.0 * ui, rect.center().y, 12.0 * ui, rgb(dim, 1.0));
                 }
                 // The trail's colour, as on its tag on the board, in the icon
                 // column, so every label starts where the card titles do; the
@@ -396,7 +398,7 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], v: &View, scene: &Sc
                 let mark_rect = Rect::new(base_x + icon / 2.0 - d / 2.0, rect.y + (rect.h - d) / 2.0, d, d);
                 let mr = small.min(d / 2.0);
                 match group {
-                    Group::Trail(_) => fill(&mut l, mark_rect, mr, rgb(th.trail(mark.colour.as_deref()), 1.0)),
+                    Group::Trail(_) => fill(&mut l, mark_rect, mr, rgb(mark.colour.as_deref().map_or(th.text2(), |c| th.color(c)), 1.0)),
                     Group::Others => {
                         fill(&mut l, mark_rect, mr, rgb(dim, 1.0));
                         fill(&mut l, mark_rect.inflate(-line), mr, rgb(surface, 1.0));
@@ -404,7 +406,7 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], v: &View, scene: &Sc
                 }
                 let x = base_x + icon + 8.0 * ui;
                 let n = count.to_string();
-                let cs = 11.0 * ui;
+                let cs = type_::CAPTION * ui;
                 let nw = r.measure(&n, cs, false);
                 l.texts.push(Text { text: n, pos: [right - nw, text_y(rect, cs)], size: cs, color: rgb(dim, 1.0), clip: inner, bold: false });
                 let room = (right - nw - 8.0 * ui - x).max(1.0);
@@ -412,7 +414,7 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], v: &View, scene: &Sc
                     text: fit(r, label, size, true, room),
                     pos: [x, text_y(rect, size)],
                     size,
-                    color: rgb(if selected { fg } else { mix(fg, soft, 0.2) }, 1.0),
+                    color: rgb(fg, 1.0),
                     clip: Rect::new(x, rect.y, (right - nw - 8.0 * ui - x).max(1.0), rect.h),
                     bold: true,
                 });
@@ -425,7 +427,7 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], v: &View, scene: &Sc
                 if matches!(group, Group::Trail(_)) {
                     for level in 0..*depth {
                         let gx = (base_x + indent * level as f32 + icon / 2.0).round();
-                        fill(&mut l, Rect::new(gx, rect.y, line, rect.h), 0.0, rgb(fg, if th.light() { 0.12 } else { 0.10 }));
+                        fill(&mut l, Rect::new(gx, rect.y, line, rect.h), 0.0, rgb(th.line(), 1.0));
                     }
                 }
                 let iy = rect.y + (rect.h - icon) / 2.0;
@@ -436,10 +438,12 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], v: &View, scene: &Sc
                 } else if let Some(c) = n.sticky.as_deref().filter(|_| n.is_sticky()) {
                     // A sticky note: a small square of its paper.
                     fill(&mut l, tile.inflate(-1.5 * ui), small.min(2.0 * ui), rgb(th.sticky_paper(c), fade));
+                } else if n.is_note() {
+                    icons::draw(&mut l, r, Icon::Note, tile.center().x, tile.center().y, icon, rgb(dim, fade));
                 } else {
-                    // A note, or a site without an icon: a letter tile.
-                    let (text, face) = if n.is_note() { ("¶".to_string(), mix(surface, th.accent(), 0.22)) } else { (letter(&n.url), mix(surface, fg, 0.14)) };
-                    fill(&mut l, tile, small.min(3.0 * ui), rgb(face, fade));
+                    // A site without an icon: a letter tile.
+                    let text = letter(&n.url);
+                    fill(&mut l, tile, small.min(3.0 * ui), rgb(th.active(), fade));
                     let ls = 9.5 * ui;
                     let lw = r.measure(&text, ls, true);
                     l.texts.push(Text { text, pos: [tile.x + (icon - lw) / 2.0, tile.y + (icon - text_h(ls)) / 2.0], size: ls, color: rgb(soft, fade), clip: tile, bold: true });
@@ -477,11 +481,11 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], v: &View, scene: &Sc
         let h = (track.h * shown).max(20.0 * ui);
         let y = track.y + (track.h - h) * scroll as f32 / max as f32;
         let w = (2.0 * ui).max(1.0);
-        fill(&mut l, Rect::new(p.right() - w - 3.0 * ui, y, w, h), w / 2.0, rgb(dim, 0.45));
+        fill(&mut l, Rect::new(p.right() - w - 3.0 * ui, y, w, h), w / 2.0, rgb(th.line_strong(), 0.8));
     }
     // A hairline over the foot while rows go on below it.
     if scroll < max {
-        fill(&mut l, Rect::new(p.x, panel.foot.y, p.w, line), 0.0, rgb(crate::chrome::edge(th), 1.0));
+        fill(&mut l, Rect::new(p.x + line, panel.foot.y, p.w - 2.0 * line, line), 0.0, rgb(crate::chrome::edge(th), 1.0));
     }
 
     // Foot: one chip per space, the current one ringed, then "+" for a new one;
@@ -489,7 +493,7 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], v: &View, scene: &Sc
     let n = v.spaces.len();
     for (i, s) in v.spaces.iter().enumerate() {
         let c = panel.chip(i);
-        let colour = s.colour.unwrap_or_else(|| mix(surface, fg, 0.35));
+        let colour = s.colour.unwrap_or_else(|| th.text3());
         if i == v.active_space {
             let ring = c.inflate(3.0 * ui);
             fill(&mut l, ring.inflate(line), small, rgb(dim, 0.9));
@@ -505,23 +509,14 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], v: &View, scene: &Sc
         }
     }
     let plus = panel.chip(n);
-    let ps = 15.0 * ui;
-    let pw = r.measure("+", ps, false);
-    l.texts.push(Text {
-        text: "+".into(),
-        pos: [plus.x + (plus.w - pw) / 2.0, plus.y + (plus.h - text_h(ps)) / 2.0],
-        size: ps,
-        color: rgb(if v.hover_chip == Some(n) { fg } else { dim }, 1.0),
-        clip: panel.foot,
-        bold: false,
-    });
+    icons::draw(&mut l, r, Icon::Plus, plus.center().x, plus.center().y, 14.0 * ui, rgb(if v.hover_chip == Some(n) { fg } else { dim }, 1.0));
     let tip = match v.hover_chip {
         Some(i) if i < n => Some(v.spaces[i].name.clone()),
         Some(_) => Some("New space".to_string()),
         None => None,
     };
     if let Some(tip) = tip {
-        let ts = 11.5 * ui;
+        let ts = type_::SMALL * ui;
         let x = plus.right() + 12.0 * ui;
         let tip = fit(r, &tip, ts, false, (p.right() - pad - x).max(1.0));
         l.texts.push(Text {

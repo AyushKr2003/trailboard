@@ -8,7 +8,7 @@ struct Globals {
     grid_origin: vec2f,
     grid_spacing: f32,
     dot_radius: f32,
-    vignette: f32,
+    fine: f32,
     _pad: f32,
     bg: vec4f,
     dot: vec4f,
@@ -30,16 +30,18 @@ fn vs_bg(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4f {
 fn fs_bg(@builtin(position) pos: vec4f) -> @location(0) vec4f {
     var c = g.bg;
     if (g.grid_spacing > 4.0) {
+        // Main dots every `grid_spacing`; between them, dots that fade in
+        // with `fine` as the board zooms in.
         let p = pos.xy - g.grid_origin;
         let m = p - g.grid_spacing * round(p / g.grid_spacing);
-        let a = clamp(g.dot_radius + 0.5 - length(m), 0.0, 1.0) * g.dot.a;
-        c = vec4f(mix(c.rgb, g.dot.rgb, a), 1.0);
+        var a = clamp(g.dot_radius + 0.5 - length(m), 0.0, 1.0);
+        if (g.fine > 0.0) {
+            let h = g.grid_spacing * 0.5;
+            let mf = p - h * round(p / h);
+            a = max(a, clamp(g.dot_radius + 0.5 - length(mf), 0.0, 1.0) * g.fine);
+        }
+        c = vec4f(mix(c.rgb, g.dot.rgb, a * g.dot.a), 1.0);
     }
-    // A soft vignette: the board falls off a little towards the corners, so
-    // the middle, where the work is, reads as lit.
-    let uv = pos.xy / g.viewport - vec2f(0.5);
-    let v = smoothstep(0.25, 0.85, length(uv * vec2f(1.0, g.viewport.y / max(g.viewport.x, 1.0))) * 1.25);
-    c = vec4f(c.rgb * (1.0 - g.vignette * v), 1.0);
     return c;
 }
 
@@ -49,8 +51,8 @@ struct Inst {
     // rect: x, y, w, h (px)   segment: x0, y0, x1, y1 (px)
     @location(0) a: vec4f,
     @location(1) color: vec4f,
-    // x: kind (0 rect, 1 segment, 2 rect rounded at the bottom only)  y: corner radius / thickness
-    // z: softness (shadow blur px)  w: textured (0/1)
+    // x: kind (0 rect, 1 segment, 2 rect rounded at the bottom only, 3 outline)  y: corner radius / thickness
+    // z: softness (shadow blur px; an outline's width)  w: textured (0/1)
     @location(2) params: vec4f,
     // xy: how many texture widths/heights the rect spans (1, 1: exactly fills it)
     @location(3) uv: vec4f,
@@ -121,12 +123,15 @@ fn fs_quad(v: VOut) -> @location(0) vec4f {
     if (v.params.x < 0.5 || v.params.x > 1.5) {
         var r = min(v.params.y, min(v.half.x, v.half.y));
         // Kind 2: square top corners (local.y < 0 is the top half).
-        if (v.params.x > 1.5 && v.local.y < 0.0) {
+        if (v.params.x > 1.5 && v.params.x < 2.5 && v.local.y < 0.0) {
             r = 0.0;
         }
         let d = sd_round_rect(v.local, v.half, r);
         let soft = v.params.z;
-        if (soft > 0.0) {
+        if (v.params.x > 2.5) {
+            // An outline: inside the shape, within `soft` px of its edge.
+            a = clamp(0.5 - d, 0.0, 1.0) * clamp(d + soft + 0.5, 0.0, 1.0);
+        } else if (soft > 0.0) {
             a = 1.0 - smoothstep(-soft, soft, d);
         } else {
             a = clamp(0.5 - d, 0.0, 1.0);

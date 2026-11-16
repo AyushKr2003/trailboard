@@ -5,109 +5,153 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Settings</title>
 <style>
+/* The settings page, laid out like the app's own chrome (docs/DESIGN.md):
+   the card is level 1, the groups of settings level 2 (the panels), what
+   is under the pointer level 3. Text in three strengths. The accent marks
+   a switch that is on, the section in view and the main button; nothing
+   else. Colours come from the app (`tbTheme`), corners follow Hyprland. */
 :root {
-  --bg: #16161a; --fg: #e8e8ea; --dim: #9a9aa2; --accent: #ffd60a; --accentfg: #16161a;
-  --card: #222228; --rule: #34343c;
-  --tile: color-mix(in srgb, var(--fg) 4%, var(--bg));
-  --tile-hi: color-mix(in srgb, var(--fg) 7%, var(--bg));
-  --edge: color-mix(in srgb, var(--fg) 10%, transparent);
-  --off: color-mix(in srgb, var(--fg) 22%, var(--bg));
-  /* Corners follow Hyprland's window rounding (sharp on Omarchy's default);
-     small things are capped at 4px, true circles stay round. */
-  --radius: 0px; --r-sm: min(4px, var(--radius));
+  --bg: #1b1c22; --fg: #e6e6e9; --dim: #a0a0a8; --faint: #7a7a83;
+  --accent: #ffd60a; --accentfg: #000; --accenttext: #ffd60a; --accentsoft: #4a4426;
+  --card: #24252c; --hover: #2c2d35; --well: #1d1e24; --rule: #34353d; --rulestrong: #4a4b55;
+  --danger: #f7768e; --shade: #000;
+  --radius: 0px;
+  --r: min(10px, var(--radius)); --r-sm: min(6px, var(--radius));
+  --font: "Inter", "Adwaita Sans", system-ui, sans-serif;
   color-scheme: dark;
 }
-:root.light { color-scheme: light; --tile: color-mix(in srgb, var(--fg) 3%, var(--bg)); --edge: color-mix(in srgb, var(--fg) 12%, transparent);
-  --off: color-mix(in srgb, var(--fg) 25%, var(--bg)); }
+:root.light { color-scheme: light; }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
 body {
   background: var(--bg); color: var(--fg);
-  font: 14.5px/1.5 system-ui, -apple-system, "Segoe UI", "Inter", sans-serif;
+  font: 13px/1.5 var(--font); font-feature-settings: "cv11", "tnum";
   -webkit-font-smoothing: antialiased;
-  display: grid; grid-template-columns: 230px 1fr; overflow: hidden;
+  display: grid; grid-template-columns: 232px 1fr; overflow: hidden;
 }
 button, input, select { font: inherit; color: inherit; }
+:focus { outline: none; }
+:focus-visible { outline: 2px solid var(--accenttext); outline-offset: 2px; }
+/* Fields show focus with their own border and ring. */
+input:focus-visible, select:focus-visible { outline: none; }
+::selection { background: var(--accentsoft); }
+svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5;
+  stroke-linecap: round; stroke-linejoin: round; }
 
-/* side navigation */
-nav { border-right: 1px solid var(--edge); padding: 28px 14px; overflow-y: auto; background: var(--tile); }
-nav h1 { margin: 0 10px 18px; font-size: 22px; font-weight: 720; letter-spacing: -0.02em; }
-nav a { display: block; padding: 7px 10px; margin: 1px 0; border-radius: var(--radius); color: var(--dim);
-  text-decoration: none; font-size: 13.5px; font-weight: 550; cursor: pointer; }
-nav a:hover { color: var(--fg); background: var(--tile-hi); }
-nav a.on { color: var(--fg); background: color-mix(in srgb, var(--accent) 14%, transparent); }
-nav a.on::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%;
-  background: var(--accent); margin: 0 8px 1px -2px; }
+/* ---- the side column: title, search, sections ---- */
+nav { display: flex; flex-direction: column; gap: 2px; padding: 20px 12px; overflow-y: auto;
+  border-right: 1px solid var(--rule); }
+nav h1 { margin: 4px 8px 14px; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+.find { position: relative; margin: 0 0 12px; }
+.find svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--dim); pointer-events: none; }
+.find input { width: 100%; height: 32px; padding: 0 30px 0 32px; border-radius: var(--r-sm);
+  border: 1px solid var(--rule); background: var(--well); }
+.find input::placeholder { color: var(--faint); }
+.find input:focus { border-color: var(--accenttext); box-shadow: 0 0 0 3px var(--accentsoft); }
+.find input::-webkit-search-cancel-button { display: none; }
+.find kbd { position: absolute; right: 7px; top: 50%; transform: translateY(-50%); }
+.find input:focus ~ kbd, .find input:not(:placeholder-shown) ~ kbd { display: none; }
+nav a { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px; border-radius: var(--r-sm);
+  color: var(--dim); text-decoration: none; font-weight: 500; cursor: pointer; white-space: nowrap; }
+nav a:hover { background: var(--hover); color: var(--fg); }
+nav a.on { background: var(--hover); color: var(--fg); font-weight: 600; }
+nav a.on svg { color: var(--accenttext); }
+nav a .n { margin-left: auto; font-size: 11px; color: var(--faint); font-weight: 500; }
 
-/* main column */
+kbd { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px;
+  font: 600 11px/1 var(--font); color: var(--dim); background: var(--hover);
+  border: 1px solid color-mix(in srgb, var(--rulestrong) 55%, transparent); border-radius: min(4px, var(--radius)); }
+
+/* ---- the sections ---- */
 main { overflow-y: auto; scroll-behavior: smooth; }
-.wrap { max-width: 720px; margin: 0 auto; padding: 28px 36px 120px; }
-.find { position: sticky; top: 0; z-index: 2; padding: 0 0 18px; background: var(--bg); }
-.find input { width: 100%; padding: 11px 14px 11px 38px; border-radius: var(--radius); border: 1px solid var(--edge);
-  background: var(--tile) no-repeat 13px 50% / 16px;
-  outline: none; }
-.find input:focus { border-color: color-mix(in srgb, var(--accent) 60%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent); }
-.find svg { position: absolute; left: 13px; top: 13px; width: 16px; height: 16px; color: var(--dim); pointer-events: none; }
-.find { position: sticky; }
-section { margin: 0 0 26px; scroll-margin-top: 70px; }
-section h2 { margin: 0 0 10px 4px; font-size: 12px; font-weight: 680; letter-spacing: .09em; text-transform: uppercase; color: var(--dim); }
-.box { background: var(--tile); border: 1px solid var(--edge); border-radius: var(--radius); overflow: hidden; }
-.row { display: flex; align-items: center; gap: 20px; padding: 14px 18px; }
-.row + .row { border-top: 1px solid var(--edge); }
+.wrap { max-width: 700px; margin: 0 auto; padding: 32px 40px 35vh; }
+section { margin: 0 0 36px; scroll-margin-top: 24px; }
+section h2 { display: flex; align-items: center; gap: 10px; margin: 0 0 4px; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+section h2 svg { width: 18px; height: 18px; color: var(--dim); }
+section .about { margin: 0 0 14px 28px; color: var(--dim); }
+.box { background: var(--card); border: 1px solid var(--rule); border-radius: var(--r); }
+.row { display: flex; align-items: center; gap: 24px; min-height: 56px; padding: 12px 16px; }
+.row + .row, .row + .actions { border-top: 1px solid var(--rule); }
 .row .text { flex: 1; min-width: 0; }
-.row .label { font-weight: 620; }
-.row .note { margin-left: 8px; font-size: 11.5px; font-weight: 600; padding: 1px 7px; border-radius: var(--r-sm);
-  color: var(--dim); border: 1px solid var(--edge); }
-.row .help { margin-top: 2px; font-size: 13px; color: var(--dim); }
+.row .label { font-weight: 600; }
+.row .note { margin-left: 8px; font: 500 11px/1 ui-monospace, "JetBrains Mono", monospace; padding: 3px 6px;
+  border-radius: min(4px, var(--radius)); color: var(--dim); background: var(--hover); vertical-align: 1px; }
+.row .help { margin-top: 2px; font-size: 12px; color: var(--dim); }
 .row .ctl { flex: none; display: flex; align-items: center; gap: 8px; }
-.sub { padding: 0 18px 14px; display: flex; gap: 8px; margin-top: -4px; }
-.sub input { flex: 1; padding: 8px 11px; border-radius: var(--radius); border: 1px solid var(--edge); background: var(--bg); outline: none; }
-.sub input:focus { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
+.row.lit { animation: lit 1.4s ease-out; }
+@keyframes lit { from { background: var(--accentsoft); } }
+.sub { display: flex; gap: 8px; padding: 0 16px 14px; margin-top: -2px; }
+.sub input { flex: 1; height: 32px; padding: 0 10px; border-radius: var(--r-sm); border: 1px solid var(--rule);
+  background: var(--well); font-family: ui-monospace, "JetBrains Mono", monospace; font-size: 12px; }
+.sub input:focus { border-color: var(--accenttext); box-shadow: 0 0 0 3px var(--accentsoft); }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px; }
+.actions .gap { flex: 1; }
 
-/* switch */
-.switch { position: relative; width: 42px; height: 24px; border-radius: min(12px, var(--radius)); border: 0; padding: 0; cursor: pointer;
-  background: var(--off); transition: background .15s; }
-.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: min(9px, var(--radius));
-  background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: transform .15s; }
+/* switch: off is a recess, on is the accent */
+.switch { position: relative; width: 36px; height: 20px; flex: none; border: 0; padding: 0; cursor: pointer;
+  border-radius: min(10px, var(--radius)); background: var(--rulestrong); transition: background .15s; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+  border-radius: min(8px, var(--radius)); background: var(--fg); transition: transform .15s cubic-bezier(.2, .8, .2, 1); }
 .switch.on { background: var(--accent); }
-.switch.on::after { transform: translateX(18px); background: var(--accentfg); }
+.switch.on::after { transform: translateX(16px); background: var(--accentfg); }
 
-/* buttons side by side */
-.seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: var(--radius); background: var(--bg); border: 1px solid var(--edge); }
-.seg button { border: 0; background: transparent; padding: 5px 11px; border-radius: max(0px, min(var(--radius) - 3px, 4px)); cursor: pointer;
-  font-size: 13px; font-weight: 600; color: var(--dim); white-space: nowrap; }
+/* a few choices side by side: the chosen one is raised, not coloured */
+.seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: var(--r-sm); background: var(--well); border: 1px solid var(--rule); }
+.seg button { height: 26px; border: 0; padding: 0 11px; background: transparent; cursor: pointer; white-space: nowrap;
+  border-radius: max(0px, min(var(--radius) - 2px, 4px)); font-size: 12px; font-weight: 500; color: var(--dim); }
 .seg button:hover { color: var(--fg); }
-.seg button.on { background: var(--accent); color: var(--accentfg); }
+.seg button.on { background: var(--hover); color: var(--fg); font-weight: 600;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--shade) 35%, transparent), inset 0 0 0 1px var(--rule); }
 
-select { padding: 7px 30px 7px 11px; border-radius: var(--radius); border: 1px solid var(--edge); background: var(--bg);
-  cursor: pointer; outline: none; min-width: 170px; font-size: 13.5px;
-  appearance: none; -webkit-appearance: none;
-  background-image: linear-gradient(45deg, transparent 50%, var(--dim) 50%), linear-gradient(-45deg, transparent 50%, var(--dim) 50%);
-  background-position: calc(100% - 15px) 52%, calc(100% - 10px) 52%; background-size: 5px 5px; background-repeat: no-repeat; }
-select:focus { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
+/* many choices: a drop-down */
+.select { position: relative; }
+.select select { height: 30px; min-width: 176px; padding: 0 30px 0 10px; border-radius: var(--r-sm); cursor: pointer;
+  border: 1px solid var(--rule); background: var(--well); appearance: none; -webkit-appearance: none; }
+.select select:hover { border-color: var(--rulestrong); }
+.select select:focus-visible { border-color: var(--accenttext); box-shadow: 0 0 0 3px var(--accentsoft); }
+.select svg { position: absolute; right: 9px; top: 50%; transform: translateY(-50%); width: 12px; height: 12px; color: var(--dim); pointer-events: none; }
 
-.btn { padding: 7px 12px; border-radius: var(--radius); border: 1px solid var(--edge); background: var(--bg); cursor: pointer;
-  font-size: 13px; font-weight: 600; white-space: nowrap; }
-.btn:hover { background: var(--tile-hi); }
+.btn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: var(--r-sm);
+  border: 1px solid var(--rule); background: var(--hover); cursor: pointer; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.btn:hover { border-color: var(--rulestrong); }
 .btn.primary { background: var(--accent); color: var(--accentfg); border-color: transparent; }
-.links { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--edge); }
+.btn.danger { background: transparent; color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+.btn.danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.btn svg { width: 14px; height: 14px; }
 
-.fact .value { font-size: 13px; font-weight: 600; color: var(--dim); text-align: right; max-width: 260px; }
-.empty { padding: 40px 0; text-align: center; color: var(--dim); }
-mark { background: color-mix(in srgb, var(--accent) 35%, transparent); color: inherit; border-radius: var(--r-sm); }
+.fact .value { font-weight: 500; color: var(--dim); text-align: right; max-width: 280px; overflow-wrap: anywhere; }
+.empty { padding: 72px 0; text-align: center; color: var(--dim); }
+.empty b { display: block; margin-bottom: 4px; font-size: 15px; color: var(--fg); font-weight: 600; }
+mark { background: var(--accentsoft); color: inherit; border-radius: 2px; padding: 0 1px; }
+
+/* A narrow card: one column, the sections as a strip under the search. */
+@media (max-width: 720px) {
+  body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  nav { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px; padding: 12px 16px;
+    border-right: 0; border-bottom: 1px solid var(--rule); overflow: visible; }
+  nav h1 { margin: 0 12px 0 0; font-size: 15px; }
+  .find { flex: 1; min-width: 160px; margin: 0; }
+  .links { flex-basis: 100%; display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+  nav a { height: 28px; padding: 0 8px; }
+  nav a svg, nav a .n { display: none; }
+  .wrap { padding: 20px 16px 35vh; }
+  section .about { margin-left: 0; }
+  section h2 svg { display: none; }
+  .row { flex-wrap: wrap; gap: 10px 16px; }
+}
 </style>
 </head>
 <body>
-<nav id="nav"><h1>Settings</h1></nav>
-<main id="main">
-  <div class="wrap">
-    <div class="find">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-      <input id="find" type="search" placeholder="Search settings" autocomplete="off" spellcheck="false">
-    </div>
-    <div id="body"></div>
-  </div>
-</main>
+<nav id="nav">
+  <h1>Settings</h1>
+  <label class="find">
+    <svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M15.8 15.8 20 20"/></svg>
+    <input id="find" type="search" placeholder="Search settings" autocomplete="off" spellcheck="false" aria-label="Search settings">
+    <kbd>/</kbd>
+  </label>
+  <div class="links" id="links"></div>
+</nav>
+<main id="main"><div class="wrap" id="body"></div></main>
 <script>
 const PREFIX = __PREFIX__;
 let D = __DATA__;
@@ -117,15 +161,44 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
 let query = "";
 let proxyDraft = null;
 
+// Each section's icon and one line on what it covers; the strokes follow
+// the app's own icon set (24-unit grid, round ends).
+const ICON = {
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="M15.8 15.8 20 20"/>',
+  appearance: '<circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17"/><path d="M12 7.5h4M12 11.5h7M12 15.5h5"/>',
+  privacy: '<path d="M12 3l7 2.8v5.7l-1.6 4.7L12 21l-5.4-4.8L5 11.5V5.8z"/>',
+  content: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="m20.5 15.5-4.5-4.5-8.5 8.5"/>',
+  permissions: '<rect x="5" y="11" width="14" height="9.5" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  languages: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17"/><ellipse cx="12" cy="12" rx="3.7" ry="8.5"/>',
+  downloads: '<path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/>',
+  system: '<path d="M4 17a8 8 0 1 1 16 0"/><path d="m12 17 4-5"/>',
+  about: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5"/><circle cx="12" cy="7.8" r=".6" fill="currentColor"/>',
+};
+const ABOUT = {
+  search: "Where searches go, and what a new card starts as.",
+  appearance: "How pages and the board look and move.",
+  privacy: "What is blocked, sent and remembered.",
+  content: "What sites may run and show.",
+  permissions: "What a site gets when it asks.",
+  languages: "What sites are asked for, and spelling.",
+  downloads: "Where files go.",
+  system: "Memory and how pages reach the internet.",
+  about: "This copy of Trailboard and how it runs.",
+};
+// Buttons that lose something get a warning colour.
+const DANGER = ["clear-history", "clear-cookies"];
+const icon = (id, cls = "i") => `<svg class="${cls}" viewBox="0 0 24 24">${ICON[id] || ICON.about}</svg>`;
+const CHEVRON = '<svg class="i" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>';
+
+function words(q) { return q.split(/\s+/).filter(Boolean); }
 function hit(it) {
   if (!query) return true;
   const hay = (it.label + " " + it.help + " " + it.words + " " + it.choices.map((c) => c[1]).join(" ")).toLowerCase();
-  return query.split(/\s+/).every((w) => hay.includes(w));
+  return words(query).every((w) => hay.includes(w));
 }
 function mark(s) {
-  if (!query) return esc(s);
   let out = esc(s);
-  for (const w of query.split(/\s+/).filter(Boolean)) {
+  for (const w of words(query)) {
     out = out.replace(new RegExp("(" + w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")(?![^<]*>)", "gi"), "<mark>$1</mark>");
   }
   return out;
@@ -137,20 +210,26 @@ function control(it) {
     return `<button class="switch${on ? " on" : ""}" role="switch" aria-checked="${on}" aria-label="${esc(it.label)}" data-key="${it.key}" data-v="${on ? "off" : "on"}"></button>`;
   }
   if (it.kind === "segment") {
-    return `<div class="seg">${it.choices.map(([id, name]) => `<button class="${id === it.value ? "on" : ""}" data-key="${it.key}" data-v="${esc(id)}">${esc(name)}</button>`).join("")}</div>`;
+    return `<div class="seg" role="radiogroup" aria-label="${esc(it.label)}">${it.choices.map(([id, name]) =>
+      `<button role="radio" aria-checked="${id === it.value}" class="${id === it.value ? "on" : ""}" data-key="${it.key}" data-v="${esc(id)}">${esc(name)}</button>`).join("")}</div>`;
   }
-  return `<select data-key="${it.key}" aria-label="${esc(it.label)}">${it.choices.map(([id, name]) => `<option value="${esc(id)}"${id === it.value ? " selected" : ""}>${esc(name)}</option>`).join("")}</select>`;
+  return `<span class="select"><select data-key="${it.key}" aria-label="${esc(it.label)}">${it.choices.map(([id, name]) =>
+    `<option value="${esc(id)}"${id === it.value ? " selected" : ""}>${esc(name)}</option>`).join("")}</select>${CHEVRON}</span>`;
 }
 
 function row(it) {
-  let extra = "";
-  if (it.key === "search") extra = `<button class="btn" data-act="engines">Compare</button>`;
-  let html = `<div class="row" data-k="${it.key}"><div class="text"><div class="label">${mark(it.label)}${it.note ? `<span class="note">${esc(it.note)}</span>` : ""}</div><div class="help">${mark(it.help)}</div></div><div class="ctl">${extra}${control(it)}</div></div>`;
+  const extra = it.key === "search" ? `<button class="btn" data-act="engines">Compare</button>` : "";
+  let html = `<div class="row" data-k="${it.key}"><div class="text"><div class="label">${mark(it.label)}${
+    it.note ? `<span class="note" title="Set for this run">${esc(it.note)}</span>` : ""}</div><div class="help">${mark(it.help)}</div></div><div class="ctl">${extra}${control(it)}</div></div>`;
   if (it.key === "proxy" && it.value === "custom") {
     const v = proxyDraft ?? D.proxyServer;
-    html += `<div class="sub"><input id="proxy" placeholder="127.0.0.1:8080 or socks5://host:1080" value="${esc(v)}" spellcheck="false"><button class="btn primary" id="proxySave">Save</button></div>`;
+    html += `<div class="sub"><input id="proxy" placeholder="127.0.0.1:8080 or socks5://host:1080" value="${esc(v)}" spellcheck="false" aria-label="Proxy server"><button class="btn primary" id="proxySave">Save</button></div>`;
   }
   return html;
+}
+
+function section(id, name, rows, actions) {
+  return `<section id="s-${id}"><h2>${icon(id)}${mark(name)}</h2>${query ? "" : `<p class="about">${ABOUT[id] || ""}</p>`}<div class="box">${rows}${actions}</div></section>`;
 }
 
 function render() {
@@ -159,22 +238,26 @@ function render() {
   const shown = [];
   for (const sec of D.sections) {
     const items = sec.items.filter(hit);
-    const secHit = query && sec.name.toLowerCase().includes(query);
+    const secHit = query && words(query).every((w) => sec.name.toLowerCase().includes(w));
     if (!items.length && !secHit) continue;
-    shown.push(sec);
     const list = items.length ? items : sec.items;
+    shown.push({ id: sec.id, name: sec.name, n: query ? list.length : 0 });
     const links = !query || secHit ? sec.buttons : [];
-    html += `<section id="s-${sec.id}"><h2>${esc(sec.name)}</h2><div class="box">${list.map(row).join("")}${
-      links.length ? `<div class="links">${links.map(([l, c]) => `<button class="btn" data-run="${c}">${esc(l)}</button>`).join("")}</div>` : ""}</div></section>`;
+    const actions = links.length
+      ? `<div class="actions">${links.filter(([, c]) => !DANGER.includes(c)).map(([l, c]) => `<button class="btn" data-run="${c}">${esc(l)}</button>`).join("")}${
+          links.some(([, c]) => DANGER.includes(c)) ? `<span class="gap"></span>` : ""}${
+          links.filter(([, c]) => DANGER.includes(c)).map(([l, c]) => `<button class="btn danger" data-run="${c}">${esc(l)}</button>`).join("")}</div>`
+      : "";
+    html += section(sec.id, sec.name, list.map(row).join(""), actions);
   }
-  const facts = D.facts.filter(([l, v, m]) => !query || (l + " " + v + " " + m).toLowerCase().includes(query));
+  const facts = D.facts.filter(([l, v, m]) => !query || words(query).every((w) => (l + " " + v + " " + m).toLowerCase().includes(w)));
   if (facts.length) {
-    shown.push({ id: "about", name: "About" });
-    html += `<section id="s-about"><h2>About</h2><div class="box">${facts.map(([l, v, m]) =>
-      `<div class="row fact"><div class="text"><div class="label">${esc(l)}</div><div class="help">${esc(m)}</div></div><div class="value">${esc(v)}</div></div>`).join("")}</div></section>`;
+    shown.push({ id: "about", name: "About", n: query ? facts.length : 0 });
+    html += section("about", "About", facts.map(([l, v, m]) =>
+      `<div class="row fact"><div class="text"><div class="label">${mark(l)}</div><div class="help">${mark(m)}</div></div><div class="value">${esc(v)}</div></div>`).join(""), "");
   }
-  $("body").innerHTML = html || `<div class="empty">No settings match “${esc(query)}”</div>`;
-  $("nav").innerHTML = `<h1>Settings</h1>` + shown.map((s) => `<a data-s="${s.id}">${esc(s.name)}</a>`).join("");
+  $("body").innerHTML = html || `<div class="empty"><b>No settings match “${esc(query)}”</b>Try a different word, or clear the search with <kbd>Esc</kbd>.</div>`;
+  $("links").innerHTML = shown.map((s) => `<a data-s="${s.id}">${icon(s.id)}<span>${esc(s.name)}</span>${s.n ? `<span class="n">${s.n}</span>` : ""}</a>`).join("");
   for (const a of document.querySelectorAll("nav a")) a.onclick = () => $("s-" + a.dataset.s)?.scrollIntoView();
   for (const b of document.querySelectorAll("[data-key][data-v]")) b.onclick = () => set(b.dataset.key, b.dataset.v);
   for (const s of document.querySelectorAll("select[data-key]")) s.onchange = () => set(s.dataset.key, s.value);
@@ -198,16 +281,27 @@ function set(key, v) {
   act("set:", key + "=" + v);
 }
 
-// The section in view is lit in the navigation.
+// The section in view is lit in the side column.
 function spy() {
-  const top = $("main").getBoundingClientRect().top + 90;
+  const top = $("main").getBoundingClientRect().top + 80;
   let cur = null;
   for (const s of document.querySelectorAll("section")) if (s.getBoundingClientRect().top <= top) cur = s.id;
   if (!cur) cur = document.querySelector("section")?.id;
   for (const a of document.querySelectorAll("nav a")) a.classList.toggle("on", "s-" + a.dataset.s === cur);
 }
 $("main").addEventListener("scroll", spy, { passive: true });
-$("find").addEventListener("input", (e) => { query = e.target.value.trim().toLowerCase(); render(); });
+$("find").addEventListener("input", (e) => { query = e.target.value.trim().toLowerCase(); render(); $("main").scrollTop = 0; });
+document.addEventListener("keydown", (e) => {
+  const typing = /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName || "");
+  if (e.key === "/" && !typing) { e.preventDefault(); $("find").focus(); $("find").select(); }
+  else if (e.key === "Escape" && document.activeElement === $("find") && $("find").value) {
+    e.preventDefault(); $("find").value = ""; query = ""; render();
+  } else if (e.key === "Enter" && document.activeElement === $("find")) {
+    // Enter goes to the first match and lights it up.
+    const first = document.querySelector(".row");
+    if (first) { first.scrollIntoView({ block: "center" }); first.classList.add("lit"); first.querySelector("button, select")?.focus(); }
+  }
+});
 
 // The app sends new data whenever a setting changes (here or elsewhere).
 window.tbSettings = function (d) { D = d; render(); };

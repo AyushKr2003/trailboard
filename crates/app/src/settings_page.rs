@@ -44,7 +44,7 @@ const SECTIONS: &[Section] = &[
     Section {
         id: "appearance",
         name: "Appearance",
-        keys: &[Key::PageColours, Key::DefaultZoom, Key::ScrollSpeed],
+        keys: &[Key::PageColours, Key::DefaultZoom, Key::ScrollSpeed, Key::SpacePanel],
         buttons: &[("Keyboard shortcuts", "shortcuts")],
     },
     Section {
@@ -120,6 +120,7 @@ fn help(key: Key) -> &'static str {
         Key::Spellcheck => "Underline misspelt words as you type and suggest fixes.",
         Key::DownloadTo => "Where files you download are saved.",
         Key::LivePages => "Cards that keep a running page. The rest sleep and wake when you go to them; fewer saves memory.",
+        Key::SpacePanel => "The sidebar button and the space's name at the board's top left. Off, B opens the sidebar and the palette (Ctrl+K) switches spaces.",
         Key::Proxy => "How pages reach the internet: as the system says, directly, or through a server you give.",
     }
 }

@@ -33,7 +33,8 @@ pub enum WebEvent {
     OpenBeside { source: u64, url: String },
     TitleChanged { page: u64, title: String },
     UrlChanged { page: u64, url: String },
-    LoadingChanged { page: u64, loading: bool },
+    /// `can_back` / `can_forward`: the page has somewhere to go back or forward to.
+    LoadingChanged { page: u64, loading: bool, can_back: bool, can_forward: bool },
     /// The mouse cursor the page wants while the pointer is over it.
     CursorChanged { page: u64, cursor: Cursor },
     /// The user right-clicked at (`x`, `y`) CSS px in the page; the app shows its own menu.
@@ -1083,13 +1084,13 @@ wrap_load_handler! {
             &self,
             browser: Option<&mut Browser>,
             is_loading: ::std::os::raw::c_int,
-            _can_go_back: ::std::os::raw::c_int,
-            _can_go_forward: ::std::os::raw::c_int,
+            can_go_back: ::std::os::raw::c_int,
+            can_go_forward: ::std::os::raw::c_int,
         ) {
             if let Some(h) = browser.and_then(|b| b.host()) {
                 self.shared.apply_zoom(&h);
             }
-            emit(WebEvent::LoadingChanged { page: self.shared.key, loading: is_loading != 0 });
+            emit(WebEvent::LoadingChanged { page: self.shared.key, loading: is_loading != 0, can_back: can_go_back != 0, can_forward: can_go_forward != 0 });
         }
 
         fn on_load_start(&self, browser: Option<&mut Browser>, frame: Option<&mut Frame>, _transition_type: TransitionType) {

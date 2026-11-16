@@ -104,8 +104,8 @@ mod tests {
     #[test]
     fn band_selects_touching_frames() {
         let (s, a, b, _) = board();
-        // Touches a's right edge and b's title bar (which sits above its rect).
-        let band = Rect::from_corners(Vec2::new(90.0, -25.0), Vec2::new(310.0, -20.0));
+        // Touches a's right edge and b's left edge.
+        let band = Rect::from_corners(Vec2::new(90.0, 20.0), Vec2::new(310.0, 25.0));
         assert_eq!(in_band(&s, band), vec![a, b]);
         assert!(in_band(&s, Rect::new(150.0, 150.0, 50.0, 50.0)).is_empty());
         assert!(in_band(&s, Rect::new(50.0, 50.0, 0.0, 0.0)).is_empty());

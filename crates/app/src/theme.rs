@@ -193,15 +193,117 @@ pub fn rgb(c: Rgb, alpha: f32) -> Rgba {
     compositor::rgba(c[0], c[1], c[2], alpha)
 }
 
+fn linear(v: u8) -> f32 {
+    let v = v as f32 / 255.0;
+    if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+}
+
 fn luminance(c: Rgb) -> f32 {
-    let lin = |v: u8| {
-        let v = v as f32 / 255.0;
-        if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+    0.2126 * linear(c[0]) + 0.7152 * linear(c[1]) + 0.0722 * linear(c[2])
+}
+
+/// WCAG contrast ratio between two colours (1 to 21).
+pub fn contrast(a: Rgb, b: Rgb) -> f32 {
+    let (la, lb) = (luminance(a), luminance(b));
+    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+}
+
+/// A colour in OKLab: lightness (0 black to 1 white) and two colour axes.
+/// Steps of lightness here look equally big to the eye whatever the hue,
+/// which a mix in sRGB does not give.
+fn to_oklab(c: Rgb) -> [f32; 3] {
+    let (r, g, b) = (linear(c[0]), linear(c[1]), linear(c[2]));
+    let l = (0.412_221_46 * r + 0.536_332_55 * g + 0.051_445_995 * b).cbrt();
+    let m = (0.211_903_5 * r + 0.680_699_5 * g + 0.107_396_96 * b).cbrt();
+    let s = (0.088_302_46 * r + 0.281_718_85 * g + 0.629_978_7 * b).cbrt();
+    [
+        0.210_454_26 * l + 0.793_617_8 * m - 0.004_072_047 * s,
+        1.977_998_5 * l - 2.428_592_2 * m + 0.450_593_7 * s,
+        0.025_904_037 * l + 0.782_771_77 * m - 0.808_675_77 * s,
+    ]
+}
+
+fn from_oklab(c: [f32; 3]) -> Rgb {
+    let l = (c[0] + 0.396_337_78 * c[1] + 0.215_803_76 * c[2]).powi(3);
+    let m = (c[0] - 0.105_561_346 * c[1] - 0.063_854_17 * c[2]).powi(3);
+    let s = (c[0] - 0.089_484_18 * c[1] - 1.291_485_5 * c[2]).powi(3);
+    let srgb = |v: f32| {
+        let v = v.clamp(0.0, 1.0);
+        let v = if v <= 0.003_130_8 { v * 12.92 } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 };
+        (v * 255.0).round().clamp(0.0, 255.0) as u8
     };
-    0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2])
+    [
+        srgb(4.076_741_7 * l - 3.307_711_6 * m + 0.230_969_94 * s),
+        srgb(-1.268_438 * l + 2.609_757_4 * m - 0.341_319_38 * s),
+        srgb(-0.004_196_086_3 * l - 0.703_418_6 * m + 1.707_614_7 * s),
+    ]
+}
+
+/// `c` made lighter (`d` > 0) or darker by `d` of OKLab lightness, keeping its hue.
+pub fn shade(c: Rgb, d: f32) -> Rgb {
+    let [l, a, b] = to_oklab(c);
+    let l2 = (l + d).clamp(0.0, 1.0);
+    // Near black and white there is no room for colour: fade it out with the lightness.
+    let keep = if l > 1e-3 { (l2.min(1.0 - l2) / l.min(1.0 - l).max(1e-3)).min(1.0) } else { 0.0 };
+    from_oklab([l2, a * keep, b * keep])
+}
+
+/// `a` mixed toward `b` by `t` in OKLab (even steps of lightness).
+pub fn blend(a: Rgb, b: Rgb, t: f32) -> Rgb {
+    let (x, y) = (to_oklab(a), to_oklab(b));
+    from_oklab([x[0] + (y[0] - x[0]) * t, x[1] + (y[1] - x[1]) * t, x[2] + (y[2] - x[2]) * t])
+}
+
+/// `ink` moved as far toward `on` as it can go while still reading on `on`
+/// at contrast `target`: how secondary text is made, so "dim" is a measured
+/// amount and not a guess that fails on some themes. An `ink` that reads
+/// worse than `target` already is pushed away from `on` instead (toward
+/// black or white) until it does.
+pub fn quiet(ink: Rgb, on: Rgb, target: f32) -> Rgb {
+    if contrast(ink, on) < target {
+        return loud(ink, on, target);
+    }
+    let (mut lo, mut hi) = (0.0_f32, 1.0_f32);
+    for _ in 0..12 {
+        let mid = (lo + hi) / 2.0;
+        if contrast(blend(ink, on, mid), on) >= target { lo = mid } else { hi = mid }
+    }
+    blend(ink, on, lo)
+}
+
+/// `ink` moved toward black or white (whichever `on` is further from) just
+/// until it reads on `on` at contrast `target`; unchanged if it already does.
+pub fn loud(ink: Rgb, on: Rgb, target: f32) -> Rgb {
+    if contrast(ink, on) >= target {
+        return ink;
+    }
+    let end = text_on(on);
+    let (mut lo, mut hi) = (0.0_f32, 1.0_f32);
+    for _ in 0..12 {
+        let mid = (lo + hi) / 2.0;
+        if contrast(blend(ink, end, mid), on) >= target { hi = mid } else { lo = mid }
+    }
+    blend(ink, end, hi)
 }
 
 /// Everything Trailboard draws with, derived from the Omarchy theme.
+///
+/// The theme gives a background, a foreground, an accent and named colours.
+/// From those come four levels, each a measured step of lightness from the
+/// one below (lighter on dark themes; on light ones the steps go darker
+/// where there is no room left above):
+///
+/// | level | what | token |
+/// |---|---|---|
+/// | 0 | the board | [`Theme::board`] |
+/// | 1 | cards | [`Theme::card`] |
+/// | 2 | floating chrome: dock, sidebar, menus, lists | [`Theme::panel`] |
+/// | 3 | what is under the pointer or chosen on a panel | [`Theme::hover`], [`Theme::active`] |
+///
+/// Text comes in three strengths by contrast on a panel: [`Theme::text`]
+/// (at least 7:1), [`Theme::text2`] (4.5:1, secondary) and [`Theme::text3`]
+/// (3:1, placeholders and decoration only). The accent is kept for the
+/// current card, the chosen row and the one main action.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Theme {
     pub palette: Palette,
@@ -247,9 +349,29 @@ impl Theme {
         text_on(self.accent())
     }
 
-    /// A trail's colour (a theme colour name), or the accent for none.
+    /// The accent as text or an icon on a panel: the accent itself where it
+    /// reads there, else moved toward the text colour until it does.
+    pub fn accent_text(&self) -> Rgb {
+        loud(self.accent(), self.panel(), 4.5)
+    }
+
+    /// A panel tinted with the accent: the chosen row, the pressed tool.
+    pub fn accent_soft(&self) -> Rgb {
+        // As much accent as leaves the text on it readable (4.5:1).
+        let mut t: f32 = if self.light() { 0.16 } else { 0.20 };
+        loop {
+            let c = blend(self.panel(), self.accent(), t);
+            if t <= 0.04 || contrast(self.text(), c) >= 4.5 {
+                return c;
+            }
+            t -= 0.04;
+        }
+    }
+
+    /// A trail's colour (a theme colour name). A trail without one is drawn
+    /// in a quiet neutral: colour on the board means something was marked.
     pub fn trail(&self, colour: Option<&str>) -> Rgb {
-        colour.map_or_else(|| self.accent(), |c| self.color(c))
+        colour.map_or_else(|| self.line_strong(), |c| self.color(c))
     }
 
     /// A sticky note's paper: theme colour `colour` itself, a little softened
@@ -270,53 +392,87 @@ impl Theme {
         mix(paper, text_on(paper), if focused { 0.22 } else { 0.12 })
     }
 
-    /// A step from the background toward the foreground: surfaces and lines.
-    fn step(&self, t: f32) -> Rgb {
-        mix(self.background(), self.foreground(), t)
-    }
-
-    /// Panels over the board: address bar, menus, the shortcut sheet, labels.
-    pub fn panel(&self) -> Rgb {
-        self.step(if self.light() { 0.05 } else { 0.07 })
-    }
-
-    /// A card's frame and title bar; `focused` stands out a little more.
-    pub fn card(&self, focused: bool) -> Rgb {
-        match (self.light(), focused) {
-            (false, false) => self.step(0.08),
-            (false, true) => self.step(0.14),
-            (true, false) => self.step(0.07),
-            (true, true) => self.step(0.13),
+    /// `c` raised `d` of lightness toward the viewer: lighter on a dark
+    /// theme. On a light one surfaces go lighter too while there is room,
+    /// and darker once they would pass white.
+    fn raise(&self, c: Rgb, d: f32) -> Rgb {
+        if !self.light() {
+            return shade(c, d);
         }
+        let l = to_oklab(c)[0];
+        let room = (l + d * 0.6).min(1.0) - l;
+        if room >= 0.02 { shade(c, room) } else { shade(c, -d * 0.55) }
+    }
+
+    /// `c` a step away from its own level, for what sits *on* a surface
+    /// (lines, hover fills): lighter on dark themes, darker on light ones.
+    fn step(&self, c: Rgb, d: f32) -> Rgb {
+        shade(c, if self.light() { -d } else { d })
+    }
+
+    /// Level 2: panels over the board (dock, sidebar, menus, lists, labels).
+    pub fn panel(&self) -> Rgb {
+        self.raise(self.background(), 0.065)
+    }
+
+    /// Level 1: a card's frame and title bar; `focused` stands out a little more.
+    pub fn card(&self, focused: bool) -> Rgb {
+        self.raise(self.background(), if focused { 0.065 } else { 0.04 })
+    }
+
+    /// A recess in a panel: text fields, and a card with nothing to show yet.
+    pub fn well(&self) -> Rgb {
+        shade(self.panel(), if self.light() { -0.03 } else { -0.035 })
     }
 
     /// Content of a card with nothing to show yet.
     pub fn placeholder(&self) -> Rgb {
-        self.step(0.04)
+        shade(self.background(), -0.02)
     }
 
-    /// Board dots.
+    /// Level 3: the row or button under the pointer.
+    pub fn hover(&self) -> Rgb {
+        self.step(self.panel(), 0.045)
+    }
+
+    /// Level 3, stronger: the chosen row, a pressed button, a keycap.
+    pub fn active(&self) -> Rgb {
+        self.step(self.panel(), 0.08)
+    }
+
+    /// The hairline around panels and cards, and between their parts.
+    pub fn line(&self) -> Rgb {
+        self.step(self.panel(), 0.075)
+    }
+
+    /// A line meant to be seen: outlines of stacked cards, unmarked trails, scroll thumbs.
+    pub fn line_strong(&self) -> Rgb {
+        self.step(self.panel(), 0.2)
+    }
+
+    /// Board dots: just enough to give the board a surface.
     pub fn dots(&self) -> Rgb {
-        self.step(if self.light() { 0.25 } else { 0.2 })
-    }
-
-    /// Outline of the cards behind a stack's front.
-    pub fn stack_edge(&self) -> Rgb {
-        self.step(0.32)
+        self.step(self.background(), if self.light() { 0.10 } else { 0.11 })
     }
 
     pub fn divider(&self) -> Rgb {
-        self.step(0.15)
+        self.line()
     }
 
-    /// Secondary text (descriptions, sleeping titles, placeholders).
-    pub fn dim_text(&self) -> Rgb {
-        mix(self.foreground(), self.background(), 0.38)
+    /// Primary text: the theme's foreground, strengthened if a theme's
+    /// foreground reads poorly on panels (7:1 at least).
+    pub fn text(&self) -> Rgb {
+        loud(self.foreground(), self.panel(), 7.0)
     }
 
-    /// Highlighted rows and selected text.
-    pub fn selection(&self) -> Rgb {
-        self.color("selection")
+    /// Secondary text (hosts, counts, descriptions): 4.5:1 on a panel.
+    pub fn text2(&self) -> Rgb {
+        quiet(self.text(), self.panel(), 4.6)
+    }
+
+    /// Placeholders, disabled items and decoration: 3:1 on a panel.
+    pub fn text3(&self) -> Rgb {
+        quiet(self.text(), self.panel(), 3.0)
     }
 
     /// Ring and band of multi-selected cards (kept apart from the accent focus ring).
@@ -328,9 +484,12 @@ impl Theme {
         self.color("red")
     }
 
-    /// Shadows are softer on light themes.
+    /// A shadow of `strength`: the board's own hue, much darker, never a
+    /// grey film. Softer on light themes, where a black shadow looks dirty.
     pub fn shadow(&self, strength: f32) -> Rgba {
-        [0.0, 0.0, 0.0, strength * if self.light() { 0.45 } else { 1.0 }]
+        let [l, a, b] = to_oklab(self.background());
+        let c = from_oklab([l * if self.light() { 0.35 } else { 0.18 }, a, b]);
+        rgb(c, strength * if self.light() { 0.42 } else { 1.0 })
     }
 
     /// Corner radius of a panel, in screen px.
@@ -338,9 +497,9 @@ impl Theme {
         self.rounding * scale
     }
 
-    /// Corner radius of small elements (rows, highlights): at most 4 px.
+    /// Corner radius of small elements (rows, buttons, keycaps): at most 6 px.
     pub fn small_radius(&self, scale: f32) -> f32 {
-        self.rounding.min(4.0) * scale
+        self.rounding.min(6.0) * scale
     }
 
     /// The board colour of a space with this tint (a theme colour name, or none).
@@ -355,7 +514,7 @@ impl Theme {
     pub fn swatch(&self, tint: Option<&str>) -> Rgb {
         match tint {
             Some(name) => self.color(name),
-            None => self.dim_text(),
+            None => self.text3(),
         }
     }
 }
@@ -443,7 +602,7 @@ red = "#f7768e"
     fn rounding_caps_small_elements() {
         let t = Theme { rounding: 10.0, ..Theme::default() };
         assert_eq!(t.radius(2.0), 20.0);
-        assert_eq!(t.small_radius(2.0), 8.0);
+        assert_eq!(t.small_radius(2.0), 12.0);
         assert_eq!(Theme::default().radius(2.0), 0.0);
     }
 
@@ -474,12 +633,61 @@ red = "#f7768e"
         assert_eq!(parse_rounding("not json"), None);
     }
 
+    fn themes() -> Vec<Theme> {
+        let light = Theme { palette: parse_palette("background = \"#f5f5f5\"\nforeground = \"#202020\"\naccent = \"#ffd60a\"\n", true), ..Theme::default() };
+        let white = Theme { palette: parse_palette("background = \"#ffffff\"\nforeground = \"#3c3c3c\"\n", true), ..Theme::default() };
+        let faint = Theme { palette: parse_palette("background = \"#1a1b26\"\nforeground = \"#565f89\"\n", false), ..Theme::default() };
+        vec![Theme::default(), Theme { palette: parse_palette(TOKYO, false), ..Theme::default() }, light, white, faint]
+    }
+
+    #[test]
+    fn oklab_round_trips_and_shades_by_lightness() {
+        for c in [[0x1a, 0x1b, 0x26], [0xa9, 0xb1, 0xd6], [0xff, 0xd6, 0x0a], [0, 0, 0], [255, 255, 255]] {
+            let back = from_oklab(to_oklab(c));
+            for i in 0..3 {
+                assert!((back[i] as i32 - c[i] as i32).abs() <= 1, "{c:?} -> {back:?}");
+            }
+        }
+        let base = [0x1a, 0x1b, 0x26];
+        assert!(luminance(shade(base, 0.05)) > luminance(base));
+        assert!(luminance(shade(base, -0.05)) < luminance(base));
+        assert_eq!(shade([255, 255, 255], 0.2), [255, 255, 255]);
+    }
+
+    #[test]
+    fn text_strengths_meet_their_contrast_on_every_theme() {
+        for th in themes() {
+            let panel = th.panel();
+            assert!(contrast(th.text(), panel) >= 6.9, "text {:?}", th.palette.colors.get("background"));
+            let (c2, c3) = (contrast(th.text2(), panel), contrast(th.text3(), panel));
+            assert!((4.5..5.2).contains(&c2), "text2 {c2}");
+            assert!((2.95..3.5).contains(&c3), "text3 {c3}");
+            // Secondary text still reads on a card and on the row under the pointer.
+            assert!(contrast(th.text2(), th.card(false)) >= 4.0);
+            assert!(contrast(th.text2(), th.hover()) >= 3.6);
+            assert!(contrast(th.accent_text(), panel) >= 4.45);
+            assert!(contrast(th.text(), th.accent_soft()) >= 4.5);
+        }
+    }
+
+    #[test]
+    fn levels_step_apart_and_lines_show() {
+        for th in themes() {
+            let (board, card, panel) = (th.board(None), th.card(false), th.panel());
+            if !th.light() {
+                assert!(luminance(card) > luminance(board) && luminance(panel) > luminance(card));
+                assert!(luminance(th.hover()) > luminance(panel) && luminance(th.active()) > luminance(th.hover()));
+            } else {
+                assert!(luminance(th.hover()) < luminance(panel) && luminance(th.active()) < luminance(th.hover()));
+            }
+            assert!(contrast(th.line(), panel) >= 1.12, "line {}", contrast(th.line(), panel));
+            assert!(contrast(th.line_strong(), panel) >= 1.5);
+            assert!(contrast(th.dots(), board) < 1.6, "dots stay faint");
+        }
+    }
+
     #[test]
     fn sticky_ink_reads_on_every_sticky_colour() {
-        let contrast = |a: Rgb, b: Rgb| {
-            let (la, lb) = (luminance(a), luminance(b));
-            (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
-        };
         let light = Theme { palette: parse_palette("background = \"#f5f5f5\"\nforeground = \"#202020\"\n", true), ..Theme::default() };
         for th in [Theme::default(), Theme { palette: parse_palette(TOKYO, false), ..Theme::default() }, light] {
             for c in scene::note::STICKY_COLOURS {

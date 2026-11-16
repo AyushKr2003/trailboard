@@ -435,6 +435,8 @@ pub struct Settings {
     pub proxy: Proxy,
     /// `host:port` (or `scheme://host:port`) for [`Proxy::Custom`].
     pub proxy_server: String,
+    /// The panel at the board's top left (sidebar button, the space's name).
+    pub space_panel: bool,
 }
 
 impl Default for Settings {
@@ -461,6 +463,7 @@ impl Default for Settings {
             download_to: DownloadTo::Downloads,
             proxy: Proxy::System,
             proxy_server: String::new(),
+            space_panel: true,
         }
     }
 }
@@ -506,11 +509,12 @@ pub enum Key {
     Notifications,
     DownloadTo,
     Proxy,
+    SpacePanel,
 }
 
 impl Key {
     /// In the panel's order.
-    pub const ALL: [Key; 20] = [
+    pub const ALL: [Key; 21] = [
         Key::Search,
         Key::NewCard,
         Key::DefaultZoom,
@@ -529,6 +533,7 @@ impl Key {
         Key::Notifications,
         Key::DownloadTo,
         Key::Proxy,
+        Key::SpacePanel,
         Key::PageColours,
         Key::ScrollSpeed,
     ];
@@ -555,6 +560,7 @@ impl Key {
             Key::Notifications => "Notifications",
             Key::DownloadTo => "Save downloads to",
             Key::Proxy => "Proxy",
+            Key::SpacePanel => "Show the space panel",
         }
     }
 
@@ -580,6 +586,7 @@ impl Key {
             }
             Key::DownloadTo => ("downloads folder save location directory", DownloadTo::ALL.iter().map(|d| d.name()).collect()),
             Key::Proxy => ("proxy server network socks http", Proxy::ALL.iter().map(|p| p.name()).collect()),
+            Key::SpacePanel => ("space name top left corner sidebar button chrome hide", vec!["on", "off"]),
         };
         let mut s = words.to_string();
         for v in values {
@@ -611,6 +618,7 @@ impl Settings {
             Key::DefaultZoom => format!("{}%", self.default_zoom),
             Key::Language => language_name(self.language).to_string(),
             Key::Spellcheck => on_off(self.spellcheck),
+            Key::SpacePanel => on_off(self.space_panel),
             Key::ThirdPartyCookies => on_off(self.block_third_party_cookies),
             Key::DoNotTrack => on_off(self.do_not_track),
             Key::JavaScript => on_off(self.javascript),
@@ -641,6 +649,7 @@ impl Settings {
             Key::History => self.history = !self.history,
             Key::BlockAds => self.block_ads = !self.block_ads,
             Key::Spellcheck => self.spellcheck = !self.spellcheck,
+            Key::SpacePanel => self.space_panel = !self.space_panel,
             Key::ThirdPartyCookies => self.block_third_party_cookies = !self.block_third_party_cookies,
             Key::DoNotTrack => self.do_not_track = !self.do_not_track,
             Key::JavaScript => self.javascript = !self.javascript,
@@ -707,6 +716,7 @@ impl Key {
             Key::Notifications => "notifications",
             Key::DownloadTo => "download_to",
             Key::Proxy => "proxy",
+            Key::SpacePanel => "space_panel",
         }
     }
 
@@ -718,7 +728,14 @@ impl Key {
     pub fn is_switch(self) -> bool {
         matches!(
             self,
-            Key::History | Key::BlockAds | Key::Spellcheck | Key::ThirdPartyCookies | Key::DoNotTrack | Key::JavaScript | Key::Images
+            Key::History
+                | Key::BlockAds
+                | Key::Spellcheck
+                | Key::ThirdPartyCookies
+                | Key::DoNotTrack
+                | Key::JavaScript
+                | Key::Images
+                | Key::SpacePanel
         )
     }
 }
@@ -788,6 +805,7 @@ impl Settings {
             Key::Notifications => self.notifications.id().into(),
             Key::DownloadTo => self.download_to.id().into(),
             Key::Proxy => self.proxy.id().into(),
+            Key::SpacePanel => on(self.space_panel),
         }
     }
 
@@ -829,6 +847,7 @@ impl Settings {
             Key::DoNotTrack => flag.into_iter().for_each(|v| self.do_not_track = v),
             Key::JavaScript => flag.into_iter().for_each(|v| self.javascript = v),
             Key::Images => flag.into_iter().for_each(|v| self.images = v),
+            Key::SpacePanel => flag.into_iter().for_each(|v| self.space_panel = v),
         }
         *self != before
     }

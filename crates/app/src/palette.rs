@@ -20,6 +20,8 @@ use scene::{Node, NodeId, Rect, Scene, Vec2};
 use storage::pagetext::Visit;
 use storage::spaces::{SpaceId, SpaceIndex};
 
+use crate::chrome::{self, type_};
+use crate::icons::{self, Icon};
 use crate::omnibox;
 use crate::theme::{rgb, Theme};
 
@@ -174,7 +176,7 @@ pub enum Dot {
 }
 
 /// `https://www.example.com/a` → `example.com`; a local file → its name.
-fn host(url: &str) -> &str {
+pub fn host(url: &str) -> &str {
     if let Some(path) = url.strip_prefix("file://") {
         return path.rsplit('/').next().unwrap_or(path);
     }
@@ -436,16 +438,74 @@ pub fn allowed_rows(query: &str, sites: &[(String, bool)], scene: &Scene) -> Vec
     palette::rank(query, &cands).into_iter().map(|r| Row { positions: r.positions, ..items[r.index].clone() }).collect()
 }
 
+/// The icon that stands for a command in the list.
+pub fn command_icon(c: Command) -> Icon {
+    use Command::*;
+    match c {
+        NewCard | StartPage => Icon::Plus,
+        NewNote => Icon::Note,
+        NewSticky => Icon::Sticky,
+        Tidy => Icon::Tidy,
+        Fit | FillView => Icon::Fit,
+        Fold | Outline => Icon::Stack,
+        NameTrail | ColourTrail => Icon::Trail,
+        Sidebar => Icon::Sidebar,
+        Read => Icon::Expand,
+        LinkHints | Shortcuts => Icon::Keyboard,
+        Arrange => Icon::Grip,
+        SaveMarkdown | Downloads => Icon::Download,
+        Undo | Reopen => Icon::Undo,
+        Redo => Icon::Forward,
+        CloseCard | Quit | DeleteSpace => Icon::Close,
+        Reload => Icon::Reload,
+        FindInPage => Icon::Find,
+        MarkCard | SelectAll => Icon::Check,
+        PageMenu => Icon::More,
+        ZoomIn => Icon::Plus,
+        ZoomOut => Icon::Minus,
+        ZoomReset => Icon::Search,
+        NewSpace | NextSpace | PreviousSpace | RenameSpace | NextTint => Icon::Board,
+        PrivateSpace | NewPrivateSpace => Icon::Lock,
+        History | ClearHistory => Icon::History,
+        ClearCookies | ToggleBlocking | AllowedSites => Icon::Shield,
+        Settings => Icon::Settings,
+        Welcome => Icon::Help,
+    }
+}
+
+/// The icon a row shows when it has no site icon of its own.
+fn row_icon(row: &Row) -> Icon {
+    match &row.item {
+        Item::Card(_) if row.detail.starts_with("Note") => Icon::Note,
+        Item::Card(_) | Item::Closed(_) if row.detail.ends_with("Trailboard") => Icon::Board,
+        Item::Card(_) => Icon::Globe,
+        Item::Space(_) => Icon::Board,
+        Item::Command(c) => command_icon(*c),
+        Item::Open(_) if row.history.is_some() || row.detail.starts_with("History") => Icon::History,
+        Item::Open(_) if row.label.starts_with("Search ") => Icon::Search,
+        Item::Open(_) => Icon::Globe,
+        Item::Closed(_) => Icon::Undo,
+        Item::Download(_) => Icon::Download,
+        Item::AllowedSite(_) => Icon::Shield,
+    }
+}
+
 /// Sizes in logical px; multiplied by the UI scale.
 pub const ROW_H: f32 = 36.0;
 pub const MAX_ROWS: usize = 9;
-const GAP: f32 = 6.0;
+/// Height of the field, and of the line of keys under a list.
+pub const FIELD_H: f32 = 48.0;
+pub const FOOT_H: f32 = 32.0;
+const WIDTH: f32 = 680.0;
 const PAD: f32 = 6.0;
-const FONT: f32 = 15.0;
-const DETAIL: f32 = 13.0;
+/// From the sheet's edge to an icon, and from there to the text.
+const INSET: f32 = 16.0;
+const ICON: f32 = 16.0;
+const LEAD: f32 = INSET + ICON + 12.0;
 /// Width of the page preview beside the list, and the least worth showing.
 pub const PREVIEW_W: f32 = 320.0;
 const PREVIEW_MIN: f32 = 160.0;
+const PREVIEW_GAP: f32 = 12.0;
 
 /// The text field's rect (shared with the address bar).
 pub fn field_rect(viewport: Vec2, ui: f32) -> Rect {
@@ -454,10 +514,13 @@ pub fn field_rect(viewport: Vec2, ui: f32) -> Rect {
 
 /// The text field's rect, centred in the part of the window right of
 /// `left` (an open sidebar's edge), so a box without a list doesn't cover it.
+/// It sits a seventh of the way down the window, where the eye already is,
+/// with the board still in view around it.
 pub fn field_rect_from(viewport: Vec2, ui: f32, left: f32) -> Rect {
     let room = viewport.x - left;
-    let w = (720.0 * ui).min(room - 32.0 * ui);
-    Rect::new(left + (room - w) / 2.0, 18.0 * ui, w, 48.0 * ui)
+    let w = (WIDTH * ui).min(room - 32.0 * ui);
+    let y = (viewport.y * 0.14).clamp(16.0 * ui, 120.0 * ui);
+    Rect::new((left + (room - w) / 2.0).round(), y.round(), w.round(), FIELD_H * ui)
 }
 
 /// Where the result list is, in screen px.
@@ -466,6 +529,8 @@ pub struct Panel {
     pub field: Rect,
     /// The list's background (sized to the rows shown).
     pub rect: Rect,
+    /// The line of keys under the list.
+    pub foot: Rect,
     pub row_h: f32,
     /// Rows shown at once.
     pub shown: usize,
@@ -474,12 +539,13 @@ pub struct Panel {
 impl Panel {
     pub fn new(viewport: Vec2, ui: f32, len: usize) -> Panel {
         let field = field_rect(viewport, ui);
-        let top = field.bottom() + GAP * ui;
+        let top = field.bottom();
         let row_h = ROW_H * ui;
-        let fit = ((viewport.y - top - 2.0 * PAD * ui - 16.0 * ui) / row_h).floor().max(1.0) as usize;
+        let fit = ((viewport.y - top - 2.0 * PAD * ui - FOOT_H * ui - 16.0 * ui) / row_h).floor().max(1.0) as usize;
         let shown = MAX_ROWS.min(fit).min(len.max(1));
         let rect = Rect::new(field.x, top, field.w, shown as f32 * row_h + 2.0 * PAD * ui);
-        Panel { field, rect, row_h, shown }
+        let foot = Rect::new(field.x, rect.bottom(), field.w, FOOT_H * ui);
+        Panel { field, rect, foot, row_h, shown }
     }
 
     fn rows_top(&self) -> f32 {
@@ -504,7 +570,7 @@ impl Panel {
     /// Where the highlighted page's thumbnail (`size` px) goes: right of the
     /// list, top-aligned, [`PREVIEW_W`] wide (less for a tall page, to fit
     /// the window's height); or, in a window too narrow for that, under the
-    /// list at its right edge. `None` when neither has room.
+    /// sheet at its right edge. `None` when neither has room.
     pub fn preview_rect(&self, viewport: Vec2, size: (u32, u32), ui: f32) -> Option<Rect> {
         let shape = size.0.max(1) as f32 / size.1.max(1) as f32;
         let margin = 16.0 * ui;
@@ -513,104 +579,206 @@ impl Panel {
             let w = (PREVIEW_W * ui).min(w).min(h * shape);
             (w >= PREVIEW_MIN * ui).then_some((w, w / shape))
         };
-        let x = self.rect.right() + 2.0 * GAP * ui;
-        if let Some((w, h)) = fit(viewport.x - x - margin, viewport.y - self.rect.y - margin) {
-            return Some(Rect::new(x, self.rect.y, w, h));
+        let x = self.rect.right() + PREVIEW_GAP * ui;
+        if let Some((w, h)) = fit(viewport.x - x - margin, viewport.y - self.field.y - margin) {
+            return Some(Rect::new(x, self.field.y, w, h));
         }
-        let y = self.rect.bottom() + 2.0 * GAP * ui;
+        let y = self.foot.bottom() + PREVIEW_GAP * ui;
         let (w, h) = fit(self.rect.w, viewport.y - y - margin)?;
         Some(Rect::new(self.rect.right() - w, y, w, h))
     }
 
-    /// The field or the list contains `p`.
+    /// The field, the list or its foot contains `p`.
     pub fn contains(&self, p: Vec2) -> bool {
-        self.field.contains(p) || self.rect.contains(p)
+        self.field.contains(p) || self.rect.contains(p) || self.foot.contains(p)
     }
 }
 
-/// The result list (the field is drawn with the address bar's code).
+/// What a text field shows.
+pub struct Field<'a> {
+    pub icon: Icon,
+    pub text: &'a str,
+    /// The text up to the caret.
+    pub before_caret: &'a str,
+    pub placeholder: &'a str,
+    /// All of the text is selected (typing replaces it).
+    pub selected: bool,
+    /// Said at the right end: find in page's "3 of 17".
+    pub note: Option<String>,
+    /// Keys and what they do, at the right end (a box without a list).
+    pub hint: &'a [(&'a str, &'a str)],
+}
+
+/// Draws `hints` (keys and what they do) right to left, ending at `right`;
+/// returns the left edge. A hint with no label is only its keys.
+#[allow(clippy::too_many_arguments)]
+fn draw_hints(l: &mut Layer, r: &mut Renderer, hints: &[(&str, &str)], right: f32, mid_y: f32, clip: Rect, th: &Theme, ui: f32) -> f32 {
+    let size = type_::SMALL * ui;
+    let ksize = type_::CAPTION * ui;
+    let mut x = right;
+    for (keys, label) in hints.iter().rev() {
+        if !label.is_empty() {
+            let w = r.measure(label, size, false);
+            x -= w;
+            chrome::text(l, *label, x, mid_y, size, rgb(th.text2(), 1.0), clip, false);
+            x -= 6.0 * ui;
+        }
+        // "Shift+Enter" is two caps; "↑" one.
+        let caps: Vec<&str> = keys.split('+').collect();
+        let widths: Vec<f32> = caps.iter().map(|k| r.measure(k, ksize, false)).collect();
+        x = chrome::draw_keycaps(l, &caps, &widths, x, mid_y, ksize, th, ui, clip);
+        x -= if label.is_empty() { 3.0 * ui } else { 14.0 * ui };
+    }
+    x
+}
+
+/// The field: its icon, what was typed (or what to type), the caret, and
+/// its note or hint at the right end. The sheet behind it is drawn by the caller.
+pub fn field_layer(r: &mut Renderer, rect: Rect, f: &Field, th: &Theme, ui: f32) -> Layer {
+    let mut l = Layer::default();
+    let size = type_::INPUT * ui;
+    let mid = rect.center().y;
+    icons::draw(&mut l, r, f.icon, rect.x + (INSET + ICON / 2.0) * ui, mid, ICON * ui, rgb(th.text2(), 1.0));
+    let mut right = rect.right() - INSET * ui;
+    if let Some(note) = &f.note {
+        let nsize = type_::SMALL * ui;
+        let w = r.measure(note, nsize, false);
+        chrome::text(&mut l, note.clone(), right - w, mid, nsize, rgb(th.text2(), 1.0), rect, false);
+        right -= w + 14.0 * ui;
+    }
+    // The hint yields to what is typed: it shows while there is room for both.
+    let x0 = rect.x + LEAD * ui;
+    let text_w = r.measure(f.text, size, false);
+    if !f.hint.is_empty() {
+        let mut probe = Layer::default();
+        let left = draw_hints(&mut probe, r, f.hint, right, mid, rect, th, ui);
+        if left - 24.0 * ui >= x0 + text_w.max(r.measure(f.placeholder, size, false)) {
+            l.quads.append(&mut probe.quads);
+            l.texts.append(&mut probe.texts);
+            right = left;
+        }
+    }
+    let clip = Rect::new(x0, rect.y, (right - x0).max(1.0), rect.h);
+    // A text longer than the field scrolls to keep the caret in view.
+    let caret_x = r.measure(f.before_caret, size, false);
+    let shift = (caret_x - (clip.w - 8.0 * ui)).max(0.0);
+    let caret_h = (size * 1.35).round();
+    let caret_y = (mid - caret_h / 2.0).round();
+    if f.text.is_empty() {
+        chrome::text(&mut l, f.placeholder, x0, mid, size, rgb(th.text3(), 1.0), clip, false);
+    } else if f.selected {
+        let sel = Rect::new(x0 - 2.0 * ui, caret_y, (text_w + 4.0 * ui).min(clip.w), caret_h);
+        chrome::fill(&mut l, sel, th.small_radius(ui / th.text_scale).min(3.0 * ui), rgb(th.accent_soft(), 1.0));
+    }
+    if !(f.selected && !f.text.is_empty()) {
+        let w = (1.5 * ui).round().max(1.0);
+        chrome::fill(&mut l, Rect::new((x0 + caret_x - shift).round(), caret_y, w, caret_h), 0.0, rgb(th.accent_text(), 1.0));
+    }
+    if !f.text.is_empty() {
+        l.texts.push(Text { text: f.text.to_string(), pos: [x0 - shift, chrome::text_y(mid, size)], size, color: rgb(th.text(), 1.0), clip, bold: false });
+    }
+    l
+}
+
+/// The line under a list: how many rows it has, and the keys that act on them.
+pub fn foot_layer(r: &mut Renderer, foot: Rect, hints: &[(&str, &str)], len: usize, th: &Theme, ui: f32) -> Layer {
+    let mut l = Layer::default();
+    let line = chrome::hair(ui);
+    chrome::fill(&mut l, Rect::new(foot.x + line, foot.y, foot.w - 2.0 * line, line), 0.0, rgb(th.line(), 1.0));
+    let mid = foot.center().y;
+    let left = draw_hints(&mut l, r, hints, foot.right() - INSET * ui, mid, foot, th, ui);
+    let count = match len {
+        0 => String::new(),
+        1 => "1 result".to_string(),
+        n => format!("{n} results"),
+    };
+    let size = type_::SMALL * ui;
+    let x = foot.x + INSET * ui;
+    if x + r.measure(&count, size, false) + 16.0 * ui <= left {
+        chrome::text(&mut l, count, x, mid, size, rgb(th.text3(), 1.0), foot, false);
+    }
+    l
+}
+
+/// The result list's rows; the sheet behind them is drawn with the field.
+/// `site_icons` has each row's site icon texture, where it has one;
 /// `empty` is what an empty list says.
 #[allow(clippy::too_many_arguments)]
-/// The result list's rows; the sheet behind them is drawn with the field.
-pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], sel: usize, scroll: usize, empty: &str, th: &Theme, ui: f32) -> Layer {
+pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], site_icons: &[Option<u64>], sel: usize, scroll: usize, empty: &str, th: &Theme, ui: f32) -> Layer {
     let mut l = Layer::default();
     let p = panel.rect;
 
-    let size = FONT * ui;
-    let dsize = DETAIL * ui;
-    let pad = 14.0 * ui;
+    let size = type_::BODY * ui;
+    let dsize = type_::SMALL * ui;
+    let small = th.small_radius(ui / th.text_scale);
     if rows.is_empty() {
-        let row = Rect::new(p.x, p.y, p.w, p.h);
-        l.texts.push(Text {
-            text: empty.into(),
-            pos: [p.x + pad, row.y + (row.h - size * 1.3) / 2.0],
-            size,
-            color: rgb(th.dim_text(), 1.0),
-            clip: row,
-            bold: false,
-        });
+        let w = r.measure(empty, size, false);
+        chrome::text(&mut l, empty, p.x + (p.w - w) / 2.0, p.center().y, size, rgb(th.text2(), 1.0), p, false);
         return l;
     }
     for (i, row) in rows.iter().enumerate() {
         let Some(rr) = panel.row_rect(i, scroll) else { continue };
         let selected = i == sel;
+        let mid = rr.center().y;
         if selected {
-            // The highlighted row: a fill, and a short accent bar at its start.
             let hl = Rect::new(rr.x + PAD * ui, rr.y + 1.0 * ui, rr.w - 2.0 * PAD * ui, rr.h - 2.0 * ui);
-            l.quads.push(Quad { shape: Shape::Rect { rect: hl, radius: th.small_radius(ui) }, color: rgb(th.selection(), 1.0), texture: None });
-            let bar = Rect::new(hl.x, hl.y + hl.h * 0.22, (2.5 * ui).max(2.0), hl.h * 0.56);
-            l.quads.push(Quad { shape: Shape::Rect { rect: bar, radius: 0.0 }, color: rgb(th.accent(), 1.0), texture: None });
+            chrome::fill(&mut l, hl, small, rgb(th.active(), 1.0));
         }
-        let mut x = rr.x + pad;
-        let dot = 8.0 * ui;
-        if let Some(d) = &row.dot {
-            let colour = match d {
-                Dot::Trail(c) => th.trail(Some(c)),
-                Dot::Sticky(c) => th.sticky_paper(c),
-            };
-            let dr = Rect::new(x, rr.y + (rr.h - dot) / 2.0, dot, dot);
-            l.quads.push(Quad { shape: Shape::Rect { rect: dr, radius: dot / 2.0 }, color: rgb(colour, 1.0), texture: None });
+        // What kind of thing the row is, at a glance: its site's icon, the
+        // colour of its trail or sticky note, or an icon for its kind.
+        let icon = ICON * ui;
+        let ix = rr.x + INSET * ui;
+        match (site_icons.get(i).copied().flatten(), &row.dot) {
+            (_, Some(d)) => {
+                let colour = match d {
+                    Dot::Trail(c) => th.color(c),
+                    Dot::Sticky(c) => th.sticky_paper(c),
+                };
+                let d = 10.0 * ui;
+                chrome::fill(&mut l, Rect::new((ix + (icon - d) / 2.0).round(), (mid - d / 2.0).round(), d, d), d / 2.0, rgb(colour, 1.0));
+            }
+            (Some(key), None) => l.quads.push(Quad {
+                shape: Shape::Rect { rect: Rect::new(ix.round(), (mid - icon / 2.0).round(), icon, icon), radius: 0.0 },
+                color: [1.0; 4],
+                texture: Some(key),
+            }),
+            (None, None) => icons::draw(&mut l, r, row_icon(row), ix + icon / 2.0, mid, icon, rgb(if selected { th.text() } else { th.text2() }, 1.0)),
         }
-        x += dot + 8.0 * ui;
+        let mut x = rr.x + LEAD * ui;
 
-        // A command's keys as keycaps; anything else (a host, "Space") as dim text.
-        let caps = matches!(row.item, Item::Command(_)).then(|| crate::chrome::keycaps(&row.detail)).flatten();
+        // A command's keys as keycaps; anything else (a host, "Space") as secondary text.
+        let right = rr.right() - INSET * ui;
+        let caps = matches!(row.item, Item::Command(_)).then(|| chrome::keycaps(&row.detail)).flatten();
         let detail_x = match caps {
             Some(keys) => {
-                let ksize = dsize * 0.9;
+                let ksize = type_::CAPTION * ui;
                 let widths: Vec<f32> = keys.iter().map(|k| r.measure(k, ksize, false)).collect();
-                crate::chrome::draw_keycaps(&mut l, &keys, &widths, rr.right() - pad, rr.y + rr.h / 2.0, ksize, th, ui, rr)
+                chrome::draw_keycaps(&mut l, &keys, &widths, right, mid, ksize, th, ui, rr)
             }
             None => {
-                let dw = r.measure(&row.detail, dsize, false);
-                let x = rr.right() - pad - dw;
-                l.texts.push(Text {
-                    text: row.detail.clone(),
-                    pos: [x, rr.y + (rr.h - dsize * 1.3) / 2.0],
-                    size: dsize,
-                    color: rgb(th.dim_text(), if selected { 1.0 } else { 0.85 }),
-                    clip: rr,
-                    bold: false,
-                });
-                x
+                // The detail keeps at most 45% of the row; the label has the rest.
+                let detail = r.ellipsize(&row.detail, dsize, false, rr.w * 0.45);
+                let dw = r.measure(&detail, dsize, false);
+                chrome::text(&mut l, detail, right - dw, mid, dsize, rgb(th.text2(), 1.0), rr, false);
+                right - dw
             }
         };
-        let clip = Rect::new(rr.x, rr.y, (detail_x - 12.0 * ui - rr.x).max(0.0), rr.h);
-        let y = rr.y + (rr.h - size * 1.3) / 2.0;
-        // The label in runs: matched letters in the accent, the rest in the text colour.
+        let clip = Rect::new(x, rr.y, (detail_x - 16.0 * ui - x).max(0.0), rr.h);
+        // The label in runs: matched letters stand out, heavier and in the accent.
         for (text, matched) in runs(&row.label, &row.positions) {
-            let w = r.measure(&text, size, false);
-            let color = if matched { rgb(th.accent(), 1.0) } else { rgb(th.foreground(), 1.0) };
-            l.texts.push(Text { text, pos: [x, y], size, color, clip, bold: false });
+            let w = r.measure(&text, size, matched);
+            let color = if matched { rgb(th.accent_text(), 1.0) } else { rgb(th.text(), 1.0) };
+            chrome::text(&mut l, text, x, mid, size, color, clip, matched);
             x += w;
         }
     }
     // A thin scroll bar when not all rows fit.
     if rows.len() > panel.shown {
-        let track = Rect::new(p.right() - 4.0 * ui, p.y + PAD * ui, 2.0 * ui, p.h - 2.0 * PAD * ui);
-        let h = (track.h * panel.shown as f32 / rows.len() as f32).max(12.0 * ui);
+        let w = (3.0 * ui).round().max(2.0);
+        let track = Rect::new(p.right() - w - 2.0 * ui, p.y + PAD * ui, w, p.h - 2.0 * PAD * ui);
+        let h = (track.h * panel.shown as f32 / rows.len() as f32).max(16.0 * ui);
         let y = track.y + (track.h - h) * scroll as f32 / (rows.len() - panel.shown) as f32;
-        l.quads.push(Quad { shape: Shape::Rect { rect: Rect::new(track.x, y, track.w, h), radius: track.w / 2.0 }, color: rgb(th.divider(), 1.0), texture: None });
+        chrome::fill(&mut l, Rect::new(track.x, y, track.w, h), track.w / 2.0, rgb(th.line_strong(), 0.8));
     }
     l
 }
@@ -618,9 +786,10 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], sel: usize, scroll: 
 /// The highlighted page's thumbnail (texture `key`) at `at`, framed like the list.
 pub fn preview_layer(at: Rect, key: u64, th: &Theme, ui: f32) -> Layer {
     let mut l = Layer::default();
-    let radius = th.radius(ui);
-    crate::chrome::panel(&mut l, at, radius, th, ui, crate::chrome::Lift::High, th.panel());
+    let radius = th.radius(ui / th.text_scale);
+    chrome::lift(&mut l, at, radius, th, ui, chrome::Lift::High);
     l.quads.push(Quad { shape: Shape::Rect { rect: at, radius }, color: [1.0; 4], texture: Some(key) });
+    chrome::outline(&mut l, at, radius, chrome::hair(ui), rgb(th.line(), 1.0));
     l
 }
 
@@ -660,7 +829,7 @@ mod tests {
         let vp = Vec2::new(1600.0, 900.0);
         let panel = Panel::new(vp, 1.0, 5);
         let r = panel.preview_rect(vp, (480, 360), 1.0).unwrap();
-        assert_eq!((r.x, r.y, r.w, r.h), (panel.rect.right() + 12.0, panel.rect.y, PREVIEW_W, 240.0));
+        assert_eq!((r.x, r.y, r.w, r.h), (panel.rect.right() + 12.0, panel.field.y, PREVIEW_W, 240.0));
         // A tall page is cut to the window's height and narrows to keep its shape.
         let tall = panel.preview_rect(vp, (120, 360), 1.0).unwrap();
         assert!(tall.bottom() <= vp.y - 16.0 + 0.01 && (tall.w / tall.h - 1.0 / 3.0).abs() < 0.01, "{tall:?}");
@@ -672,7 +841,7 @@ mod tests {
         let small = Vec2::new(900.0, 900.0);
         let p = Panel::new(small, 1.0, 5);
         let u = p.preview_rect(small, (480, 360), 1.0).unwrap();
-        assert_eq!((u.right(), u.y, u.w, u.h), (p.rect.right(), p.rect.bottom() + 12.0, PREVIEW_W, 240.0));
+        assert_eq!((u.right(), u.y, u.w, u.h), (p.rect.right(), p.foot.bottom() + 12.0, PREVIEW_W, 240.0));
         // No room under a long list in a short window either: none.
         let short = Vec2::new(900.0, 420.0);
         let p = Panel::new(short, 1.0, 9);
@@ -899,7 +1068,7 @@ mod tests {
         let vp = Vec2::new(1000.0, 800.0);
         let p = Panel::new(vp, 1.0, 20);
         assert_eq!(p.shown, MAX_ROWS);
-        assert_eq!(p.field, Rect::new(140.0, 18.0, 720.0, 48.0));
+        assert_eq!(p.field, Rect::new(160.0, 112.0, 680.0, 48.0));
         let r0 = p.row_rect(0, 0).expect("row 0");
         assert_eq!(p.row_at(r0.center(), 0, 20), Some(0));
         assert_eq!(p.row_at(r0.center(), 3, 20), Some(3));
@@ -907,8 +1076,10 @@ mod tests {
         assert_eq!(p.row_at(Vec2::new(10.0, r0.center().y), 0, 20), None);
         // Few rows: the list shrinks to them; a short window fits fewer.
         assert_eq!(Panel::new(vp, 1.0, 2).shown, 2);
-        assert_eq!(Panel::new(Vec2::new(1000.0, 250.0), 1.0, 20).shown, 4);
-        assert!(p.contains(Vec2::new(500.0, 40.0)));
+        assert_eq!(Panel::new(Vec2::new(1000.0, 250.0), 1.0, 20).shown, 2);
+        assert!(p.contains(Vec2::new(500.0, 130.0)));
+        // The line of keys under the list is part of the sheet.
+        assert!(p.contains(p.foot.center()));
         assert!(!p.contains(Vec2::new(500.0, 790.0)));
     }
 
@@ -918,8 +1089,8 @@ mod tests {
         assert_eq!(field_rect_from(vp, 1.0, 0.0), field_rect(vp, 1.0));
         // Wide window: full width, centred in the room right of the sheet.
         let r = field_rect_from(Vec2::new(1600.0, 800.0), 1.0, 296.0);
-        assert_eq!(r.w, 720.0);
-        assert_eq!(r.x, 296.0 + (1304.0 - 720.0) / 2.0);
+        assert_eq!(r.w, 680.0);
+        assert_eq!(r.x, 296.0 + (1304.0 - 680.0) / 2.0);
         // Narrow window: shrinks to the room, never starting under the sheet.
         let r = field_rect_from(vp, 1.0, 296.0);
         assert_eq!(r.x, 296.0 + 16.0);

@@ -10,7 +10,7 @@
 use compositor::{Layer, Quad, Renderer, Shape, Text};
 use scene::Rect;
 
-use crate::theme::{mix, rgb, Theme};
+use crate::theme::{rgb, Theme};
 
 /// Section title, then (keys, what they do) rows. In keys, " · " separates
 /// alternatives and "+" keys held together; see [`chips`].
@@ -62,7 +62,7 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         "Cards",
         &[
             ("Click", "Focus a page"),
-            ("Drag title bar", "Move"),
+            ("Drag its label", "Move"),
             ("Drag corner", "Resize"),
             ("Double-click title", "Fill the view"),
             ("× · Ctrl+W", "Close"),
@@ -290,15 +290,15 @@ pub fn flow(heights: &[f32], cols: usize, gap: f32) -> (Vec<usize>, Vec<f32>) {
 pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mut Sheet) -> Vec<Layer> {
     let ui = scale;
     let radius = th.radius(ui / th.text_scale);
-    let size = 13.5 * ui;
-    let ks = 12.0 * ui; // keycap text
+    let size = crate::chrome::type_::BODY * ui;
+    let ks = crate::chrome::type_::CAPTION * ui; // keycap text
     let line = (size * 2.25).max(ks * 1.7 + 8.0 * ui);
     let pad = 24.0 * ui;
     let gap = 28.0 * ui; // between columns
     let section_gap = line * 0.8;
-    let title_size = 19.0 * ui;
-    let fg = th.foreground();
-    let dim = th.dim_text();
+    let title_size = crate::chrome::type_::TITLE * ui;
+    let fg = th.text();
+    let dim = th.text2();
 
     let sections = filtered(&sheet.filter);
 
@@ -367,7 +367,7 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
 
     // The panel.
     let mut base = Layer::default();
-    base.quads.extend(crate::chrome::scrim(screen, th, 1.3).quads);
+    base.quads.extend(crate::chrome::scrim(screen, th, 1.0).quads);
     crate::chrome::panel(&mut base, panel, radius, th, ui, crate::chrome::Lift::High, th.panel());
 
     // The sections, scrolled.
@@ -375,7 +375,7 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
     let text = |s: &str, x: f32, y: f32, size: f32, color, bold, clip| Text { text: s.into(), pos: [x, y], size, color, clip, bold };
     let top = body.y + 4.0 * ui - sheet.scroll;
     let mut col_y = vec![0.0f32; cols];
-    let hair = ui.max(1.0);
+    let hair = crate::chrome::hair(ui);
     for (i, (name, rows)) in sections.iter().enumerate() {
         let c = at[i];
         let x = panel.x + pad + c as f32 * (col_w + gap);
@@ -388,7 +388,8 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
             continue;
         }
         let clip = Rect::new(x, body.y, col_w, body.h);
-        rows_l.texts.push(text(name, x, y0 + (line - size * 1.3) / 2.0, size * 0.92, rgb(th.accent(), 1.0), true, clip));
+        // A section's name: small and quiet, it only groups.
+        rows_l.texts.push(text(name, x, y0 + (line - ks * 1.3) / 2.0 + 3.0 * ui, ks, rgb(th.text2(), 1.0), true, clip));
         for (j, (_, desc)) in rows.iter().enumerate() {
             let ry = y0 + (j + 1) as f32 * line;
             if ry > body.bottom() || ry + line < body.y {
@@ -399,7 +400,7 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
             // A hairline between rows, from the section's title down.
             rows_l.quads.push(Quad {
                 shape: Shape::Rect { rect: Rect::new(x, ry, col_w, hair), radius: 0.0 },
-                color: rgb(th.divider(), 0.7),
+                color: rgb(th.line(), 0.8),
                 texture: None,
             });
             // Keys right-aligned; what it does gets the rest (cut with "…").
@@ -437,7 +438,7 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
     fill(&mut top_l, Shape::Rect { rect: Rect::new(panel.x, panel.y, w, header_h), radius });
     fill(&mut top_l, Shape::Rect { rect: Rect::new(panel.x, panel.y + radius, w, (header_h - radius).max(0.0)), radius: 0.0 });
     fill(&mut top_l, Shape::RoundBottom { rect: Rect::new(panel.x, body.bottom(), w, panel.bottom() - body.bottom()), radius });
-    crate::chrome::sheen(&mut top_l, panel, radius, th, ui);
+    crate::chrome::outline(&mut top_l, panel, radius, hair, rgb(th.line(), 1.0));
     let inner = panel.inflate(-pad);
     let ty = panel.y + pad;
     top_l.texts.push(text("Keyboard shortcuts", inner.x, ty, title_size, rgb(fg, 1.0), true, inner));
@@ -451,12 +452,12 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
 
     // The filter field.
     let field = Rect::new(inner.x, ty + title_size * 1.3 + 14.0 * ui, inner.w, field_h);
-    let face = if th.light() { mix(th.panel(), [255, 255, 255], 0.7) } else { mix(th.panel(), [0, 0, 0], 0.25) };
-    let rim = if sheet.filter.is_empty() { crate::chrome::edge(th) } else { th.accent() };
+    let rim = if sheet.filter.is_empty() { th.line_strong() } else { th.accent_text() };
     let small = th.small_radius(ui / th.text_scale);
-    top_l.quads.push(Quad { shape: Shape::Rect { rect: field.inflate(hair), radius: small + hair }, color: rgb(rim, 1.0), texture: None });
-    top_l.quads.push(Quad { shape: Shape::Rect { rect: field, radius: small }, color: rgb(face, 1.0), texture: None });
-    let fpad = 12.0 * ui;
+    crate::chrome::fill(&mut top_l, field, small, rgb(th.well(), 1.0));
+    crate::chrome::outline(&mut top_l, field, small, hair, rgb(rim, 1.0));
+    crate::icons::draw(&mut top_l, r, crate::icons::Icon::Search, field.x + 18.0 * ui, field.center().y, 14.0 * ui, rgb(th.text2(), 1.0));
+    let fpad = 34.0 * ui;
     let fy = field.y + (field_h - size * 1.3) / 2.0;
     let total: usize = sections.iter().map(|(_, r)| r.len()).sum();
     let count = if sheet.filter.trim().is_empty() {
@@ -465,12 +466,12 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
         format!("{total} {}", if total == 1 { "shortcut" } else { "shortcuts" })
     };
     let count_w = if count.is_empty() { 0.0 } else { r.measure(&count, ks, false) };
-    let field_clip = Rect::new(field.x + fpad, field.y, (field.w - 3.0 * fpad - count_w).max(1.0), field_h);
+    let field_clip = Rect::new(field.x + fpad, field.y, (field.w - fpad - 24.0 * ui - count_w).max(1.0), field_h);
     if sheet.filter.is_empty() {
-        top_l.texts.push(text("Type to filter", field.x + fpad, fy, size, rgb(dim, 1.0), false, field_clip));
+        top_l.texts.push(text("Type to filter", field.x + fpad, fy, size, rgb(th.text3(), 1.0), false, field_clip));
         top_l.quads.push(Quad {
             shape: Shape::Rect { rect: Rect::new(field.x + fpad - 1.0 * ui, field.y + field_h * 0.25, (1.5 * ui).max(1.0), field_h * 0.5), radius: 0.0 },
-            color: rgb(th.accent(), 0.9),
+            color: rgb(th.accent_text(), 1.0),
             texture: None,
         });
     } else {
@@ -480,10 +481,10 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
         top_l.texts.push(text(&sheet.filter, x, fy, size, rgb(fg, 1.0), false, field_clip));
         top_l.quads.push(Quad {
             shape: Shape::Rect { rect: Rect::new((x + tw + 1.0 * ui).min(field_clip.right()), field.y + field_h * 0.25, (1.5 * ui).max(1.0), field_h * 0.5), radius: 0.0 },
-            color: rgb(th.accent(), 1.0),
+            color: rgb(th.accent_text(), 1.0),
             texture: None,
         });
-        top_l.texts.push(text(&count, field.right() - fpad - count_w, field.y + (field_h - ks * 1.3) / 2.0, ks, rgb(dim, 1.0), false, field));
+        top_l.texts.push(text(&count, field.right() - 12.0 * ui - count_w, field.y + (field_h - ks * 1.3) / 2.0, ks, rgb(dim, 1.0), false, field));
     }
     // A hairline under the header once the rows are under it.
     if sheet.scroll > 0.5 {
@@ -499,7 +500,7 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
         let thumb_y = track.y + (track.h - thumb_h) * (sheet.scroll / sheet.max);
         top_l.quads.push(Quad {
             shape: Shape::Rect { rect: Rect::new(track.x, thumb_y, track.w, thumb_h), radius: track.w / 2.0 },
-            color: rgb(fg, 0.28),
+            color: rgb(th.line_strong(), 0.9),
             texture: None,
         });
     }
@@ -517,7 +518,7 @@ mod tests {
         assert_eq!(chips("h j k l · Arrows"), vec![Cap("h"), Cap("j"), Cap("k"), Cap("l"), Word("or"), Cap("Arrows")]);
         assert_eq!(chips("Shift + h j k l"), vec![Cap("Shift"), Cap("h"), Cap("j"), Cap("k"), Cap("l")]);
         assert_eq!(chips("Ctrl + Scroll"), vec![Cap("Ctrl"), Word("Scroll")]);
-        assert_eq!(chips("Drag title bar"), vec![Word("Drag title bar")]);
+        assert_eq!(chips("Drag its label"), vec![Word("Drag its label")]);
         assert_eq!(chips("+ · -"), vec![Cap("+"), Word("or"), Cap("-")]);
         assert_eq!(chips("Ctrl+,"), vec![Cap("Ctrl"), Cap(",")]);
         assert_eq!(chips("M, then h j k l"), vec![Word("M, then h j k l")]);

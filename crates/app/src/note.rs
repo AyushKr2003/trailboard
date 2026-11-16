@@ -14,17 +14,22 @@ pub(crate) fn hex(c: Rgb) -> String {
 }
 
 /// The theme's colours as the editor's CSS variables, a JSON object. A
-/// sticky note (`sticky`, its colour name) is written on its coloured paper.
+/// note is a card, so it is written on the card level in the chrome's text
+/// strengths. A sticky note (`sticky`, its colour name) is written on its
+/// coloured paper, everything in shades of its ink.
 fn colors(th: &Theme, sticky: Option<&str>) -> String {
     let vars = match sticky {
         None => [
-            ("bg", th.placeholder()),
-            ("fg", th.foreground()),
-            ("dim", th.dim_text()),
+            ("bg", th.card(false)),
+            ("fg", th.text()),
+            ("dim", th.text2()),
+            ("faint", th.text3()),
+            ("link", th.accent_text()),
             ("accent", th.accent()),
-            ("sel", th.selection()),
-            ("code", th.card(false)),
-            ("rule", th.divider()),
+            ("sel", th.accent_soft()),
+            ("code", th.panel()),
+            ("rule", th.line()),
+            ("rulestrong", th.line_strong()),
         ],
         Some(c) => {
             // Ink on coloured paper: links and boxes in the ink, not the accent,
@@ -33,11 +38,14 @@ fn colors(th: &Theme, sticky: Option<&str>) -> String {
             [
                 ("bg", paper),
                 ("fg", ink),
-                ("dim", mix(ink, paper, 0.4)),
+                ("dim", mix(ink, paper, 0.3)),
+                ("faint", mix(ink, paper, 0.45)),
+                ("link", ink),
                 ("accent", ink),
-                ("sel", mix(paper, ink, 0.25)),
+                ("sel", mix(paper, ink, 0.22)),
                 ("code", mix(paper, ink, 0.08)),
-                ("rule", mix(paper, ink, 0.25)),
+                ("rule", mix(paper, ink, 0.18)),
+                ("rulestrong", mix(paper, ink, 0.35)),
             ]
         }
     };
@@ -45,11 +53,13 @@ fn colors(th: &Theme, sticky: Option<&str>) -> String {
         .iter()
         .map(|(k, c)| format!("\"{k}\":\"{}\"", hex(*c)))
         .collect();
-    // Hyprland's window rounding, which code blocks follow (capped small).
+    // Hyprland's window rounding, which code blocks follow (capped small);
+    // whether the note is a sticky note (tighter, for its small paper).
     format!(
-        "{{{},\"radius\":\"{}px\"}}",
+        "{{{},\"radius\":\"{}px\",\"sticky\":{}}}",
         body.join(","),
-        th.rounding.max(0.0)
+        th.rounding.max(0.0),
+        sticky.is_some()
     )
 }
 
@@ -127,8 +137,8 @@ mod tests {
     #[test]
     fn colors_are_css_hex() {
         let c = colors(&Theme::default(), None);
-        assert!(c.starts_with("{\"bg\":\"#") && c.ends_with("\"}"));
-        assert_eq!(c.matches('#').count(), 7);
+        assert!(c.starts_with("{\"bg\":\"#") && c.ends_with("\"sticky\":false}"));
+        assert_eq!(c.matches('#').count(), 10);
     }
 
     #[test]
@@ -137,7 +147,8 @@ mod tests {
         let paper = hex(th.sticky_paper("yellow"));
         let c = colors(&th, Some("yellow"));
         assert!(c.starts_with(&format!("{{\"bg\":\"{paper}\"")), "{c}");
-        assert_eq!(c.matches('#').count(), 7);
+        assert_eq!(c.matches('#').count(), 10);
+        assert!(c.ends_with("\"sticky\":true}"));
         assert_ne!(colors(&th, Some("green")), c);
         assert!(theme_script(&th, Some("yellow")).contains(&paper));
     }

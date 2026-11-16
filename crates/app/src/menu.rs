@@ -1,8 +1,16 @@
-//! Menu overlays: the page context menu (items from `web::menu`) and a stack's
-//! outline (its members, to jump to one). Layout, hit testing and keyboard movement.
+//! Menu overlays: the page context menu (items from `web::menu`), a stack's
+//! outline (its members, to jump to one), and the menus of the board's own
+//! controls (the spaces, and *More* on the dock). Layout, hit testing and
+//! keyboard movement.
 
 use scene::{NodeId, Rect, Vec2};
+use storage::spaces::SpaceId;
 use web::menu::MenuItem;
+
+use crate::palette::Command;
+
+/// The card a menu of the board's own controls belongs to: none.
+pub const NO_CARD: NodeId = NodeId(u64::MAX);
 
 /// Longest page title shown in a stack's outline, in characters.
 pub const OUTLINE_CHARS: usize = 60;
@@ -16,13 +24,17 @@ pub enum Entry {
     Member { id: NodeId, label: String, current: bool },
     /// Unfold the stack.
     Unfold,
+    /// A board command, with the keys that also run it.
+    Command { cmd: Command, label: &'static str, keys: &'static str },
+    /// Go to a space; `current` is the one showing.
+    Space { id: SpaceId, label: String, current: bool },
 }
 
 impl Entry {
     pub fn is_enabled(&self) -> bool {
         match self {
             Entry::Page(i) => i.is_enabled(),
-            Entry::Member { .. } | Entry::Unfold => true,
+            Entry::Member { .. } | Entry::Unfold | Entry::Command { .. } | Entry::Space { .. } => true,
         }
     }
 
@@ -33,10 +45,34 @@ impl Entry {
     /// The row's text; "-" for a separator.
     pub fn label(&self) -> &str {
         match self {
-            Entry::Page(MenuItem::Action { label, .. }) | Entry::Member { label, .. } => label,
+            Entry::Page(MenuItem::Action { label, .. }) | Entry::Member { label, .. } | Entry::Space { label, .. } => label,
+            Entry::Command { label, .. } => label,
             Entry::Page(MenuItem::Separator) => "-",
             Entry::Unfold => "Unfold trail",
         }
+    }
+
+    /// The keys shown at the row's right end.
+    pub fn keys(&self) -> &str {
+        match self {
+            Entry::Command { keys, .. } => keys,
+            _ => "",
+        }
+    }
+
+    /// The row is ticked: the stack member in front, the space showing.
+    pub fn is_current(&self) -> bool {
+        matches!(self, Entry::Member { current: true, .. } | Entry::Space { current: true, .. })
+    }
+
+    /// A command's row, labelled and keyed as in the palette.
+    pub fn command(cmd: Command) -> Entry {
+        let info = crate::palette::COMMANDS.iter().find(|i| i.cmd == cmd).expect("every command is listed");
+        Entry::Command { cmd, label: info.label, keys: info.keys }
+    }
+
+    pub fn separator() -> Entry {
+        Entry::Page(MenuItem::Separator)
     }
 }
 
@@ -70,12 +106,13 @@ pub fn outline(members: &[(NodeId, &str)], front: NodeId) -> Vec<Entry> {
 }
 
 /// Sizes in logical px; multiplied by the window scale.
-pub const ITEM_H: f32 = 28.0;
+pub const ITEM_H: f32 = 30.0;
 pub const SEP_H: f32 = 9.0;
-pub const PAD: f32 = 6.0;
-pub const TEXT_PAD: f32 = 14.0;
-pub const FONT: f32 = 14.0;
-pub const MIN_W: f32 = 180.0;
+pub const PAD: f32 = 4.0;
+/// From the menu's edge to a row's text: room for the tick of the current row.
+pub const TEXT_PAD: f32 = 32.0;
+pub const FONT: f32 = 13.0;
+pub const MIN_W: f32 = 200.0;
 
 pub struct ContextMenu {
     /// The card whose page was right-clicked, or the stack's front for an outline.
@@ -126,7 +163,7 @@ impl ContextMenu {
 /// Menu box and row rects. The menu opens down and right of `anchor`, flipping
 /// up or left when it would leave the viewport, and is clamped inside it.
 pub fn layout(items: &[Entry], anchor: Vec2, label_w: f32, viewport: Vec2, scale: f32) -> (Rect, Vec<Rect>) {
-    let w = (label_w + 2.0 * TEXT_PAD * scale).max(MIN_W * scale);
+    let w = (label_w + (TEXT_PAD + 16.0) * scale).max(MIN_W * scale);
     let content_h: f32 =
         items.iter().map(|i| if i.is_separator() { SEP_H } else { ITEM_H }).sum::<f32>() * scale;
     let h = content_h + 2.0 * PAD * scale;

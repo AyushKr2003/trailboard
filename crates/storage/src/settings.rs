@@ -5,7 +5,8 @@
 //! "language": "system", "spellcheck": true, "block_third_party_cookies": false,
 //! "do_not_track": false, "javascript": true, "images": true, "camera": "ask",
 //! "microphone": "ask", "location": "ask", "notifications": "ask",
-//! "download_to": "downloads", "proxy": "system", "proxy_server": "" }`.
+//! "download_to": "downloads", "proxy": "system", "proxy_server": "",
+//! "space_panel": true }`.
 //!
 //! Each field is read on its own: a missing or unknown value (say, an engine
 //! a newer build added, or a field an older build didn't write) keeps its
@@ -47,6 +48,7 @@ struct SettingsFile<'a> {
     download_to: &'a str,
     proxy: &'a str,
     proxy_server: &'a str,
+    space_panel: bool,
 }
 
 #[derive(Deserialize)]
@@ -109,6 +111,7 @@ pub fn load_settings(data_dir: &Path) -> Settings {
     flag("do_not_track", &mut s.do_not_track);
     flag("javascript", &mut s.javascript);
     flag("images", &mut s.images);
+    flag("space_panel", &mut s.space_panel);
     for (name, into) in [
         ("camera", &mut s.camera),
         ("microphone", &mut s.microphone),
@@ -155,6 +158,7 @@ pub fn save_settings(data_dir: &Path, s: &Settings) -> std::io::Result<()> {
         download_to: s.download_to.id(),
         proxy: s.proxy.id(),
         proxy_server: &s.proxy_server,
+        space_panel: s.space_panel,
     };
     let json = serde_json::to_vec_pretty(&file).map_err(std::io::Error::other)?;
     write_atomic(&settings_path(data_dir), &json)
@@ -190,6 +194,7 @@ mod tests {
             download_to: DownloadTo::Ask,
             proxy: Proxy::Custom,
             proxy_server: "socks5://127.0.0.1:9050".into(),
+            space_panel: false,
         };
         save_settings(dir.path(), &s).unwrap();
         assert_eq!(load_settings(dir.path()), s);

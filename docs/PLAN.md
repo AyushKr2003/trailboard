@@ -70,7 +70,10 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
 
 ### M2: Live page cards ✅
 - CEF 156 bootstrap (subprocesses re-exec the same binary), off-screen browsers.
-- Paint → texture upload; rounded cards with title bar, shadow, focus ring, close ×.
+- Paint → texture upload; rounded cards with shadow and focus ring.
+  (2026-11-16 redesign, owner's decision: no title bar and no dock. A card is its
+  page; its name, buttons and handle are a screen-sized label above it. See
+  [DESIGN.md](DESIGN.md).)
   (2026-11-16: every text is one line, cut with "…" at its clip, so long titles never wrap.)
 - Mouse, wheel and keyboard forwarded to the focused page; logical-key shortcuts.
 - Omnibox (Ctrl+L / Ctrl+T): URL vs search detection (DuckDuckGo; the engine is a setting since M6).
@@ -78,6 +81,9 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
 ### M3: Many cards and trails ✅
 - ✅ Links open beside their source (`on_before_browse` LINK + gesture, popups, Ctrl/middle-click).
 - ✅ Bezier trail edges; placement right of the source, sliding down past siblings.
+- ✅ New cards are screen-shaped (owner's decision, 2026-11-16, later the same
+  day): shaped like a full window on an empty workspace (Hyprland), else the
+  monitor, else 16:9, at width `CARD_W`; `CARD_H` is now 576 (16:9).
 - ✅ One size for new cards (owner's decision, 2026-11-16): every new card,
   link, start page, note and our own page (welcome, settings, engines) opens
   at `scene::CARD_W`×`CARD_H` (1024×720); `placement::beside` no longer copies

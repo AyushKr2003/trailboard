@@ -9,6 +9,8 @@ mod crash;
 mod desktop;
 mod engines;
 mod hints;
+mod hud;
+mod icons;
 mod keymap;
 mod launch;
 mod menu;

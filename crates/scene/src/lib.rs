@@ -39,14 +39,19 @@ pub use selection::Selection;
 pub use trail::TrailStep;
 use serde::{Deserialize, Serialize};
 
-/// Size of every new card's content, world units: pages, the welcome,
-/// settings and search engine pages, start pages, links and notes. Only
-/// sticky notes are smaller. A card keeps whatever size it is resized to.
+/// The default size of a new card's content, world units: pages, the
+/// welcome, settings and search engine pages, start pages, links and notes
+/// (sticky notes are smaller). The app shapes new cards like the screen
+/// instead (`placement::card_size`) and uses this when it knows nothing
+/// better: 16:9 at a width pages lay out well at. A card keeps whatever
+/// size it is resized to.
 pub const CARD_W: f32 = 1024.0;
-pub const CARD_H: f32 = 720.0;
+pub const CARD_H: f32 = 576.0;
 
-/// Height of a card's title bar, in world units, drawn above the page content.
-pub const HEADER_H: f32 = 30.0;
+/// Height of the chrome above a page card's content, in world units: none.
+/// A card is its page; its name is a label drawn above it at a fixed size
+/// on screen (the app's `Bar`), which takes no room on the board.
+pub const HEADER_H: f32 = 0.0;
 
 /// Height of a sticky note's grab strip, its only chrome (`note`).
 pub const STICKY_GRIP_H: f32 = 16.0;
@@ -57,7 +62,7 @@ pub struct NodeId(pub u64);
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Node {
     pub id: NodeId,
-    /// Page content area in world units. The title bar sits directly above it.
+    /// Page content area in world units.
     pub rect: Rect,
     pub url: String,
     pub title: String,
@@ -76,12 +81,12 @@ pub struct Node {
 }
 
 impl Node {
-    /// Height of the chrome above the content: a title bar, or a sticky note's strip.
+    /// Height of the chrome above the content: a sticky note's strip; none on other cards.
     pub fn header_h(&self) -> f32 {
         if self.is_sticky() { STICKY_GRIP_H } else { HEADER_H }
     }
 
-    /// Content rect plus title bar: the area the card occupies on the board.
+    /// The area the card occupies on the board: its content (plus a sticky note's strip).
     pub fn frame(&self) -> Rect {
         let h = self.header_h();
         Rect::new(self.rect.x, self.rect.y - h, self.rect.w, self.rect.h + h)
@@ -130,8 +135,13 @@ impl Scene {
 
     /// Opens `url` as a new card beside `from`, connected by a trail edge.
     pub fn spawn_beside(&mut self, from: NodeId, url: impl Into<String>) -> Option<NodeId> {
+        self.spawn_beside_sized(from, url, Vec2::new(CARD_W, CARD_H))
+    }
+
+    /// [`Scene::spawn_beside`] at `size`.
+    pub fn spawn_beside_sized(&mut self, from: NodeId, url: impl Into<String>, size: Vec2) -> Option<NodeId> {
         let src = self.nodes.get(&from)?.clone();
-        let rect = placement::beside(self, &src);
+        let rect = placement::beside_sized(self, &src, size.x, size.y);
         let id = self.add_page(rect, url);
         self.nodes.get_mut(&id).expect("just added").trail = src.trail;
         self.edges.push(Edge { from, to: id });

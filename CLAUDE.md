@@ -5,6 +5,9 @@ infinite board; links open beside their source. Read [README.md](README.md) for
 use, [docs/PLAN.md](docs/PLAN.md) for milestones and status,
 [docs/FUTURE.md](docs/FUTURE.md) for later ideas, and
 [docs/re-findings.md](docs/re-findings.md) for what we learned about Marble.
+Interface rules (colour levels, text strengths, type scale, icons) are in
+[docs/DESIGN.md](docs/DESIGN.md): use `theme.rs` tokens and `chrome.rs`
+helpers, never ad-hoc colours or sizes.
 
 ## Clean-room rule
 

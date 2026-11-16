@@ -237,7 +237,7 @@ pub fn info(e: SearchEngine) -> Info {
 }
 
 /// The engines, the groups and the one in use, as JSON for the pages.
-pub fn data(current: SearchEngine) -> String {
+pub(crate) fn data(current: SearchEngine) -> String {
     let q = web::js_string;
     let engines: Vec<String> = SearchEngine::ALL
         .iter()

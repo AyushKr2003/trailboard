@@ -4,42 +4,83 @@
 <meta charset="utf-8">
 <title>Note</title>
 <style>
-:root { --bg: #1c1c1c; --fg: #e6e6e6; --dim: #9a9a9a; --accent: #ffd60a; --sel: #444; --code: #2a2a2a; --rule: #3a3a3a;
-  /* Code blocks follow Hyprland's window rounding, capped at 4px. */
-  --radius: 0px; --r-sm: min(4px, var(--radius)); }
+/* A note: the card's own level, text in the chrome's three strengths, a
+   reading column that writing keeps (the text doesn't jump when you click
+   in). Colours come from the app (`tbTheme`); a sticky note is set on its
+   paper, tighter for its small size. Corners follow Hyprland, capped small. */
+:root { --bg: #24252c; --fg: #e6e6e9; --dim: #a0a0a8; --faint: #7a7a83; --link: #ffd60a; --accent: #ffd60a;
+  --sel: #4a4426; --code: #2c2d35; --rule: #34353d; --rulestrong: #4a4b55;
+  --radius: 0px; --r-sm: min(6px, var(--radius));
+  --font: "Inter", "Adwaita Sans", system-ui, sans-serif;
+  --mono: ui-monospace, "JetBrains Mono", "DejaVu Sans Mono", monospace;
+  /* The column: at most ~68 characters, centred, with room around it. */
+  --pad-y: 32px; --pad-x: max(32px, calc((100% - 640px) / 2)); }
 :root { color-scheme: light dark; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); }
-body { font: 16px/1.55 system-ui, sans-serif; }
+body { font: 15px/1.65 var(--font); font-feature-settings: "cv11"; -webkit-font-smoothing: antialiased; }
+body.sticky { --pad-y: 14px; --pad-x: 16px; font-size: 14px; line-height: 1.5; }
 ::selection { background: var(--sel); }
-#view, #src { box-sizing: border-box; padding: 18px max(24px, calc((100% - 46em) / 2)); }
+* { scrollbar-width: thin; scrollbar-color: var(--rulestrong) transparent; }
+#view, #src { box-sizing: border-box; padding: var(--pad-y) var(--pad-x); }
 #view { min-height: 100%; overflow-wrap: anywhere; cursor: text; }
 #view > :first-child { margin-top: 0; }
+#view > :last-child { margin-bottom: 0; }
 #src { display: none; position: fixed; inset: 0; width: 100%; height: 100%; margin: 0; border: 0;
-  outline: 0; resize: none; background: var(--bg); color: var(--fg); caret-color: var(--accent);
-  font: 15px/1.6 ui-monospace, "JetBrains Mono", "DejaVu Sans Mono", monospace; tab-size: 4; }
-#src::placeholder, .empty { color: var(--dim); }
+  outline: 0; resize: none; background: var(--bg); color: var(--fg); caret-color: var(--link);
+  font: 13.5px/1.75 var(--mono); tab-size: 4; }
+body.sticky #src { font-size: 12.5px; line-height: 1.6; }
+#src::placeholder { color: var(--faint); }
 body.editing #view { display: none; }
 body.editing #src { display: block; }
-h1, h2, h3, h4, h5, h6 { line-height: 1.25; margin: 1.1em 0 0.45em; }
-h1 { font-size: 1.7em; } h2 { font-size: 1.35em; } h3 { font-size: 1.15em; }
-h4, h5, h6 { font-size: 1em; } h6 { color: var(--dim); }
-p, ul, ol, blockquote, pre { margin: 0 0 0.8em; }
-ul, ol { padding-left: 1.5em; }
-li.task { list-style: none; margin-left: -1.3em; }
-li.task > input { margin: 0 0.45em 0 0; vertical-align: -0.1em; accent-color: var(--accent); cursor: pointer; }
-li.done { color: var(--dim); text-decoration: line-through; }
-a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
-code { font: 0.9em ui-monospace, "JetBrains Mono", "DejaVu Sans Mono", monospace; background: var(--code); padding: 0.1em 0.3em; border-radius: var(--r-sm); }
-pre { background: var(--code); padding: 0.7em 0.9em; overflow-x: auto; border-radius: var(--r-sm); }
-pre code { background: none; padding: 0; }
-blockquote { border-left: 3px solid var(--accent); padding: 0.1em 0 0.1em 0.9em; color: var(--dim); margin-left: 0; }
+
+h1, h2, h3, h4, h5, h6 { line-height: 1.3; margin: 1.6em 0 0.5em; font-weight: 600; letter-spacing: -0.01em; }
+h1 { font-size: 1.6em; letter-spacing: -0.02em; } h2 { font-size: 1.27em; } h3 { font-size: 1.07em; }
+h4, h5, h6 { font-size: 1em; } h5, h6 { color: var(--dim); }
+body.sticky h1 { font-size: 1.3em; } body.sticky h2 { font-size: 1.15em; }
+body.sticky :is(h1, h2, h3, h4, h5, h6) { margin: 0.9em 0 0.3em; }
+p, ul, ol, blockquote, pre { margin: 0 0 0.85em; }
+ul, ol { padding-left: 1.4em; }
+li { margin: 0.15em 0; }
+li::marker { color: var(--faint); }
+li.task { list-style: none; margin-left: -1.4em; display: flex; gap: 0.6em; align-items: baseline; }
+li.task > input { appearance: none; -webkit-appearance: none; flex: none; position: relative; top: 0.2em;
+  width: 15px; height: 15px; margin: 0; border: 1.5px solid var(--rulestrong); border-radius: min(4px, var(--radius));
+  background: transparent; cursor: pointer; transition: background .12s, border-color .12s; }
+li.task > input:hover { border-color: var(--dim); }
+li.task > input:checked { background: var(--link); border-color: var(--link); }
+li.task > input:checked::after { content: ""; position: absolute; left: 3.5px; top: 0.5px; width: 4px; height: 8px;
+  border: solid var(--bg); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+li.done { color: var(--faint); text-decoration: line-through; text-decoration-color: var(--faint); }
+a { color: var(--link); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--link) 40%, transparent);
+  text-underline-offset: 3px; cursor: pointer; }
+a:hover { text-decoration-color: currentColor; }
+strong { font-weight: 600; }
+code { font: 0.88em var(--mono); background: var(--code); padding: 0.12em 0.35em; border-radius: min(4px, var(--radius)); }
+pre { background: var(--code); border: 1px solid var(--rule); padding: 0.8em 1em; overflow-x: auto;
+  border-radius: var(--r-sm); line-height: 1.55; }
+pre code { background: none; padding: 0; font-size: 0.85em; }
+blockquote { border-left: 2px solid var(--rulestrong); padding: 0 0 0 1em; color: var(--dim); margin-left: 0; }
 blockquote > :last-child { margin-bottom: 0; }
-hr { border: 0; border-top: 1px solid var(--rule); margin: 1.2em 0; }
+hr { border: 0; border-top: 1px solid var(--rule); margin: 1.6em 0; }
+del { color: var(--faint); }
+
+/* An empty note says how to start. */
+.empty { color: var(--faint); margin: 0; }
+.empty b { display: block; color: var(--dim); font-weight: 600; margin-bottom: 2px; }
+kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; vertical-align: 1px;
+  font: 600 11px/1 var(--font); color: var(--dim); background: var(--code);
+  border: 1px solid var(--rule); border-radius: min(4px, var(--radius)); }
+/* While writing: what the text is, and how to stop. */
+#hint { position: fixed; right: 14px; bottom: 12px; display: none; align-items: center; gap: 6px;
+  font: 500 11px/1 var(--font); color: var(--faint); pointer-events: none; }
+body.editing #hint { display: flex; }
+body.sticky #hint { display: none; }
 </style>
 </head>
 <body>
 <div id="view"></div>
 <textarea id="src" spellcheck="false" placeholder="Write in Markdown…"></textarea>
+<div id="hint">Markdown <span aria-hidden="true">·</span> <kbd>Esc</kbd> done</div>
 <script>
 "use strict";
 // Trailboard note editor. The text lives in the app's board; every change is
@@ -52,7 +93,8 @@ let text = __TEXT__;
 function send() { console.log(PREFIX + text); }
 
 window.tbTheme = function (t) {
-  for (const k in t) document.documentElement.style.setProperty("--" + k, t[k]);
+  for (const k in t) if (k !== "sticky") document.documentElement.style.setProperty("--" + k, t[k]);
+  document.body.classList.toggle("sticky", !!t.sticky);
 };
 window.tbTheme(__THEME__);
 
@@ -209,7 +251,7 @@ function render(t) {
 
 function show() {
   document.body.classList.remove("editing");
-  view.innerHTML = text.trim() ? render(text) : '<p class="empty">Empty note. Click or press Enter to write.</p>';
+  view.innerHTML = text.trim() ? render(text) : '<p class="empty"><b>Empty note</b>Click, or press <kbd>Enter</kbd>, to write.</p>';
 }
 
 function edit(line) {
@@ -269,8 +311,12 @@ src.addEventListener("keydown", e => {
     if (!m) return;
     e.preventDefault();
     if (line.length === m[0].length && at === (v.indexOf("\n", at) < 0 ? v.length : v.indexOf("\n", at))) {
+      // Enter on an empty item ends the list: the bullet goes (a quote's
+      // ">" stays). Chromium ignores inserting empty text, so an empty
+      // replacement is a delete.
       src.selectionStart = lineStart;
-      document.execCommand("insertText", false, m[1].trimEnd() === "" ? "" : m[1]);
+      const keep = m[1].trimEnd() === "" ? "" : m[1];
+      document.execCommand(keep ? "insertText" : "delete", false, keep);
       return;
     }
     const bullet = m[3] ? (parseInt(m[3], 10) + 1) + m[4] : m[2];

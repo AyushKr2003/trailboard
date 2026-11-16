@@ -6,6 +6,74 @@ All notable changes to Trailboard. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **New cards are shaped like your screen.** A new card takes the shape a
+  full window gets on an empty workspace (from Hyprland: the focused
+  monitor less bars, gaps and borders; 1896×1030 here, so cards come out
+  1024×556), else the shape of the monitor, else 16:9. It stays 1024 wide so
+  pages lay out as on a desktop; the height follows the shape (400 to 1600).
+  The default with nothing to go on is now 1024×576 (16:9) instead of
+  1024×720. It follows monitor changes and Hyprland reloads; cards already
+  on the board keep their size.
+- **The space panel can be hidden**: *Show the space panel* in Settings →
+  Appearance turns off the sidebar button and space name at the top left
+  (B still opens the sidebar, Ctrl+K switches spaces).
+- **A redesigned interface, from the ground up** (rules in
+  [docs/DESIGN.md](docs/DESIGN.md)).
+  - **Cards are just their page.** The title bar is gone; a card's name is a
+    label above it (site icon and title) that keeps its size on screen at any
+    zoom, so every card stays named however far out you zoom. The label is
+    the card's handle (drag to move, double-click to fill the view,
+    Shift+click to select). On the card under the pointer and the current
+    one it also shows the site's address, the blocker's shield and count,
+    and **back, forward, reload** (new) and close. The label under the
+    hovered card and the "· asleep" suffix are replaced by this; a sleeping
+    card's label ends in a moon.
+  - **A right-click menu on the empty board** (new page, note, sticky note,
+    tidy, fold, fit, reopen, undo, redo, history, downloads, settings,
+    shortcuts), each with its key, and a **spaces menu** on the space's name
+    at the top left, beside a button for the sidebar. Controls say their
+    name and key when the pointer rests on them.
+  - **Finding your way**: a view with no card in it offers *Fit everything*;
+    an empty board offers *Open a page*; Read Mode shows *Back to the board*
+    when the pointer nears the top.
+  - **Palette, history, downloads**: a sheet a seventh of the way down the
+    window; each row starts with its site's icon or an icon for its kind;
+    a foot lists the keys (Open, Open beside, Forget…) instead of a
+    sentence in the placeholder; long text in a field scrolls with the caret.
+  - **Colour** is derived from the theme in OKLab: four levels (board, card,
+    panel, hover) a measured step of lightness apart, and three strengths of
+    text set by contrast (7:1, 4.5:1, 3:1), checked by tests on dark, light
+    and low-contrast themes. Shadows take the board's hue. The vignette,
+    glows and sheens are gone. Unmarked trails are a quiet neutral, and the
+    current card's trail is brought out in the accent.
+  - **Type**: the interface is set in Inter (bundled, SIL OFL) on one scale
+    (11, 12, 13, 15, 18).
+  - **Icons**: our own line icons, rasterised at the size shown, replace
+    text glyphs (×, ▸, +, ¶).
+  - **Board**: the dot grid keeps one density at every zoom; trails end in
+    dots; loading is a line along a card's top edge; messages and questions
+    moved to the foot of the window.
+  - Menus show keys as keycaps and tick the current row; the sidebar and
+    shortcut sheet use the same levels and text strengths.
+  - **Settings, rebuilt**: the search field and the sections (each with an
+    icon, and how many settings match while searching) in the side column;
+    `/` jumps to the search, Enter goes to the first match. Sections are
+    titled plainly with a line on what they cover; switches show the accent
+    only when on, a few choices are a neutral segmented control, and
+    *Clear history…* and *Clear cookies…* are marked as destructive. A
+    narrow card gets one column.
+  - **Start page, rebuilt**: one calm field with the engine picker inside
+    it and an Enter keycap saying what Enter will do, then **the pages you
+    opened last** (from history, none in a private space): click one, or
+    ↓ from the field and Enter, to open it in the card.
+  - **Notes, rebuilt**: a centred reading column that writing keeps, so the
+    text doesn't jump when you click in; set in the chrome's type with
+    quieter quotes, code and links, drawn checkboxes, and a "Markdown · Esc
+    done" hint while writing. Sticky notes are set tighter for their size.
+  - App pages ask for Inter, then Adwaita Sans (made from Inter, installed
+    on GNOME-based desktops), then the system font.
+
 ### Added
 - **Browsing settings** (Ctrl+,), the parts of Chromium's own settings page
   that Trailboard can offer: *Default page zoom*, *Page language* (what sites
@@ -137,6 +205,9 @@ All notable changes to Trailboard. The format follows
   shrinks it back into its place. It used to be an instant cut.
 
 ### Fixed
+- Enter on an empty list item in a note now ends the list on that line.
+  It used to leave the bullet selected, so the next text joined the line
+  above.
 - **Labels stay on one line.** A card's title or address that is too long
   for its title bar ends in "…" before the × instead of wrapping onto a
   second line. Every other label (palette, menus, sidebar, trail names,

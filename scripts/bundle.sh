@@ -28,7 +28,8 @@ NAME="trailboard-$VERSION-$(uname -m)"
 OUT="$ROOT/target/bundle/$NAME"
 
 rm -rf "$OUT"
-mkdir -p "$OUT/share/applications" "$OUT/share/icons/hicolor/scalable/apps"
+mkdir -p "$OUT/share/applications" "$OUT/share/icons/hicolor/scalable/apps" \
+    "$OUT/share/icons/hicolor/symbolic/apps"
 install -m 755 target/release/trailboard "$OUT/trailboard"
 
 # CEF's runtime: libraries, data files and locales. Not its headers, CMake
@@ -46,6 +47,8 @@ strip --strip-unneeded "$OUT/libcef.so" "$OUT"/libvk_swiftshader.so "$OUT"/libvu
 
 install -m 644 share/trailboard.desktop "$OUT/share/applications/trailboard.desktop"
 install -m 644 share/trailboard.svg "$OUT/share/icons/hicolor/scalable/apps/trailboard.svg"
+install -m 644 share/trailboard-symbolic.svg \
+    "$OUT/share/icons/hicolor/symbolic/apps/trailboard-symbolic.svg"
 install -m 644 README.md CHANGELOG.md "$OUT/"
 
 echo "Bundled $OUT ($(du -sh "$OUT" | cut -f1))"

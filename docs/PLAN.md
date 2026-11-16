@@ -613,6 +613,13 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     `WebEvent::Relaunch`; the second process gets `Startup::Handed` and exits
     0). No socket of our own. The profile is per `XDG_DATA_HOME`, so isolated
     test runs never reach the user's window.
+  - Icon redesigned (2026-11-16) after Omarchy's own app icons: the object
+    seen from the front on a transparent 512 px canvas, Tokyo Night colours,
+    one hard `#0e0f17` shadow per piece, and a `<title>`/`<desc>`. A link on
+    a page card leads down a trail into a new page beside it, forming a
+    lowercase t; few shapes, so it reads at 16 px.
+    `share/trailboard-symbolic.svg` is the one-colour version (installed
+    under `hicolor/symbolic/apps`).
   - Handed pages open as new cards in the space on screen, near the view's
     middle, the last one current; Read Mode is left first. With no pages the
     window is only asked to come forward (`focus_window`; Hyprland may just

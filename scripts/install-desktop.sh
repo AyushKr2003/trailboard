@@ -14,6 +14,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
 APPS="$DATA/applications"
 ICONS="$DATA/icons/hicolor/scalable/apps"
+SYMBOLIC="$DATA/icons/hicolor/symbolic/apps"
 
 refresh() {
     command -v update-desktop-database >/dev/null && update-desktop-database -q "$APPS" || true
@@ -21,7 +22,7 @@ refresh() {
 }
 
 if [[ "${1:-}" == "--uninstall" ]]; then
-    rm -f "$APPS/trailboard.desktop" "$ICONS/trailboard.svg"
+    rm -f "$APPS/trailboard.desktop" "$ICONS/trailboard.svg" "$SYMBOLIC/trailboard-symbolic.svg"
     refresh
     echo "Removed the Trailboard desktop entry and icon."
     exit 0
@@ -33,7 +34,7 @@ if [[ ! -x "$BIN" ]]; then
     exit 1
 fi
 
-mkdir -p "$APPS" "$ICONS"
+mkdir -p "$APPS" "$ICONS" "$SYMBOLIC"
 # Quote the path for the Exec key (spaces and the characters it reserves).
 EXEC="\"$(printf '%s' "$BIN" | sed 's/[\\"`$]/\\\\&/g')\""
 while IFS= read -r line; do
@@ -42,5 +43,6 @@ while IFS= read -r line; do
 done < "$ROOT/share/trailboard.desktop" > "$APPS/trailboard.desktop.tmp"
 mv "$APPS/trailboard.desktop.tmp" "$APPS/trailboard.desktop"
 install -m 644 "$ROOT/share/trailboard.svg" "$ICONS/trailboard.svg"
+install -m 644 "$ROOT/share/trailboard-symbolic.svg" "$SYMBOLIC/trailboard-symbolic.svg"
 refresh
 echo "Installed $APPS/trailboard.desktop (runs $BIN) and its icon."

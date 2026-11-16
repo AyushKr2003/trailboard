@@ -19,6 +19,13 @@ All notable changes to Trailboard. The format follows
   turns JavaScript or images on or off for one site (`sites.json`).
 
 ### Changed
+- **A new app icon** in the style of Omarchy's own apps (Hype, Omasnap,
+  Folio): Tokyo Night colours, each piece with a hard shadow, no tile. A lilac
+  link on a dark browser card runs down a lilac trail into a new blue page
+  beside it, and the pieces together make a lowercase *t*. It replaces the
+  busy three-card drawing, which blurred below 64 px; the new mark reads down
+  to 16 px. A one-colour `trailboard-symbolic.svg` now ships with it from the
+  install and bundle scripts.
 - **A redesigned welcome page**: the title on one line, the buttons
   (with *All shortcuts*), then a wide picture of a board drawn the way
   Trailboard draws one: trails leave a card's right edge and enter the

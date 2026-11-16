@@ -3,11 +3,7 @@
 Trailboard is a canvas browser for Linux. Web pages are live cards on an infinite
 board. A clicked link opens as a new card beside its source, joined by a trail edge.
 
-It is an independent build modelled on Marble (marble.surf), which ships only for
-Apple Silicon macOS. Marble's behaviour and architecture were studied with REA
-([re-findings.md](re-findings.md)). No Marble code, art, name, prompts or server
-is reused. Where Marble's algorithms were not decompiled (Tidy, placement, Fold),
-we design our own.
+Every algorithm (Tidy, placement, Fold) is our own design.
 
 Status legend: ✅ done · 🟡 partial · ⬜ not started · ⏸ on hold for the owner's decision
 
@@ -16,14 +12,14 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started · ⏸ on hold for th
 ## 1. Goals and non-goals
 
 **Goals**
-- Native Linux app (Wayland first, X11 too) with Marble's core experience: a spatial
+- Native Linux app (Wayland first, X11 too) with a canvas-first experience: a spatial
   board of live pages, links opening beside their source, trails, spaces and notes.
 - Fast and memory-aware on ordinary laptops (the dev machine has 7.6 GB RAM, Intel iGPU).
 - Local-first: the board, history and search live on disk. No account required.
 - Private by default: ads, trackers and cookie banners blocked.
 
 **Non-goals (for now)**
-- Recreating Marble's look, branding, server or paid features.
+- Recreating another app's look, branding, server or paid features.
 - Browser sync, accounts, payments, telemetry.
 - macOS/Windows builds (the stack allows them later).
 
@@ -47,7 +43,7 @@ Rules
 - Each card owns one windowless Chromium browser. Its BGRA frames are uploaded to a
   `wgpu` texture only when the paint serial changes.
 
-Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
+Rendering model (CEF off-screen rendering + `compositor`)
 - Software OSR (`on_paint`) first. Accelerated OSR (dmabuf shared textures) comes later, only if profiling needs it.
 - Page raster scale follows the settled zoom (0.5–2.0, quarter steps), so zoomed-in text stays sharp.
   CEF 156 OSR ignores the device scale factor (both `screen_info` and
@@ -58,11 +54,6 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
 ---
 
 ## 3. Milestones
-
-### M0: Reverse engineering ✅
-- Unpack the DMG (UDIF/LZMA → HFS+), inventory with REA, recover module map and
-  1,549 function names, SQL schemas, board JSON structs, menus/shortcuts, Explain API.
-- Output: `docs/re-findings.md`, `docs/marble-function-names.txt`.
 
 ### M1: Skeleton ✅
 - Workspace, winit window, wgpu (Vulkan) surface, dot-grid background.
@@ -341,7 +332,7 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   - The editor is our own page (`crates/app/src/note.html`) in the card's
     browser, loaded as a `data:` URL with the text and theme colours filled in
     (`PageKind::Note`). This gives IME, selection, clipboard, undo and Read
-    Mode for free; Marble also hosts its notes in CEF. Cost: a note is a
+    Mode for free. Cost: a note is a
     renderer like any card (it sleeps under the live cap like one).
   - Source and rendered views instead of WYSIWYG: a monospace textarea while
     editing; on Esc or blur our own small Markdown renderer (headings,
@@ -952,7 +943,7 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     back), so it is not offered; same as Ctrl+Shift+T.
 
 ### M8: Privacy ✅
-- ✅ Brave `adblock` engine (0.13, MPL-2.0) with EasyList/EasyPrivacy in a
+- ✅ The `adblock` crate (0.13, MPL-2.0) with EasyList/EasyPrivacy in a
   resource request handler (`web::shield`, 2026-11-15). Decisions:
   - The lists are not shipped: they are fetched from easylist.to on the first
     start (3 s after it, so the first pages load first) and again when older
@@ -1163,7 +1154,7 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   - Not done: per-site camera/location lists, notification display (Alloy
     shows none), font sizes, site data other than cookies.
 - ✅ Blocking like uBlock Origin (2026-11-16), asked by the owner: sites that
-  open in Firefox or Chrome with uBlock Origin showed "turn off your ad
+  open elsewhere with uBlock Origin showed "turn off your ad
   blocker" walls here, and turning blocking off let every ad in.
   - Cause: a request the lists stop was cancelled outright, so a page that
     checks its ad script loaded (`adsbygoogle`, `googletag`, the IMA SDK) saw
@@ -1362,39 +1353,32 @@ other steps only when the owner asks for them.
 (sharp on this machine, no separate *Look* setting for now), so "premium"
 has to come from spacing, type, depth, icons and motion, not soft corners;
 the sidebar both opens with B and peeks from the window's left edge. Aim: Trailboard should
-feel as finished and calm as the premium browsers (Zen, Arc) and Marble,
-while staying a board of cards and staying clean-room.
+feel finished and calm while staying a board of cards. Every value below is
+ours to choose.
 
-**Clean-room note.** Zen, Arc and Marble are references for *principles*
-only. Copy no art, icons, names, colour values, gradients, sounds or CSS
-from any of them, and don't take measurements from third-party "design
-system" pages that imitate them. Every value below is ours to choose.
-
-**Research (2026-11-15), what makes them feel premium:**
-- *The page is the hero; the chrome recedes.* Arc and Zen put tabs in a
-  vertical sidebar and remove the top tab bar. Zen's compact mode hides the
+**Principles (2026-11-15), what makes a browser feel premium:**
+- *The page is the hero; the chrome recedes.* Tabs live in a
+  vertical sidebar with no top tab bar. A compact mode hides the
   sidebar and toolbar entirely and brings them back when the pointer reaches
   the window's edge, or pins them with a key. The page sits as an inset,
   rounded sheet inside a tinted window frame instead of running edge to edge.
-- *One colour mood per space.* Both let each space (Arc "Spaces", Zen
-  "workspaces") carry its own colour or soft gradient, which tints the
+- *One colour mood per space.* Each space can carry its own colour or soft gradient, which tints the
   frame, sidebar and accents, so you know where you are without reading.
-  Zen adds an optional grain (noise) over the gradient to avoid banding and
-  flatness. Marble gives each space its own background (a photo or colour).
+  An optional grain (noise) over the gradient avoids banding and flatness;
+  a space can also have its own background (a photo or colour).
 - *Few, consistent surfaces.* A small set of surface steps (base, raised,
   hover, hairline edge) used everywhere; floating things (command bar,
   menus) are one elevated sheet with a soft wide shadow and a faint light
   outline.
-- *A central command bar.* Arc's command bar is a centred sheet in the upper
+- *A central command bar.* The command bar is a centred sheet in the upper
   part of the window, large input text, rows with right-aligned key hints:
   one place for tabs, history and actions. (Trailboard's Ctrl+K palette is
   already this; it needs the finish, not the idea.)
 - *Quiet, quick motion.* Short eased transitions (≈150–250 ms) for the
   sidebar sliding, titles fading after it, spaces switching with a slight
   spring; nothing bounces for long.
-- *Editorial type.* Marble's site uses large sentence-case display lines and
-  small, spaced uppercase labels; Arc keeps UI text small and the command
-  input large. A clear type scale (label, body, title, display) matters more
+- *Editorial type.* Large sentence-case display lines and small, spaced
+  uppercase labels; UI text small and the command input large. A clear type scale (label, body, title, display) matters more
   than the font.
 - *Restraint.* Mostly neutral surfaces with one accent colour; colour comes
   from the space's tint, not from many coloured controls.
@@ -1489,8 +1473,8 @@ and light):**
 - ⬜ 8. Review pass: every overlay and state in dark and light, at small
   and large windows and a HiDPI scale; fix what looks off.
 
-**Not in scope:** Arc/Zen features that aren't about the look (Boosts,
-split view, auto-archiving tabs, Glance); user CSS themes or mods.
+**Not in scope:** features that aren't about the look (site restyling,
+split view, auto-archiving tabs, link previews); user CSS themes or mods.
 
 ---
 
@@ -1519,7 +1503,7 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 | CPU: software OSR copies every frame | Upload only on new paint serial; later dmabuf accelerated OSR |
 | CEF version drift | Pin `cef` crate and CEF build together; `scripts/install-cef.sh` |
 | Wayland quirks (input, scale) | Logical-key shortcuts; test on Hyprland and one other compositor |
-| Legal | Clean-room behaviour only; never copy Marble code, assets or prompts |
+| Legal | Clean-room behaviour only; never copy another app's code, assets or prompts |
 
 ---
 
@@ -1707,7 +1691,7 @@ toast or a palette command.
   zygote and every renderer in a new user namespace with their own PID
   namespaces and `Seccomp: 2`; Wikipedia loads; `chrome://sandbox` reads
   "You are adequately sandboxed" (only Yama non-broker ptrace is yellow, as
-  in Chrome). Run 3, `TRAILBOARD_NO_SANDBOX=1`: warning logged, everything
+  in stock Chromium). Run 3, `TRAILBOARD_NO_SANDBOX=1`: warning logged, everything
   in the host namespace, seccomp 0. Run 4 (`run-nons.sh`: inside a user
   namespace with `max_user_namespaces=1`, so no nested ones, as on
   linux-hardened): the probe fails, "sandbox: OFF …" warning, the app
@@ -1813,7 +1797,7 @@ toast or a palette command.
   edges and sheen, HiDPI, private-space and warning (red-edged) toasts.
 - PKGBUILD verified (`~/.cache/trailboard-aur`: a copy of the PKGBUILD,
   the CEF tarball symlinked from `~/.cache/cef-dl`, built with
-  `TRAILBOARD_GIT=file:///home/shadow/Work/marble-linux makepkg -f`, log in
+  `TRAILBOARD_GIT=file://$PWD makepkg -f`, log in
   `makepkg.log`). ~5 min: release build 3m57, `check()` 126 + 58 tests and
   the version line. Package 158 MB `.pkg.tar.zst`, 377 MB installed;
   runpath `[$ORIGIN]` only; libcef.so stripped (278 MB). E2e

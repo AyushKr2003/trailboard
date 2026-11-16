@@ -1,20 +1,18 @@
 # Trailboard: agent instructions
 
 A Linux canvas browser (Rust + winit + wgpu + CEF). Pages are live cards on an
-infinite board; links open beside their source. Read [README.md](README.md) for
-use, [docs/PLAN.md](docs/PLAN.md) for milestones and status,
-[docs/FUTURE.md](docs/FUTURE.md) for later ideas, and
-[docs/re-findings.md](docs/re-findings.md) for what we learned about Marble.
+infinite board; links open beside their source. Read [README.md](README.md) and [docs/GUIDE.md](docs/GUIDE.md) for
+use, [docs/PLAN.md](docs/PLAN.md) for milestones and status, and
+[docs/FUTURE.md](docs/FUTURE.md) for later ideas.
 Interface rules (colour levels, text strengths, type scale, icons) are in
 [docs/DESIGN.md](docs/DESIGN.md): use `theme.rs` tokens and `chrome.rs`
 helpers, never ad-hoc colours or sizes.
 
 ## Clean-room rule
 
-Trailboard is modelled on Marble's *behaviour*, not its code. Never copy Marble
-code, decompiled pseudocode, art, icons, names, prompts or server APIs into this
-repo. Recovered function names and data shapes in `docs/` are reference for
-designing our own versions only.
+Trailboard is our own design and code. Never copy another app's code, art,
+icons, names, prompts or server APIs into this repo, and don't name other
+browsers in the docs.
 
 ## Layout and boundaries
 
@@ -63,6 +61,17 @@ Kill the app with `pkill -x trailboard`, never `pkill -f`, which matches your ow
   (builds, CEF, analysis data) on disk under `~/.cache` or the repo's `target/`.
 - Each card is a full Chromium renderer; keep test boards small.
 - Use `pkexec` for root, never `sudo`.
+
+## Starting a session
+
+1. Read `docs/PLAN.md` (section 6 "Handoff" and the status marks) and the
+   Unreleased part of `CHANGELOG.md`; run `git status`, `cargo build`, `cargo test`.
+   If something is broken, fixing it is the task.
+2. Take the Handoff's "Next up", else the first ⬜/🟡 item in milestone order.
+   Do one coherent item per session; decide open questions sensibly and record
+   them in `docs/PLAN.md`. Ask only when it's genuinely the owner's call.
+3. When done, rewrite the Handoff (date, done, next up, notes) and end with a
+   short summary: what changed, how it was verified, what wasn't, what's next.
 
 ## Workflow
 

@@ -108,6 +108,6 @@ package() {
   install -Dm644 share/trailboard.desktop "$pkgdir/usr/share/applications/trailboard.desktop"
   install -Dm644 share/trailboard.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/trailboard.svg"
   install -Dm644 share/trailboard-symbolic.svg "$pkgdir/usr/share/icons/hicolor/symbolic/apps/trailboard-symbolic.svg"
-  install -Dm644 README.md CHANGELOG.md -t "$pkgdir/usr/share/doc/trailboard/"
+  install -Dm644 README.md CHANGELOG.md docs/GUIDE.md -t "$pkgdir/usr/share/doc/trailboard/"
   install -Dm644 "$srcdir/cef/CREDITS.html" "$pkgdir/usr/share/licenses/trailboard/CEF-CREDITS.html"
 }

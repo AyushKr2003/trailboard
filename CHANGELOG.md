@@ -39,6 +39,15 @@ All notable changes to Trailboard. The format follows
     pages update at once.
 
 ### Changed
+- **A short README**: what Trailboard is, install, the ten keys you need.
+  The full reference (every shortcut, cards, history, downloads, blocking,
+  settings, data folders, tests) moved to `docs/GUIDE.md`, which the Arch
+  package and the bundle now ship.
+- The docs no longer name other browsers, and the reverse-engineering notes
+  are gone; the README says in one line that Trailboard is inspired by Marble.
+- Removed `scripts/install-desktop.sh` and `scripts/next.sh`: the Arch package
+  installs the launcher entry and icon. `scripts/bundle.sh` now always packs
+  the portable `.tar.zst` for other distros (no `--tar` flag).
 - **A card shows its page as a full window would.** Pages on the board now
   lay out at Read Mode's width (the window's) and the card shows that layout
   scaled to fit, so a card is a small copy of the page in Read Mode. Entering
@@ -165,8 +174,8 @@ All notable changes to Trailboard. The format follows
   text. Scrolling glides like the board's (a wheel notch or a key eases
   there, the touchpad follows the fingers and flings). Typing filters it (Esc clears the filter, then closes), keys show
   as keycaps beside what they do, and a click outside closes it.
-- **Ad blocking works like uBlock Origin**, so sites that open in Firefox or
-  Chrome with uBlock no longer ask you to turn the blocker off here. uBlock
+- **Ad blocking works like uBlock Origin**, so sites that open elsewhere
+  with uBlock no longer ask you to turn the blocker off here. uBlock
   Origin's own lists (filters, badware, privacy, Unbreak, Quick fixes) and
   Peter Lowe's list join EasyList, EasyPrivacy and the cookie list, with
   their `!#include` parts and `!#if` blocks. A blocked ad or analytics script
@@ -319,7 +328,7 @@ All notable changes to Trailboard. The format follows
   pick it for an explanation. When the system can't run the sandbox,
   Trailboard now says so once on screen instead of only in its log.
 - **Pages run in Chromium's sandbox**: web pages are now confined the way
-  they are in Chrome (user namespaces and seccomp), so a page that exploits
+  Chromium intends (user namespaces and seccomp), so a page that exploits
   a browser bug has a much harder time reaching your files. Where the system doesn't support
   that, Trailboard still starts, without the sandbox, and says so in its
   log. The Arch package installs Chromium's `chrome-sandbox` helper for
@@ -647,10 +656,6 @@ All notable changes to Trailboard. The format follows
   opening, closing, moving and resizing cards. A restored card gets its live page
   and trail edges back. After a click inside a page, Ctrl+Z goes to the page.
 - Script commands `drag`, `undo`, `redo` and `cards` for end-to-end runs.
-- **Reverse-engineering notes** for Marble 0.1.28 (macOS), gathered with REA:
-  architecture, module map, 1,549 recovered function names, SQLite page-text
-  schema, board JSON structures, menus/shortcuts and the Explain API contract
-  (`docs/re-findings.md`, `docs/marble-function-names.txt`).
 - **Cargo workspace** with crates `scene`, `storage`, `web`, `compositor` and `app` (binary `trailboard`).
 - **Board model** (`scene`): cards, trail edges, z-order, hit testing, bounds;
   camera with pan, zoom-about-point and fit; placement beside a source card and

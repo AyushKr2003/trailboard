@@ -11,8 +11,8 @@ Each needs a short design note before work starts.
 ## Near term (after M9)
 
 ### Semantic search ("search by meaning") ⏸ on hold
-- Local embedding model through `ort` (ONNX Runtime) + `tokenizers`; Marble
-  ships a ~118 MB int8 multilingual model (likely multilingual-e5-small; unconfirmed).
+- Local embedding model through `ort` (ONNX Runtime) + `tokenizers`; a small
+  int8 multilingual model (~120 MB) is enough.
 - Pick our own openly licensed model; download on first use, not bundled.
 - Store per-passage vectors in `passages(page_id, n, vec)` next to FTS5, and blend
   BM25 and vector scores in the palette.
@@ -26,7 +26,7 @@ Each needs a short design note before work starts.
   screenshot. Honour size limits and show cost and usage.
 
 ### Import from other browsers ⏸ on hold
-- Chrome/Chromium/Brave/Arc, Firefox: history, open tabs/sessions, bookmarks, favicons.
+- Chromium- and Gecko-based profiles: history, open tabs/sessions, bookmarks, favicons.
 - Cookies only with explicit consent.
 
 ### Password managers and passkeys ⏸ on hold
@@ -52,5 +52,5 @@ Each needs a short design note before work starts.
 
 ## Explicitly out of scope
 
-- Copying Marble's branding, art, server API, prompts or paid features.
+- Copying another app's branding, art, server API, prompts or paid features.
 - Telemetry or analytics without opt-in.

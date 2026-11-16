@@ -7,9 +7,10 @@ use crate::{Node, Rect, Scene, HEADER_H};
 /// Horizontal and vertical gap between cards, in world units.
 pub const GAP: f32 = 60.0;
 
-/// Content rect for a new card opened from `src`.
+/// Content rect for a new card opened from `src`, at the default card size
+/// whatever size `src` is.
 pub fn beside(scene: &Scene, src: &Node) -> Rect {
-    beside_sized(scene, src, src.rect.w, src.rect.h)
+    beside_sized(scene, src, crate::CARD_W, crate::CARD_H)
 }
 
 /// Content rect of size `w`×`h` for a new card opened from `src`.

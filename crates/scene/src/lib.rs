@@ -39,6 +39,12 @@ pub use selection::Selection;
 pub use trail::TrailStep;
 use serde::{Deserialize, Serialize};
 
+/// Size of every new card's content, world units: pages, the welcome,
+/// settings and search engine pages, start pages, links and notes. Only
+/// sticky notes are smaller. A card keeps whatever size it is resized to.
+pub const CARD_W: f32 = 1024.0;
+pub const CARD_H: f32 = 720.0;
+
 /// Height of a card's title bar, in world units, drawn above the page content.
 pub const HEADER_H: f32 = 30.0;
 
@@ -246,6 +252,15 @@ mod tests {
         assert!(!fa.intersects(&fb));
         assert!(!fb.intersects(&fc));
         assert!(fb.x > fa.right());
+    }
+
+    #[test]
+    fn a_link_opens_at_the_default_size_whatever_its_source_is() {
+        let mut s = Scene::new();
+        let a = s.add_page(Rect::new(0.0, 0.0, 400.0, 1300.0), "https://a");
+        let b = s.spawn_beside(a, "https://b").unwrap();
+        let r = s.node(b).unwrap().rect;
+        assert_eq!((r.w, r.h), (CARD_W, CARD_H));
     }
 
     #[test]

@@ -6,11 +6,6 @@
 use crate::note::{hex, percent_encode};
 use crate::theme::{Theme, mix};
 
-/// Size of the welcome card's content, world units: wide enough for its
-/// two-column layout, as tall as a page card (it sits beside the first one).
-pub const W: f32 = 880.0;
-pub const H: f32 = 720.0;
-
 const PAGE: &str = include_str!("welcome.html");
 
 /// What a button on the welcome page can ask for.

@@ -3,10 +3,6 @@
 
 use crate::theme::{Rgb, Theme, mix};
 
-/// Size of a new note's content, world units.
-pub const W: f32 = 560.0;
-pub const H: f32 = 420.0;
-
 /// Size of a new sticky note's content, world units.
 pub const STICKY_W: f32 = 280.0;
 pub const STICKY_H: f32 = 240.0;

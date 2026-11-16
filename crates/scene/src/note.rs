@@ -384,7 +384,7 @@ mod tests {
         let mut s = Scene::new();
         assert_eq!(s.welcome_card(), None);
         s.add_page(Rect::new(0.0, 0.0, 800.0, 600.0), "https://a");
-        let w = s.add_welcome(Rect::new(0.0, 1000.0, 880.0, 720.0));
+        let w = s.add_welcome(Rect::new(0.0, 1000.0, crate::CARD_W, crate::CARD_H));
         assert_eq!(s.welcome_card(), Some(w));
         let n = s.node(w).unwrap();
         assert!(!n.is_note());
@@ -395,7 +395,7 @@ mod tests {
     fn the_settings_page_is_a_card_found_by_its_address() {
         let mut s = Scene::new();
         assert_eq!(s.settings_card(), None);
-        let id = s.add_settings(Rect::new(0.0, 0.0, 980.0, 780.0));
+        let id = s.add_settings(Rect::new(0.0, 0.0, crate::CARD_W, crate::CARD_H));
         assert_eq!(s.settings_card(), Some(id));
         let n = s.node(id).unwrap();
         assert!(!n.is_note());

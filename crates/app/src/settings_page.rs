@@ -18,10 +18,6 @@ use crate::theme::Theme;
 
 const PAGE: &str = include_str!("settings.html");
 
-/// Size of the settings card's content, world units.
-pub const W: f32 = 980.0;
-pub const H: f32 = 780.0;
-
 /// Before `key=value`: a setting changed on the page.
 pub const SET: &str = "set:";
 /// Before the proxy server typed for *Proxy: Custom*.

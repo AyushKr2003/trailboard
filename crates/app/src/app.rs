@@ -95,6 +95,7 @@ use scene::arrange::Arrange;
 use scene::hint;
 use scene::nav::{self, Dir};
 use scene::pagezoom::{self, SiteZooms};
+use scene::{CARD_H, CARD_W};
 use scene::settings::{self as prefs, Settings};
 use scene::{liveness, placement, read, selection, tidy, Camera, Change, Edge, History, Node, NodeId, Rect, Scene, Selection, TrailStep, Vec2};
 use storage::spaces::{self, SpaceId, SpaceIndex};
@@ -120,8 +121,6 @@ use crate::palette::{self, Command, Item};
 use crate::script::{Cmd, Script};
 use crate::sidebar::Panel;
 
-const CARD_W: f32 = 1024.0;
-const CARD_H: f32 = 720.0;
 const MIN_CARD: f32 = 240.0;
 /// How long after a page loads (or retitles itself) its text is read for history.
 const TEXT_SETTLE: Duration = Duration::from_millis(1200);
@@ -1145,10 +1144,9 @@ impl App {
     /// First start: the welcome page, left of the first page (`beside`).
     /// Not focused, so the page keeps the keys.
     fn add_guide(&mut self, beside: Option<NodeId>) -> NodeId {
-        let (w, h) = (crate::welcome::W, crate::welcome::H);
         let rect = match beside.and_then(|id| self.scene.node(id)) {
-            Some(src) => placement::left_of(&self.scene, src, w, h),
-            None => placement::free_near(&self.scene, self.camera.center, w, h),
+            Some(src) => placement::left_of(&self.scene, src, CARD_W, CARD_H),
+            None => placement::free_near(&self.scene, self.camera.center, CARD_W, CARD_H),
         };
         let id = self.scene.add_welcome(rect);
         self.create_page(id);
@@ -1255,14 +1253,9 @@ impl App {
             self.go_to_card(id);
             return;
         }
-        let (w, h) = (crate::engines::W, crate::engines::H);
-        let rect = self.scene.node(from).map(|src| placement::beside_sized(&self.scene, src, w, h));
         let Some(id) = self.scene.spawn_beside(from, scene::note::ENGINES_URL) else { return };
         if let Some(n) = self.scene.node_mut(id) {
             n.title = scene::note::ENGINES_TITLE.to_string();
-            if let Some(r) = rect {
-                n.rect = r;
-            }
         }
         self.create_page(id);
         self.history.opened(id);
@@ -1292,8 +1285,7 @@ impl App {
             self.go_to_card(id);
             return;
         }
-        let (w, h) = (crate::welcome::W, crate::welcome::H);
-        let rect = placement::free_near(&self.scene, self.camera.center, w, h);
+        let rect = placement::free_near(&self.scene, self.camera.center, CARD_W, CARD_H);
         let id = self.scene.add_welcome(rect);
         self.create_page(id);
         self.history.opened(id);
@@ -1305,7 +1297,7 @@ impl App {
 
     /// N: a new, empty note in the middle of the view, ready to type in.
     fn new_note_at_center(&mut self) -> NodeId {
-        let rect = placement::free_near(&self.scene, self.camera.center, crate::note::W, crate::note::H);
+        let rect = placement::free_near(&self.scene, self.camera.center, CARD_W, CARD_H);
         let id = self.scene.add_note(rect, "");
         self.create_page(id);
         self.history.opened(id);
@@ -1415,7 +1407,7 @@ impl App {
                 t
             }
             None => {
-                let Some(t) = self.scene.note_beside(src, quote, crate::note::W, crate::note::H) else { return };
+                let Some(t) = self.scene.note_beside(src, quote, CARD_W, CARD_H) else { return };
                 self.create_page(t);
                 self.history.opened(t);
                 // While reading, the new note waits on the board (not read next).
@@ -2158,8 +2150,7 @@ impl App {
             self.go_to_card(id);
             return;
         }
-        let (w, h) = (crate::settings_page::W, crate::settings_page::H);
-        let rect = placement::free_near(&self.scene, self.camera.center, w, h);
+        let rect = placement::free_near(&self.scene, self.camera.center, CARD_W, CARD_H);
         let id = self.scene.add_settings(rect);
         self.create_page(id);
         self.history.opened(id);

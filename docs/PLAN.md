@@ -78,6 +78,10 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
 ### M3: Many cards and trails ✅
 - ✅ Links open beside their source (`on_before_browse` LINK + gesture, popups, Ctrl/middle-click).
 - ✅ Bezier trail edges; placement right of the source, sliding down past siblings.
+- ✅ One size for new cards (owner's decision, 2026-11-16): every new card,
+  link, start page, note and our own page (welcome, settings, engines) opens
+  at `scene::CARD_W`×`CARD_H` (1024×720); `placement::beside` no longer copies
+  the source's size. Sticky notes are the exception (280×240).
 - ✅ Move, resize, close, reopen closed, double-click title → fill view.
 - ✅ Hide off-screen pages; zoom-aware page resolution. Decision (2026-11-14):
   done with page zoom instead of the device scale factor, which CEF 156 OSR
@@ -1253,7 +1257,7 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     `placement::left_of` (tops aligned, `free_near` when taken).
   - Changed at the owner's request (2026-11-15): no longer a Markdown note
     but a designed page (`crates/app/src/welcome.html`, `welcome.rs`), on an
-    880×720 card the board keeps as `trailboard:welcome`
+    880×720 card (1024×720 since 2026-11-16) the board keeps as `trailboard:welcome`
     (`scene::note::WELCOME_URL`, `Scene::add_welcome`/`welcome_card`). It
     loads as a `data:` URL with the theme's colours (recoloured live like
     notes) in a new `web::PageKind::App`: never navigates (links open

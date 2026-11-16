@@ -26,6 +26,11 @@ All notable changes to Trailboard. The format follows
   busy three-card drawing, which blurred below 64 px; the new mark reads down
   to 16 px. A one-colour `trailboard-symbolic.svg` now ships with it from the
   install and bundle scripts.
+- **Every new card is the same size**, 1024×720 (`scene::CARD_W`/`CARD_H`):
+  pages, links, start pages, notes and the welcome, settings and search
+  engine pages. A link no longer copies its source card's size, so a link
+  opened from a card you resized comes out at the default. Only sticky notes
+  stay small. Resized cards keep their size.
 - **A redesigned welcome page**: the title on one line, the buttons
   (with *All shortcuts*), then a wide picture of a board drawn the way
   Trailboard draws one: trails leave a card's right edge and enter the

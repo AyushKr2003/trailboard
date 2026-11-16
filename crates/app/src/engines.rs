@@ -13,10 +13,6 @@ use crate::theme::Theme;
 
 const PAGE: &str = include_str!("engines.html");
 
-/// Size of the guide card's content, world units.
-pub const W: f32 = 1000.0;
-pub const H: f32 = 760.0;
-
 /// Where an engine sits in the picker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Group {

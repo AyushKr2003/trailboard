@@ -299,6 +299,8 @@ pub struct App {
     tags: Vec<(NodeId, Rect)>,
     /// The shortcut sheet (`?`) is showing.
     hints: bool,
+    /// Its filter and scroll.
+    sheet: crate::hints::Sheet,
     /// Link hints (`f`) on a card's page: asked for, or showing labels.
     link_hints: Option<LinkHints>,
     /// Moving or resizing the current card from the keyboard (M).
@@ -570,6 +572,7 @@ impl App {
             shields: Vec::new(),
             tags: Vec::new(),
             hints: false,
+            sheet: Default::default(),
             link_hints: None,
             arrange: None,
             read: None,
@@ -2913,10 +2916,7 @@ impl App {
             Command::ClearCookies => self.ask_clear_cookies(),
             Command::Settings => self.open_settings(),
             Command::Downloads => self.open_downloads(),
-            Command::Shortcuts => {
-                self.hints = true;
-                log::info!("hints shown");
-            }
+            Command::Shortcuts => self.show_hints(),
             Command::Welcome => self.show_guide(),
             Command::ToggleBlocking => self.toggle_blocking(self.current()),
             Command::AllowedSites => self.open_allowed_sites(),
@@ -4125,9 +4125,9 @@ impl App {
         if state == ElementState::Pressed {
             self.board_pan.stop(); // a grab holds the board where it is
         }
-        // Any click closes the shortcut sheet, and does nothing else.
+        // A click outside the shortcut sheet closes it; none does anything else.
         if self.hints {
-            if state == ElementState::Pressed {
+            if state == ElementState::Pressed && !self.sheet.panel.contains(p) {
                 self.hints = false;
                 log::info!("hints hidden");
                 self.menu_pressed = true; // swallow the release too
@@ -4465,6 +4465,12 @@ impl App {
             MouseScrollDelta::LineDelta(x, y) => (x, y, true),
             MouseScrollDelta::PixelDelta(p) => (p.x as f32, p.y as f32, false),
         };
+        // The shortcut sheet is in front of everything: the wheel scrolls it.
+        if self.hints {
+            let px = if lines { -dy * self.sheet.line * 2.0 } else { -dy };
+            self.sheet.scroll_by(px);
+            return;
+        }
         self.camera_goal = None;
         self.menu = None;
         self.link_hints = None; // scrolling a page moves its links
@@ -4568,6 +4574,50 @@ impl App {
         }
     }
 
+    /// Shows the shortcut sheet, from the top with no filter.
+    fn show_hints(&mut self) {
+        self.hints = true;
+        self.sheet = Default::default();
+        log::info!("hints shown");
+    }
+
+    /// A key while the shortcut sheet shows: typing filters it, the arrows,
+    /// Page keys and Home/End scroll it, Esc clears the filter and then
+    /// closes it, as do ? and F1. Other keys do nothing.
+    fn sheet_key(&mut self, ev: &KeyIn, chord: bool) {
+        let sh = &mut self.sheet;
+        let close = |app: &mut Self| {
+            app.hints = false;
+            log::info!("hints hidden");
+        };
+        match ev.named {
+            Some(NamedKey::Escape) if !sh.filter.is_empty() => {
+                sh.filter.clear();
+                sh.scroll = 0.0;
+            }
+            Some(NamedKey::Escape | NamedKey::F1) => close(self),
+            Some(NamedKey::ArrowDown) => sh.scroll_by(sh.line),
+            Some(NamedKey::ArrowUp) => sh.scroll_by(-sh.line),
+            Some(NamedKey::PageDown) => sh.scroll_by(sh.page),
+            Some(NamedKey::PageUp) => sh.scroll_by(-sh.page),
+            Some(NamedKey::Home) => sh.scroll = 0.0,
+            Some(NamedKey::End) => sh.scroll = sh.max,
+            Some(NamedKey::Backspace) if chord => {
+                sh.filter.clear();
+                sh.scroll = 0.0;
+            }
+            Some(NamedKey::Backspace) => sh.backspace(),
+            _ if chord => {}
+            // ? closes the sheet it opened, unless it is being typed into a filter.
+            _ if ev.text.as_deref() == Some("?") && sh.filter.is_empty() => close(self),
+            _ => {
+                if let Some(t) = ev.text.as_deref().filter(|t| !t.trim().is_empty() || !sh.filter.is_empty()) {
+                    sh.type_text(t);
+                }
+            }
+        }
+    }
+
     fn key(&mut self, ev: KeyIn) {
         let pressed = ev.pressed;
         let ctrl = self.mods.control_key();
@@ -4578,10 +4628,8 @@ impl App {
 
         let is_question = ev.text.as_deref() == Some("?") || (shift && code == Some(KeyCode::Slash));
         if self.hints {
-            // Esc or ? hides the sheet; other keys (except modifiers) hide it too and are dropped.
-            if pressed && !matches!(ev.named, Some(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super)) {
-                self.hints = false;
-                log::info!("hints hidden");
+            if pressed {
+                self.sheet_key(&ev, ctrl || alt);
             }
             return;
         }
@@ -4617,8 +4665,7 @@ impl App {
         let f1 = ev.named == Some(NamedKey::F1) && !ctrl && !alt;
         if pressed && (f1 || (is_question && !ctrl && !alt && !self.typing() && self.omnibox.is_none() && self.menu.is_none())) {
             self.menu = None;
-            self.hints = true;
-            log::info!("hints shown");
+            self.show_hints();
             return;
         }
 
@@ -5816,9 +5863,10 @@ impl App {
         if self.hints
             && let Some(r) = self.renderer.as_mut()
         {
-            let mut l = crate::hints::layer(r, ui, screen, &th);
-            crate::chrome::fade(&mut l, came, Vec2::new(0.0, 0.0));
-            layers.push(l);
+            for mut l in crate::hints::layers(r, ui, screen, &th, &mut self.sheet) {
+                crate::chrome::fade(&mut l, came, Vec2::new(0.0, 0.0));
+                layers.push(l);
+            }
         }
 
         if let Some(r) = self.renderer.as_mut() {

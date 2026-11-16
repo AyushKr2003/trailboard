@@ -569,6 +569,10 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
 - ✅ Keyboard-shortcut sheet: `?` with no card focused (`app::hints`). Decisions
   (2026-11-14): only when no card is focused, so `?` still types in pages; Esc,
   `?`, any other key or a click hides it, and that click/key does nothing else.
+  Redesigned (2026-11-16): at most 75% of the window each way, sections in
+  1–3 columns (each to the shortest, `hints::flow`), scrolling under a fixed
+  header instead of shrinking; typing filters (`hints::filtered`), Esc clears
+  the filter then closes, other keys do nothing, only a click outside closes.
 - ✅ Omarchy look (`app::theme`, `app::desktop`), modelled on the conventions of
   Omarchy's own apps. Decisions (2026-11-14):
   - Palette: the whole of `~/.local/state/omarchy/current/theme/colors.toml`
@@ -587,7 +591,7 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
     zoom; small highlights cap it at 4 px; colour dots stay circles.
   - Overlays (address bar, menu, sheet, labels) scale with the shell's
     `[font] base-size` (`omarchy display text size`) over 12 px; card titles
-    keep following the zoom. The shortcut sheet shrinks to fit a small window.
+    keep following the zoom. The shortcut sheet scrolls in a small window.
   - Pages follow light/dark through DevTools media emulation
     (`prefers-color-scheme`) per page, because windowless (Alloy) browsers
     ignore the request context's Chrome colour scheme. Form controls only

@@ -19,6 +19,13 @@ All notable changes to Trailboard. The format follows
   turns JavaScript or images on or off for one site (`sites.json`).
 
 ### Changed
+- **A new shortcut sheet** (`?` or F1): a panel at most three quarters of
+  the window (smaller when it needs less) instead of one filling it, with
+  the sections in one to three balanced columns as the width allows. What
+  doesn't fit scrolls (wheel, arrows, Page Up/Down, Home/End, with a thin
+  scrollbar) under a header that stays put, rather than shrinking the
+  text. Typing filters it (Esc clears the filter, then closes), keys show
+  as keycaps beside what they do, and a click outside closes it.
 - **Ad blocking works like uBlock Origin**, so sites that open in Firefox or
   Chrome with uBlock no longer ask you to turn the blocker off here. uBlock
   Origin's own lists (filters, badware, privacy, Unbreak, Quick fixes) and
@@ -105,6 +112,11 @@ All notable changes to Trailboard. The format follows
   second line. Every other label (palette, menus, sidebar, trail names,
   address bar) does the same: the renderer cuts any text at its clip's
   right edge.
+- **Keypad keys**: with Num Lock off, the keypad's Page Up, Page Down,
+  Home, End, arrows, Insert and Delete reach pages as those very keys, so
+  pages can't tell them from the dedicated ones. With Num Lock on, the
+  keypad's digits are digits to Trailboard's shortcuts too (they used to
+  count as Page Up, Home and the rest, whatever Num Lock said).
 - **A card's title shows once.** Zoomed out a little, the title showed both
   in the title bar and in the name label under the card. The label now
   appears only once the title bar is too small to draw its title.

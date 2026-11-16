@@ -8,6 +8,14 @@
 //! private jar as it is made. A change reaches the profile's pages after a
 //! restart.
 //!
+//! Chromium's default page zoom is not a setting: it follows the board's
+//! raster scale ([`set_raster_scale`]), so a page at 100% user zoom needs
+//! no zoom of its own. A page on a site Chromium has no zoom for then lays
+//! out at the right size from its first paint, instead of at 100% and then
+//! again once [`crate::Page`] corrects it. The zooms Chromium saves per
+//! site are ours (raster scale × user zoom, kept in the app's own file), so
+//! [`forget_saved_zooms`] drops them before Chromium starts.
+//!
 //! Two settings act on requests instead (checked on Chromium's IO thread,
 //! so behind atomics and a lock): `DNT`/`Sec-GPC` headers
 //! ([`set_do_not_track`]) and images ([`set_images`]).
@@ -45,6 +53,8 @@ thread_local! {
     /// Chromium has made the profile's context; until then preferences
     /// can't be set and wait in `CURRENT`.
     static READY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Chromium's default zoom level: the raster scale's ([`set_raster_scale`]).
+    static DEFAULT_ZOOM: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) };
 }
 
 /// Called once Chromium's profile context exists: sets the preferences
@@ -54,6 +64,70 @@ pub(crate) fn context_ready() {
     if let Some(p) = CURRENT.with_borrow(|c| c.clone()) {
         apply(&p);
     }
+    if let Some(ctx) = request_context_get_global_context() {
+        set_default_zoom(&ctx);
+    }
+}
+
+/// Makes `scale` (pixels per CSS px, see [`crate::Page::resize`]) Chromium's
+/// default zoom, in the profile and in `jars`. Call it when the board's
+/// raster scale changes, before resizing pages to it: every page without a
+/// zoom of its own follows at once, and pages that open later start at it.
+pub fn set_raster_scale(scale: f32, jars: &[&crate::Jar]) {
+    let level = crate::zoom_level_for(scale);
+    if (DEFAULT_ZOOM.get() - level).abs() < 1e-9 {
+        return;
+    }
+    DEFAULT_ZOOM.set(level);
+    log::debug!("default zoom level {level:.3} (scale {scale})");
+    if READY.get()
+        && let Some(ctx) = request_context_get_global_context()
+    {
+        set_default_zoom(&ctx);
+    }
+    for jar in jars {
+        set_default_zoom(&jar.0);
+    }
+}
+
+/// Sets Chromium's default zoom on `ctx` to [`DEFAULT_ZOOM`]. Chromium keeps
+/// it per storage partition; `x` is the profile's own one.
+pub(crate) fn set_default_zoom(ctx: &RequestContext) {
+    let Some(mut dict) = dictionary_value_create() else { return };
+    dict.set_double(Some(&CefString::from(PARTITION)), DEFAULT_ZOOM.get());
+    let Some(v) = value_create() else { return };
+    v.set_dictionary(Some(&mut dict));
+    set(ctx, "partition.default_zoom_level", Some(v));
+}
+
+/// Chromium's key for the profile's default storage partition in its zoom preferences.
+const PARTITION: &str = "x";
+
+/// Drops the zooms Chromium saved per site in the profile's `Preferences`
+/// (in `profile_dir`): they hold an old raster scale, which a page would
+/// lay out at before being corrected, and Chromium keys `data:` pages by
+/// their whole text. Call it before Chromium starts.
+pub(crate) fn forget_saved_zooms(profile_dir: &std::path::Path) {
+    let path = profile_dir.join("Preferences");
+    let Ok(text) = std::fs::read_to_string(&path) else { return };
+    let Some(out) = without_saved_zooms(&text) else { return };
+    let tmp = profile_dir.join("Preferences.trailboard-tmp");
+    match std::fs::write(&tmp, out).and_then(|_| std::fs::rename(&tmp, &path)) {
+        Ok(()) => log::info!("prefs: forgot Chromium's saved page zooms"),
+        Err(e) => log::warn!("prefs: rewriting {}: {e}", path.display()),
+    }
+}
+
+/// `Preferences` text without `partition.per_host_zoom_levels`; `None` if
+/// it has none (or isn't JSON), so the file is left alone.
+fn without_saved_zooms(text: &str) -> Option<String> {
+    let mut doc: serde_json::Value = serde_json::from_str(text).ok()?;
+    let partition = doc.get_mut("partition")?.as_object_mut()?;
+    let zooms = partition.remove("per_host_zoom_levels")?;
+    if zooms.as_object().is_some_and(|z| z.values().all(|p| p.as_object().is_some_and(|p| p.is_empty()))) {
+        return None;
+    }
+    serde_json::to_string(&doc).ok()
 }
 
 static DO_NOT_TRACK: AtomicBool = AtomicBool::new(false);
@@ -189,6 +263,19 @@ fn proxy_fields(p: &Proxy) -> (&'static str, Option<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_zooms_are_dropped_and_the_rest_kept() {
+        let text = r#"{"partition":{"per_host_zoom_levels":{"x":{"a.com":{"zoom_level":-1.5}}},"default_zoom_level":{"x":0.0}},"intl":{"accept_languages":"en"}}"#;
+        let out: serde_json::Value = serde_json::from_str(&without_saved_zooms(text).unwrap()).unwrap();
+        assert!(out["partition"].get("per_host_zoom_levels").is_none());
+        assert_eq!(out["partition"]["default_zoom_level"]["x"], 0.0);
+        assert_eq!(out["intl"]["accept_languages"], "en");
+        // Nothing saved: the file is left alone.
+        assert_eq!(without_saved_zooms(r#"{"partition":{"per_host_zoom_levels":{"x":{}}}}"#), None);
+        assert_eq!(without_saved_zooms(r#"{"intl":{}}"#), None);
+        assert_eq!(without_saved_zooms("not json"), None);
+    }
 
     #[test]
     fn proxy_modes() {

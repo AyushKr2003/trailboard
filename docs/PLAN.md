@@ -91,6 +91,17 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   fine while the scale is global) and we re-assert it on every navigation, so a
   page may lay out once at a stale zoom. User page zoom (Ctrl +/−, M6) is
   multiplied in: Chromium gets `scale × zoom`, the view stays `size × scale`.
+- ✅ Zoom on card start, board zoom and Read Mode (2026-11-16). Chromium
+  saved our raster zooms per site (stale scales, `data:` pages keyed by their
+  text), so pages first laid out at an old scale: `web::prefs::forget_saved_zooms`
+  drops them at launch; `prefs::set_raster_scale` keeps
+  `partition.default_zoom_level` at the raster scale (Chromium reads it only
+  at startup, so it helps from the next launch); `page_scale` is settled
+  before pages are made or woken, and leaving Read Mode goes straight to the
+  board's scale. Still open: Chromium shares zoom per site and applies zoom
+  and size as two updates, so same-site cards can lay out once at a
+  passing width when the scale changes (seen only by page scripts, not
+  painted, in e2e). Per-tab zoom exists only in the extensions API.
 - ✅ Undo/redo for board edits (move, resize, close, open): `scene::History`,
   Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y. Decisions: history is per session (not saved);
   page navigation, titles and stacking are not board edits; after a click inside

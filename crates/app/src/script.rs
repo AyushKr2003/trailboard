@@ -29,7 +29,7 @@
 //! cards                # log every card (id, rect, live page, selected, requests blocked, elements hidden, title, url), edge and trail label
 //! spaces               # log every space (id, name, background) and which is active
 //! sidebar              # log the trails sidebar: open/keys, highlight, scroll, each row and where to click it
-//! zooms                # log each live card's page zoom (wanted and Chromium's)
+//! zooms                # log each live card's page zoom (wanted, Chromium's, and Chromium's default)
 //! find                 # log the find bar: text, card, matches
 //! history rust         # log the history index's size, its newest pages, and what the words find
 //! palette              # log the Ctrl+K palette: query, highlight, each result row and where to click it

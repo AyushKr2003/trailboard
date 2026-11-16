@@ -26,6 +26,14 @@ All notable changes to Trailboard. The format follows
   busy three-card drawing, which blurred below 64 px; the new mark reads down
   to 16 px. A one-colour `trailboard-symbolic.svg` now ships with it from the
   install and bundle scripts.
+- **Pages no longer start at a stale zoom.** Chromium saved our raster
+  zoom per site (and whole `data:` pages as keys, ~420 KB in `Preferences`),
+  so a card opening a site it had seen first laid out at an old board scale,
+  then jumped. Those saved zooms are dropped at launch, Chromium's default
+  zoom follows the raster scale (it takes effect from the next launch), and
+  cards that start or wake get the settled scale before they are made.
+  Leaving Read Mode puts pages straight back at the board's scale instead
+  of 1:1 first and the board's scale a moment later.
 - **Every new card is the same size**, 1024×720 (`scene::CARD_W`/`CARD_H`):
   pages, links, start pages, notes and the welcome, settings and search
   engine pages. A link no longer copies its source card's size, so a link

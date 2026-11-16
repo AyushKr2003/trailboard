@@ -1132,6 +1132,7 @@ impl App {
             ),
             None => (n.url.clone(), web::PageKind::Web),
         };
+        self.sync_default_zoom();
         let jar = self.jar.as_ref();
         match Page::new(self.page_key(id), &url, kind, (r.w as i32, r.h as i32), self.page_scale, &self.spawn_beside, jar) {
             Some(page) => {
@@ -3544,8 +3545,12 @@ impl App {
         log::info!("read mode: back to the board");
         self.menu = None;
         self.keys_in_page = false;
-        self.camera_moved(); // pages go back to the board's raster scale once settled
+        self.camera_moved();
         self.ensure_visible(id);
+        // Pages go straight back to the board's raster scale (where the camera
+        // is heading), so they lay out once instead of at 1:1 and again once it rests.
+        let zoom = self.camera_goal.map_or(self.camera.zoom, |g| g.zoom);
+        self.page_scale = Self::page_scale_for(zoom, self.scale());
         // It shrinks back into its place (following the camera if that glides).
         self.read_morph = Some(ReadMorph { id, entering: false, start: Instant::now() });
     }
@@ -3606,14 +3611,14 @@ impl App {
         let reading = self.read;
         let settled =
             reading.is_some() || (self.camera_changed.elapsed() > Duration::from_millis(250) && self.camera_goal.is_none());
-        self.sync_liveness(settled && !matches!(self.drag, Drag::Pan { .. }));
+        // The scale first, so pages that wake below start at it rather than
+        // at the old one and then lay out again.
         if settled {
-            let zoom = if reading.is_some() { 1.0 } else { self.camera.zoom };
-            let want = ((zoom * self.scale()) * 4.0).round().clamp(2.0, 8.0) / 4.0;
-            if (want - self.page_scale).abs() > f32::EPSILON {
-                self.page_scale = want;
-            }
+            self.page_scale = self.settled_page_scale();
         }
+        self.sync_liveness(settled && !matches!(self.drag, Drag::Pan { .. }));
+        // Before the pages: those without a zoom of their own follow it at once.
+        self.sync_default_zoom();
         let vp = self.viewport();
         let screen = Rect::new(0.0, 0.0, vp.x, vp.y);
         let page_scale = self.page_scale;
@@ -3636,6 +3641,25 @@ impl App {
                 card.page.resize(size, page_scale);
             }
         }
+    }
+
+    /// The raster scale for pages once the camera rests: the zoom's
+    /// resolution in quarter steps (0.5–2), 1:1 in Read Mode.
+    fn settled_page_scale(&self) -> f32 {
+        let zoom = if self.read.is_some() { 1.0 } else { self.camera.zoom };
+        Self::page_scale_for(zoom, self.scale())
+    }
+
+    /// The raster scale for camera `zoom` on a window of `scale`.
+    fn page_scale_for(zoom: f32, scale: f32) -> f32 {
+        ((zoom * scale) * 4.0).round().clamp(2.0, 8.0) / 4.0
+    }
+
+    /// Makes the raster scale Chromium's default zoom (in every cookie jar),
+    /// so pages open at it rather than at 100% and then shrink or grow.
+    fn sync_default_zoom(&self) {
+        let jars: Vec<&web::Jar> = self.jar.iter().chain(self.sessions.values().filter_map(|s| s.jar.as_ref())).collect();
+        web::prefs::set_raster_scale(self.page_scale, &jars);
     }
 
     /// Keep at most `max_live` live browsers. Sleeping cards on screen wake only
@@ -6620,8 +6644,9 @@ impl App {
                     for id in ids {
                         let url = self.scene.node(id).map(|n| n.url.clone()).unwrap_or_default();
                         let page = self.cards[&id].page.zoom_factor();
+                        let default = self.cards[&id].page.default_zoom_factor();
                         log::info!(
-                            "script zoom card {}: site {:?} want {} chromium/scale {page:.3} {url:?}",
+                            "script zoom card {}: site {:?} want {} chromium/scale {page:.3} default/scale {default:.3} {url:?}",
                             id.0, pagezoom::site_of(&url), pagezoom::label(self.zooms.borrow().get(&url))
                         );
                     }
@@ -6780,10 +6805,11 @@ impl ApplicationHandler for App {
                 return;
             }
         }
-        self.page_scale = self.scale();
         self.start_desktop();
         let first_run = spaces::is_first_run(&self.data_dir);
         let restored = self.restore();
+        // At the restored camera's resolution, so pages don't lay out twice.
+        self.page_scale = self.settled_page_scale();
         let urls = std::mem::take(&mut self.initial_urls);
         let mut last = None;
         for url in &urls {

@@ -390,6 +390,10 @@ pub fn start(cef_dir: &Path, cache_dir: &Path, accept_language: impl FnOnce() ->
 
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(cache_dir).map_err(|e| e.to_string())?;
+    // A running Trailboard owns the profile (this one will hand over to it).
+    if !profile_in_use(cache_dir) {
+        prefs::forget_saved_zooms(&cache_dir.join("Default"));
+    }
     // Chromium looks for `chrome-sandbox` beside the real executable (a
     // `/usr/bin` symlink resolves to `/usr/lib/trailboard`).
     let sandbox = sandbox::detect(exe.parent().unwrap_or(Path::new("/")));
@@ -414,6 +418,15 @@ pub fn start(cef_dir: &Path, cache_dir: &Path, accept_language: impl FnOnce() ->
         return Err(format!("CEF initialize failed (exit code {})", get_exit_code()));
     }
     Ok(Startup::Browser(Engine { sandbox }))
+}
+
+/// Whether a live Chromium holds the profile in `cache_dir`: its
+/// `SingletonLock` is a link to `host-pid`, and that process exists.
+fn profile_in_use(cache_dir: &Path) -> bool {
+    let Ok(target) = std::fs::read_link(cache_dir.join("SingletonLock")) else { return false };
+    let target = target.to_string_lossy();
+    let pid = target.rsplit('-').next().and_then(|p| p.parse::<u32>().ok());
+    pid.is_none_or(|pid| Path::new(&format!("/proc/{pid}")).exists())
 }
 
 /// Handle to an initialized CEF. Call [`Engine::shutdown`] after every page is dropped.
@@ -1311,6 +1324,7 @@ impl Jar {
         };
         let ctx = request_context_create_context(Some(&settings), None)?;
         prefs::apply_to(&ctx);
+        prefs::set_default_zoom(&ctx);
         Some(Jar(ctx))
     }
 
@@ -1480,6 +1494,13 @@ impl Page {
     /// The page zoom Chromium has, without the raster scale: the user's zoom once applied.
     pub fn zoom_factor(&self) -> f64 {
         let level = self.host().map_or(0.0, |h| h.zoom_level());
+        1.2f64.powf(level) / *self.shared.scale.borrow() as f64
+    }
+
+    /// Chromium's default zoom as a factor over the raster scale: 1.0 once
+    /// [`prefs::set_raster_scale`] has reached this page's context.
+    pub fn default_zoom_factor(&self) -> f64 {
+        let level = self.host().map_or(0.0, |h| h.default_zoom_level());
         1.2f64.powf(level) / *self.shared.scale.borrow() as f64
     }
 

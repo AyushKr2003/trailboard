@@ -25,6 +25,23 @@ pub fn layout(viewport: Vec2, scale: f32, bar_px: f32) -> ReadLayout {
     ReadLayout { bar, content, css }
 }
 
+/// Narrowest Read Mode width (CSS px) a card's page is laid out at; below
+/// it (no window yet) a card lays out at its own size.
+const MIN_READ_W: i32 = 320;
+
+/// The CSS size a card's page lays out at on the board: as wide as Read
+/// Mode's page (`read_w`, CSS px), so the card shows the page exactly as the
+/// full window does, only scaled down, and never zoomed in or out by the
+/// card's size; as tall as the card's shape gives at that width. `card` is
+/// the card's content size (world units).
+pub fn card_css(card: Vec2, read_w: i32) -> Vec2 {
+    if read_w < MIN_READ_W || card.x < 1.0 || card.y < 1.0 {
+        return Vec2::new(card.x.round().max(1.0), card.y.round().max(1.0));
+    }
+    let w = read_w as f32;
+    Vec2::new(w, (card.y * w / card.x).round().max(1.0))
+}
+
 /// How long the card takes to grow into Read Mode, or shrink back (ms).
 pub const MORPH_MS: u64 = 200;
 
@@ -116,6 +133,16 @@ mod tests {
         assert!((m.css.x - 1256.0 / 0.75).abs() < 0.01);
         // Out of range clamps.
         assert_eq!(morph(header, content, css, &l, 2.0), b);
+    }
+
+    #[test]
+    fn card_lays_out_at_read_width() {
+        // A 1024 × 640 card on a window whose Read Mode page is 1440 px wide.
+        assert_eq!(card_css(Vec2::new(1024.0, 640.0), 1440), Vec2::new(1440.0, 900.0));
+        // Resizing the card scales the page; its width stays the window's.
+        assert_eq!(card_css(Vec2::new(512.0, 640.0), 1440), Vec2::new(1440.0, 1800.0));
+        // No window yet: the card's own size.
+        assert_eq!(card_css(Vec2::new(1024.0, 576.0), 1), Vec2::new(1024.0, 576.0));
     }
 
     #[test]

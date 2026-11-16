@@ -7,6 +7,12 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Changed
+- **A card shows its page as a full window would.** Pages on the board now
+  lay out at Read Mode's width (the window's) and the card shows that layout
+  scaled to fit, so a card is a small copy of the page in Read Mode. Entering
+  or leaving Read Mode no longer reflows the page, and resizing a card only
+  changes how big the page is drawn and how much of it shows below, never the
+  page's layout or text size. Notes still fill their card.
 - **New cards are shaped like your screen.** A new card takes the shape a
   full window gets on an empty workspace (from Hyprland: the focused
   monitor less bars, gaps and borders; 1896×1030 here, so cards come out

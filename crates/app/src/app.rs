@@ -1119,6 +1119,17 @@ impl App {
         read::layout(self.viewport(), self.scale(), READ_BAR * self.ui())
     }
 
+    /// Card `n`'s page size on the board (CSS px). Pages lay out at Read
+    /// Mode's width and the card shows them scaled (`read::card_css`), so a
+    /// card always looks like the page in a full window; notes fill their card.
+    fn card_css(&self, n: &Node) -> Vec2 {
+        let card = Vec2::new(n.rect.w, n.rect.h);
+        if n.note.is_some() {
+            return read::card_css(card, 0);
+        }
+        read::card_css(card, self.read_layout().css.0)
+    }
+
     /// Where card `id`'s page is drawn (screen px) and its size in CSS px.
     fn page_view(&self, id: NodeId) -> Option<(Rect, Vec2)> {
         if self.read == Some(id) {
@@ -1126,7 +1137,7 @@ impl App {
             return Some((l.content, Vec2::new(l.css.0 as f32, l.css.1 as f32)));
         }
         let n = self.scene.node(id)?;
-        Some((self.to_screen_rect(n.rect), Vec2::new(n.rect.w, n.rect.h)))
+        Some((self.to_screen_rect(n.rect), self.card_css(n)))
     }
 
     /// Screen point → CSS px in card `id`'s page.
@@ -1176,7 +1187,7 @@ impl App {
             return;
         }
         let Some(n) = self.scene.node(id) else { return };
-        let r = n.rect;
+        let css = self.card_css(n);
         let (url, kind) = match &n.note {
             Some(text) => (
                 crate::note::page_url(text, &self.theme, n.sticky.as_deref()),
@@ -1204,7 +1215,7 @@ impl App {
             None => (n.url.clone(), web::PageKind::Web),
         };
         let jar = self.jar.as_ref();
-        match Page::new(self.page_key(id), &url, kind, (r.w as i32, r.h as i32), self.page_scale, &self.spawn_beside, jar) {
+        match Page::new(self.page_key(id), &url, kind, (css.x as i32, css.y as i32), self.page_scale, &self.spawn_beside, jar) {
             Some(page) => {
                 self.cards.insert(id, Card { page, loading: true, can_back: false, can_forward: false, hidden: false, cursor: web::Cursor::Default });
             }
@@ -3620,7 +3631,7 @@ impl App {
         // Pages go straight back to the board's raster scale (where the camera
         // is heading), so they lay out once instead of at 1:1 and again once it rests.
         let zoom = self.camera_goal.map_or(self.camera.zoom, |g| g.zoom);
-        self.page_scale = Self::page_scale_for(zoom, self.scale());
+        self.page_scale = self.board_page_scale(zoom);
         // It shrinks back into its place (following the camera if that glides).
         self.read_morph = Some(ReadMorph { id, entering: false, start: Instant::now() });
     }
@@ -3693,10 +3704,12 @@ impl App {
         let mut updates = Vec::new();
         let read_css = self.read_layout().css;
         for n in self.scene.nodes() {
+            let css = self.card_css(n);
+            let board = (css.x as i32, css.y as i32);
             let (on_screen, size) = match reading {
                 Some(r) if r == n.id => (true, read_css),
-                Some(_) => (false, (n.rect.w.round() as i32, n.rect.h.round() as i32)),
-                None => (self.to_screen_rect(n.frame()).intersects(&screen), (n.rect.w.round() as i32, n.rect.h.round() as i32)),
+                Some(_) => (false, board),
+                None => (self.to_screen_rect(n.frame()).intersects(&screen), board),
             };
             updates.push((n.id, on_screen, size));
         }
@@ -3714,8 +3727,19 @@ impl App {
     /// The raster scale for pages once the camera rests: the zoom's
     /// resolution in quarter steps (0.5–2), 1:1 in Read Mode.
     fn settled_page_scale(&self) -> f32 {
-        let zoom = if self.read.is_some() { 1.0 } else { self.camera.zoom };
-        Self::page_scale_for(zoom, self.scale())
+        if self.read.is_some() {
+            return Self::page_scale_for(1.0, self.scale());
+        }
+        self.board_page_scale(self.camera.zoom)
+    }
+
+    /// The raster scale for pages on the board at camera `zoom`. Pages lay
+    /// out at Read Mode's width (`card_css`), so a card of the default width
+    /// shows `CARD_W / read width` world units per CSS px. One scale for all
+    /// cards: Chromium shares page zoom (our raster scale) across a site.
+    fn board_page_scale(&self, zoom: f32) -> f32 {
+        let css = read::card_css(Vec2::new(scene::CARD_W, scene::CARD_H), self.read_layout().css.0);
+        Self::page_scale_for(zoom * scene::CARD_W / css.x, self.scale())
     }
 
     /// The raster scale for camera `zoom` on a window of `scale`.
@@ -5466,7 +5490,7 @@ impl App {
             // (leaving Read Mode, resizing the card) it is cropped or filled
             // out, never squashed, until the page paints at the new size.
             let extent = match (card, self.page_css.get(&n.id)) {
-                (Some(_), Some(&css)) => read::extent(Vec2::new(n.rect.w, n.rect.h), css),
+                (Some(_), Some(&css)) => read::extent(self.card_css(n), css),
                 _ => [1.0, 1.0],
             };
             l.quads.push(Quad {
@@ -5988,7 +6012,7 @@ impl App {
     fn read_morph_layer(&mut self, m: ReadMorph) -> Option<Layer> {
         let n = self.scene.node(m.id)?;
         let (header, content) = (self.to_screen_rect(n.header()), self.to_screen_rect(n.rect));
-        let card_css = Vec2::new(n.rect.w, n.rect.h);
+        let card_css = self.card_css(n);
         let p = m.progress();
         let lay = self.read_layout();
         let mo = read::morph(header, content, card_css, &lay, p);

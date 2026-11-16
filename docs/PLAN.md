@@ -109,6 +109,15 @@ Rendering model (mirrors Marble's observed `cef_backend::osr` + `compositor`)
   and size as two updates, so same-site cards can lay out once at a
   passing width when the scale changes (seen only by page scripts, not
   painted, in e2e). Per-tab zoom exists only in the extensions API.
+- ✅ Cards lay out at Read Mode's width (2026-11-16): `read::card_css` gives
+  a card's page the window's CSS width and the card's shape at that width, so
+  the card is a scaled copy of the full window, Read Mode never reflows the
+  page, and a resize scales the page instead of re-laying it out. Notes keep
+  their card size. The raster scale stays one for all cards (Chromium shares
+  page zoom per site), corrected for default-width cards
+  (`board_page_scale`); a resized card is drawn from a texture a little over-
+  or under-sampled. At fractional raster scales the width can be 1 px off
+  (view px are rounded).
 - ✅ Undo/redo for board edits (move, resize, close, open): `scene::History`,
   Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y. Decisions: history is per session (not saved);
   page navigation, titles and stacking are not board edits; after a click inside

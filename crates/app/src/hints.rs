@@ -111,8 +111,13 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
 #[derive(Debug, Default, Clone)]
 pub struct Sheet {
     pub filter: String,
-    /// How far the sections are scrolled, px.
+    /// How far the sections are scrolled, px, as shown.
     pub scroll: f32,
+    /// Where a wheel notch or a key is taking the scroll; `scroll` glides
+    /// there, the way the board glides (`scene::scroll::GLIDE_TAU`).
+    pub goal: f32,
+    /// Touchpad movement, followed at once, and its fling.
+    touch: scene::scroll::Pan,
     /// The largest useful scroll, px, as last drawn.
     pub max: f32,
     /// One row and one page of scrolling, px, as last drawn.
@@ -123,20 +128,69 @@ pub struct Sheet {
 }
 
 impl Sheet {
-    /// Scrolls by `px` (down when positive), within the list.
+    /// Glides `px` further (down when positive), within the list; steps
+    /// that come quickly add up.
     pub fn scroll_by(&mut self, px: f32) {
+        self.scroll_to(self.goal + px);
+    }
+
+    /// Glides to `px` from the top, within the list.
+    pub fn scroll_to(&mut self, px: f32) {
+        self.touch.stop();
+        self.goal = px.clamp(0.0, self.max.max(0.0));
+    }
+
+    /// Touchpad movement `dy` (winit's sign): followed at once; `ended` is
+    /// the fingers lifting, which may fling. `speed` is *Scroll speed*.
+    pub fn touch(&mut self, dy: f32, speed: f32, ended: bool) {
+        let d = self.touch.touch(scene::Vec2::new(0.0, dy), speed, ended);
+        self.move_now(-d.y);
+    }
+
+    /// Moves the scroll by `px` at once (no glide).
+    fn move_now(&mut self, px: f32) {
         self.scroll = (self.scroll + px).clamp(0.0, self.max.max(0.0));
+        self.goal = self.scroll;
+    }
+
+    /// Back to the top at once (the filter changed what is listed).
+    fn reset(&mut self) {
+        self.touch.stop();
+        self.scroll = 0.0;
+        self.goal = 0.0;
+    }
+
+    /// Advances a glide or a fling by `dt` seconds. Call it every frame the
+    /// sheet shows: it also times the touchpad movement a fling comes from.
+    pub fn step(&mut self, dt: f32) {
+        let fling = self.touch.step(dt);
+        if fling.y != 0.0 {
+            self.move_now(-fling.y);
+            return;
+        }
+        let left = self.goal - self.scroll;
+        // The last half px goes at once rather than creeping.
+        if left.abs() < 0.5 {
+            self.scroll = self.goal;
+        } else {
+            self.scroll += left * (1.0 - (-dt / scene::scroll::GLIDE_TAU).exp());
+        }
     }
 
     /// Types `text` into the filter (and goes back to the top).
     pub fn type_text(&mut self, text: &str) {
         self.filter.extend(text.chars().filter(|c| !c.is_control()));
-        self.scroll = 0.0;
+        self.reset();
     }
 
     pub fn backspace(&mut self) {
         self.filter.pop();
-        self.scroll = 0.0;
+        self.reset();
+    }
+
+    pub fn clear_filter(&mut self) {
+        self.filter.clear();
+        self.reset();
     }
 }
 
@@ -306,6 +360,7 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
 
     sheet.max = (content_h + 8.0 * ui - body.h).max(0.0);
     sheet.scroll = sheet.scroll.clamp(0.0, sheet.max);
+    sheet.goal = sheet.goal.clamp(0.0, sheet.max);
     sheet.line = line;
     sheet.page = (body.h - line).max(line);
     sheet.panel = panel;
@@ -481,6 +536,30 @@ mod tests {
         assert!(filtered("nothing like this").is_empty());
         // A section's name keeps all its rows.
         assert_eq!(filtered("spaces")[0].1.len(), SECTIONS[4].1.len());
+    }
+
+    #[test]
+    fn scrolling_glides_and_stays_in_the_list() {
+        let mut s = Sheet { max: 500.0, ..Default::default() };
+        s.scroll_by(100.0);
+        s.scroll_by(100.0);
+        assert_eq!((s.scroll, s.goal), (0.0, 200.0), "notches add up; nothing moves before a frame");
+        s.step(1.0 / 60.0);
+        assert!(s.scroll > 0.0 && s.scroll < 100.0, "eases out: {}", s.scroll);
+        for _ in 0..60 {
+            s.step(1.0 / 60.0);
+        }
+        assert_eq!(s.scroll, 200.0, "there within a second");
+        s.scroll_to(9000.0);
+        assert_eq!(s.goal, 500.0);
+        s.scroll_by(-9000.0);
+        assert_eq!(s.goal, 0.0);
+        // The touchpad moves it at once, and typing goes back to the top.
+        let mut s = Sheet { max: 500.0, ..Default::default() };
+        s.touch(-10.0, 1.0, false);
+        assert!(s.scroll > 0.0 && s.goal == s.scroll);
+        s.type_text("u");
+        assert_eq!((s.scroll, s.goal), (0.0, 0.0));
     }
 
     #[test]

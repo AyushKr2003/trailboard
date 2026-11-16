@@ -4467,8 +4467,12 @@ impl App {
         };
         // The shortcut sheet is in front of everything: the wheel scrolls it.
         if self.hints {
-            let px = if lines { -dy * self.sheet.line * 2.0 } else { -dy };
-            self.sheet.scroll_by(px);
+            let speed = self.settings.scroll_speed.factor();
+            if lines {
+                self.sheet.scroll_by(-dy * self.sheet.line * 2.0 * speed);
+            } else {
+                self.sheet.touch(dy, speed, matches!(phase, TouchPhase::Ended | TouchPhase::Cancelled));
+            }
             return;
         }
         self.camera_goal = None;
@@ -4591,21 +4595,15 @@ impl App {
             log::info!("hints hidden");
         };
         match ev.named {
-            Some(NamedKey::Escape) if !sh.filter.is_empty() => {
-                sh.filter.clear();
-                sh.scroll = 0.0;
-            }
+            Some(NamedKey::Escape) if !sh.filter.is_empty() => sh.clear_filter(),
             Some(NamedKey::Escape | NamedKey::F1) => close(self),
             Some(NamedKey::ArrowDown) => sh.scroll_by(sh.line),
             Some(NamedKey::ArrowUp) => sh.scroll_by(-sh.line),
             Some(NamedKey::PageDown) => sh.scroll_by(sh.page),
             Some(NamedKey::PageUp) => sh.scroll_by(-sh.page),
-            Some(NamedKey::Home) => sh.scroll = 0.0,
-            Some(NamedKey::End) => sh.scroll = sh.max,
-            Some(NamedKey::Backspace) if chord => {
-                sh.filter.clear();
-                sh.scroll = 0.0;
-            }
+            Some(NamedKey::Home) => sh.scroll_to(0.0),
+            Some(NamedKey::End) => sh.scroll_to(sh.max),
+            Some(NamedKey::Backspace) if chord => sh.clear_filter(),
             Some(NamedKey::Backspace) => sh.backspace(),
             _ if chord => {}
             // ? closes the sheet it opened, unless it is being typed into a filter.
@@ -6021,6 +6019,9 @@ impl App {
         self.step_camera(dt);
         self.step_page_scroll(dt);
         self.step_board_pan(dt);
+        if self.hints {
+            self.sheet.step(dt);
+        }
         self.sync_pages();
         self.sync_ime();
         if let Some(w) = self.window() {

@@ -24,7 +24,8 @@ All notable changes to Trailboard. The format follows
   the sections in one to three balanced columns as the width allows. What
   doesn't fit scrolls (wheel, arrows, Page Up/Down, Home/End, with a thin
   scrollbar) under a header that stays put, rather than shrinking the
-  text. Typing filters it (Esc clears the filter, then closes), keys show
+  text. Scrolling glides like the board's (a wheel notch or a key eases
+  there, the touchpad follows the fingers and flings). Typing filters it (Esc clears the filter, then closes), keys show
   as keycaps beside what they do, and a click outside closes it.
 - **Ad blocking works like uBlock Origin**, so sites that open in Firefox or
   Chrome with uBlock no longer ask you to turn the blocker off here. uBlock

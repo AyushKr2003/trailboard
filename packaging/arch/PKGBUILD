@@ -76,7 +76,8 @@ check() {
   export RUSTUP_TOOLCHAIN=stable CARGO_TARGET_DIR=target CEF_PATH="$srcdir/cef"
   # The pure logic; the app's own tests need the same build again with cfg(test).
   cargo test --frozen --release -p scene -p storage
-  ./target/release/trailboard --version
+  # Installed, CEF sits beside the binary ($ORIGIN); here it is in $srcdir/cef.
+  LD_LIBRARY_PATH="$srcdir/cef" ./target/release/trailboard --version
 }
 
 package() {
@@ -106,6 +107,7 @@ package() {
   cd trailboard
   install -Dm644 share/trailboard.desktop "$pkgdir/usr/share/applications/trailboard.desktop"
   install -Dm644 share/trailboard.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/trailboard.svg"
+  install -Dm644 share/trailboard-symbolic.svg "$pkgdir/usr/share/icons/hicolor/symbolic/apps/trailboard-symbolic.svg"
   install -Dm644 README.md CHANGELOG.md -t "$pkgdir/usr/share/doc/trailboard/"
   install -Dm644 "$srcdir/cef/CREDITS.html" "$pkgdir/usr/share/licenses/trailboard/CEF-CREDITS.html"
 }

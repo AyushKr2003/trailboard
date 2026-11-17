@@ -1757,6 +1757,32 @@ impl App {
         }
     }
 
+    /// Loads `url` in the current card: a web page navigates, a start page
+    /// becomes the page, and a note or the welcome page (which never
+    /// navigate) gets it opened beside.
+    fn load_here(&mut self, url: &str) {
+        let Some(page) = self.focused_page() else { return };
+        if page.kind() == web::PageKind::Web {
+            page.load(url);
+        } else if let Some(id) = self.focused.filter(|&id| self.is_start(id)) {
+            self.start_go(id, url);
+        } else {
+            self.open_beside_current(url);
+        }
+    }
+
+    /// p / P: the clipboard's text as an address (or a search) here / beside.
+    fn open_clipboard(&mut self, beside: bool) {
+        let text = self.clipboard.text().unwrap_or_default();
+        let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let Some(url) = omnibox::resolve(&line, self.settings.search) else {
+            self.toast("The clipboard has no text to open");
+            return;
+        };
+        log::info!("opening the clipboard {}", if beside { "beside" } else { "here" });
+        if beside { self.open_beside_current(&url) } else { self.load_here(&url) }
+    }
+
     fn new_card_at_center(&mut self, url: &str) -> Option<NodeId> {
         let center = self.camera.center;
         let rect = placement::free_near(&self.scene, center, self.card_size.x, self.card_size.y);
@@ -2166,7 +2192,19 @@ impl App {
                 self.clipboard.set_text(&text);
                 self.toast(format!("Copied the {what}"));
             }
+            KeyAction::CopyMarkdown => {
+                let Some(n) = self.scene.node(id) else { return };
+                if n.url.is_empty() {
+                    return;
+                }
+                let text = scene::export::link(&n.title, &n.url);
+                self.clipboard.set_text(&text);
+                self.toast("Copied a Markdown link");
+            }
+            KeyAction::PasteHere => self.open_clipboard(false),
+            KeyAction::PasteBeside => self.open_clipboard(true),
             KeyAction::AddressBar => self.open_address_bar(),
+            KeyAction::AddressBarBeside => self.omnibox = Some(Omnibox::new("", Target::Beside)),
             KeyAction::Find => self.open_find(),
             KeyAction::FindNext | KeyAction::FindPrev if !self.last_find.is_empty() => {
                 if let Some(p) = self.focused_page() {
@@ -5783,17 +5821,11 @@ impl App {
                     } else if let Target::NameTrail(id) = ob.target {
                         self.name_trail(id, &ob.text);
                     } else if let Some(url) = omnibox::resolve(&ob.text, self.settings.search) {
-                        match (ob.target, self.focused_page()) {
+                        match ob.target {
                             // Shift+Enter: beside the current card instead.
                             _ if shift => self.open_beside_current(&url),
-                            (Target::Focused, Some(page)) if page.kind() == web::PageKind::Web => page.load(&url),
-                            // A start page becomes the page typed.
-                            (Target::Focused, Some(_)) if self.focused.is_some_and(|id| self.is_start(id)) => {
-                                let id = self.focused.expect("checked");
-                                self.start_go(id, &url);
-                            }
-                            // A note or the welcome page never navigates: the address opens beside it.
-                            (Target::Focused, Some(_)) => self.open_beside_current(&url),
+                            Target::Beside => self.open_beside_current(&url),
+                            Target::Focused if self.focused_page().is_some() => self.load_here(&url),
                             _ => {
                                 // Typed an address: the new page is what you use next.
                                 if self.new_card_at_center(&url).is_some() {
@@ -6862,6 +6894,7 @@ impl App {
                 Target::AllowedSites => (Icon::Shield, "Sites with ads allowed", &[("Enter", "Block ads again"), ("Esc", "Close")]),
                 Target::Photo => (Icon::Picture, "Find a picture or type its path", &[("Enter", "Use as background"), ("Esc", "Close")]),
                 Target::SaveAs(_) => (Icon::Download, "Save download as", &[("Enter", "Save"), ("Esc", "Cancel")]),
+                Target::Beside => (Icon::Globe, "Search or enter address", &[("Enter", "Open beside")]),
                 _ => (Icon::Globe, "Search or enter address", &[("Enter", "Open"), ("Shift+Enter", "Open beside")]),
             };
             // The list (if this field has one) hangs from the field: one sheet.

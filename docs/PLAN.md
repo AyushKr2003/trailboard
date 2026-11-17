@@ -264,9 +264,26 @@ typing in one field and scrolling another pane both work.
     verified: a real keyboard, RTL pages (negative `scrollLeft`), scroll
     snapping, shadow-DOM scrollers, a page zoomed away from 100 %, the
     light theme for the outline.
-- ⬜ 4. Page keys: H/L back/forward, r/R reload, `/` with n/N, gi first
-  field, yy/yt/ym copy URL/title/Markdown link, p/P open the clipboard URL
-  here/beside, o/O address bar here/beside.
+- ✅ 4. Page keys (2026-11-17; `App::load_here`, `App::open_clipboard`,
+  `omnibox::Target::Beside`). H/L, r/R, `/` n/N, gi, yy/yt and o came with
+  step 2; this step added ym, p/P and O. Decisions:
+  - ym copies `[title](<url>)` through `scene::export::link` (the same
+    escaping as Save as Markdown).
+  - p/P take the clipboard's text with whitespace folded to single spaces
+    and resolve it like the address bar: an address opens, other text is
+    searched with the chosen engine. An empty clipboard toasts. "Here"
+    follows the address bar's Enter: a web page navigates, a start page
+    becomes the page, a note or the welcome page opens it beside. A count
+    is ignored.
+  - O opens an empty address bar (`Target::Beside`) whose Enter opens beside
+    the card, joined by a trail edge, with the keys in Page mode; its hint
+    says "Open beside". o keeps its address prefilled.
+  - Verified e2e (`~/.cache/trailboard-e2e-m12`, `script13`): p loads the
+    copied `file://` address in the same card, P opens it beside (edge
+    3→4), O + typed address + Enter opens beside (edge 4→5) in Page mode,
+    ym puts `[Page a](<file:///…/a.html>)` on the desktop clipboard
+    (read back with `wl-paste`); the O bar (`obar.png`). Not verified: an
+    empty clipboard's toast, p on a note or start page, a real keyboard.
 - ⬜ 5. Hint kinds with `;`: copy a link, download, open an image, open
   beside in the background, focus a field; a "keep hinting" mode.
 - ⬜ 6. Command line `:` in the palette, our own command names with
@@ -332,17 +349,16 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-17 (twenty-first). Built M12 step 3, scroll
-sections (`web::scroll` page script, `scene::scrolltarget`, `s` / `]s` /
-`[s` / `S`, the outline and the pill), replacing step 2's interim
-wheel-at-the-middle scrolling. Page and board scroll keys now go through
-the card's scroll target.
-**Repo state:** on `master`; M12 steps 1–2 committed (`e6a09af`); step 3
+**Last session:** 2026-11-17 (twenty-second). Finished M12 step 4, page
+keys, at the owner's request: ym (Markdown link), p/P (open the clipboard
+here / beside) and O (address bar that opens beside); the rest of step 4
+had come with step 2. The address bar's Enter logic moved into
+`App::load_here`, shared with p.
+**Repo state:** on `master`; M12 steps 1–3 committed (`aa8abc0`); step 4
 uncommitted.
-**Next up:** the owner tries steps 1–3 and decides on the rest (owner
-answer 4). Until then: the per-site "start in Insert" setting left from
-step 2, and retaking the README screenshots (`docs/images/`) in the new
-look.
+**Next up:** M12 step 5, hint kinds with `;`. Still open from step 2: the
+per-site "start in Insert" setting. Also retake the README screenshots
+(`docs/images/`) in the new look.
 
 **Small follow-ups (backlog):** glide on undo/redo of moves; follow the
 desktop's animation switch live; verify the setuid sandbox path without

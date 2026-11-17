@@ -412,7 +412,14 @@ pub enum Action {
     FocusField,
     CopyUrl,
     CopyTitle,
+    /// Copy `[title](url)`.
+    CopyMarkdown,
+    /// Open the clipboard's address (or search for its text) in this card / beside.
+    PasteHere,
+    PasteBeside,
     AddressBar,
+    /// An empty address bar whose Enter opens beside the card.
+    AddressBarBeside,
     Find,
     FindNext,
     FindPrev,
@@ -548,7 +555,11 @@ pub fn page() -> Bindings<Action> {
         ("gi", FocusField),
         ("yy", CopyUrl),
         ("yt", CopyTitle),
+        ("ym", CopyMarkdown),
+        ("p", PasteHere),
+        ("P", PasteBeside),
         ("o", AddressBar),
+        ("O", AddressBarBeside),
         ("/", Find),
         ("n", FindNext),
         ("N", FindPrev),
@@ -735,6 +746,12 @@ mod tests {
         assert_eq!(feed("gg"), Outcome::Run { action: Action::Top, count: None });
         assert_eq!(feed("gi"), Outcome::Run { action: Action::FocusField, count: None });
         assert_eq!(feed("yy"), Outcome::Run { action: Action::CopyUrl, count: None });
+        assert_eq!(feed("ym"), Outcome::Run { action: Action::CopyMarkdown, count: None });
+        assert_eq!(feed("p"), Outcome::Run { action: Action::PasteHere, count: None });
+        assert_eq!(feed("P"), Outcome::Run { action: Action::PasteBeside, count: None });
+        assert_eq!(feed("O"), Outcome::Run { action: Action::AddressBarBeside, count: None });
+        // A count doesn't repeat opening or copying.
+        assert!(!Action::PasteHere.repeats() && !Action::CopyMarkdown.repeats());
         assert_eq!(feed("0"), Outcome::Run { action: Action::LeftEdge, count: None });
         assert_eq!(feed("$"), Outcome::Run { action: Action::RightEdge, count: None });
         assert_eq!(feed("f"), Outcome::Run { action: Action::LinkHintsHere, count: None });

@@ -21,6 +21,10 @@ All notable changes to Trailboard. The format follows
   - *Passthrough* (Ctrl+V) gives a site every key, Esc included, for sites
     with their own shortcuts; Shift+Esc ends it.
   - Link hints now show in Solo too.
+  - ym copies a Markdown link to the page (`[title](address)`); p opens
+    the copied address in the same card and P beside it (copied text that
+    isn't an address is searched for); O opens an address bar whose Enter
+    opens beside the card.
 - **Scroll areas from the keyboard.** Pages with several scrolling parts (a
   sidebar, the main pane, a list inside it, a wide table, a carousel, a
   frame, an open dialog) now scroll the right one: j/k/h/l, d/u, gg/G and

@@ -9,6 +9,8 @@ pub enum Target {
     Focused,
     /// Open a new card.
     NewCard,
+    /// Open beside the current card (Page mode's `O`).
+    Beside,
     /// Rename the current space (the text is a name, not an address).
     RenameSpace,
     /// Name the trail through this card (a name too).

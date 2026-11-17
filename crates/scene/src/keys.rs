@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::time::{Duration, Instant};
 
+use crate::hint;
 use crate::nav::Dir;
 
 /// How long a half-typed sequence waits for its next key.
@@ -371,6 +372,8 @@ pub enum Action {
     Quit,
     Fit,
     LinkHints,
+    /// Link hints of one kind (`;` then a letter).
+    Hint(hint::Kind),
     Tidy,
     Arrange,
     NewNote,
@@ -520,7 +523,15 @@ pub fn board() -> Bindings<Action> {
     for (seq, a) in table {
         b.bind(seq, *a).expect("board keys parse");
     }
+    bind_hint_kinds(&mut b);
     b
+}
+
+/// `;` then a letter: link hints of that kind, on the board and in a page.
+fn bind_hint_kinds(b: &mut Bindings<Action>) {
+    for k in hint::Kind::ALL {
+        b.bind(&format!(";{}", k.key()), Action::Hint(k)).expect("hint keys parse");
+    }
 }
 
 /// Page mode's keys: a card is entered (Enter, or Solo) and our keys come
@@ -572,6 +583,7 @@ pub fn page() -> Bindings<Action> {
     for (seq, a) in table {
         b.bind(seq, *a).expect("page keys parse");
     }
+    bind_hint_kinds(&mut b);
     b
 }
 
@@ -726,8 +738,10 @@ mod tests {
         for s in ["<Esc>", "<Tab>", "?", "<F1>", "<F2>", "<Menu>", "1", "0"] {
             assert_eq!(b.lookup(&parse(s).unwrap()), Lookup::None, "{s}");
         }
-        // No board key waits for another.
-        assert!(b.iter().all(|(seq, _)| seq.len() == 1));
+        // Only the hint kinds wait for another key.
+        assert!(b.iter().all(|(seq, a)| seq.len() == 1 || matches!(a, Action::Hint(_))));
+        assert_eq!(get(";y"), Some(Action::Hint(hint::Kind::Yank)));
+        assert_eq!(get(";m"), Some(Action::Hint(hint::Kind::Many)));
     }
 
     #[test]
@@ -760,6 +774,11 @@ mod tests {
         assert_eq!(feed("]s"), Outcome::Run { action: Action::NextSection, count: None });
         assert_eq!(feed("[s"), Outcome::Run { action: Action::PrevSection, count: None });
         assert_eq!(feed("S"), Outcome::Run { action: Action::OuterSection, count: None });
+        for k in hint::Kind::ALL {
+            assert_eq!(feed(&format!(";{}", k.key())), Outcome::Run { action: Action::Hint(k), count: None });
+        }
+        assert_eq!(feed(";"), Outcome::Wait);
+        assert_eq!(feed("<Esc>"), Outcome::Cancelled);
         // g waits; a key that isn't a g-sequence ends it, and is swallowed.
         assert_eq!(feed("g"), Outcome::Wait);
         assert_eq!(feed("x"), Outcome::Unbound { swallow: true });

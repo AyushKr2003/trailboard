@@ -6,6 +6,57 @@
 //! it is typed in full, with no Enter. As many labels as possible are one
 //! letter shorter than the rest; the short ones go to the first links.
 
+/// What choosing a label does, besides following it (`;` then a letter).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Kind {
+    /// `;y`: copy a link's address.
+    Yank,
+    /// `;d`: download a link or an image.
+    Download,
+    /// `;i`: open an image beside the card.
+    Image,
+    /// `;b`: open a link beside the card, staying where you are.
+    Background,
+    /// `;e`: type in a text field.
+    Field,
+    /// `;m`: open links beside, staying where you are, until Esc.
+    Many,
+}
+
+impl Kind {
+    /// Every kind, in the order the `;` keys are listed.
+    pub const ALL: [Kind; 6] = [Kind::Yank, Kind::Download, Kind::Image, Kind::Background, Kind::Field, Kind::Many];
+
+    /// The key after `;`.
+    pub fn key(self) -> char {
+        match self {
+            Kind::Yank => 'y',
+            Kind::Download => 'd',
+            Kind::Image => 'i',
+            Kind::Background => 'b',
+            Kind::Field => 'e',
+            Kind::Many => 'm',
+        }
+    }
+
+    /// What the labels do, for the corner while they show.
+    pub fn label(self) -> &'static str {
+        match self {
+            Kind::Yank => "Copy a link's address",
+            Kind::Download => "Download a link or image",
+            Kind::Image => "Open an image beside",
+            Kind::Background => "Open a link beside, stay here",
+            Kind::Field => "Type in a field",
+            Kind::Many => "Open links beside, stay here",
+        }
+    }
+
+    /// The labels stay up after one is chosen.
+    pub fn keeps(self) -> bool {
+        self == Kind::Many
+    }
+}
+
 /// Letters labels are made of: the home row, which needs no reaching.
 pub const ALPHABET: &str = "asdfghjkl";
 
@@ -65,6 +116,11 @@ impl Hints {
         } else {
             Typed::NoMatch
         }
+    }
+
+    /// Start typing a label afresh (the labels stay).
+    pub fn restart(&mut self) {
+        self.typed.clear();
     }
 
     /// Take back the last letter typed. False when nothing was typed.
@@ -146,6 +202,27 @@ mod tests {
         assert_eq!(h.type_char('z'), Typed::NoMatch);
         assert_eq!(h.typed, c.to_string());
         assert!(h.backspace());
+        assert!((0..20).all(|i| h.shown(i)));
+    }
+
+    #[test]
+    fn kinds_have_distinct_keys_and_only_many_keeps() {
+        let keys: std::collections::HashSet<char> = Kind::ALL.iter().map(|k| k.key()).collect();
+        assert_eq!(keys.len(), Kind::ALL.len());
+        assert_eq!(Kind::ALL.iter().filter(|k| k.keeps()).collect::<Vec<_>>(), [&Kind::Many]);
+    }
+
+    #[test]
+    fn restart_keeps_the_labels() {
+        let mut h = Hints::new(20);
+        let long = h.labels.iter().position(|l| l.len() == 2).unwrap();
+        let label = h.labels[long].clone();
+        for c in label.chars() {
+            h.type_char(c);
+        }
+        h.restart();
+        assert_eq!(h.typed, "");
+        assert_eq!(h.labels.len(), 20);
         assert!((0..20).all(|i| h.shown(i)));
     }
 

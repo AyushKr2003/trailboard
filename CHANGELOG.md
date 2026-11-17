@@ -25,6 +25,12 @@ All notable changes to Trailboard. The format follows
     the copied address in the same card and P beside it (copied text that
     isn't an address is searched for); O opens an address bar whose Enter
     opens beside the card.
+  - **Hint kinds:** `;` then a letter labels only what that letter uses,
+    on the board and in a page: ;y copies a link's address, ;d downloads a
+    link or image, ;i opens an image beside, ;b opens a link beside while
+    you stay where you are, ;m keeps the labels up to open several that way
+    (chosen ones dim; Esc ends), ;e types in a field. The corner says what
+    the labels do.
 - **Scroll areas from the keyboard.** Pages with several scrolling parts (a
   sidebar, the main pane, a list inside it, a wide table, a carousel, a
   frame, an open dialog) now scroll the right one: j/k/h/l, d/u, gg/G and

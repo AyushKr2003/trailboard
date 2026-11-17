@@ -1,8 +1,9 @@
 //! What can be clicked in a page, for link hints: links, and buttons, fields
-//! and other controls. [`SCRIPT`] runs in the page's main frame and answers
-//! with one console message starting with [`PREFIX`]: the page's layout width,
-//! then one line per target (`x,y,w,h` of the visible part in the page's CSS
-//! px, a tab, its kind letter, a tab, and for a link its absolute URL). Our own design.
+//! and other controls, or only some kinds of them (a [`Filter`], for the `;`
+//! hint kinds). [`script`] runs in the page's main frame and answers with one
+//! console message starting with [`PREFIX`]: the page's layout width, then one
+//! line per target (`x,y,w,h` of the visible part in the page's CSS px, a tab,
+//! its kind letter, a tab, and for a link or image its absolute URL). Our own design.
 
 /// Prefix of the console message with a page's targets.
 pub const PREFIX: &str = "\u{1}trailboard-links\u{1}";
@@ -10,16 +11,56 @@ pub const PREFIX: &str = "\u{1}trailboard-links\u{1}";
 /// The most targets one message reports.
 pub const MAX_LINKS: usize = 500;
 
+/// Which targets to label.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Filter {
+    /// Links, controls and fields (`f`).
+    All,
+    /// Links a card can open.
+    Links,
+    /// Images with an address a card can open (not tiny ones).
+    Images,
+    /// Fields you type in.
+    Fields,
+    /// Links and images.
+    Downloads,
+}
+
+impl Filter {
+    /// The selector group and the kind letters kept, as the script spells them.
+    fn js(self) -> (&'static str, &'static str) {
+        match self {
+            Filter::All => ("all", "oct"),
+            Filter::Links => ("links", "o"),
+            Filter::Images => ("images", "i"),
+            Filter::Fields => ("all", "t"),
+            Filter::Downloads => ("downloads", "oi"),
+        }
+    }
+}
+
+/// The script that collects `filter`'s targets (see [`SCRIPT`]).
+pub fn script(filter: Filter) -> String {
+    let (group, keep) = filter.js();
+    SCRIPT.replacen("'%GROUP%'", &format!("'{group}'"), 1).replacen("'%KEEP%'", &format!("'{keep}'"), 1)
+}
+
 /// Collects targets that can be seen: on screen, not hidden, not disabled, not
 /// covered by something else at their middle, in document order. A link with
 /// a URL a card can open is `o`; a field you type in (text inputs, text areas,
-/// selects, editable content) is `t`; anything else clickable is `c`.
-pub const SCRIPT: &str = r#"(() => {
+/// selects, editable content) is `t`; an image (when asked for) is `i`;
+/// anything else clickable is `c`. `%GROUP%` and `%KEEP%` are filled in by
+/// [`script`].
+const SCRIPT: &str = r#"(() => {
   const W = innerWidth, H = innerHeight, out = [];
-  const sel = 'a[href], area[href], button, input:not([type=hidden]), select, textarea, summary, ' +
+  const GROUP = '%GROUP%', KEEP = '%KEEP%';
+  const links = 'a[href], area[href]';
+  const sel = GROUP === 'links' ? links : GROUP === 'images' ? 'img' : GROUP === 'downloads' ? links + ', img' :
+    links + ', button, input:not([type=hidden]), select, textarea, summary, ' +
     '[contenteditable=""], [contenteditable=true], [onclick], [tabindex]:not([tabindex="-1"]), ' +
     '[role=button], [role=link], [role=checkbox], [role=radio], [role=switch], [role=tab], ' +
     '[role=menuitem], [role=option], [role=combobox], [role=textbox], [role=treeitem]';
+  const url = /^(https?|file):/i;
   const typed = /^(text|search|email|url|tel|password|number|date|datetime-local|month|week|time)$/i;
   const seen = new Set();
   for (const e of document.querySelectorAll(sel)) {
@@ -31,13 +72,18 @@ pub const SCRIPT: &str = r#"(() => {
     if (inside) continue;
     let kind = 'c', href = '';
     const tag = e.tagName;
-    if ((tag === 'A' || tag === 'AREA') && typeof e.href === 'string' && /^(https?|file):/i.test(e.href)) {
+    if ((tag === 'A' || tag === 'AREA') && typeof e.href === 'string' && url.test(e.href)) {
       kind = 'o'; href = e.href;
+    } else if (tag === 'IMG' && KEEP.includes('i')) {
+      const src = e.currentSrc || e.src || '';
+      if (!url.test(src) || e.width < 16 || e.height < 16) continue;
+      kind = 'i'; href = src;
     } else if (tag === 'TEXTAREA' || tag === 'SELECT' || e.isContentEditable ||
                (tag === 'INPUT' && typed.test(e.type || 'text')) ||
                /^(textbox|combobox)$/.test(e.getAttribute('role') || '')) {
       kind = 't';
     }
+    if (!KEEP.includes(kind)) continue;
     for (const r of e.getClientRects()) {
       const x0 = Math.max(r.left, 0), y0 = Math.max(r.top, 0);
       const x1 = Math.min(r.right, W), y1 = Math.min(r.bottom, H);
@@ -58,6 +104,8 @@ pub const SCRIPT: &str = r#"(() => {
 pub enum Action {
     /// A link: open its URL beside the card.
     Open(String),
+    /// An image, by its address.
+    Image(String),
     /// Click it (buttons, checkboxes, tabs, links without a URL).
     Click,
     /// Click it and type in it (text fields, selects, editable content).
@@ -82,16 +130,13 @@ pub fn parse(body: &str) -> Option<(f32, Vec<Link>)> {
             let nums = parts.next()?;
             let v: Vec<f32> = nums.split(',').map(|n| n.trim().parse().ok()).collect::<Option<_>>()?;
             let rect: [f32; 4] = v.try_into().ok()?;
+            let openable = |url: &str| {
+                ["http:", "https:", "file:"].iter().any(|s| url.get(..s.len()).is_some_and(|p| p.eq_ignore_ascii_case(s)))
+            };
             let action = match (parts.next()?.trim(), parts.next().unwrap_or("").trim()) {
-                ("o", url) => {
-                    let ok = ["http:", "https:", "file:"]
-                        .iter()
-                        .any(|s| url.get(..s.len()).is_some_and(|p| p.eq_ignore_ascii_case(s)));
-                    if !ok {
-                        return None;
-                    }
-                    Action::Open(url.to_string())
-                }
+                ("o", url) if openable(url) => Action::Open(url.to_string()),
+                ("i", url) if openable(url) => Action::Image(url.to_string()),
+                ("o" | "i", _) => return None,
                 ("c", _) => Action::Click,
                 ("t", _) => Action::Type,
                 _ => return None,
@@ -109,9 +154,12 @@ mod tests {
 
     #[test]
     fn parses_width_and_links() {
-        let (w, links) = parse("1024\n10,20,30,12\to\thttps://a.example/x\n0,0,5,5\to\tfile:///tmp/p.html\n1,1,9,9\tc\t\n2,2,9,9\tt").unwrap();
+        let (w, links) =
+            parse("1024\n10,20,30,12\to\thttps://a.example/x\n0,0,5,5\to\tfile:///tmp/p.html\n1,1,9,9\tc\t\n2,2,9,9\tt\n3,3,40,40\ti\thttps://a.example/p.png\n3,3,40,40\ti\tdata:image/png,x")
+                .unwrap();
         assert_eq!(w, 1024.0);
-        assert_eq!(links.len(), 4);
+        assert_eq!(links.len(), 5);
+        assert_eq!(links[4].action, Action::Image("https://a.example/p.png".into()));
         assert_eq!(links[0], Link { rect: [10.0, 20.0, 30.0, 12.0], action: Action::Open("https://a.example/x".into()) });
         assert_eq!(links[1].action, Action::Open("file:///tmp/p.html".into()));
         assert_eq!(links[2].action, Action::Click);
@@ -141,5 +189,15 @@ mod tests {
         let escaped = PREFIX.replace('\u{1}', "\\u0001");
         assert!(SCRIPT.contains(&escaped));
         assert!(SCRIPT.contains(&MAX_LINKS.to_string()));
+    }
+
+    #[test]
+    fn script_fills_in_the_filter() {
+        for f in [Filter::All, Filter::Links, Filter::Images, Filter::Fields, Filter::Downloads] {
+            let s = script(f);
+            assert!(!s.contains('%'), "{f:?}");
+            let (group, keep) = f.js();
+            assert!(s.contains(&format!("GROUP = '{group}', KEEP = '{keep}'")), "{f:?}");
+        }
     }
 }

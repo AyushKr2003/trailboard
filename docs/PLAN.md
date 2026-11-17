@@ -284,8 +284,33 @@ typing in one field and scrolling another pane both work.
     ym puts `[Page a](<file:///…/a.html>)` on the desktop clipboard
     (read back with `wl-paste`); the O bar (`obar.png`). Not verified: an
     empty clipboard's toast, p on a note or start page, a real keyboard.
-- ⬜ 5. Hint kinds with `;`: copy a link, download, open an image, open
-  beside in the background, focus a field; a "keep hinting" mode.
+- ✅ 5. Hint kinds with `;` (2026-11-17; `scene::hint::Kind`,
+  `web::links::Filter`, `App::ask_link_hints`, `App::use_hint`). Decisions:
+  - Keys: `;y` copy a link's address, `;d` download a link or image, `;i`
+    open an image beside (as F does), `;b` open beside in the background,
+    `;e` type in a field, `;m` the keep-hinting mode (open beside in the
+    background, labels stay until Esc; chosen labels dim and the corner
+    counts them). Bound on the board and in Page mode alike.
+  - Each kind labels only what it can use (the page script takes a filter:
+    links / images / links + images / fields), so labels stay short. Images
+    are `img` elements with an http(s)/file address, at least 16×16 px; an
+    image inside a link is the link's (`;d` saves the link).
+  - "Background" means the card, the camera and the keys stay where they
+    are; the new card grows in beside, joined by a trail edge.
+  - While a kind's labels show, the corner says what they do
+    (`Hints · Copy a link's address`) in place of the mode pill.
+  - Downloads go through the page (`Page::download`), like the menu's
+    *Download link*, so cookies apply and the usual download flow follows.
+  - Verified e2e (`~/.cache/trailboard-e2e-m12`, `script14`, `script15`,
+    page `site/hk.html`, downloads to `dl14` via `TRAILBOARD_DOWNLOAD_DIR`):
+    ;y labels only the 3 links and copies b.html; ;i labels the one big
+    image (the 8 px one skipped) and opens it beside; ;d labels links and
+    the image and saves both; ;b opens c.html beside with focus, Page mode
+    and camera unchanged; ;m a s opens a and b and keeps the labels
+    (`many.png`); ;e a then typing fills the field in Insert (`typed15.png`).
+    Not verified: a real keyboard, the clipboard read back for ;y (logged
+    only), images in `srcset`/`picture` beyond `currentSrc`, CSS background
+    images (not labelled), the light theme for dimmed labels.
 - ⬜ 6. Command line `:` in the palette, our own command names with
   arguments, completion and history.
 - ⬜ 7. Jumps and marks: Ctrl+o/Ctrl+i through visited cards; `m{a-z}` /
@@ -349,14 +374,12 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-17 (twenty-second). Finished M12 step 4, page
-keys, at the owner's request: ym (Markdown link), p/P (open the clipboard
-here / beside) and O (address bar that opens beside); the rest of step 4
-had come with step 2. The address bar's Enter logic moved into
-`App::load_here`, shared with p.
-**Repo state:** on `master`; M12 steps 1–3 committed (`aa8abc0`); step 4
-uncommitted.
-**Next up:** M12 step 5, hint kinds with `;`. Still open from step 2: the
+**Last session:** 2026-11-17 (twenty-third). Finished M12 step 5, hint
+kinds with `;` (;y ;d ;i ;b ;m ;e), on the board and in Page mode; the
+link script now takes a filter so each kind labels only what it uses.
+**Repo state:** on `master`; M12 steps 1–5 committed.
+**Next up:** M12 step 6, the `:` command line (decide the extra vim keys
+listed under "Not yet asked of the owner" with it). Still open from step 2: the
 per-site "start in Insert" setting. Also retake the README screenshots
 (`docs/images/`) in the new look.
 

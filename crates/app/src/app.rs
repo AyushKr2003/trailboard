@@ -271,6 +271,10 @@ struct LinkHints {
     id: NodeId,
     /// Follow a link in the same card (Page mode's f) instead of beside it.
     here: bool,
+    /// `;` hints: what choosing a label does instead of following it.
+    kind: Option<hint::Kind>,
+    /// Labels already chosen while `kind` keeps the labels up (`;m`).
+    chosen: Vec<usize>,
     links: Vec<(Rect, web::links::Action)>,
     /// `s`: labels on the page's scroll sections instead of its links
     /// (section number, where it is in the view's CSS px), in label order.
@@ -2110,6 +2114,7 @@ impl App {
             }
             KeyAction::Fit => self.fit_all(),
             KeyAction::LinkHints if idle => self.show_link_hints(),
+            KeyAction::Hint(kind) if idle => self.ask_link_hints(false, Some(kind)),
             KeyAction::Tidy if idle => self.tidy_board(),
             KeyAction::Arrange if idle => self.start_arrange(),
             KeyAction::NewNote if idle => {
@@ -2164,6 +2169,7 @@ impl App {
             KeyAction::OuterSection => self.ask_sections(id, SectionAsk::Out),
             KeyAction::LinkHintsHere => self.show_link_hints_to(true),
             KeyAction::LinkHints => self.show_link_hints_to(false),
+            KeyAction::Hint(kind) => self.ask_link_hints(false, Some(kind)),
             KeyAction::Back | KeyAction::Forward => {
                 if let Some(p) = self.focused_page() {
                     for _ in 0..times {
@@ -2435,7 +2441,7 @@ impl App {
             id.0,
             hints.labels.iter().zip(&sections).map(|(l, (s, _))| format!("{l}=#{s}")).collect::<Vec<_>>().join(" ")
         );
-        self.link_hints = Some(LinkHints { id, here: true, links: Vec::new(), sections, hints: Some(hints) });
+        self.link_hints = Some(LinkHints { id, here: true, kind: None, chosen: Vec::new(), links: Vec::new(), sections, hints: Some(hints) });
     }
 
     /// Where the entered page's focus went: a field the user put the caret
@@ -4001,6 +4007,12 @@ impl App {
     /// Link hints; `here`: a chosen link loads in the same card (Page mode's
     /// f) instead of opening beside it.
     fn show_link_hints_to(&mut self, here: bool) {
+        self.ask_link_hints(here, None);
+    }
+
+    /// Link hints, of `kind` if given (`;y`, `;d`…): only the targets that
+    /// kind can use are labelled.
+    fn ask_link_hints(&mut self, here: bool, kind: Option<hint::Kind>) {
         let Some(id) = self.current() else {
             self.toast("No page here to follow links on");
             return;
@@ -4012,9 +4024,17 @@ impl App {
             self.toast("No page here to follow links on");
             return;
         };
-        card.page.request_links();
-        self.link_hints = Some(LinkHints { id, here, links: Vec::new(), sections: Vec::new(), hints: None });
-        log::info!("link hints asked of card {}", id.0);
+        use web::links::Filter;
+        let filter = match kind {
+            None => Filter::All,
+            Some(hint::Kind::Yank | hint::Kind::Background | hint::Kind::Many) => Filter::Links,
+            Some(hint::Kind::Download) => Filter::Downloads,
+            Some(hint::Kind::Image) => Filter::Images,
+            Some(hint::Kind::Field) => Filter::Fields,
+        };
+        card.page.request_links(filter);
+        self.link_hints = Some(LinkHints { id, here, kind, chosen: Vec::new(), links: Vec::new(), sections: Vec::new(), hints: None });
+        log::info!("link hints asked of card {}{}", id.0, kind.map(|k| format!(" (;{})", k.key())).unwrap_or_default());
     }
 
     /// The page of card `id` answered with its links (`width`: its layout
@@ -4032,10 +4052,18 @@ impl App {
             .map(|l| (Rect::new(l.rect[0] * k, l.rect[1] * k, l.rect[2] * k, l.rect[3] * k), l.action))
             .collect();
         if lh.links.is_empty() {
+            let kind = lh.kind;
             self.link_hints = None;
             let loading = self.cards.get(&id).is_some_and(|c| c.loading);
             log::info!("link hints on card {}: no links in view", id.0);
-            self.toast(if loading { "Nothing to click yet · the page is still loading" } else { "Nothing to click in view" });
+            let what = match kind {
+                None => "Nothing to click",
+                Some(hint::Kind::Yank | hint::Kind::Background | hint::Kind::Many) => "No links",
+                Some(hint::Kind::Download) => "No links or images",
+                Some(hint::Kind::Image) => "No images",
+                Some(hint::Kind::Field) => "No text fields",
+            };
+            self.toast(if loading { format!("{what} yet · the page is still loading") } else { format!("{what} in view") });
             return;
         }
         let h = hint::Hints::new(lh.links.len());
@@ -4049,6 +4077,7 @@ impl App {
                 .take(8)
                 .map(|(l, (_, a))| match a {
                     web::links::Action::Open(u) => format!("{l}={u}"),
+                    web::links::Action::Image(u) => format!("{l}=image {u}"),
                     web::links::Action::Click => format!("{l}=click"),
                     web::links::Action::Type => format!("{l}=type"),
                 })
@@ -4075,14 +4104,27 @@ impl App {
                     self.link_hints = None;
                     self.set_scroll_target(id, section, true);
                 }
+                hint::Typed::Follow(i) if lh.kind.is_some_and(hint::Kind::keeps) => {
+                    h.restart();
+                    if !lh.chosen.contains(&i) {
+                        lh.chosen.push(i);
+                    }
+                    let (id, action) = (lh.id, lh.links[i].1.clone());
+                    if let web::links::Action::Open(url) | web::links::Action::Image(url) = action {
+                        self.open_behind(id, &url);
+                    }
+                }
                 hint::Typed::Follow(i) => {
-                    let (id, here, (rect, action)) = (lh.id, lh.here, lh.links[i].clone());
+                    let (id, here, kind, (rect, action)) = (lh.id, lh.here, lh.kind, lh.links[i].clone());
                     self.link_hints = None;
-                    match action {
-                        web::links::Action::Open(url) if here => self.follow_here(id, &url),
-                        web::links::Action::Open(url) => self.follow_link(id, &url),
-                        web::links::Action::Click => self.click_target(id, rect, false),
-                        web::links::Action::Type => self.click_target(id, rect, true),
+                    match kind {
+                        Some(k) => self.use_hint(id, k, rect, action),
+                        None => match action {
+                            web::links::Action::Open(url) if here => self.follow_here(id, &url),
+                            web::links::Action::Open(url) | web::links::Action::Image(url) => self.follow_link(id, &url),
+                            web::links::Action::Click => self.click_target(id, rect, false),
+                            web::links::Action::Type => self.click_target(id, rect, true),
+                        },
                     }
                 }
                 hint::Typed::Narrowed => {}
@@ -4095,6 +4137,45 @@ impl App {
                 log::info!("link hints cancelled");
             }
         }
+    }
+
+    /// A label of a `;` hint kind was chosen on card `id`'s page.
+    fn use_hint(&mut self, id: NodeId, kind: hint::Kind, rect: Rect, action: web::links::Action) {
+        use web::links::Action as A;
+        let url = match &action {
+            A::Open(u) | A::Image(u) => Some(u.clone()),
+            A::Click | A::Type => None,
+        };
+        match (kind, url) {
+            (hint::Kind::Yank, Some(url)) => {
+                self.clipboard.set_text(&url);
+                log::info!("hint: copied {url}");
+                self.toast(if matches!(action, A::Image(_)) { "Copied the image's address" } else { "Copied the link's address" });
+            }
+            (hint::Kind::Download, Some(url)) => {
+                log::info!("hint: download {url}");
+                if let Some(c) = self.cards.get(&id) {
+                    c.page.download(&url);
+                }
+            }
+            (hint::Kind::Image, Some(url)) => self.follow_link(id, &url),
+            (hint::Kind::Background | hint::Kind::Many, Some(url)) => {
+                self.open_behind(id, &url);
+                self.toast("Opened beside · still here");
+            }
+            (hint::Kind::Field, _) => self.click_target(id, rect, true),
+            (_, None) => log::debug!("hint kind {kind:?} on a target without an address"),
+        }
+    }
+
+    /// Open `url` beside card `from` without going there: the current card,
+    /// the view and where the keys are stay as they were.
+    fn open_behind(&mut self, from: NodeId, url: &str) {
+        if self.scene.node(from).is_none() {
+            return;
+        }
+        log::info!("opened a link hint from card {} beside it, staying: {url}", from.0);
+        self.open_card(Rect::default(), url, Some(from));
     }
 
     /// A hint on a button, field or other control: click its middle, as the
@@ -4238,10 +4319,12 @@ impl App {
             };
             let label = h.labels[i].to_uppercase();
             let (head, tail): (String, String) = (label.chars().take(typed_n).collect(), label.chars().skip(typed_n).collect());
-            items.push((at, head, tail));
+            items.push((at, head, tail, lh.chosen.contains(&i)));
         }
         let r = self.renderer.as_mut()?;
-        for (at, head, tail) in items {
+        for (at, head, tail, chosen) in items {
+            // A label already chosen (`;m`) is quieter, but can be chosen again.
+            let (bg, fg) = if chosen { (rgb(th.accent(), 0.45), rgb(th.accent_foreground(), 0.7)) } else { (bg, fg) };
             let head_w = r.measure(&head, size, true);
             let w = head_w + r.measure(&tail, size, true) + pad * 2.0;
             // At the link's start, kept inside the page.
@@ -7026,6 +7109,18 @@ impl App {
             }
             if !typed.is_empty() {
                 text = format!("{text} · {typed}");
+            }
+            let l = self.message(&text, 0.0, vp.y - 16.0 * ui, false);
+            layers.push(l);
+        }
+        // `;` hints say what a label does, in the same corner.
+        if let Some(lh) = self.link_hints.as_ref().filter(|h| h.hints.is_some())
+            && let Some(kind) = lh.kind
+            && self.omnibox.is_none()
+        {
+            let mut text = format!("Hints · {}", kind.label());
+            if kind.keeps() {
+                text = format!("{text} · {} opened · Esc to stop", lh.chosen.len());
             }
             let l = self.message(&text, 0.0, vp.y - 16.0 * ui, false);
             layers.push(l);

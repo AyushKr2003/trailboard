@@ -1735,9 +1735,10 @@ impl Page {
         }
     }
 
-    /// Ask for the links visible in the page; they arrive as [`WebEvent::Links`].
-    pub fn request_links(&self) {
-        self.run_script(links::SCRIPT);
+    /// Ask for the targets of `filter` visible in the page; they arrive as
+    /// [`WebEvent::Links`].
+    pub fn request_links(&self, filter: links::Filter) {
+        self.run_script(&links::script(filter));
     }
 
     /// Run a scroll section command ([`scroll::list`], [`scroll::by`]…); the

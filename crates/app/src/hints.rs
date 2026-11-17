@@ -43,6 +43,8 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("s", "Label the scroll areas; type one to scroll it"),
             ("]s · [s · S", "Next / previous scroll area · the one around it"),
             ("f · F", "Follow a link here / beside"),
+            (";y · ;d · ;i", "Hints: copy a link / download / open an image"),
+            (";b · ;m · ;e", "Hints: beside, stay here / many / a field"),
             ("H · L · r", "Back / forward / reload"),
             ("i · gi", "Type in the page / in its first field"),
             ("yy · yt · ym", "Copy the address / title / Markdown link"),

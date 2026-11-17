@@ -28,6 +28,7 @@ with *Welcome page* in Ctrl+K.
 | Do a board key several times | type a number first: 3j goes three cards down, 2+ zooms in twice (shown at the bottom while you type; Esc drops it) |
 | Move / resize a card with the keyboard | M, then h/j/k/l (Shift resizes, Ctrl takes fine steps); Enter keeps, Esc puts it back |
 | Follow a link by keyboard | f labels the links in the current card's page; type a label to open it beside (Esc cancels) |
+| Do something else with a link, image or field | ; then a letter labels only what that letter uses; type a label: ;y copies a link's address, ;d downloads a link or image, ;i opens an image beside, ;b opens a link beside while you stay where you are, ;m does that for as many links as you like (the labels stay up; Esc ends), ;e types in a field. Works on the board and in a page; the corner says what the labels do |
 | Close the current card / quit | Delete / Q (Ctrl+Q works everywhere) |
 | Focus a page | click it (keyboard and scroll then go to the page) |
 | Move / resize a card | drag the label above it / its bottom-right corner |

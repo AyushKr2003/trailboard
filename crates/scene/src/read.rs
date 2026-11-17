@@ -1,10 +1,10 @@
-//! Read Mode: one card fills the window and its page lays out at the window's
-//! size. The board (camera, card rects) is left as it was, so leaving Read Mode
+//! Solo: one card fills the window and its page lays out at the window's
+//! size. The board (camera, card rects) is left as it was, so leaving Solo
 //! shows the board exactly as before.
 
 use crate::{NodeId, Rect, Scene, Vec2};
 
-/// Screen layout of Read Mode.
+/// Screen layout of Solo.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ReadLayout {
     /// Title bar across the top of the window (screen px).
@@ -25,7 +25,7 @@ pub fn layout(viewport: Vec2, scale: f32, bar_px: f32) -> ReadLayout {
     ReadLayout { bar, content, css }
 }
 
-/// Narrowest Read Mode width (CSS px) a card's page is laid out at; below
+/// Narrowest Solo width (CSS px) a card's page is laid out at; below
 /// it (no window yet) a card lays out at its own size.
 const MIN_READ_W: i32 = 320;
 
@@ -42,10 +42,10 @@ pub fn card_css(card: Vec2, read_w: i32) -> Vec2 {
     Vec2::new(w, (card.y * w / card.x).round().max(1.0))
 }
 
-/// How long the card takes to grow into Read Mode, or shrink back (ms).
+/// How long the card takes to grow into Solo, or shrink back (ms).
 pub const MORPH_MS: u64 = 200;
 
-/// One frame of the move between a card on the board and Read Mode.
+/// One frame of the move between a card on the board and Solo.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Morph {
     /// The title bar (screen px): the card's header → the read bar.
@@ -58,7 +58,7 @@ pub struct Morph {
 }
 
 /// The card's `header` and `content` (screen px, the content showing
-/// `card_css` CSS px) at `t` = 0, Read Mode's `layout` at `t` = 1. Screen
+/// `card_css` CSS px) at `t` = 0, Solo's `layout` at `t` = 1. Screen
 /// px per CSS px moves evenly between the two, so the page grows at a
 /// steady rate rather than jumping in scale at either end.
 pub fn morph(header: Rect, content: Rect, card_css: Vec2, layout: &ReadLayout, t: f32) -> Morph {
@@ -81,7 +81,7 @@ pub fn extent(shown: Vec2, painted: (f32, f32)) -> [f32; 2] {
     [shown.x / painted.0, shown.y / painted.1]
 }
 
-/// The card to read when Read Mode is asked for: the focused card, else the
+/// The card to read when Solo is asked for: the focused card, else the
 /// topmost card under the middle of the view, else the card nearest to it.
 pub fn pick(scene: &Scene, focused: Option<NodeId>, view_center: Vec2) -> Option<NodeId> {
     if let Some(id) = focused.filter(|id| scene.node(*id).is_some()) {
@@ -137,7 +137,7 @@ mod tests {
 
     #[test]
     fn card_lays_out_at_read_width() {
-        // A 1024 × 640 card on a window whose Read Mode page is 1440 px wide.
+        // A 1024 × 640 card on a window whose Solo page is 1440 px wide.
         assert_eq!(card_css(Vec2::new(1024.0, 640.0), 1440), Vec2::new(1440.0, 900.0));
         // Resizing the card scales the page; its width stays the window's.
         assert_eq!(card_css(Vec2::new(512.0, 640.0), 1440), Vec2::new(1440.0, 1800.0));

@@ -101,7 +101,7 @@ pub const COMMANDS: &[CommandInfo] = &[
     c(Command::NameTrail, "Name trail", "R", "rename label"),
     c(Command::ColourTrail, "Next trail colour", "C", "color sticky"),
     c(Command::Sidebar, "Trails sidebar", "B", "list tree panel"),
-    c(Command::Read, "Read mode", "Tab", "fullscreen focus fill window"),
+    c(Command::Read, "Solo", "Tab", "read mode fullscreen focus fill window alone"),
     c(Command::LinkHints, "Follow a link", "f", "link hints keyboard"),
     c(Command::Arrange, "Move or resize card", "M", "arrange keyboard"),
     c(Command::SaveMarkdown, "Save as Markdown", "Ctrl+S", "export file"),

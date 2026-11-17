@@ -1,5 +1,6 @@
 //! winit keyboard events → toolkit-neutral `web::keys::Key`.
 
+use scene::keys::{Chord, Key as K};
 use web::flags;
 use web::keys::{vk, Key};
 use winit::event::{ElementState, KeyEvent};
@@ -211,6 +212,71 @@ impl KeyIn {
         })
     }
 
+    /// The key as a binding sees it (`scene::keys`). Letters and digits come
+    /// from the layout-aware `code` (so h/j/k/l work on any layout, as they
+    /// always did); other characters from the text the key typed. `None` for
+    /// a modifier alone or a key no binding can name.
+    pub fn chord(&self, mods: ModifiersState) -> Option<Chord> {
+        use winit::keyboard::NamedKey as N;
+        let (ctrl, alt, shift) = (mods.control_key(), mods.alt_key(), mods.shift_key());
+        let named = match self.named {
+            Some(N::Escape) => Some(K::Esc),
+            Some(N::Enter) => Some(K::Enter),
+            Some(N::Tab) => Some(K::Tab),
+            Some(N::Space) => Some(K::Space),
+            Some(N::Backspace) => Some(K::Backspace),
+            Some(N::Delete) => Some(K::Delete),
+            Some(N::Insert) => Some(K::Insert),
+            Some(N::ArrowLeft) => Some(K::Left),
+            Some(N::ArrowRight) => Some(K::Right),
+            Some(N::ArrowUp) => Some(K::Up),
+            Some(N::ArrowDown) => Some(K::Down),
+            Some(N::Home) => Some(K::Home),
+            Some(N::End) => Some(K::End),
+            Some(N::PageUp) => Some(K::PageUp),
+            Some(N::PageDown) => Some(K::PageDown),
+            Some(N::ContextMenu) => Some(K::Menu),
+            Some(N::Shift | N::Control | N::Alt | N::Super | N::Meta | N::Hyper | N::AltGraph | N::CapsLock | N::NumLock) => return None,
+            _ => None,
+        };
+        let key = named
+            .or_else(|| match self.code? {
+                KeyCode::F1 => Some(K::F(1)),
+                KeyCode::F2 => Some(K::F(2)),
+                KeyCode::F3 => Some(K::F(3)),
+                KeyCode::F4 => Some(K::F(4)),
+                KeyCode::F5 => Some(K::F(5)),
+                KeyCode::F6 => Some(K::F(6)),
+                KeyCode::F7 => Some(K::F(7)),
+                KeyCode::F8 => Some(K::F(8)),
+                KeyCode::F9 => Some(K::F(9)),
+                KeyCode::F10 => Some(K::F(10)),
+                KeyCode::F11 => Some(K::F(11)),
+                KeyCode::F12 => Some(K::F(12)),
+                KeyCode::Space => Some(K::Space),
+                _ => None,
+            })
+            .or_else(|| {
+                let letter = (b'a'..=b'z').map(char::from).find(|&c| self.code == Some(letter_code(c)));
+                let digit = (b'0'..=b'9').map(char::from).find(|&c| self.code == Some(digit_code(c)));
+                match (letter, digit) {
+                    (Some(c), _) if shift && !ctrl && !alt => Some(K::Char(c.to_ascii_uppercase())),
+                    (Some(c), _) => Some(K::Char(c)),
+                    (None, Some(c)) if !shift => Some(K::Char(c)),
+                    _ => None,
+                }
+            })
+            .or_else(|| {
+                let mut cs = self.text.as_deref()?.chars().filter(|c| !c.is_control());
+                match (cs.next(), cs.next()) {
+                    (Some(c), None) => Some(K::Char(c)),
+                    _ => None,
+                }
+            })
+            .or_else(|| self.code.and_then(us_char).map(K::Char))?;
+        Some(Chord::new(key, ctrl, alt, shift))
+    }
+
     /// The event Chromium gets for this key.
     pub fn to_web(&self, mods: ModifiersState) -> Key {
         // Ctrl/Alt combos are shortcuts, not text (AltGr arrives without ctrl+alt both set on most layouts).
@@ -271,6 +337,27 @@ fn char_code(c: char) -> Option<KeyCode> {
         '[' => BracketLeft,
         ']' => BracketRight,
         '\\' => Backslash,
+        _ => return None,
+    })
+}
+
+/// The US-layout character of a punctuation key, for chords whose text the
+/// platform doesn't give (Ctrl/Alt combos).
+fn us_char(c: KeyCode) -> Option<char> {
+    use KeyCode::*;
+    Some(match c {
+        Minus | NumpadSubtract => '-',
+        Equal => '=',
+        NumpadAdd => '+',
+        Comma => ',',
+        Period => '.',
+        Slash => '/',
+        Semicolon => ';',
+        Quote => '\'',
+        Backquote => '`',
+        BracketLeft => '[',
+        BracketRight => ']',
+        Backslash => '\\',
         _ => return None,
     })
 }
@@ -381,6 +468,34 @@ mod tests {
         // Keys that aren't on the keypad keep their own keycode; Enter stays the keypad's.
         assert_eq!(native_code(PhysicalKey::Code(KeyCode::PageUp), Some(NamedKey::PageUp)), 112);
         assert_eq!(native_code(PhysicalKey::Code(KeyCode::NumpadEnter), Some(NamedKey::Enter)), 104);
+    }
+
+    #[test]
+    fn keys_become_chords() {
+        use scene::keys::parse;
+        let chord = |combo: &str| {
+            let (mods, name) = parse_combo(combo).unwrap();
+            KeyIn::from_name(name, true, mods.shift_key()).unwrap().chord(mods)
+        };
+        let one = |s: &str| parse(s).unwrap().into_iter().next();
+        assert_eq!(chord("j"), one("j"));
+        assert_eq!(chord("shift+j"), one("J"));
+        assert_eq!(chord("ctrl+shift+z"), one("<C-S-z>"));
+        assert_eq!(chord("ctrl+z"), one("<C-z>"));
+        assert_eq!(chord("5"), one("5"));
+        assert_eq!(chord("enter"), one("<Enter>"));
+        assert_eq!(chord("shift+left"), one("<S-Left>"));
+        assert_eq!(chord("space"), one("<Space>"));
+        assert_eq!(chord("["), one("["));
+        assert_eq!(KeyIn::from_name("+", true, false).unwrap().chord(ModifiersState::empty()), one("+"));
+        assert_eq!(chord("ctrl+-"), one("<C-->"));
+        assert_eq!(chord("f2"), one("<F2>"));
+        // A real Shift+4 types "$": the text wins over the digit.
+        let dollar = KeyIn { text: Some("$".into()), ..KeyIn::from_name("4", true, true).unwrap() };
+        assert_eq!(dollar.chord(ModifiersState::SHIFT), one("$"));
+        // A modifier alone is no chord.
+        let shift = KeyIn { named: Some(NamedKey::Shift), code: Some(KeyCode::ShiftLeft), text: None, pressed: true, native: 0 };
+        assert_eq!(shift.chord(ModifiersState::SHIFT), None);
     }
 
     #[test]

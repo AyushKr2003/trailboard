@@ -7,6 +7,7 @@
 pub mod consent;
 pub mod cosmetic;
 pub mod download;
+pub mod focus;
 pub mod keys;
 pub mod links;
 pub mod menu;
@@ -79,6 +80,9 @@ pub enum WebEvent {
     PermissionAsked { page: u64, id: u64, origin: String, kinds: Vec<permission::Kind> },
     /// Chromium withdrew permission request `id` (the page navigated or closed).
     PermissionWithdrawn { id: u64 },
+    /// Where page `page`'s keyboard focus went (see [`focus`]). Any page can
+    /// send this about itself; the app only acts on the card it is using.
+    Focus { page: u64, report: focus::Report },
 }
 
 /// Largest favicon side asked of Chromium, px (title bars draw 16 px icons, sharp at 2×).
@@ -1002,6 +1006,12 @@ wrap_display_handler! {
                 log::info!("youtube: {what} on {}", url.chars().take(100).collect::<String>());
                 return 1;
             }
+            if let Some(body) = message.strip_prefix(focus::PREFIX) {
+                if let Some(report) = focus::parse(body) {
+                    emit(WebEvent::Focus { page: self.shared.key, report });
+                }
+                return 1;
+            }
             if let Some(body) = message.strip_prefix(links::PREFIX) {
                 if let Some((width, links)) = links::parse(body) {
                     emit(WebEvent::Links { page: self.shared.key, width, links });
@@ -1105,6 +1115,11 @@ wrap_load_handler! {
                 if let Some(h) = browser.as_ref().and_then(|b| b.host()) {
                     self.shared.apply_zoom(&h);
                 }
+            }
+            // Focus reports for Insert mode, in every frame of pages you browse
+            // or use (notes take their keys another way).
+            if self.shared.kind != PageKind::Note {
+                frame.execute_java_script(Some(&CefString::from(focus::script().as_str())), None, 0);
             }
             if self.shared.kind == PageKind::Web
                 && let Some(browser) = browser
@@ -1694,6 +1709,19 @@ impl Page {
     pub fn run_script(&self, script: &str) {
         if let Some(f) = self.browser.main_frame() {
             f.execute_java_script(Some(&CefString::from(script)), None, 0);
+        }
+    }
+
+    /// Focus the first visible text field (`gi`); the answer arrives as a
+    /// [`WebEvent::Focus`] (a user's focus, or [`focus::Report::NoField`]).
+    pub fn focus_first_field(&self) {
+        self.run_script(&focus::focus_first_field());
+    }
+
+    /// Take the focus out of the focused field, in whichever frame has it.
+    pub fn blur_field(&self) {
+        if let Some(f) = self.edit_frame() {
+            f.execute_java_script(Some(&CefString::from(focus::BLUR)), None, 0);
         }
     }
 

@@ -103,7 +103,7 @@ see a card halfway.
 
 | What | How | Time |
 |---|---|---|
-| Read Mode in and out | the card grows to the window, board dims | 200 ms |
+| Solo in and out | the card grows to the window, board dims | 200 ms |
 | Tidy | cards glide from their old places | 220 ms |
 | A card opens beside another | grows out of the source's side, 85% → 100%, fading in | 220 ms |
 | A card opens elsewhere | grows from 92% in its own middle, fading in | 220 ms |

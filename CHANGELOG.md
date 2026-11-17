@@ -7,6 +7,25 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Use pages from the keyboard.** A card you enter (Enter) and Solo now
+  start in *Page* mode, shown in the corner: j/k scroll, h/l sideways, d/u
+  half a page, gg/G top and bottom, 0/$ the edges, f follows a link in the
+  same card and F beside it, H/L back and forward, r reload (R without the
+  cache), / find with n/N, yy copies the address and yt the title, o the
+  address bar; a number repeats a key. Enter, Tab, arrows, Space and the
+  page's own shortcuts still reach the page.
+  - *Insert* mode turns on by itself when you click into a text field,
+    choose one with f, or press gi (the first field) or i; Esc leaves the
+    field and gives the keys back. A page focusing a field on its own as it
+    loads doesn't switch modes. Notes and the start page start in Insert.
+  - *Passthrough* (Ctrl+V) gives a site every key, Esc included, for sites
+    with their own shortcuts; Shift+Esc ends it.
+  - Link hints now show in Solo too.
+- **Counts for board keys:** type a number before a move, pan, zoom or
+  scroll key to do it that many times (`3j`, `2L`, `2+`, `4d`). The number
+  shows at the bottom while you type; Esc drops it. The board's keys now
+  come from one binding table (`scene::keys`), the start of a fully
+  keyboard-driven, vim-like mode set (M12).
 - **A premium look for the board.**
   - **Rounded corners** on cards, panels, menus and the app's own pages,
     with a *Corners* setting: Rounded (the default), Follow Hyprland
@@ -52,6 +71,8 @@ All notable changes to Trailboard. The format follows
     pages update at once.
 
 ### Changed
+- **Read Mode is now called Solo** (Tab: the card fills the window). The
+  palette still finds it by "read".
 - **An empty board welcomes you.** A space with no cards shows its name,
   "Where to first?" and *Open a page*, *Search everything* and *All keys*
   with their keys, straight on the space's colour.

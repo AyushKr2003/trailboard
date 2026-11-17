@@ -67,7 +67,7 @@
 //! - Ctrl+S saves the focused note, or else the whole board, as Markdown in
 //!   `Documents/Trailboard` (`scene::export`, `storage::export`); a note's page
 //!   menu has *Save as Markdown* too.
-//! - Tab (unless keys are going to a page) toggles Read Mode: the focused card, or
+//! - Tab (unless keys are going to a page) toggles Solo: the focused card, or
 //!   the one in the middle of the view, fills the window and its page lays out at
 //!   the window's size. Esc or Tab returns to the board.
 //! - Looks follow Omarchy live (see `theme` and `desktop`): the theme's palette,
@@ -94,6 +94,7 @@ use std::time::{Duration, Instant};
 use compositor::{Background, Layer, Quad, Renderer, Shape, Text};
 use scene::arrange::Arrange;
 use scene::hint;
+use scene::keys::{self, Action as KeyAction, Outcome};
 use scene::nav::{self, Dir};
 use scene::pagezoom::{self, SiteZooms};
 use scene::settings::{self as prefs, Settings};
@@ -147,21 +148,21 @@ const BAR_CLOSE_MIN: f32 = 96.0;
 /// board); above it only the current card, the one under the pointer and
 /// selected ones do.
 const LABELS_ALL_BELOW: f32 = 0.45;
-/// Height of the Read Mode title bar, in overlay px (scaled by `ui()`).
+/// Height of the Solo title bar, in overlay px (scaled by `ui()`).
 /// None: the page fills the whole window (Tab or Esc goes back).
 const READ_BAR: f32 = 0.0;
 
-/// A card moving between the board and Read Mode (`scene::read::morph`).
+/// A card moving between the board and Solo (`scene::read::morph`).
 #[derive(Debug, Clone, Copy)]
 struct ReadMorph {
     id: NodeId,
-    /// Growing into Read Mode (else shrinking back to its place on the board).
+    /// Growing into Solo (else shrinking back to its place on the board).
     entering: bool,
     start: Instant,
 }
 
 impl ReadMorph {
-    /// How far into Read Mode the card is: 0 on the board, 1 filling the window.
+    /// How far into Solo the card is: 0 on the board, 1 filling the window.
     fn progress(&self) -> f32 {
         let t = crate::chrome::ease_out(self.start.elapsed().as_secs_f32() * 1000.0 / read::MORPH_MS as f32);
         if self.entering { t } else { 1.0 - t }
@@ -242,8 +243,31 @@ struct SidebarPress {
     to: Option<usize>,
 }
 
+/// Where an entered card's keys go (M12). Board mode is no card entered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PageKeys {
+    /// Our page keys first (`scene::keys::page`); keys that type nothing go on.
+    Page,
+    /// Every key to the page; Esc back to Page.
+    Insert,
+    /// Every key to the page, Esc included; Shift+Esc back to Page.
+    Passthrough,
+}
+
+impl PageKeys {
+    fn label(self) -> &'static str {
+        match self {
+            PageKeys::Page => "Page",
+            PageKeys::Insert => "Insert",
+            PageKeys::Passthrough => "Passthrough · Shift+Esc to leave",
+        }
+    }
+}
+
 struct LinkHints {
     id: NodeId,
+    /// Follow a link in the same card (Page mode's f) instead of beside it.
+    here: bool,
     links: Vec<(Rect, web::links::Action)>,
     hints: Option<hint::Hints>,
 }
@@ -281,7 +305,7 @@ pub struct App {
     renderer: Option<Renderer>,
     scene: Scene,
     camera: Camera,
-    /// Camera we're gliding toward (fit / read mode).
+    /// Camera we're gliding toward (fit / Solo).
     camera_goal: Option<Camera>,
     /// Wheel and touchpad scrolling inside a page, and flings (`scene::scroll`):
     /// to card, at view px.
@@ -309,6 +333,16 @@ pub struct App {
     group: Vec<(NodeId, Rect)>,
     /// The last click landed inside the focused page, so its keys (incl. Ctrl+Z) go there.
     keys_in_page: bool,
+    /// The board's key bindings (`scene::keys`, M12).
+    board_keys: keys::Bindings<KeyAction>,
+    /// Page mode's key bindings.
+    page_keys_table: keys::Bindings<KeyAction>,
+    /// A count or sequence typed toward a binding (`5j`).
+    pending: keys::Pending,
+    /// Where an entered card's keys go.
+    page_keys: PageKeys,
+    /// Keys pressed in Page mode that went on to the page, so their release does too.
+    forwarded: HashSet<i32>,
     omnibox: Option<Omnibox>,
     menu: Option<ContextMenu>,
     /// Where the title-bar shields were drawn last frame (screen px, with a
@@ -325,9 +359,9 @@ pub struct App {
     link_hints: Option<LinkHints>,
     /// Moving or resizing the current card from the keyboard (M).
     arrange: Option<Arrange>,
-    /// Read Mode: this card fills the window (see `scene::read`).
+    /// Solo: this card fills the window (see `scene::read`).
     read: Option<NodeId>,
-    /// The card growing into Read Mode or shrinking back to the board.
+    /// The card growing into Solo or shrinking back to the board.
     read_morph: Option<ReadMorph>,
     /// The CSS size each live card's last uploaded frame was laid out at, so
     /// a frame from before a resize is drawn at its own size, not stretched.
@@ -476,7 +510,7 @@ pub struct App {
     /// welcome, a view with no card in it), and what each does.
     nudge: Vec<(Rect, crate::hud::Go)>,
     /// The desktop asks for less motion (`desktop::reduced_motion`): cards,
-    /// spaces, Read Mode and the sidebar change without animating.
+    /// spaces, Solo and the sidebar change without animating.
     still: bool,
     /// Cards gliding to new places or growing in (`scene::motion`).
     glides: motion::Glides,
@@ -633,6 +667,11 @@ impl App {
             selection: Selection::new(),
             group: Vec::new(),
             keys_in_page: false,
+            board_keys: keys::board(),
+            page_keys_table: keys::page(),
+            pending: keys::Pending::default(),
+            page_keys: PageKeys::Page,
+            forwarded: HashSet::new(),
             omnibox: None,
             menu: None,
             shields: Vec::new(),
@@ -1334,7 +1373,7 @@ impl App {
         self.history.opened(id);
         self.dirty = true;
         self.focus(Some(id));
-        self.keys_in_page = true;
+        self.give_keys(PageKeys::Insert);
         log::info!("start page {}", id.0);
         id
     }
@@ -1380,7 +1419,7 @@ impl App {
         self.create_page(id);
         self.dirty = true;
         self.focus(Some(id));
-        self.keys_in_page = true;
+        self.give_keys(PageKeys::Page);
     }
 
     /// A message from a start page or the search engine guide (card `id`).
@@ -1534,7 +1573,7 @@ impl App {
         self.note_target = Some(id);
         self.focus(Some(id));
         self.ensure_visible(id);
-        self.keys_in_page = true;
+        self.give_keys(PageKeys::Insert);
         log::info!("new note {}", id.0);
         id
     }
@@ -1550,7 +1589,7 @@ impl App {
         self.note_target = Some(id);
         self.focus(Some(id));
         self.ensure_visible(id);
-        self.keys_in_page = true;
+        self.give_keys(PageKeys::Insert);
         log::info!("new sticky note {}", id.0);
         id
     }
@@ -1670,7 +1709,7 @@ impl App {
             None => self.new_card_at_center(url),
         };
         if id.is_some() {
-            self.keys_in_page = true;
+            self.give_keys(PageKeys::Page);
         }
     }
 
@@ -1752,7 +1791,7 @@ impl App {
             self.focused = None;
         }
         if self.read == Some(id) {
-            log::info!("read mode: card {} is gone; back to the board", id.0);
+            log::info!("solo: card {} is gone; back to the board", id.0);
             self.read = None;
             self.camera_moved();
         }
@@ -1856,7 +1895,42 @@ impl App {
     /// Mode); otherwise they are board keys and the focused card is just the
     /// current one.
     fn typing(&self) -> bool {
+        self.entered() && self.page_keys != PageKeys::Page
+    }
+
+    /// A card is entered: its page has the keys (Page, Insert or
+    /// Passthrough), after Enter or a click in it, or in Solo.
+    fn entered(&self) -> bool {
         self.focused_page().is_some() && (self.keys_in_page || self.read.is_some())
+    }
+
+    /// Page mode: a card is entered and our page keys come first.
+    fn page_mode(&self) -> bool {
+        self.entered() && self.page_keys == PageKeys::Page
+    }
+
+    /// The focused card takes the keys, in `mode`.
+    fn give_keys(&mut self, mode: PageKeys) {
+        self.keys_in_page = true;
+        self.set_page_keys(mode);
+    }
+
+    fn set_page_keys(&mut self, mode: PageKeys) {
+        if self.page_keys != mode {
+            log::info!("keys: {mode:?}");
+        }
+        self.page_keys = mode;
+        self.pending.clear();
+    }
+
+    /// The mode a card starts in when entered: Insert where you type
+    /// (notes, the start page), Page elsewhere.
+    fn entry_mode(&self, id: NodeId) -> PageKeys {
+        if self.scene.node(id).is_some_and(Node::is_note) || self.is_start(id) {
+            PageKeys::Insert
+        } else {
+            PageKeys::Page
+        }
     }
 
     /// The card board keys act on: the current one, else the one in the
@@ -1912,7 +1986,7 @@ impl App {
         self.selection.clear();
         self.focus(Some(id));
         self.ensure_visible(id);
-        self.keys_in_page = true;
+        self.give_keys(self.entry_mode(id));
         if let Some(c) = self.cards.get(&id) {
             c.page.set_focus(true);
             if self.scene.node(id).is_some_and(Node::is_note) {
@@ -1929,6 +2003,170 @@ impl App {
             p.set_focus(false);
         }
         log::info!("left the page of card {:?}", self.focused.map(|f| f.0));
+    }
+
+    /// Runs a board key's action (`scene::keys::board`). A count repeats the
+    /// actions that make sense more than once (`3j`); the guards are the ones
+    /// each key always had (most wait while a drag is on).
+    fn board_action(&mut self, action: KeyAction, count: Option<u32>) {
+        /// More repeats than this do nothing more on a board.
+        const MAX_REPEAT: u32 = 100;
+        let times = if action.repeats() { count.unwrap_or(1).clamp(1, MAX_REPEAT) } else { 1 };
+        let idle = self.drag_is_idle();
+        log::debug!("board key: {action:?} ×{times}");
+        match action {
+            KeyAction::Move(dir) if idle => (0..times).for_each(|_| self.move_current(dir)),
+            KeyAction::Pan(dir) if idle => (0..times).for_each(|_| self.pan_by_key(dir)),
+            KeyAction::ZoomIn | KeyAction::ZoomOut if self.read.is_none() => {
+                (0..times).for_each(|_| self.zoom_by_key(action == KeyAction::ZoomIn))
+            }
+            KeyAction::ScrollDown | KeyAction::ScrollUp => {
+                (0..times).for_each(|_| self.scroll_current(action == KeyAction::ScrollDown))
+            }
+            KeyAction::Enter if idle => self.enter_current(),
+            KeyAction::Close if idle && !self.selection.is_empty() => {
+                let ids = self.selection.ids();
+                log::info!("closing {} selected card(s)", ids.len());
+                self.close_cards(&ids);
+            }
+            KeyAction::Close if idle => {
+                if let Some(id) = self.focused {
+                    self.close_card(id);
+                }
+            }
+            KeyAction::Quit => {
+                log::info!("quit (Q)");
+                self.quit = true;
+            }
+            KeyAction::Fit => self.fit_all(),
+            KeyAction::LinkHints if idle => self.show_link_hints(),
+            KeyAction::Tidy if idle => self.tidy_board(),
+            KeyAction::Arrange if idle => self.start_arrange(),
+            KeyAction::NewNote if idle => {
+                self.new_note_at_center();
+            }
+            KeyAction::NewSticky if idle => {
+                self.new_sticky_at_center();
+            }
+            KeyAction::Sidebar if idle => self.toggle_sidebar(),
+            KeyAction::Select if idle => self.toggle_mark(),
+            KeyAction::SelectAll => self.selection.select_all(&self.scene),
+            KeyAction::Fill if idle && self.read.is_none() => self.fill_current(),
+            KeyAction::NameTrail if idle => self.ask_trail_name(),
+            KeyAction::TrailColour if idle => self.cycle_trail_colour(),
+            KeyAction::Fold if idle => self.toggle_fold(),
+            KeyAction::Outline if idle => self.outline_in_view(),
+            KeyAction::StackPrev if idle => self.peek_stack(-1),
+            KeyAction::StackNext if idle => self.peek_stack(1),
+            KeyAction::Undo => self.undo(false),
+            KeyAction::Redo => self.undo(true),
+            _ => {}
+        }
+    }
+
+    /// Runs a Page mode key's action (`scene::keys::page`) on the entered card.
+    fn page_action(&mut self, action: KeyAction, count: Option<u32>) {
+        const MAX_REPEAT: u32 = 100;
+        let times = if action.repeats() { count.unwrap_or(1).clamp(1, MAX_REPEAT) } else { 1 };
+        let Some(id) = self.focused else { return };
+        log::debug!("page key: {action:?} ×{times}");
+        // How far j/k/h/l move, CSS px, as about three lines of text.
+        const LINE: i32 = 60;
+        // Further than any page: Top, Bottom and the edges.
+        const FAR: i32 = 10_000_000;
+        let half = self.page_view(id).map_or(300, |(_, css)| (css.y / 2.0).round() as i32);
+        match action {
+            KeyAction::Scroll(dir) => {
+                let (dx, dy) = match dir {
+                    Dir::Down => (0, -LINE),
+                    Dir::Up => (0, LINE),
+                    Dir::Left => (LINE, 0),
+                    Dir::Right => (-LINE, 0),
+                };
+                self.wheel_page(id, dx * times as i32, dy * times as i32, false);
+            }
+            KeyAction::ScrollDown => self.wheel_page(id, 0, -half * times as i32, false),
+            KeyAction::ScrollUp => self.wheel_page(id, 0, half * times as i32, false),
+            KeyAction::Top => self.wheel_page(id, 0, FAR, true),
+            KeyAction::Bottom => self.wheel_page(id, 0, -FAR, true),
+            KeyAction::LeftEdge => self.wheel_page(id, FAR, 0, true),
+            KeyAction::RightEdge => self.wheel_page(id, -FAR, 0, true),
+            KeyAction::LinkHintsHere => self.show_link_hints_to(true),
+            KeyAction::LinkHints => self.show_link_hints_to(false),
+            KeyAction::Back | KeyAction::Forward => {
+                if let Some(p) = self.focused_page() {
+                    for _ in 0..times {
+                        if action == KeyAction::Back { p.back() } else { p.forward() }
+                    }
+                }
+            }
+            KeyAction::Reload | KeyAction::ReloadFresh => {
+                if let Some(p) = self.focused_page().filter(|p| p.kind() == web::PageKind::Web) {
+                    if action == KeyAction::Reload { p.reload() } else { p.reload_fresh() }
+                }
+            }
+            KeyAction::Insert => self.set_page_keys(PageKeys::Insert),
+            KeyAction::Passthrough => self.set_page_keys(PageKeys::Passthrough),
+            KeyAction::FocusField => {
+                if let Some(p) = self.focused_page() {
+                    p.focus_first_field();
+                }
+            }
+            KeyAction::CopyUrl | KeyAction::CopyTitle => {
+                let Some(n) = self.scene.node(id) else { return };
+                let (text, what) = if action == KeyAction::CopyUrl { (n.url.clone(), "address") } else { (n.title.clone(), "title") };
+                if text.is_empty() {
+                    return;
+                }
+                self.clipboard.set_text(&text);
+                self.toast(format!("Copied the {what}"));
+            }
+            KeyAction::AddressBar => self.open_address_bar(),
+            KeyAction::Find => self.open_find(),
+            KeyAction::FindNext | KeyAction::FindPrev if !self.last_find.is_empty() => {
+                if let Some(p) = self.focused_page() {
+                    for _ in 0..times {
+                        p.find(&self.last_find, action == KeyAction::FindNext, true);
+                    }
+                }
+            }
+            KeyAction::FindNext | KeyAction::FindPrev => self.open_find(),
+            // Board actions don't come from the page table.
+            _ => {}
+        }
+    }
+
+    /// Scrolls card `id`'s page as a wheel over its middle would (CSS px;
+    /// positive is up / left). `jump`: at once, without the smooth glide.
+    fn wheel_page(&mut self, id: NodeId, dx: i32, dy: i32, jump: bool) {
+        let Some((_, css)) = self.page_view(id) else { return };
+        let Some(card) = self.cards.get(&id) else { return };
+        let (x, y) = ((css.x / 2.0) as i32, (css.y / 2.0) as i32);
+        card.page.mouse_wheel(x, y, 0, dx, dy, jump);
+        self.link_hints = None; // scrolling moves the targets
+    }
+
+    /// Where the entered page's focus went: a field the user put the caret
+    /// in switches to Insert; leaving a field (or a click outside one)
+    /// switches back to Page. A page focusing a field on its own as it loads
+    /// changes nothing. Only the entered card is listened to.
+    fn page_focus(&mut self, id: NodeId, report: web::focus::Report) {
+        if self.focused != Some(id) || !self.entered() || self.page_keys == PageKeys::Passthrough {
+            return;
+        }
+        match report {
+            web::focus::Report::Field { editable: true, user: true } if self.page_keys == PageKeys::Page => {
+                self.set_page_keys(PageKeys::Insert);
+            }
+            web::focus::Report::Field { editable: false, .. } if self.page_keys == PageKeys::Insert => {
+                // A note or the start page types without a field we can see.
+                if self.entry_mode(id) == PageKeys::Page {
+                    self.set_page_keys(PageKeys::Page);
+                }
+            }
+            web::focus::Report::NoField => self.toast("No text field here"),
+            _ => {}
+        }
     }
 
     // ---------------------------------------------------------------- sidebar
@@ -1965,14 +2203,14 @@ impl App {
         }
     }
 
-    /// The sidebar is on screen (not in Read Mode, which covers the window).
+    /// The sidebar is on screen (not in Solo, which covers the window).
     fn sidebar_shown(&self) -> bool {
         self.sidebar_open && self.read.is_none()
     }
 
     /// The sidebar takes board keys: open, given the keys, and no page has them.
     fn sidebar_has_keys(&self) -> bool {
-        self.sidebar_shown() && self.sidebar_keys && !self.typing()
+        self.sidebar_shown() && self.sidebar_keys && !self.entered()
     }
 
     /// B: opens the sidebar with the keys on the current card's row; closes
@@ -2004,7 +2242,7 @@ impl App {
 
     /// The sidebar takes the keys, highlighting the current card's row.
     fn take_sidebar_keys(&mut self) {
-        if self.typing() {
+        if self.entered() {
             self.leave_page();
         }
         self.sidebar_keys = true;
@@ -2248,7 +2486,7 @@ impl App {
 
     // ---------------------------------------------------------------- palette
 
-    /// Ctrl+K: the palette, over everything but Read Mode's page.
+    /// Ctrl+K: the palette, over everything but Solo's page.
     fn open_palette(&mut self) {
         self.menu = None;
         self.link_hints = None;
@@ -2273,7 +2511,7 @@ impl App {
             Item::Open(url) if beside => self.open_beside_current(&url),
             Item::Open(url) => {
                 if self.new_card_at_center(&url).is_some() {
-                    self.keys_in_page = true;
+                    self.give_keys(PageKeys::Page);
                 }
             }
             Item::Closed(id) => {
@@ -3303,7 +3541,7 @@ impl App {
             }
             return;
         }
-        if self.typing() {
+        if self.entered() {
             self.leave_page();
         }
         self.sidebar_keys = true;
@@ -3465,6 +3703,12 @@ impl App {
     /// middle of the view), which becomes current. The labels show once the
     /// page has answered (`got_links`).
     fn show_link_hints(&mut self) {
+        self.show_link_hints_to(false);
+    }
+
+    /// Link hints; `here`: a chosen link loads in the same card (Page mode's
+    /// f) instead of opening beside it.
+    fn show_link_hints_to(&mut self, here: bool) {
         let Some(id) = self.current() else {
             self.toast("No page here to follow links on");
             return;
@@ -3477,7 +3721,7 @@ impl App {
             return;
         };
         card.page.request_links();
-        self.link_hints = Some(LinkHints { id, links: Vec::new(), hints: None });
+        self.link_hints = Some(LinkHints { id, here, links: Vec::new(), hints: None });
         log::info!("link hints asked of card {}", id.0);
     }
 
@@ -3535,9 +3779,10 @@ impl App {
             }
             (_, Some(c), Some(h)) if !chord => match h.type_char(c) {
                 hint::Typed::Follow(i) => {
-                    let (id, (rect, action)) = (lh.id, lh.links[i].clone());
+                    let (id, here, (rect, action)) = (lh.id, lh.here, lh.links[i].clone());
                     self.link_hints = None;
                     match action {
+                        web::links::Action::Open(url) if here => self.follow_here(id, &url),
                         web::links::Action::Open(url) => self.follow_link(id, &url),
                         web::links::Action::Click => self.click_target(id, rect, false),
                         web::links::Action::Type => self.click_target(id, rect, true),
@@ -3560,7 +3805,7 @@ impl App {
     fn click_target(&mut self, id: NodeId, rect: Rect, typing: bool) {
         if typing {
             self.focus(Some(id));
-            self.keys_in_page = true;
+            self.give_keys(PageKeys::Insert);
         }
         let Some(card) = self.cards.get(&id) else { return };
         if typing {
@@ -3630,6 +3875,18 @@ impl App {
 
     /// Open `url` beside card `from`, as a click on the link would, and make
     /// the new card current, so the next f follows on from it.
+    /// Page mode's f: a web page loads the link itself; a note or one of our
+    /// own pages never navigates, so the link opens beside it as usual.
+    fn follow_here(&mut self, id: NodeId, url: &str) {
+        match self.cards.get(&id).map(|c| &c.page) {
+            Some(p) if p.kind() == web::PageKind::Web => {
+                log::info!("followed a link hint in card {} to {url}", id.0);
+                p.load(url);
+            }
+            _ => self.follow_link(id, url),
+        }
+    }
+
     fn follow_link(&mut self, from: NodeId, url: &str) {
         if self.scene.node(from).is_none() {
             return;
@@ -3885,7 +4142,7 @@ impl App {
             return;
         }
         if self.read != Some(id) {
-            log::info!("read mode: card {}", id.0);
+            log::info!("solo: card {}", id.0);
         }
         // From the board, the card grows out of its place (if it is on screen).
         if self.read.is_none() {
@@ -3898,6 +4155,7 @@ impl App {
         self.drag = Drag::None;
         self.focus(Some(id));
         self.keys_in_page = false;
+        self.set_page_keys(PageKeys::Page);
     }
 
     /// Tab: read the focused card (or the one in the middle of the view), or go back to the board.
@@ -3913,7 +4171,7 @@ impl App {
     /// Back to the board as it was, with the card that was read focused and on screen.
     fn leave_read(&mut self) {
         let Some(id) = self.read.take() else { return };
-        log::info!("read mode: back to the board");
+        log::info!("solo: back to the board");
         self.menu = None;
         self.keys_in_page = false;
         self.camera_moved();
@@ -3933,7 +4191,7 @@ impl App {
     }
 
     /// Glide just enough to bring card `id` on screen (fitting it with the focused card if possible).
-    /// In Read Mode, bringing a card on screen means reading it.
+    /// In Solo, bringing a card on screen means reading it.
     fn ensure_visible(&mut self, id: NodeId) {
         if self.read.is_some() {
             self.read_card(id);
@@ -4015,7 +4273,7 @@ impl App {
     }
 
     /// The raster scale for pages once the camera rests: the zoom's
-    /// resolution in quarter steps (0.5–2), 1:1 in Read Mode.
+    /// resolution in quarter steps (0.5–2), 1:1 in Solo.
     fn settled_page_scale(&self) -> f32 {
         if self.read.is_some() {
             return Self::page_scale_for(1.0, self.scale());
@@ -4024,7 +4282,7 @@ impl App {
     }
 
     /// The raster scale for pages on the board at camera `zoom`. Pages lay
-    /// out at Read Mode's width (`card_css`), so a card of the default width
+    /// out at Solo's width (`card_css`), so a card of the default width
     /// shows `CARD_W / read width` world units per CSS px. One scale for all
     /// cards: Chromium shares page zoom (our raster scale) across a site.
     fn board_page_scale(&self, zoom: f32) -> f32 {
@@ -4153,6 +4411,11 @@ impl App {
                         if done {
                             log::info!("find: {active} of {count}");
                         }
+                    }
+                }
+                WebEvent::Focus { page, report } => {
+                    if let Some(id) = self.node_of(page) {
+                        self.page_focus(id, report);
                     }
                 }
                 WebEvent::Links { page, width, links } => {
@@ -4471,6 +4734,7 @@ impl App {
         let mods = keymap::modifiers(self.mods);
         if state == ElementState::Pressed {
             self.board_pan.stop(); // a grab holds the board where it is
+            self.pending.clear(); // a click ends a half-typed count
         }
         // A click outside the shortcut sheet closes it; none does anything else.
         if self.hints {
@@ -4713,7 +4977,9 @@ impl App {
                 Hit::Content(id) => {
                     self.selection.clear();
                     self.focus(Some(id));
-                    self.keys_in_page = true;
+                    // Insert until the page says the click wasn't in a field
+                    // (`WebEvent::Focus`), so typing right after a click lands.
+                    self.give_keys(PageKeys::Insert);
                     if let (Some(card), Some((x, y))) = (self.cards.get(&id), self.page_point(id, p)) {
                         card.page.mouse_button(x, y, mods, web_button, false, self.click_count.min(3));
                     }
@@ -5036,6 +5302,18 @@ impl App {
         let code = ev.code;
 
         let is_question = ev.text.as_deref() == Some("?") || (shift && code == Some(KeyCode::Slash));
+        // A half-typed count or sequence ends when something else takes the keys.
+        if pressed
+            && (self.hints
+                || self.confirm.is_some()
+                || self.link_hints.is_some()
+                || self.arrange.is_some()
+                || self.menu.is_some()
+                || self.omnibox.is_some()
+                || self.typing())
+        {
+            self.pending.clear();
+        }
         if self.hints {
             if pressed {
                 self.sheet_key(&ev, ctrl || alt);
@@ -5074,6 +5352,7 @@ impl App {
         let f1 = ev.named == Some(NamedKey::F1) && !ctrl && !alt;
         if pressed && (f1 || (is_question && !ctrl && !alt && !self.typing() && self.omnibox.is_none() && self.menu.is_none())) {
             self.menu = None;
+            self.pending.clear();
             self.show_hints();
             return;
         }
@@ -5202,7 +5481,7 @@ impl App {
                             _ => {
                                 // Typed an address: the new page is what you use next.
                                 if self.new_card_at_center(&url).is_some() {
-                                    self.keys_in_page = true;
+                                    self.give_keys(PageKeys::Page);
                                 }
                             }
                         }
@@ -5266,6 +5545,42 @@ impl App {
         // Enter, Esc, B); the rest are board keys as usual.
         if pressed && !ctrl && !alt && self.drag_is_idle() && self.sidebar_has_keys() && self.sidebar_key(code, shift) {
             return;
+        }
+
+        // Board keys (`scene::keys`), while no card is entered. A key that
+        // isn't one goes on to the app's shortcuts below.
+        if pressed
+            && !self.entered()
+            && let Some(chord) = ev.chord(self.mods)
+        {
+            match self.pending.feed(&self.board_keys, chord, Instant::now(), true) {
+                Outcome::Run { action, count } => return self.board_action(action, count),
+                Outcome::Wait | Outcome::Cancelled | Outcome::Unbound { swallow: true } => return,
+                Outcome::Unbound { swallow: false } => {}
+            }
+        }
+        // Page mode: our page keys first. A character that isn't one does
+        // nothing; other keys (Enter, Tab, arrows, Space, shortcuts) go on to
+        // the app's shortcuts and then to the page.
+        let mut to_page = self.typing();
+        if self.page_mode() {
+            if pressed {
+                let chord = ev.chord(self.mods);
+                if let Some(chord) = chord {
+                    match self.pending.feed(&self.page_keys_table, chord, Instant::now(), true) {
+                        Outcome::Run { action, count } => return self.page_action(action, count),
+                        Outcome::Wait | Outcome::Cancelled | Outcome::Unbound { swallow: true } => return,
+                        Outcome::Unbound { swallow: false } => {}
+                    }
+                }
+                if chord.is_some_and(|c| c.is_bare() && matches!(c.key, keys::Key::Char(_))) {
+                    return;
+                }
+                to_page = true;
+                self.forwarded.insert(ev.native);
+            } else {
+                to_page = self.forwarded.remove(&ev.native);
+            }
         }
 
         if pressed {
@@ -5336,14 +5651,6 @@ impl App {
                     self.page_paste(Some(&ev));
                     true
                 }
-                Some(KeyCode::KeyZ) if ctrl && !self.typing() => {
-                    self.undo(shift);
-                    true
-                }
-                Some(KeyCode::KeyY) if ctrl && !self.typing() => {
-                    self.undo(true);
-                    true
-                }
                 Some(KeyCode::KeyT) if ctrl && shift => {
                     self.reopen_closed();
                     true
@@ -5409,34 +5716,24 @@ impl App {
                     }
                     true
                 }
-                Some(KeyCode::Delete | KeyCode::Backspace)
-                    if !self.selection.is_empty() && !self.typing() && !ctrl && !alt && self.drag_is_idle() =>
-                {
-                    let ids = self.selection.ids();
-                    log::info!("closing {} selected card(s)", ids.len());
-                    self.close_cards(&ids);
-                    true
-                }
-                Some(KeyCode::KeyA) if ctrl && !shift && !self.typing() => {
-                    self.selection.select_all(&self.scene);
-                    true
-                }
-                Some(KeyCode::Tab) if !ctrl && !alt && !shift && !(self.keys_in_page && self.focused_page().is_some()) => {
+                Some(KeyCode::Tab) if !ctrl && !alt && !shift && !self.typing() => {
                     self.toggle_read();
                     true
                 }
-                Some(KeyCode::KeyS) if !self.typing() && !ctrl && !alt && self.drag_is_idle() => {
-                    self.toggle_fold();
+                // Passthrough: Shift+Esc gives our keys back; a plain Esc is the page's.
+                Some(KeyCode::Escape) if self.typing() && self.page_keys == PageKeys::Passthrough && shift => {
+                    self.set_page_keys(PageKeys::Page);
                     true
                 }
-                Some(KeyCode::KeyO) if !self.typing() && !ctrl && !alt && !shift && self.drag_is_idle() => {
-                    self.outline_in_view();
-                    true
-                }
-                Some(KeyCode::BracketLeft | KeyCode::BracketRight)
-                    if !self.typing() && !ctrl && !alt && self.drag_is_idle() =>
-                {
-                    self.peek_stack(if code == Some(KeyCode::BracketLeft) { -1 } else { 1 });
+                Some(KeyCode::Escape) if self.typing() && self.page_keys == PageKeys::Passthrough => false,
+                // Insert: the page sees Esc (closes its menus), the field lets
+                // go of the caret, and our page keys are back.
+                Some(KeyCode::Escape) if self.typing() && self.drag_is_idle() => {
+                    if let Some(p) = self.focused_page() {
+                        p.send_key(&ev.to_web(self.mods));
+                        p.blur_field();
+                    }
+                    self.set_page_keys(PageKeys::Page);
                     true
                 }
                 Some(KeyCode::Escape) if self.read.is_some() && self.drag_is_idle() => {
@@ -5451,7 +5748,7 @@ impl App {
                     self.selection.clear();
                     true
                 }
-                Some(KeyCode::Escape) if self.typing() && self.drag_is_idle() => {
+                Some(KeyCode::Escape) if self.page_mode() && self.drag_is_idle() => {
                     // Let the page see Esc too (closes its menus), then give the
                     // keys back to the board; the card stays the current one.
                     if let Some(p) = self.focused_page() {
@@ -5465,106 +5762,13 @@ impl App {
                     self.focus(None);
                     true
                 }
-                // Board shortcuts while no page has the keys.
-                Some(
-                    KeyCode::KeyH
-                    | KeyCode::KeyJ
-                    | KeyCode::KeyK
-                    | KeyCode::KeyL
-                    | KeyCode::ArrowLeft
-                    | KeyCode::ArrowDown
-                    | KeyCode::ArrowUp
-                    | KeyCode::ArrowRight,
-                ) if !self.typing() && !ctrl && !alt && self.drag_is_idle() => {
-                    let dir = match code {
-                        Some(KeyCode::KeyH | KeyCode::ArrowLeft) => Dir::Left,
-                        Some(KeyCode::KeyJ | KeyCode::ArrowDown) => Dir::Down,
-                        Some(KeyCode::KeyK | KeyCode::ArrowUp) => Dir::Up,
-                        _ => Dir::Right,
-                    };
-                    if shift { self.pan_by_key(dir) } else { self.move_current(dir) }
-                    true
-                }
-                Some(KeyCode::Equal | KeyCode::NumpadAdd | KeyCode::Minus | KeyCode::NumpadSubtract)
-                    if !self.typing() && !ctrl && !alt && self.read.is_none() =>
-                {
-                    let zoom_in = matches!(code, Some(KeyCode::Equal | KeyCode::NumpadAdd));
-                    self.zoom_by_key(zoom_in);
-                    true
-                }
-                Some(KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space)
-                    if !self.typing() && !ctrl && !alt && self.drag_is_idle() =>
-                {
-                    self.enter_current();
-                    true
-                }
-                Some(KeyCode::Delete | KeyCode::Backspace)
-                    if !self.typing() && self.focused.is_some() && !ctrl && !alt && self.drag_is_idle() =>
-                {
-                    let id = self.focused.expect("checked");
-                    self.close_card(id);
-                    true
-                }
-                Some(KeyCode::KeyQ) if !self.typing() && !ctrl && !alt && !shift => {
-                    log::info!("quit (Q)");
-                    self.quit = true;
-                    true
-                }
-                Some(KeyCode::KeyF) if !self.typing() && !ctrl && !alt && shift => {
-                    self.fit_all();
-                    true
-                }
-                Some(KeyCode::KeyF) if !self.typing() && !ctrl && !alt && self.drag_is_idle() => {
-                    self.show_link_hints();
-                    true
-                }
-                Some(KeyCode::KeyT) if !self.typing() && !ctrl && !alt && self.drag_is_idle() => {
-                    self.tidy_board();
-                    true
-                }
-                Some(KeyCode::KeyM) if !self.typing() && !ctrl && !alt && !shift && self.drag_is_idle() => {
-                    self.start_arrange();
-                    true
-                }
-                Some(KeyCode::KeyN) if !self.typing() && !ctrl && !alt && shift && self.drag_is_idle() => {
-                    self.new_sticky_at_center();
-                    true
-                }
-                Some(KeyCode::KeyN) if !self.typing() && !ctrl && !alt && self.drag_is_idle() => {
-                    self.new_note_at_center();
-                    true
-                }
-                Some(KeyCode::KeyB) if !self.typing() && !ctrl && !alt && !shift && self.drag_is_idle() => {
-                    self.toggle_sidebar();
-                    true
-                }
-                Some(KeyCode::KeyV) if !self.typing() && !ctrl && !alt && !shift && self.drag_is_idle() => {
-                    self.toggle_mark();
-                    true
-                }
-                Some(KeyCode::KeyZ) if !self.typing() && !ctrl && !alt && !shift && self.drag_is_idle() && self.read.is_none() => {
-                    self.fill_current();
-                    true
-                }
-                Some(KeyCode::KeyD | KeyCode::KeyU) if !self.typing() && !ctrl && !alt && !shift => {
-                    self.scroll_current(code == Some(KeyCode::KeyD));
-                    true
-                }
-                Some(KeyCode::KeyR) if !self.typing() && !ctrl && !alt && !shift && self.drag_is_idle() => {
-                    self.ask_trail_name();
-                    true
-                }
-                Some(KeyCode::KeyC) if !self.typing() && !ctrl && !alt && !shift && self.drag_is_idle() => {
-                    self.cycle_trail_colour();
-                    true
-                }
                 _ => false,
             };
             if handled {
                 return;
             }
         }
-        if self.typing()
+        if to_page
             && let Some(p) = self.focused_page()
         {
             p.send_key(&ev.to_web(self.mods));
@@ -5607,7 +5811,7 @@ impl App {
         if self.read_morph.is_some_and(|m| m.done() || self.scene.node(m.id).is_none()) {
             self.read_morph = None;
         }
-        // While a card grows into Read Mode the board still shows behind it.
+        // While a card grows into Solo the board still shows behind it.
         let board_hidden = self.read.is_some() && self.read_morph.is_none();
         let preview_url = self
             .omnibox
@@ -5751,7 +5955,7 @@ impl App {
         let screen = Rect::new(0.0, 0.0, vp.x, vp.y);
         let band = self.band();
         let in_band = band.map(|b| selection::in_band(&self.scene, b)).unwrap_or_default();
-        let typing = self.typing();
+        let typing = self.entered();
         let board_cards = if board_hidden { Vec::new() } else { self.scene.draw_order() };
         let morphing = self.read_morph.map(|m| m.id);
         self.shields.clear();
@@ -5762,7 +5966,7 @@ impl App {
         let now = Instant::now();
         let crowd = k / scale < LABELS_ALL_BELOW;
         for n in board_cards {
-            // The card on its way to or from Read Mode is drawn by `read_morph_layer`.
+            // The card on its way to or from Solo is drawn by `read_morph_layer`.
             if morphing == Some(n.id) {
                 in_view = true;
                 continue;
@@ -5836,7 +6040,7 @@ impl App {
             let key = page_key(epoch, n.id);
             let has_tex = self.renderer.as_ref().is_some_and(|r| r.has_page(key));
             // A live page's last frame at its own size: right after a resize
-            // (leaving Read Mode, resizing the card) it is cropped or filled
+            // (leaving Solo, resizing the card) it is cropped or filled
             // out, never squashed, until the page paints at the new size.
             let extent = match (card, self.page_css.get(&n.id)) {
                 (Some(_), Some(&css)) => read::extent(self.card_css(n), css),
@@ -6153,9 +6357,8 @@ impl App {
             layers.push(l);
         }
 
-        if self.read.is_none()
-            && let Some(l) = self.link_hint_layer()
-        {
+        // Over the board's cards, or over the page in Solo.
+        if let Some(l) = self.link_hint_layer() {
             layers.push(l);
         }
 
@@ -6233,7 +6436,7 @@ impl App {
             panel.rect.right()
         } else {
             self.anim.sidebar.update(None, Instant::now());
-            // Hidden: it slides back out past the edge as it came (not into Read Mode).
+            // Hidden: it slides back out past the edge as it came (not into Solo).
             if self.read.is_some() {
                 self.sidebar_last = None;
             }
@@ -6253,7 +6456,7 @@ impl App {
             0.0
         };
 
-        // The board's own control: the sidebar's button and the space. Read Mode
+        // The board's own control: the sidebar's button and the space. Solo
         // is the page alone, with a way back that shows when the pointer
         // nears the top of the window.
         let chrome_shown = self.read.is_none() && self.read_morph.is_none();
@@ -6450,6 +6653,20 @@ impl App {
             bottom -= 48.0 * ui;
             layers.push(l);
         }
+        // A half-typed count or key sequence on the board (`5`).
+        if !self.pending.is_empty() && self.omnibox.is_none() && !self.entered() {
+            let typed = self.pending.display();
+            let l = self.message(&typed, mid_x, bottom, false);
+            bottom -= 48.0 * ui;
+            layers.push(l);
+        }
+        // An entered card's mode, and what is half-typed in it, in the corner.
+        if self.entered() && self.omnibox.is_none() && self.link_hints.is_none() {
+            let typed = self.pending.display();
+            let text = if typed.is_empty() { self.page_keys.label().to_string() } else { format!("{} · {typed}", self.page_keys.label()) };
+            let l = self.message(&text, 0.0, vp.y - 16.0 * ui, false);
+            layers.push(l);
+        }
         if let Some((msg, at)) = &self.toast {
             if self.confirm.is_some() || Instant::now() < *at {
                 let msg = msg.clone();
@@ -6491,7 +6708,7 @@ impl App {
         }
     }
 
-    /// A card growing from its place on the board into Read Mode, or
+    /// A card growing from its place on the board into Solo, or
     /// shrinking back: the board dims behind it and its corners square off
     /// as it fills the window. The page's pixels keep
     /// their own scale (`read::morph`), so nothing stretches on the way.
@@ -6533,7 +6750,7 @@ impl App {
         Some(l)
     }
 
-    /// Read Mode: card `id`'s page across the whole window.
+    /// Solo: card `id`'s page across the whole window.
     fn read_layer(&mut self, id: NodeId) -> Layer {
         let th = self.theme.clone();
         let scale = self.scale();
@@ -6621,6 +6838,16 @@ impl App {
             self.toast(msg);
         }
         self.read_due_texts();
+        // Nothing entered: the next card entered starts afresh.
+        if !self.entered() && self.page_keys != PageKeys::Page {
+            self.page_keys = PageKeys::Page;
+        }
+        // A key sequence left half-typed runs (or is dropped) after a pause.
+        let page = self.page_mode();
+        let table = if page { &self.page_keys_table } else { &self.board_keys };
+        if let Some(Outcome::Run { action, count }) = self.pending.expire(table, Instant::now()) {
+            if page { self.page_action(action, count) } else { self.board_action(action, count) }
+        }
         self.sidebar_peek_tick();
         self.sync_find();
         self.autosave();
@@ -6703,7 +6930,8 @@ impl App {
 
     /// Enable IME while text can go somewhere, and keep the candidate window by the caret.
     fn sync_ime(&mut self) {
-        let page_keys = self.keys_in_page && self.focused_page().is_some();
+        // Only where text goes: an input method would take Page mode's keys.
+        let page_keys = self.typing();
         // A test script feeds IME events itself; keep a running input method out of it.
         let allowed = (self.omnibox.is_some() || page_keys) && self.script.is_none();
         // A composition left in a page that lost focus is dropped.
@@ -7233,8 +7461,9 @@ impl App {
                     }
                     let l = self.read_layout();
                     log::info!(
-                        "script read: {:?} css={:?} page_scale={} focused={:?} keys_in_page={} camera=({:.0},{:.0} z{:.3})",
+                        "script read: {:?} css={:?} page_scale={} focused={:?} keys_in_page={} mode={} camera=({:.0},{:.0} z{:.3})",
                         self.read.map(|r| r.0), l.css, self.page_scale, self.focused.map(|f| f.0), self.keys_in_page,
+                        if self.entered() { format!("{:?}", self.page_keys) } else { "Board".into() },
                         self.camera.center.x, self.camera.center.y, self.camera.zoom
                     );
                 }
@@ -7430,7 +7659,7 @@ enum Hit {
     Reload(NodeId),
     Grip(NodeId),
     Content(NodeId),
-    /// Read Mode's title bar.
+    /// Solo's title bar.
     ReadBar(NodeId),
     /// A stack's count badge.
     Badge(NodeId),

@@ -9,6 +9,7 @@ pub mod geom;
 pub mod download;
 pub mod hint;
 pub mod icon;
+pub mod keys;
 pub mod history;
 pub mod liveness;
 pub mod mark;

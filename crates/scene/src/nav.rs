@@ -9,7 +9,7 @@
 
 use crate::{NodeId, Rect, Scene};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Dir {
     Left,
     Right,

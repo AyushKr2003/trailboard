@@ -143,7 +143,7 @@ setuid `chrome-sandbox` helper. The Arch package installs it; for the archive, s
 | `h` `j` `k` `l` | Move between cards |
 | `Enter` · `Esc` | Type in the page · back to the board |
 | `f` | Follow a link by keyboard |
-| `Tab` | Read Mode: the page fills the window |
+| `Tab` | Solo: the page fills the window |
 | `B` · `T` · `S` | Trails sidebar · Tidy · Fold a trail |
 | `N` | New note |
 | `?` | Every shortcut |

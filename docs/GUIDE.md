@@ -25,6 +25,7 @@ with *Welcome page* in Ctrl+K.
 | Type in the current card's page | Enter or Space, or click in the page (a thick ring shows it has the keys) |
 | Back to the board / let go of the card | Esc / Esc again |
 | Pan / zoom with the keyboard | Shift + h/j/k/l or Shift + arrows / + and - |
+| Do a board key several times | type a number first: 3j goes three cards down, 2+ zooms in twice (shown at the bottom while you type; Esc drops it) |
 | Move / resize a card with the keyboard | M, then h/j/k/l (Shift resizes, Ctrl takes fine steps); Enter keeps, Esc puts it back |
 | Follow a link by keyboard | f labels the links in the current card's page; type a label to open it beside (Esc cancels) |
 | Close the current card / quit | Delete / Q (Ctrl+Q works everywhere) |
@@ -33,7 +34,10 @@ with *Welcome page* in Ctrl+K.
 | Select cards | Shift+drag on the board, Shift+click labels, Ctrl+A (Esc clears) |
 | Move / close selected cards | drag a selected card's label / Delete |
 | Fill the view with a card | double-click its label |
-| Read Mode (page fills the window) | Tab (Tab or Esc to go back) |
+| Solo (the card fills the window) | Tab (Tab or Esc to go back) |
+| Use a page from the keyboard (after Enter, or in Solo) | j/k scroll, h/l sideways, d/u half a page, gg/G top/bottom, 0/$ left/right edge, f follow a link here, F beside, H/L back/forward, r reload, / find, n/N next/previous, yy copy the address, yt the title, o address bar; a number repeats (5j). The corner shows *Page* |
+| Type in a page | click a field, choose one with f, or press gi (first field) or i (anywhere); the corner shows *Insert*. Esc leaves the field and gives the keys back; Esc again goes to the board |
+| Let a site have every key (its own shortcuts) | Ctrl+V in a page; the corner shows *Passthrough*; Shift+Esc ends it |
 | Close card / reopen closed | × on its label or Ctrl+W / Ctrl+Shift+T |
 | Back / forward / reload with the pointer | the arrows on the label of the card under the pointer |
 | Board menu: new page, note, tidy, fold, fit, history, settings | right-click the empty board |

@@ -268,6 +268,7 @@ struct Anims {
     toast: crate::chrome::Appear,
     sheet: crate::chrome::Appear,
     sidebar: crate::chrome::Appear,
+    welcome: crate::chrome::Appear,
 }
 
 /// A small hash for telling one overlay's content from the next.
@@ -471,9 +472,9 @@ pub struct App {
     /// order, and the buttons on them, for the pointer.
     bars: Vec<(NodeId, Rect)>,
     bar_buttons: Vec<(Hit, Rect)>,
-    /// The button of the guidance line drawn last frame (an empty board, a
-    /// view with no card in it), and what it runs.
-    nudge: Option<(Rect, Command)>,
+    /// The buttons of the guidance drawn last frame (an empty board's
+    /// welcome, a view with no card in it), and what each does.
+    nudge: Vec<(Rect, crate::hud::Go)>,
     /// The desktop asks for less motion (`desktop::reduced_motion`): cards,
     /// spaces, Read Mode and the sidebar change without animating.
     still: bool,
@@ -718,7 +719,7 @@ impl App {
             hover: Hit::Board,
             bars: Vec::new(),
             bar_buttons: Vec::new(),
-            nudge: None,
+            nudge: Vec::new(),
             still: {
                 if let Some(k) = std::env::var("TRAILBOARD_SLOW_MOTION").ok().and_then(|v| v.parse::<f32>().ok()) {
                     motion::set_slow(k);
@@ -4572,10 +4573,13 @@ impl App {
                 return;
             }
             if state == ElementState::Pressed {
-                if let Some((_, cmd)) = self.nudge.filter(|(r, _)| r.contains(p)) {
+                if let Some(&(_, go)) = self.nudge.iter().find(|(r, _)| r.contains(p)) {
                     self.hud_down = true;
                     self.omnibox = None;
-                    self.run_command(cmd);
+                    match go {
+                        crate::hud::Go::Command(cmd) => self.run_command(cmd),
+                        crate::hud::Go::Palette => self.open_palette(),
+                    }
                     return;
                 }
                 if let Some(c) = self.hud.at(p) {
@@ -4770,7 +4774,7 @@ impl App {
             None
         };
         let on_chrome = over.is_some()
-            || (matches!(self.drag, Drag::None) && self.read.is_none() && (self.hud.covers(p) || self.nudge.is_some_and(|(r, _)| r.contains(p))));
+            || (matches!(self.drag, Drag::None) && self.read.is_none() && (self.hud.covers(p) || self.nudge.iter().any(|(r, _)| r.contains(p))));
         match (over, self.hud_hover) {
             (Some(c), Some((old, _))) if c == old => {}
             (Some(c), _) => self.hud_hover = Some((c, Instant::now())),
@@ -4779,7 +4783,7 @@ impl App {
         if on_chrome {
             self.hover = Hit::Board;
             self.cursor = p;
-            let button = over.is_some() || self.nudge.is_some_and(|(r, _)| r.contains(p));
+            let button = over.is_some() || self.nudge.iter().any(|(r, _)| r.contains(p));
             self.set_cursor(if button { web::Cursor::Pointer } else { web::Cursor::Default });
             return;
         }
@@ -6253,7 +6257,7 @@ impl App {
         // is the page alone, with a way back that shows when the pointer
         // nears the top of the window.
         let chrome_shown = self.read.is_none() && self.read_morph.is_none();
-        self.nudge = None;
+        self.nudge.clear();
         let mut tip_shown = None;
         if chrome_shown {
             let entry = self.spaces.active_entry();
@@ -6280,17 +6284,28 @@ impl App {
                 // board says how to start; a view with no card in it (the
                 // board is somewhere else) offers the way back.
                 let hot = |rect: Rect| free && rect.contains(self.cursor);
-                if self.scene.is_empty() && self.omnibox.is_none() {
-                    let probe = crate::hud::nudge(r, "This board is empty.", "Open a page", "Ctrl+T", mid_x, vp.y / 2.0, false, &th, ui).1;
-                    let (l, button) = crate::hud::nudge(r, "This board is empty.", "Open a page", "Ctrl+T", mid_x, vp.y / 2.0, hot(probe), &th, ui);
+                let empty = self.scene.is_empty() && self.omnibox.is_none() && self.ghosts.is_empty();
+                let came = self.anim.welcome.update(empty.then(|| anim_key(entry.id.0)), Instant::now());
+                if empty {
+                    let wv = crate::hud::WelcomeView {
+                        space: &space,
+                        swatch,
+                        private,
+                        on_photo: photo_on,
+                        pointer: (free && self.pointer_in && matches!(self.drag, Drag::None)).then_some(self.cursor),
+                        down: self.hud_down,
+                    };
+                    let area = Rect::new(sidebar_w, 0.0, (vp.x - sidebar_w).max(0.0), vp.y);
+                    let (mut l, buttons) = crate::hud::welcome(r, &wv, area, &th, ui);
+                    crate::chrome::arrive(&mut l, came, 8.0 * ui);
                     layers.push(l);
-                    self.nudge = Some((button, Command::NewCard));
-                } else if !in_view && !board_hidden && self.camera_goal.is_none() && matches!(self.drag, Drag::None) {
+                    self.nudge = buttons;
+                } else if !self.scene.is_empty() && !in_view && !board_hidden && self.camera_goal.is_none() && matches!(self.drag, Drag::None) {
                     let bottom = vp.y - 16.0 * ui;
                     let probe = crate::hud::nudge(r, "No cards in view.", "Fit everything", "Shift+F", mid_x, bottom, false, &th, ui).1;
                     let (l, button) = crate::hud::nudge(r, "No cards in view.", "Fit everything", "Shift+F", mid_x, bottom, hot(probe), &th, ui);
                     layers.push(l);
-                    self.nudge = Some((button, Command::Fit));
+                    self.nudge = vec![(button, crate::hud::Go::Command(Command::Fit))];
                 }
             }
             tip_shown = hud_hover.filter(|(_, since)| !self.hud_down && since.elapsed() >= crate::hud::TIP_DWELL).map(|(c, _)| c);
@@ -6427,7 +6442,7 @@ impl App {
         // while arranging by keyboard, then whatever was just said.
         let mid_x = sidebar_w + (vp.x - sidebar_w) / 2.0;
         let mut bottom = vp.y - 16.0 * ui;
-        if self.nudge.is_some_and(|(_, c)| c == Command::Fit) {
+        if self.nudge.iter().any(|(_, g)| *g == crate::hud::Go::Command(Command::Fit)) {
             bottom -= 52.0 * ui;
         }
         if self.arrange.is_some() && self.omnibox.is_none() {

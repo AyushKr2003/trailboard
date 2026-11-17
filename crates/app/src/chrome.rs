@@ -27,6 +27,8 @@ pub mod type_ {
     pub const INPUT: f32 = 18.0;
     /// A sheet's heading.
     pub const TITLE: f32 = 18.0;
+    /// The one large line an empty board shows.
+    pub const DISPLAY: f32 = 30.0;
 }
 
 /// Line height the renderer gives a text of `size`.

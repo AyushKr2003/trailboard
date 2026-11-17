@@ -95,7 +95,8 @@ the label also shows the site's address, a shield with what the blocker
 stopped, and back, forward, reload and close. A line glides along the card's
 top edge while the page loads, and a sleeping card's label ends in a moon.
 When no card is in view, a line at the foot of the window offers *Fit
-everything*; an empty board offers *Open a page*.
+everything*; an empty board shows a short welcome on the space's colour,
+with *Open a page* (Ctrl+T), *Search everything* (Ctrl+K) and *All keys* (?).
 
 The interface is set in Inter (bundled, SIL OFL). Its design rules (levels,
 text strengths, type scale, icons) are in [docs/DESIGN.md](docs/DESIGN.md).

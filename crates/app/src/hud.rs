@@ -5,7 +5,8 @@
 //! pointer rests on it.
 //!
 //! Layout and hit testing are pure (`layout`, `Hud::at`); `layer` draws.
-//! `nudge` is the line of guidance an empty board or an empty view shows.
+//! `welcome` is what an empty board shows; `nudge` the line of guidance a
+//! view with no card in it shows.
 
 use std::time::Duration;
 
@@ -41,6 +42,14 @@ impl Control {
             _ => return None,
         })
     }
+}
+
+/// What a press on the board's guidance does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Go {
+    Command(Command),
+    /// Ctrl+K, which is a key rather than a palette command.
+    Palette,
 }
 
 /// Sizes in logical px; multiplied by the UI scale.
@@ -197,6 +206,165 @@ pub fn nudge(r: &mut Renderer, text: &str, action: &str, keys: &str, mid_x: f32,
     (l, button)
 }
 
+/// What an empty board offers, as (label, keys, what a press does).
+pub const WELCOME_ACTIONS: [(&str, &str, Go); 3] = [
+    ("Open a page", "Ctrl+T", Go::Command(Command::NewCard)),
+    ("Search everything", "Ctrl+K", Go::Palette),
+    ("All keys", "?", Go::Command(Command::Shortcuts)),
+];
+
+/// The welcome's big line, and the one under it (a private space says
+/// what it keeps).
+pub const WELCOME_DISPLAY: &str = "Where to first?";
+const WELCOME_LINE: &str = "Open a page. Its links open beside it, joined by a trail.";
+const WELCOME_LINE_PRIVATE: &str = "Pages here stay out of history, and their cookies go when you quit.";
+
+/// Widths (screen px) of what the welcome shows, measured by the caller.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct WelcomeSizes {
+    pub label: f32,
+    pub display: f32,
+    pub line: f32,
+    /// Each action's whole chip.
+    pub chips: Vec<f32>,
+}
+
+/// Where the welcome's parts go, in screen px; mid lines for the texts.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct WelcomeLayout {
+    /// Everything, for the sheet behind it over a photo.
+    pub block: Rect,
+    pub label_y: f32,
+    pub display_y: f32,
+    pub line_y: f32,
+    pub chips: Vec<Rect>,
+}
+
+/// Height of a welcome chip, logical px.
+const CHIP_H: f32 = 32.0;
+const CHIP_GAP: f32 = 8.0;
+
+/// Lays the welcome out in `area` (the board beside the sidebar): centred
+/// across, its middle a little above the area's (where the eye rests).
+/// The chips sit in a row, or one above the other when the row doesn't fit,
+/// each as wide as the widest then.
+pub fn welcome_layout(s: &WelcomeSizes, area: Rect, ui: f32) -> WelcomeLayout {
+    let (label_h, display_h, line_h) = (chrome::line_h(type_::CAPTION * ui), chrome::line_h(type_::DISPLAY * ui), chrome::line_h(type_::BODY * ui));
+    let (gap, h) = (CHIP_GAP * ui, CHIP_H * ui);
+    let row_w = s.chips.iter().sum::<f32>() + gap * s.chips.len().saturating_sub(1) as f32;
+    let room = (area.w - 32.0 * ui).max(0.0);
+    let stacked = row_w > room;
+    let chips_h = if stacked { s.chips.len() as f32 * (h + gap) - gap } else { h };
+    let total = label_h + 10.0 * ui + display_h + 6.0 * ui + line_h + 24.0 * ui + chips_h;
+    let mid_x = area.x + area.w / 2.0;
+    let top = (area.y + area.h * 0.45 - total / 2.0).max(area.y + 16.0 * ui).round();
+    let label_y = top + label_h / 2.0;
+    let display_y = top + label_h + 10.0 * ui + display_h / 2.0;
+    let line_y = display_y + display_h / 2.0 + 6.0 * ui + line_h / 2.0;
+    let chips_top = line_y + line_h / 2.0 + 24.0 * ui;
+    let chips = if stacked {
+        let w = s.chips.iter().copied().fold(0.0, f32::max);
+        (0..s.chips.len())
+            .map(|i| Rect::new((mid_x - w / 2.0).round(), (chips_top + i as f32 * (h + gap)).round(), w.round(), h))
+            .collect()
+    } else {
+        let mut x = mid_x - row_w / 2.0;
+        s.chips
+            .iter()
+            .map(|w| {
+                let r = Rect::new(x.round(), chips_top.round(), w.round(), h);
+                x += w + gap;
+                r
+            })
+            .collect()
+    };
+    let wide = s.label.max(s.display).max(s.line).max(if stacked { s.chips.iter().copied().fold(0.0, f32::max) } else { row_w });
+    let block = Rect::new(mid_x - wide / 2.0, top, wide, total).inflate(24.0 * ui);
+    WelcomeLayout { block, label_y, display_y, line_y, chips }
+}
+
+/// What the welcome shows this frame.
+pub struct WelcomeView<'a> {
+    pub space: &'a str,
+    pub swatch: Rgb,
+    pub private: bool,
+    /// The board is a photo: the welcome sits on a sheet to read over it.
+    pub on_photo: bool,
+    /// The pointer, if it may press a chip, and whether its button is held.
+    pub pointer: Option<Vec2>,
+    pub down: bool,
+}
+
+/// The calm page an empty board shows: the space's name in small spaced
+/// capitals after its colour, a large display line, a quiet line under it,
+/// and a few actions with their keys, straight on the board's colour mood.
+/// Returns the layer and each action's rect.
+pub fn welcome(r: &mut Renderer, v: &WelcomeView, area: Rect, th: &Theme, ui: f32) -> (Layer, Vec<(Rect, Go)>) {
+    let mut l = Layer::default();
+    let (cap, body, display) = (type_::CAPTION * ui, type_::BODY * ui, type_::DISPLAY * ui);
+    // The space's name, cut so a long one stays a label.
+    let mut name: String = v.space.trim().chars().take(28).collect::<String>().to_uppercase();
+    if v.space.trim().chars().count() > 28 {
+        name.push('…');
+    }
+    if v.private {
+        name.push_str(" · PRIVATE");
+    }
+    let dot = 8.0 * ui;
+    let track = |r: &mut Renderer, s: &str| s.chars().map(|c| if c.is_whitespace() { cap * 0.3 } else { r.measure(&c.to_string(), cap, true) } + cap * 0.1).sum::<f32>();
+    let label_w = dot + 8.0 * ui + track(r, &name);
+    let line = if v.private { WELCOME_LINE_PRIVATE } else { WELCOME_LINE };
+    let caps: Vec<(Vec<&str>, Vec<f32>)> = WELCOME_ACTIONS
+        .iter()
+        .map(|(_, keys, _)| {
+            let k = chrome::keycaps(keys).unwrap_or_default();
+            let w = k.iter().map(|k| r.measure(k, cap, false)).collect();
+            (k, w)
+        })
+        .collect();
+    let chip_w: Vec<f32> = WELCOME_ACTIONS
+        .iter()
+        .zip(&caps)
+        .map(|((label, _, _), (_, w))| 12.0 * ui + r.measure(label, body, true) + 10.0 * ui + chrome::keycaps_width(w, cap) + 6.0 * ui)
+        .collect();
+    let sizes = WelcomeSizes { label: label_w, display: r.measure(WELCOME_DISPLAY, display, true), line: r.measure(line, body, false), chips: chip_w };
+    let lay = welcome_layout(&sizes, area, ui);
+    let radius = th.radius(ui / th.text_scale);
+    if v.on_photo {
+        chrome::panel(&mut l, lay.block, radius, th, ui, Lift::Mid, th.panel());
+    }
+    let mid_x = area.x + area.w / 2.0;
+    let clip = Rect::new(area.x, lay.block.y, area.w, lay.block.h);
+    // The space's colour and name.
+    let x = (mid_x - label_w / 2.0).round();
+    let d = Rect::new(x, (lay.label_y - dot / 2.0).round(), dot, dot);
+    if v.private {
+        chrome::outline(&mut l, d, dot / 2.0, (1.5 * ui).max(1.5), rgb(v.swatch, 1.0));
+    } else {
+        chrome::fill(&mut l, d, dot / 2.0, rgb(v.swatch, 1.0));
+    }
+    chrome::spaced(&mut l, r, &name, d.right() + 8.0 * ui, lay.label_y, cap, rgb(th.text2(), 1.0), clip);
+    chrome::text(&mut l, WELCOME_DISPLAY, (mid_x - sizes.display / 2.0).round(), lay.display_y, display, rgb(th.text(), 1.0), clip, true);
+    chrome::text(&mut l, line, (mid_x - sizes.line / 2.0).round(), lay.line_y, body, rgb(th.text2(), 1.0), clip, false);
+    // The actions: quiet sheets at rest, lifted under the pointer.
+    let small = th.small_radius(ui / th.text_scale);
+    let mut out = Vec::new();
+    for ((&rect, (label, _, go)), (keys, widths)) in lay.chips.iter().zip(WELCOME_ACTIONS.iter()).zip(&caps) {
+        let hot = v.pointer.is_some_and(|p| rect.contains(p));
+        if hot {
+            chrome::lift(&mut l, rect, small, th, ui, Lift::Low);
+            chrome::fill(&mut l, rect, small, rgb(if v.down { th.active() } else { th.panel() }, 1.0));
+        } else {
+            chrome::fill(&mut l, rect, small, rgb(th.panel(), if v.on_photo { 1.0 } else { 0.55 }));
+        }
+        chrome::outline(&mut l, rect, small, chrome::hair(ui), rgb(if hot { th.line_strong() } else { th.line() }, 1.0));
+        chrome::text(&mut l, *label, rect.x + 12.0 * ui, rect.center().y, body, rgb(th.text(), 1.0), rect, true);
+        chrome::draw_keycaps(&mut l, keys, widths, rect.right() - 6.0 * ui, rect.center().y, cap, th, ui, rect);
+        out.push((rect, *go));
+    }
+    (l, out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,5 +401,36 @@ mod tests {
         assert_eq!(Control::Sidebar.command(), Some(Command::Sidebar));
         assert_eq!(Control::Space.command(), None);
         assert!(chrome::keycaps(Control::Sidebar.info().1).is_some());
+    }
+
+    fn sizes() -> WelcomeSizes {
+        WelcomeSizes { label: 90.0, display: 220.0, line: 340.0, chips: vec![150.0, 180.0, 100.0] }
+    }
+
+    #[test]
+    fn the_welcome_is_centred_with_its_chips_in_a_row() {
+        let area = Rect::new(0.0, 0.0, 1280.0, 800.0);
+        let lay = welcome_layout(&sizes(), area, 1.0);
+        assert_eq!(lay.chips.len(), 3);
+        let (first, last) = (lay.chips[0], lay.chips[2]);
+        assert_eq!(first.y, last.y, "one row");
+        assert!(((first.x + last.right()) / 2.0 - 640.0).abs() <= 1.0, "centred across");
+        assert!(lay.chips.windows(2).all(|w| w[0].right() < w[1].x), "no overlap");
+        assert!(lay.chips.iter().all(|c| c.h >= 24.0), "targets of at least 24 px");
+        assert!(lay.label_y < lay.display_y && lay.display_y < lay.line_y && lay.line_y < first.y);
+        // A little above the middle, and the block holds everything.
+        assert!(lay.block.center().y < 400.0);
+        assert!(lay.chips.iter().all(|c| lay.block.contains(Vec2::new(c.x, c.y)) && lay.block.contains(Vec2::new(c.right(), c.bottom()))));
+    }
+
+    #[test]
+    fn a_narrow_board_stacks_the_chips_and_a_sidebar_moves_the_middle() {
+        let lay = welcome_layout(&sizes(), Rect::new(0.0, 0.0, 420.0, 800.0), 1.0);
+        assert!(lay.chips.windows(2).all(|w| w[0].bottom() < w[1].y && w[0].x == w[1].x && w[0].w == w[1].w));
+        let beside = welcome_layout(&sizes(), Rect::new(288.0, 0.0, 992.0, 800.0), 1.0);
+        assert!((beside.block.center().x - (288.0 + 496.0)).abs() <= 1.0);
+        // A short window never pushes it above the top.
+        let short = welcome_layout(&sizes(), Rect::new(0.0, 0.0, 1280.0, 120.0), 1.0);
+        assert!(short.label_y > 0.0);
     }
 }

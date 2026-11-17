@@ -1,29 +1,58 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
   <title>Trailboard</title>
-  <desc>A page seen from the front, in Tokyo Night colors: a dark browser card with an address bar and a lilac link, whose lilac trail runs down and turns into a new blue page beside it, so the pieces make a lowercase t. Each piece has a hard shadow, on a transparent background.</desc>
+  <desc>A board with a colour mood (a soft blue-to-violet gradient with fine grain and faint dots) and two light rounded pages floating over it on soft shadows: a wide page with an address bar and a blue link, whose blue trail, with a dot at each end, runs down and into a new page beside it, ringed as the current card. Together they make a lowercase t.</desc>
   <defs>
-    <linearGradient id="page" x1="0" y1="0" x2="1" y2="1">
-      <stop stop-color="#7aa2f7"/>
-      <stop offset="1" stop-color="#7dcfff"/>
+    <linearGradient id="mood" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2a3866"/>
+      <stop offset="1" stop-color="#46306e"/>
     </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".10"/>
+      <stop offset=".5" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <pattern id="dots" width="32" height="32" patternUnits="userSpaceOnUse" x="16" y="16">
+      <circle cx="16" cy="16" r="2" fill="#ffffff" fill-opacity=".10"/>
+    </pattern>
+    <filter id="grain" x="0" y="0" width="1" height="1">
+      <feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" seed="7"/>
+      <feColorMatrix values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .07 0"/>
+      <feComposite in2="SourceGraphic" operator="in"/>
+    </filter>
+    <filter id="float" x="-30%" y="-30%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#0b0c1c" flood-opacity=".35"/>
+      <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#0b0c1c" flood-opacity=".45"/>
+    </filter>
+    <clipPath id="tile">
+      <rect x="32" y="32" width="448" height="448" rx="104"/>
+    </clipPath>
   </defs>
-  <g transform="translate(256 256) scale(1.3) translate(-256 -262)">
-    <!-- The page the link is on; one hard shadow, as Omarchy's own app icons. -->
-    <rect x="76" y="96" width="360" height="132" rx="22" fill="#0e0f17" transform="translate(0 8)"/>
-    <rect x="76" y="96" width="360" height="132" rx="22" fill="#1a1b26" stroke="#3b4261" stroke-width="3"/>
-    <!-- The trail, from under the link down and into the new page. -->
-    <path d="M176 230V318Q176 346 204 346H244" fill="none" stroke="#0e0f17" stroke-width="40" stroke-linecap="round" transform="translate(0 8)"/>
-    <path d="M176 230V318Q176 346 204 346H244" fill="none" stroke="#bb9af7" stroke-width="40" stroke-linecap="round"/>
-    <!-- Address bar, then a line of text whose first words are the link. -->
-    <rect x="112" y="132" width="288" height="28" rx="14" fill="#3b4261"/>
-    <rect x="130" y="139" width="14" height="14" rx="7" fill="#7aa2f7"/>
-    <rect x="128" y="180" width="96" height="16" rx="8" fill="#bb9af7"/>
-    <rect x="236" y="180" width="128" height="16" rx="8" fill="#565f89" opacity=".55"/>
-    <!-- The new page, opened beside its source. -->
-    <rect x="236" y="268" width="200" height="160" rx="20" fill="#0e0f17" transform="translate(0 8)"/>
-    <rect x="236" y="268" width="200" height="160" rx="20" fill="url(#page)"/>
-    <rect x="268" y="304" width="112" height="18" rx="9" fill="#0e0f17" opacity=".4"/>
-    <rect x="268" y="338" width="136" height="14" rx="7" fill="#0e0f17" opacity=".25"/>
-    <rect x="268" y="366" width="88" height="14" rx="7" fill="#0e0f17" opacity=".25"/>
+  <!-- The board: the space's colour mood, grain against banding, faint dots. -->
+  <g clip-path="url(#tile)">
+    <rect x="32" y="32" width="448" height="448" fill="url(#mood)"/>
+    <rect x="32" y="32" width="448" height="448" fill="#fff" filter="url(#grain)"/>
+    <rect x="32" y="32" width="448" height="448" fill="url(#dots)"/>
+    <rect x="32" y="32" width="448" height="448" fill="url(#sheen)"/>
   </g>
+  <rect x="33" y="33" width="446" height="446" rx="103" fill="none" stroke="#ffffff" stroke-opacity=".10" stroke-width="2"/>
+  <!-- The page the link is on. -->
+  <g filter="url(#float)">
+    <rect x="84" y="100" width="344" height="132" rx="20" fill="#eef1fa"/>
+  </g>
+  <rect x="108" y="122" width="296" height="26" rx="13" fill="#d9deee"/>
+  <circle cx="124" cy="135" r="6" fill="#7a88b8"/>
+  <rect x="112" y="170" width="92" height="14" rx="7" fill="#4f7cf0"/>
+  <rect x="216" y="170" width="120" height="14" rx="7" fill="#b8bfd6"/>
+  <rect x="112" y="196" width="196" height="14" rx="7" fill="#b8bfd6"/>
+  <!-- The new page, opened beside its source: the current card, ringed. -->
+  <g filter="url(#float)">
+    <rect x="244" y="276" width="184" height="140" rx="20" fill="#eef1fa"/>
+  </g>
+  <rect x="241" y="273" width="190" height="146" rx="23" fill="none" stroke="#7aa2f7" stroke-width="4"/>
+  <rect x="268" y="304" width="104" height="16" rx="8" fill="#9aa4c4"/>
+  <rect x="268" y="336" width="132" height="12" rx="6" fill="#c3c9dc"/>
+  <rect x="268" y="360" width="88" height="12" rx="6" fill="#c3c9dc"/>
+  <!-- The trail, from under the link down and into the new page, a dot at each end. -->
+  <path d="M158 232V318Q158 346 186 346H241" fill="none" stroke="#7aa2f7" stroke-width="16" stroke-linecap="round"/>
+  <circle cx="158" cy="236" r="15" fill="#7aa2f7" stroke="#eef1fa" stroke-width="4"/>
+  <circle cx="241" cy="346" r="15" fill="#7aa2f7" stroke="#eef1fa" stroke-width="4"/>
 </svg>

@@ -1599,8 +1599,29 @@ and light):**
     movement across the screen). Read once; not followed live.
   - `TRAILBOARD_SLOW_MOTION=k` slows every board motion k times, for
     screenshots of one halfway.
-- ⬜ 7. Empty board and first start: a calm welcome with a large display
-  line and a few keycaps on the space's tint; the app icon redrawn to match.
+- ✅ 7. Empty board and first start (2026-11-17).
+  - `hud::welcome` replaces the empty board's one-line nudge: the space's
+    dot and name in spaced capitals, "Where to first?" at the new display
+    size (`type_::DISPLAY`, 30 px semibold), one line in text2 (a private
+    space says what it keeps instead), and three chips with keycaps:
+    *Open a page* (Ctrl+T), *Search everything* (Ctrl+K), *All keys* (?).
+    Drawn straight on the mood (text contrast is already held there by
+    step 3); over a photo the block sits on a Mid panel sheet. Layout is
+    pure (`welcome_layout`, tested): centred in the board beside the
+    sidebar, its middle at 45% of the height, chips stacked when the row
+    doesn't fit. Fades in with `Appear` (keyed by space) and waits for a
+    closing card's ghost to finish. `App::nudge` became a list of
+    (rect, `hud::Go`), since Ctrl+K isn't a palette command.
+  - Fixed on the way: the *Fit everything* line showed at the foot of an
+    empty board while the palette or address bar was open.
+  - First start keeps the welcome page card (M6): a new user gets the
+    guide as a page; the empty-board welcome is for every empty space
+    after that. No separate first-start screen.
+  - App icon redrawn (`share/trailboard.svg`): the same t of a page, a
+    trail and a new page, now as two light rounded sheets with soft
+    shadows over a blue → violet mood tile (grain, faint dots), the trail
+    with a dot at each end and the new page ringed as the current card.
+    The symbolic icon keeps its shape and is unchanged.
 - ⬜ 8. Review pass: every overlay and state in dark and light, at small
   and large windows and a HiDPI scale; fix what looks off.
 
@@ -1640,37 +1661,31 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-17 (seventeenth). Owner asked: commit step 5
-(`25c8a91`) and do the next step: M11 step 6, the rest of the motion pass.
-**Repo state:** on `master`, step 6 uncommitted.
+**Last session:** 2026-11-17 (eighteenth). Owner asked: do M11's next
+step, step 7 (empty board and first start).
+**Repo state:** on `master`, step 6 (`c2a55f0`) committed; step 7 uncommitted.
 **Done this session:**
-- `scene::motion` (glides, open/grow/close shapes, a slow-motion knob)
-  and its use: Tidy glide, cards growing in beside their source or in
-  place, closed cards shrinking away, the space switch's tint cross-fade
-  and slide, the sidebar sliding out; all off with the desktop's reduced
-  motion. Decisions in M11 step 6; the timings table in `docs/DESIGN.md`
-  (Motion); env vars in `docs/GUIDE.md`.
-- Verified e2e in `~/.cache/trailboard-e2e-premium` with frame bursts:
-  `burst12.sh N shots…` (6 grim frames per shot, `TRAILBOARD_SLOW_MOTION=8`)
-  into `b12/` (`*_sheet.jpg` contact sheets): Tidy (`script12`, cards
-  glide while the camera follows), space switch (grey → green tint),
-  sidebar sliding out, a closed card fading, and a card opened beside
-  Hacker News growing out of its right side (`script13`). At normal speed
-  (`b11/`) the sidebar slide-out shows; the shorter ones end before grim's
-  first frame.
-- Not checked: reduced motion with Hyprland's animations really off (the
-  parser is unit-tested with the real `bool` answer), GNOME, the light
-  theme, HiDPI, closing several selected cards at once, undo within a
-  close's 160 ms, a photo backdrop during a space switch.
+- The empty board's welcome (`hud::welcome`, `welcome_layout` with tests,
+  `type_::DISPLAY`), its chips pressable (`hud::Go`); the stray *Fit
+  everything* over an empty board fixed; the app icon redrawn. Decisions
+  in M11 step 7; DESIGN (Type, The board), GUIDE and CHANGELOG updated.
+- Verified e2e in `~/.cache/trailboard-e2e-welcome` (`run.sh N shots…`,
+  `SEED=seed2` for a seed with an empty space): a new space and a private
+  one (`script1`, `w1`/`w2`); hover, each chip opening the palette, the
+  address bar and the key sheet, the sidebar open in dark and light
+  (`script2`/`3`, `h1`–`h5`, `l5`); a photo backdrop and the welcome
+  coming back after the last card closes (`script4`, `p2`). Icon checked
+  with `rsvg-convert` at 512, 32 and 24 px.
+- Not checked: HiDPI, a very narrow window (the stacked chips are only
+  unit-tested), the icon in a real launcher.
 **Owner decisions (2026-11-15):** no AppImage, Flatpak or AUR work (the owner
 publishes later, on their own); no UI translations; licence is Apache-2.0
 only (`LICENSE-APACHE`); all AI features (semantic search, Explain, any
 other AI/ML), imports from other browsers, and password managers and
 passkeys are all on hold until the owner says otherwise (see M10).
-**Next up:** M11 step 7 (empty board and first start: a calm welcome with
-a large display line and a few keycaps on the space's tint; the app icon
-redrawn to match), then 8 (review pass); retake the README's screenshots
-(`docs/images/`) now that steps 5 and 6 have landed. Follow-ups from 6:
+**Next up:** M11 step 8 (review pass: every overlay and state in dark and
+light, small and large windows, HiDPI); retake the README's screenshots
+(`docs/images/`) now that steps 5–7 have landed. Follow-ups from 6:
 glide on undo/redo of moves; follow the desktop's animation switch live.
 No M10 work: its items are on hold or wait for the owner.
 

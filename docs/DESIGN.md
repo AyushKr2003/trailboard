@@ -67,7 +67,8 @@ wide ambient), offset and blur growing together with the lift (`Lift::Low`,
 Inter, bundled (regular and semibold only; semibold is the one emphasis).
 One scale, in logical px × the desktop's text scale: 11 caption (keycaps,
 counts), 12 small (secondary), 13 body (rows, menus), 18 input (the
-palette's and address field), 18 title. Section labels in lists are
+palette's and address field), 18 title, 30 display (the one large line an
+empty board shows). Section labels in lists are
 caption capitals, semibold, spaced 10% (`chrome::spaced`).
 
 ## Shape and size
@@ -153,6 +154,15 @@ and embedding it would put a megabyte in every note), so they ask for
   contact) that keeps some size when zoomed out; the current card floats
   higher, the hovered one a touch. Current: 1.5 px accent ring at 80%;
   with the keys: 2.5 px solid. Selected: a yellow ring outside that.
+- An empty board shows a welcome straight on its colour mood, centred
+  beside the sidebar a little above the middle: a dot of the space's
+  tint and its name in spaced capitals (· PRIVATE for a private space),
+  "Where to first?" in display type, one quiet line (what a trail is, or
+  what a private space keeps), and three chips with their keys (*Open a
+  page*, *Search everything*, *All keys*), quiet sheets at rest and
+  lifted under the pointer; they stack when the row doesn't fit. Over a
+  photo it sits on a panel sheet. It arrives like an overlay (160 ms)
+  and hides while an overlay or the address bar is open.
 - A sleeping card that never painted shows its site icon and title,
   centred, in place of its page.
 - Label above a card (26 px high, 6 px above, shown by principle 2): stack

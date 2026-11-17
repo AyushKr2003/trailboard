@@ -52,6 +52,11 @@ All notable changes to Trailboard. The format follows
     pages update at once.
 
 ### Changed
+- **An empty board welcomes you.** A space with no cards shows its name,
+  "Where to first?" and *Open a page*, *Search everything* and *All keys*
+  with their keys, straight on the space's colour.
+- **A new app icon** in the new look: two light pages floating over a
+  soft blue-to-violet board, joined by a trail.
 - **The board moves.** Tidy glides cards to their places, new cards grow
   out of the page that opened them (or in place), closed cards shrink
   away, switching spaces cross-fades the tint and slides the board in,
@@ -302,6 +307,8 @@ All notable changes to Trailboard. The format follows
   shrinks it back into its place. It used to be an instant cut.
 
 ### Fixed
+- An empty board no longer offers *Fit everything* at its foot while the
+  palette or the address bar is open.
 - **Every settings section can be lit in the side column.** The last short
   sections (*Performance and network*, *About*) could never scroll up far
   enough to be marked as the one in view, even when clicked. The page now

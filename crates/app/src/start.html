@@ -391,6 +391,21 @@ const ICON = {
 };
 const G = () => S.start.groups;
 
+// Icons from the web (a site's own, an engine's) are asked for only once the
+// page has loaded: Chromium counts the page as loading until every image has
+// come or failed, and a slow site can take most of a minute to say no.
+// They are written with `data-src`; this gives them their `src`.
+let pageLoaded = document.readyState === "complete";
+function webIcons() {
+  if (!pageLoaded) return;
+  for (const img of document.querySelectorAll("img[data-src]")) {
+    img.src = img.dataset.src;
+    img.removeAttribute("data-src");
+  }
+}
+addEventListener("load", () => { pageLoaded = true; webIcons(); });
+new MutationObserver(webIcons).observe(document.documentElement, { childList: true, subtree: true });
+
 // ---- sites --------------------------------------------------------------
 
 // The site an icon is kept under, as the app keys it (`pagezoom::site_of`).
@@ -414,7 +429,7 @@ function mark(url) {
   let origin = "";
   try { origin = new URL(url).origin; } catch {}
   if (!/^https?:/.test(origin)) return `<span class="mark mono" style="${hue(url)}">${esc(letter(url))}</span>`;
-  return `<span class="mark mono web" style="${hue(url)}">${esc(letter(url))}<img src="${esc(origin)}/favicon.ico" data-next="${esc(origin)}/apple-touch-icon.png" alt="" onload="iconLoaded(this)" onerror="iconFailed(this)"></span>`;
+  return `<span class="mark mono web" style="${hue(url)}">${esc(letter(url))}<img data-src="${esc(origin)}/favicon.ico" data-next="${esc(origin)}/apple-touch-icon.png" alt="" onload="iconLoaded(this)" onerror="iconFailed(this)"></span>`;
 }
 // A loaded icon too small to be one (a 1×1 placeholder) counts as missing.
 window.iconLoaded = (img) => { if (img.naturalWidth < 8) iconFailed(img); };
@@ -861,7 +876,7 @@ $("scrim").addEventListener("mousedown", (e) => { if (e.target === $("scrim")) c
 // ---- the search field and engine picker ---------------------------------
 
 function badge(e) {
-  return `<span class="badge" style="--c:${e.colour}">${e.mark}<img src="${e.icon}" alt="" onload="this.parentNode.classList.add('img')" onerror="this.remove()"></span>`;
+  return `<span class="badge" style="--c:${e.colour}">${e.mark}<img data-src="${e.icon}" alt="" onload="this.parentNode.classList.add('img')" onerror="this.remove()"></span>`;
 }
 window.tbEngine = function (id) {
   D.current = id;

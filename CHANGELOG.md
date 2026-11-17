@@ -257,6 +257,12 @@ All notable changes to Trailboard. The format follows
   shrinks it back into its place. It used to be an instant cut.
 
 ### Fixed
+- **The start page is ready at once.** It used to stay "loading" until
+  every site's icon had arrived, and a site that is slow to answer kept it
+  loading for up to about 45 seconds. Until then it was drawn zoomed in and
+  too short, so *Jump back in* and the pinned groups were hidden. Site and
+  search engine icons now load after the page, and the page gets its size
+  as soon as it starts showing.
 - Enter on an empty list item in a note now ends the list on that line.
   It used to leave the bullet selected, so the next text joined the line
   above.

@@ -1098,6 +1098,13 @@ wrap_load_handler! {
             if frame.is_main() != 0 {
                 self.shared.committed.set(true);
                 self.shared.banner_rejected.set(false);
+                // Chromium drops a zoom set before the page commits. Web pages
+                // get it again when their address changes; app pages (the
+                // start page) would otherwise wait until they finish loading,
+                // laid out at the wrong size until then.
+                if let Some(h) = browser.as_ref().and_then(|b| b.host()) {
+                    self.shared.apply_zoom(&h);
+                }
             }
             if self.shared.kind == PageKind::Web
                 && let Some(browser) = browser

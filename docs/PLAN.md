@@ -726,6 +726,13 @@ Rendering model (CEF off-screen rendering + `compositor`)
     service, so no third party learns the pins); only then the site's
     letter in a hue from its host (OKLCH, low chroma). The box stays empty
     while an icon loads, so no letter flashes first.
+  - Fixed 2026-11-17: web icons (sites' and engines') are written as
+    `data-src` and only get their `src` after the page's `load` event, so a
+    slow site can't keep the page loading (one recent site took 33–44 s to
+    fail its touch icon). App pages also get their zoom (the raster scale)
+    in `on_load_start`: Chromium drops a zoom set before commit, so the
+    start page was laid out at scale × its size (too short, so *Jump back
+    in* was hidden) until it finished loading.
   - No wallpapers, quotes, weather or to-dos (quiet chrome; the board
     already has notes).
 - ✅ Settings panel (Ctrl+,; `scene::settings`, `storage::settings`,

@@ -85,7 +85,7 @@ pub struct Text {
     pub bold: bool,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Layer {
     pub quads: Vec<Quad>,
     pub texts: Vec<Text>,

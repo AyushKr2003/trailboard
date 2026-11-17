@@ -52,6 +52,12 @@ All notable changes to Trailboard. The format follows
     pages update at once.
 
 ### Changed
+- **The board moves.** Tidy glides cards to their places, new cards grow
+  out of the page that opened them (or in place), closed cards shrink
+  away, switching spaces cross-fades the tint and slides the board in,
+  and the sidebar slides out as it came. All of it is off when your
+  desktop turns animations off (Hyprland's `animations:enabled`, GNOME's
+  *Animations*), or with `TRAILBOARD_REDUCED_MOTION=1`.
 - **The palette in sections.** Results sit under small labels (Recent,
   Spaces, Actions; Go to, History, Web while typing), with the best match
   still first; the label stays in view while scrolling. The text you type

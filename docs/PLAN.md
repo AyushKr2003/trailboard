@@ -1562,19 +1562,43 @@ and light):**
     full-window page with no bar and no inset, as principle 1 says; Tab or
     Esc goes back. The bar's controls are in the sidebar's head and the
     page's right-click menu.
-- 🟡 6. Motion pass. Done (2026-11-15): Read Mode in and out
-  (`scene::read::morph`, 200 ms ease-out): the card's header and content
+- ✅ 6. Motion pass. Read Mode in and out (2026-11-15,
+  `scene::read::morph`, 200 ms ease-out): the card's header and content
   move to the read bar and window, screen px per CSS px moving evenly, the
   board dims behind (0.75 of its colour at full), corners square off, the
   title fades in over the second half. Only from a card on screen; a
   switch between read cards stays a cut. Pages are drawn at the CSS size
   their frame was painted at (`web::PaintFrame::css`, `Shape::Page`'s
   extent): cropped when the frame is bigger, the row's left-edge colour
-  past it when smaller, never stretched. Left: space switch (cross-fade of the tint and a short slide),
-  sidebar peek, card open beside its source (grow from the link's side),
-  close (shrink and fade), Tidy (cards glide to their places, already a
-  follow-up), all ≈150–250 ms, eased, and off with the system's reduced
-  motion setting if one can be read.
+  past it when smaller, never stretched.
+  The rest (2026-11-17), in `scene::motion` (pure, tested) and drawn only:
+  the model is at its end at once, so hit tests, saving and undo never see
+  a card halfway.
+  - `Glides`: a card's drawn rect eases (cubic out, 220 ms) from where it
+    was. Tidy starts one per moved card (solid); `App::open_card` starts
+    one per new card, fading in: beside a source from `open_from` (85%,
+    pinned on the side facing the source, pulled up to 48 units toward
+    it), else from `grow_from` (92% about its middle). Edges follow the
+    drawn rects. Undo/redo of moves and arranging stay cuts.
+  - Closing: a card on screen leaves a ghost (the node, its page texture,
+    start) that shrinks to 92% and fades in 160 ms; `drop_page` keeps the
+    texture until the ghost is gone, and frees it then unless undo
+    brought the card back. Ghosts are dropped on a space switch.
+  - Space switch (`switch_space` only, not a new space): the backdrop's two
+    colours cross-fade from the old space's and the board (edges, cards,
+    ghosts) slides 32 px in from the side the space sits on in the list
+    (right for later, left for earlier) and fades in, 240 ms. A photo
+    backdrop doesn't cross-fade.
+  - Sidebar: the last drawn sheet is kept and slides out as it came in
+    (150 ms, fading); not when Read Mode takes over the window.
+  - Reduced motion: `desktop::reduced_motion` at start:
+    `TRAILBOARD_REDUCED_MOTION`, else Hyprland's `animations:enabled`
+    (answered as `bool` on 0.5x, `int` before), else GNOME's
+    `enable-animations`. Off: no glides, ghosts, space slide, sidebar slide
+    out or Read Mode morph. Overlays' 160 ms appear stays (it isn't
+    movement across the screen). Read once; not followed live.
+  - `TRAILBOARD_SLOW_MOTION=k` slows every board motion k times, for
+    screenshots of one halfway.
 - ⬜ 7. Empty board and first start: a calm welcome with a large display
   line and a few keycaps on the space's tint; the app icon redrawn to match.
 - ⬜ 8. Review pass: every overlay and state in dark and light, at small
@@ -1616,37 +1640,38 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-17 (sixteenth). Owner asked: do the next M11
-(premium look) step: step 5, the command bar and overlays finish.
-**Repo state:** on `master`, uncommitted (palette, menus, icons, toasts,
-docs).
+**Last session:** 2026-11-17 (seventeenth). Owner asked: commit step 5
+(`25c8a91`) and do the next step: M11 step 6, the rest of the motion pass.
+**Repo state:** on `master`, step 6 uncommitted.
 **Done this session:**
-- Palette sections with spaced capital labels, a mixed-height
-  `palette::Panel`, 56 px field with 18 px input; menus with an icon column
-  and page keys; six new icons; toasts and questions on the palette's
-  sheet. Decisions in M11 step 5; rules in `docs/DESIGN.md` (Type, Lists
-  and menus).
-- Owner dropped the Read Mode page bar (Read Mode stays a bare page).
-- Verified e2e in `~/.cache/trailboard-e2e-premium` (`script8`–`script10`;
-  `DELAY=0.4 ./run.sh N shots…`, the delay must be shorter than the
-  script's wait after `log shot`, or the shot misses what Esc closed):
-  palette empty (`p1`: RECENT…), scrolled (`p2`: SPACES / ACTIONS, the
-  first row's label repeated), typed "rust" (`p3`: GO TO / WEB); board menu
-  (`m1_dark`) and page menu (`m2_light`) with icons and keys; the cookie
-  question on the new sheet (`t2_light`).
-- Not checked: a plain toast on screen (same code as the question, without
-  the red edge), HiDPI, the palette in a very short window, the stack
-  outline and spaces menus (tick in the icon column), a real wheel over
-  the sectioned list (`scroll_by` is unit-tested).
+- `scene::motion` (glides, open/grow/close shapes, a slow-motion knob)
+  and its use: Tidy glide, cards growing in beside their source or in
+  place, closed cards shrinking away, the space switch's tint cross-fade
+  and slide, the sidebar sliding out; all off with the desktop's reduced
+  motion. Decisions in M11 step 6; the timings table in `docs/DESIGN.md`
+  (Motion); env vars in `docs/GUIDE.md`.
+- Verified e2e in `~/.cache/trailboard-e2e-premium` with frame bursts:
+  `burst12.sh N shots…` (6 grim frames per shot, `TRAILBOARD_SLOW_MOTION=8`)
+  into `b12/` (`*_sheet.jpg` contact sheets): Tidy (`script12`, cards
+  glide while the camera follows), space switch (grey → green tint),
+  sidebar sliding out, a closed card fading, and a card opened beside
+  Hacker News growing out of its right side (`script13`). At normal speed
+  (`b11/`) the sidebar slide-out shows; the shorter ones end before grim's
+  first frame.
+- Not checked: reduced motion with Hyprland's animations really off (the
+  parser is unit-tested with the real `bool` answer), GNOME, the light
+  theme, HiDPI, closing several selected cards at once, undo within a
+  close's 160 ms, a photo backdrop during a space switch.
 **Owner decisions (2026-11-15):** no AppImage, Flatpak or AUR work (the owner
 publishes later, on their own); no UI translations; licence is Apache-2.0
 only (`LICENSE-APACHE`); all AI features (semantic search, Explain, any
 other AI/ML), imports from other browsers, and password managers and
 passkeys are all on hold until the owner says otherwise (see M10).
-**Next up:** the rest of M11 step 6 (motion: space switch, sidebar slide
-out, card open beside / close, Tidy glide), then 7 (empty board and first
-start) and 8 (review pass); retake the README's screenshots
-(`docs/images/`) now that step 5 has landed.
+**Next up:** M11 step 7 (empty board and first start: a calm welcome with
+a large display line and a few keycaps on the space's tint; the app icon
+redrawn to match), then 8 (review pass); retake the README's screenshots
+(`docs/images/`) now that steps 5 and 6 have landed. Follow-ups from 6:
+glide on undo/redo of moves; follow the desktop's animation switch live.
 No M10 work: its items are on hold or wait for the owner.
 
 After that, the other small follow-ups below. Sandbox follow-ups: verify the setuid path on a kernel without unprivileged user namespaces (needs `kernel.unprivileged_userns_clone=0` or linux-hardened, and the package installed). Consent follow-ups: more platforms as real sites show them (TCF
@@ -1672,7 +1697,7 @@ sites without an icon; the name label for a stack could list its size; a zoom
 badge on a zoomed card's title bar; Ctrl+scroll inside a page to zoom it;
 keyboard selection of
 several cards; link hints inside iframes; xdg-desktop-portal file chooser for
-Save as Markdown; animate cards to their Tidy places; a sticky note's
+Save as Markdown; a sticky note's
 strip is hard to hit when zoomed far out; open `crash.log` from the crash
 toast or a palette command.
 **Notes for the next session:**

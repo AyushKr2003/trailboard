@@ -156,6 +156,30 @@ fn hyprland_socket() -> Option<PathBuf> {
     Some(PathBuf::from(runtime).join("hypr").join(sig).join(".socket2.sock"))
 }
 
+/// The desktop asks for less motion: `TRAILBOARD_REDUCED_MOTION=1`, else
+/// Hyprland with `animations:enabled` off, else GNOME's (and most GTK
+/// desktops') `enable-animations` off. Asked once at start.
+pub fn reduced_motion() -> bool {
+    if let Some(v) = std::env::var_os("TRAILBOARD_REDUCED_MOTION") {
+        return v != "0";
+    }
+    if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() {
+        let out = Command::new("hyprctl").args(["-j", "getoption", "animations:enabled"]).output();
+        if let Some(out) = out.ok().filter(|o| o.status.success()) {
+            return parse_animations(&String::from_utf8_lossy(&out.stdout)) == Some(false);
+        }
+    }
+    let out = Command::new("gsettings").args(["get", "org.gnome.desktop.interface", "enable-animations"]).output();
+    out.is_ok_and(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "false")
+}
+
+/// `hyprctl -j getoption animations:enabled`'s answer: on or off.
+fn parse_animations(json: &str) -> Option<bool> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    // Hyprland 0.5x answers with "bool"; older ones with "int".
+    v.get("bool").and_then(serde_json::Value::as_bool).or_else(|| v.get("int").and_then(serde_json::Value::as_i64).map(|i| i != 0))
+}
+
 /// Asks `hyprctl` for the rounding; `None` if it fails or says nothing usable.
 fn ask_rounding(hyprctl: &Path) -> Option<f32> {
     let out = Command::new(hyprctl).args(["-j", "getoption", "decoration:rounding"]).output().ok()?;
@@ -263,6 +287,15 @@ fn follow_hyprland(tx: Sender<Event>, hyprctl: &Path, socket: &Path) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn hyprland_animations_switch() {
+        assert_eq!(super::parse_animations(r#"{"option": "animations:enabled", "int": 0, "set": true}"#), Some(false));
+        assert_eq!(super::parse_animations(r#"{"option": "animations:enabled", "int": 1, "set": false}"#), Some(true));
+        assert_eq!(super::parse_animations(r#"{"option": "animations:enabled", "bool": false, "set": true }"#), Some(false));
+        assert_eq!(super::parse_animations(r#"{"option": "animations:enabled", "bool": true, "set": true }"#), Some(true));
+        assert_eq!(super::parse_animations("no"), None);
+    }
+
     use super::*;
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;

@@ -12,6 +12,7 @@ pub mod icon;
 pub mod history;
 pub mod liveness;
 pub mod mark;
+pub mod motion;
 pub mod nav;
 pub mod note;
 pub mod pagezoom;

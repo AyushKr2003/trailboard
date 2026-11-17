@@ -97,7 +97,7 @@ use scene::hint;
 use scene::nav::{self, Dir};
 use scene::pagezoom::{self, SiteZooms};
 use scene::settings::{self as prefs, Settings};
-use scene::{liveness, placement, read, selection, tidy, Camera, Change, Edge, History, Node, NodeId, Rect, Scene, Selection, TrailStep, Vec2};
+use scene::{liveness, motion, placement, read, selection, tidy, Camera, Change, Edge, History, Node, NodeId, Rect, Scene, Selection, TrailStep, Vec2};
 use storage::spaces::{self, SpaceId, SpaceIndex};
 use web::{MouseButton as WebButton, Page, SpawnBeside, WebEvent};
 use winit::application::ApplicationHandler;
@@ -474,6 +474,21 @@ pub struct App {
     /// The button of the guidance line drawn last frame (an empty board, a
     /// view with no card in it), and what it runs.
     nudge: Option<(Rect, Command)>,
+    /// The desktop asks for less motion (`desktop::reduced_motion`): cards,
+    /// spaces, Read Mode and the sidebar change without animating.
+    still: bool,
+    /// Cards gliding to new places or growing in (`scene::motion`).
+    glides: motion::Glides,
+    /// Closed cards shrinking away: the card as it was, its page's texture
+    /// (removed once it is gone), and since when.
+    ghosts: Vec<(Node, u64, Instant)>,
+    /// A space switch under way: since when, the side the board slides in
+    /// from (±1), and the backdrop colours of the space it left.
+    space_in: Option<(Instant, f32, [f32; 4], [f32; 4])>,
+    /// The sidebar as last drawn and its right edge, to slide it out once
+    /// it is hidden; and since when it has been sliding.
+    sidebar_last: Option<(Layer, f32)>,
+    sidebar_out: Option<Instant>,
     /// A download waiting for the user to say where it goes (`Target::SaveAs`).
     save_as: Option<SaveAs>,
     /// Sites asking for a permission, waiting for Enter (allow) or Esc; the
@@ -704,6 +719,17 @@ impl App {
             bars: Vec::new(),
             bar_buttons: Vec::new(),
             nudge: None,
+            still: {
+                if let Some(k) = std::env::var("TRAILBOARD_SLOW_MOTION").ok().and_then(|v| v.parse::<f32>().ok()) {
+                    motion::set_slow(k);
+                }
+                crate::desktop::reduced_motion()
+            },
+            glides: motion::Glides::default(),
+            ghosts: Vec::new(),
+            space_in: None,
+            sidebar_last: None,
+            sidebar_out: None,
             save_as: None,
             asks: Vec::new(),
         };
@@ -886,7 +912,9 @@ impl App {
     fn unload_space(&mut self) {
         self.finish_arrange(true);
         self.save();
-        let keys: Vec<u64> = self.scene.all_nodes().map(|n| self.page_key(n.id)).collect();
+        let mut keys: Vec<u64> = self.scene.all_nodes().map(|n| self.page_key(n.id)).collect();
+        keys.extend(self.ghosts.drain(..).map(|g| g.1));
+        self.glides.clear();
         if let Some(r) = self.renderer.as_mut() {
             for k in keys {
                 r.remove_page(k);
@@ -950,10 +978,30 @@ impl App {
             self.toast(format!("{} is the only space · Ctrl+Shift+N makes another", self.spaces.active_entry().name));
             return;
         }
+        // The new board slides in from the side the space is on, while the
+        // tint cross-fades from the old one.
+        let dir = match (self.spaces.position(self.spaces.active), self.spaces.position(to)) {
+            (Some(a), Some(b)) if b < a => -1.0,
+            _ => 1.0,
+        };
+        let (near, far) = self.backdrop_colours();
         self.unload_space();
         self.spaces.active = to;
         self.save_index();
         self.load_space();
+        if !self.still {
+            self.space_in = Some((Instant::now(), dir, rgb(near, 1.0), rgb(far, 1.0)));
+        }
+    }
+
+    /// The board's two colours behind the cards: the space's mood, or its
+    /// flat colour twice for *Plain*.
+    fn backdrop_colours(&self) -> (crate::theme::Rgb, crate::theme::Rgb) {
+        let tint = self.spaces.active_entry().tint.clone();
+        match self.settings.backdrop {
+            prefs::Backdrop::Plain => (self.theme.board(tint.as_deref()), self.theme.board(tint.as_deref())),
+            _ => self.theme.mood(tint.as_deref()),
+        }
     }
 
     fn new_space(&mut self, private: bool) {
@@ -1193,6 +1241,16 @@ impl App {
         self.create_page(id);
         self.history.opened(id);
         self.dirty = true;
+        // It grows in: out of the card that opened it, else in its own place.
+        if !self.still
+            && let Some(to) = self.scene.node(id).map(|n| n.rect)
+        {
+            let start = match from.and_then(|s| self.scene.node(s)) {
+                Some(src) => motion::open_from(src.rect, to),
+                None => motion::grow_from(to),
+            };
+            self.glides.start(id, start, true, Instant::now());
+        }
         Some(id)
     }
 
@@ -1648,6 +1706,15 @@ impl App {
     fn close_cards(&mut self, ids: &[NodeId]) {
         let mut gone = Vec::new();
         for &id in ids {
+            // A card on screen shrinks away; its page's picture stays until then.
+            if !self.still
+                && self.card_on_screen(id)
+                && let Some(n) = self.scene.node(id)
+            {
+                let ghost = (n.clone(), self.page_key(id), Instant::now());
+                self.ghosts.retain(|g| g.0.id != id);
+                self.ghosts.push(ghost);
+            }
             if let Some(removed) = self.scene.remove(id) {
                 self.closed.push(removed.clone());
                 gone.push(removed);
@@ -1675,7 +1742,9 @@ impl App {
         self.selection.remove(id);
         let key = self.page_key(id);
         self.thumb_tried.remove(&key);
-        if let Some(r) = self.renderer.as_mut() {
+        // A card shrinking away keeps its picture until it is gone (`draw`).
+        let ghost = self.ghosts.iter().any(|g| g.1 == key);
+        if let Some(r) = self.renderer.as_mut().filter(|_| !ghost) {
             r.remove_page(key);
         }
         if self.focused == Some(id) {
@@ -3645,6 +3714,13 @@ impl App {
         }
         self.history.moved_many(&self.scene, &before);
         self.dirty = true;
+        if !self.still {
+            // Cards glide to their places rather than jumping.
+            let now = Instant::now();
+            for &(id, old) in &before {
+                self.glides.start(id, old, false, now);
+            }
+        }
         if let Some((id, old)) = anchor
             && let Some(new) = self.scene.node(id).map(|n| n.rect)
         {
@@ -3812,7 +3888,7 @@ impl App {
         }
         // From the board, the card grows out of its place (if it is on screen).
         if self.read.is_none() {
-            self.read_morph = self.card_on_screen(id).then(|| ReadMorph { id, entering: true, start: Instant::now() });
+            self.read_morph = (self.card_on_screen(id) && !self.still).then(|| ReadMorph { id, entering: true, start: Instant::now() });
         }
         self.read = Some(id);
         self.selection.clear();
@@ -3846,7 +3922,7 @@ impl App {
         let zoom = self.camera_goal.map_or(self.camera.zoom, |g| g.zoom);
         self.page_scale = self.board_page_scale(zoom);
         // It shrinks back into its place (following the camera if that glides).
-        self.read_morph = Some(ReadMorph { id, entering: false, start: Instant::now() });
+        self.read_morph = (!self.still).then(|| ReadMorph { id, entering: false, start: Instant::now() });
     }
 
     /// Whether any of card `id` is in the window.
@@ -5557,16 +5633,28 @@ impl App {
             self.toast(format!("Can't show {name} as the background: {e}"));
         }
         let photo_on = photo.as_deref().is_some_and(|p| self.photo.ready(p)) && !board_hidden;
-        let (near, far, grain, dots) = match self.settings.backdrop {
-            prefs::Backdrop::Plain => (th.board(tint.as_deref()), th.board(tint.as_deref()), 0.0, 1.0),
+        let (near, far) = self.backdrop_colours();
+        let (grain, dots) = match self.settings.backdrop {
+            prefs::Backdrop::Plain => (0.0, 1.0),
+            _ => (1.5, if photo_on { 0.0 } else { 0.7 }),
+        };
+        // Just switched space: the colours cross-fade from the old space's.
+        let now = Instant::now();
+        let space_t = match self.space_in {
+            Some((at, ..)) if motion::progress(at, motion::SPACE, now) < 1.0 => Some(motion::ease_out(motion::progress(at, motion::SPACE, now))),
             _ => {
-                let (a, b) = th.mood(tint.as_deref());
-                (a, b, 1.5, if photo_on { 0.0 } else { 0.7 })
+                self.space_in = None;
+                None
             }
         };
+        let mix = |old: [f32; 4], new: [f32; 4]| match space_t {
+            Some(t) => std::array::from_fn(|i| old[i] + (new[i] - old[i]) * t),
+            None => new,
+        };
+        let (old_near, old_far) = self.space_in.map_or((rgb(near, 1.0), rgb(far, 1.0)), |s| (s.2, s.3));
         let bg = Background {
-            color: rgb(near, 1.0),
-            color2: rgb(far, 1.0),
+            color: mix(old_near, rgb(near, 1.0)),
+            color2: mix(old_far, rgb(far, 1.0)),
             grain,
             dot: rgb(th.dots(), dots),
             grid_origin: [origin.x, origin.y],
@@ -5600,6 +5688,15 @@ impl App {
         // title bar to the target's. A trail is drawn in its own colour, or a
         // quiet neutral if it has none; the current card's trail is brought
         // out, so its path can be followed through a busy board.
+        // Everything from here to the cards' last layer is the board, which
+        // slides in on a space switch.
+        let board_from = layers.len();
+        // A card on its way somewhere is drawn where it is now (`glides`).
+        let glides = &self.glides;
+        let shown_frame = |n: &Node| match glides.at(n.id, n.rect, now) {
+            Some((r, _)) => Rect::new(r.x, r.y - n.header_h(), r.w, r.h + n.header_h()),
+            None => n.frame(),
+        };
         let mut edges = Layer::default();
         let labels: HashMap<NodeId, scene::TrailMark> =
             if board_hidden { HashMap::new() } else { self.scene.trail_labels().into_iter().collect() };
@@ -5614,8 +5711,8 @@ impl App {
         let board_edges: Vec<Edge> = if board_hidden { Vec::new() } else { self.scene.visible_edges().copied().collect() };
         for e in &board_edges {
             let (Some(a), Some(b)) = (self.scene.node(e.from), self.scene.node(e.to)) else { continue };
-            let fa = self.to_screen_rect(a.frame());
-            let fb = self.to_screen_rect(b.frame());
+            let fa = self.to_screen_rect(shown_frame(a));
+            let fb = self.to_screen_rect(shown_frame(b));
             // Near the top of each card, where its name is.
             let (ya, yb) = (fa.y + (28.0 * k).min(fa.h / 2.0), fb.y + (28.0 * k).min(fb.h / 2.0));
             let (p0, p3) = if fb.x >= fa.right() { ([fa.right(), ya], [fb.x, yb]) } else { ([fa.x, ya], [fb.right(), yb]) };
@@ -5666,6 +5763,16 @@ impl App {
                 in_view = true;
                 continue;
             }
+            // Gliding or growing in: drawn where it is on the way, fading in if new.
+            let glide = self.glides.at(n.id, n.rect, now);
+            let moved;
+            let n = match glide {
+                Some((r, _)) => {
+                    moved = Node { rect: r, ..n.clone() };
+                    &moved
+                }
+                None => n,
+            };
             let frame = self.to_screen_rect(n.frame());
             in_view |= frame.intersects(&screen);
             if !frame.inflate(64.0 * scale).intersects(&screen) {
@@ -5984,10 +6091,54 @@ impl App {
                 l.quads[label_from.0..].iter_mut().for_each(|q| q.color[3] *= ease);
                 l.texts[label_from.1..].iter_mut().for_each(|t| t.color[3] *= ease);
             }
+            if let Some((_, a)) = glide.filter(|g| g.1 < 1.0) {
+                crate::chrome::fade(&mut l, a, Vec2::new(0.0, 0.0));
+            }
             layers.push(l);
         }
         let scene = &self.scene;
         self.label_fades.retain(|id| scene.node(NodeId(id)).is_some());
+        self.glides.settle(now);
+
+        // Closed cards shrink away, then their pictures go.
+        let mut done = Vec::new();
+        for (n, key, at) in &self.ghosts {
+            let t = motion::progress(*at, motion::CLOSE, now);
+            if t >= 1.0 || board_hidden {
+                done.push(*key);
+                continue;
+            }
+            if self.scene.node(n.id).is_some() {
+                continue; // back already (undo)
+            }
+            let (r, a) = motion::closing(self.to_screen_rect(n.rect), t);
+            let radius = th.card_corner(k, scale, r.w, r.h);
+            let has_tex = self.renderer.as_ref().is_some_and(|rd| rd.has_page(*key));
+            let mut l = Layer::default();
+            l.quads.push(Quad { shape: Shape::Shadow { rect: r.translate(Vec2::new(0.0, 6.0 * k)), radius, blur: (26.0 * k).max(2.0) }, color: th.shadow(0.26 * a), texture: None });
+            l.quads.push(Quad {
+                shape: Shape::Rect { rect: r, radius },
+                color: if has_tex { [1.0, 1.0, 1.0, a] } else { rgb(th.card(false), a) },
+                texture: has_tex.then_some(*key),
+            });
+            layers.push(l);
+        }
+        if !done.is_empty() {
+            let gone: Vec<u64> = self.ghosts.iter().filter(|g| done.contains(&g.1) && self.scene.node(g.0.id).is_none()).map(|g| g.1).collect();
+            self.ghosts.retain(|g| !done.contains(&g.1));
+            if let Some(rd) = self.renderer.as_mut() {
+                for key in gone {
+                    rd.remove_page(key);
+                }
+            }
+        }
+        // A new space's board slides in from its side as the tint changes.
+        if let (Some(t), Some((_, dir, ..))) = (space_t, self.space_in) {
+            let shift = Vec2::new(dir * motion::SPACE_SLIDE * ui * (1.0 - t), 0.0);
+            for l in &mut layers[board_from..] {
+                crate::chrome::fade(l, t, shift);
+            }
+        }
 
         if let Some(m) = self.read_morph {
             if let Some(l) = self.read_morph_layer(m) {
@@ -6067,13 +6218,34 @@ impl App {
             let came = self.anim.sidebar.update(Some(0), Instant::now());
             if let Some(r) = self.renderer.as_mut() {
                 let mut l = crate::sidebar::layer(r, &panel, &rows, &marks, &self.scene, &th, ui);
+                if !self.still {
+                    self.sidebar_last = Some((l.clone(), panel.rect.right()));
+                }
                 // Slides in from past the window's left edge, settling quickly.
                 crate::chrome::fade(&mut l, 0.5 + 0.5 * came, Vec2::new(-panel.rect.right() * 0.6 * (1.0 - came), 0.0));
                 layers.push(l);
             }
+            self.sidebar_out = None;
             panel.rect.right()
         } else {
             self.anim.sidebar.update(None, Instant::now());
+            // Hidden: it slides back out past the edge as it came (not into Read Mode).
+            if self.read.is_some() {
+                self.sidebar_last = None;
+            }
+            if let Some((l, right)) = &self.sidebar_last {
+                let at = *self.sidebar_out.get_or_insert(now);
+                let t = motion::progress(at, motion::SIDEBAR_OUT, now);
+                if t < 1.0 {
+                    let e = motion::ease_out(t);
+                    let mut l = l.clone();
+                    crate::chrome::fade(&mut l, 1.0 - e, Vec2::new(-right * 0.6 * e, 0.0));
+                    layers.push(l);
+                } else {
+                    self.sidebar_last = None;
+                    self.sidebar_out = None;
+                }
+            }
             0.0
         };
 

@@ -209,6 +209,12 @@ then most recently used). The rest sleep and show their last frame, dimmed, unti
 you click them or bring them into view. Change the cap with *Pages kept awake*
 in the settings (Ctrl+,), or for one run with `TRAILBOARD_MAX_LIVE=N`.
 
+Cards glide when Tidy moves them, grow in when they open and shrink away
+when they close; a space switch slides its board in. These follow your
+desktop: with Hyprland's `animations:enabled` off (or GNOME's
+*Animations* off) everything changes at once. `TRAILBOARD_REDUCED_MOTION=1`
+turns motion off for one run (`=0` turns it on whatever the desktop says).
+
 ## Tests
 
 ```sh
@@ -219,4 +225,6 @@ TRAILBOARD_SCRIPT=path cargo run -p trailboard -- URL   # scripted end-to-end ru
 `TRAILBOARD_SCRIPT` drives the real input handlers (`click x y`, `pclick card x y`,
 `key ctrl+c`, `type text`, `ime-commit text`, `menuclick label`, `badgeclick id`, `wheel`, `fit`,
 `open URL`, `wait ms`, `log`, `quit`); see `crates/app/src/script.rs`.
+`TRAILBOARD_SLOW_MOTION=8` makes every board motion 8 times slower, to
+screenshot one halfway.
 

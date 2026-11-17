@@ -96,6 +96,24 @@ tests check it stays inside its box at every size.
 Overlays ease out into place in 160 ms and leave at once. Loading is a line
 gliding along a card's top edge. Nothing bounces or loops for decoration.
 
+The board moves with cubic ease-out (`scene::motion`), and only in what is
+drawn: the model is already at its end, so clicks, saving and undo never
+see a card halfway.
+
+| What | How | Time |
+|---|---|---|
+| Read Mode in and out | the card grows to the window, board dims | 200 ms |
+| Tidy | cards glide from their old places | 220 ms |
+| A card opens beside another | grows out of the source's side, 85% → 100%, fading in | 220 ms |
+| A card opens elsewhere | grows from 92% in its own middle, fading in | 220 ms |
+| A card closes | shrinks to 92% and fades | 160 ms |
+| Space switch | the tint cross-fades; the board slides 32 px in from the side the space is on and fades in | 240 ms |
+| Sidebar | slides in 150 ms; slides out the same way | 150 ms |
+
+All of it is off when the desktop asks for less motion
+(`desktop::reduced_motion`: Hyprland's `animations:enabled`, else GNOME's
+`enable-animations`).
+
 ## App pages
 
 The welcome, settings, start and note pages are HTML in `data:` URLs

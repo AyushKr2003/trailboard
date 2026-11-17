@@ -474,8 +474,6 @@ pub struct App {
     /// The button of the guidance line drawn last frame (an empty board, a
     /// view with no card in it), and what it runs.
     nudge: Option<(Rect, Command)>,
-    /// Read Mode's "back to the board" button, while it shows.
-    read_exit: Option<Rect>,
     /// A download waiting for the user to say where it goes (`Target::SaveAs`).
     save_as: Option<SaveAs>,
     /// Sites asking for a permission, waiting for Enter (allow) or Esc; the
@@ -706,7 +704,6 @@ impl App {
             bars: Vec::new(),
             bar_buttons: Vec::new(),
             nudge: None,
-            read_exit: None,
             save_as: None,
             asks: Vec::new(),
         };
@@ -4484,12 +4481,6 @@ impl App {
             }
             self.sidebar_keys = false;
         }
-        // Read Mode's way back, while it shows.
-        if state == ElementState::Pressed && button == MouseButton::Left && self.read_exit.is_some_and(|r| r.contains(p)) {
-            self.leave_read();
-            self.menu_pressed = true; // swallow the release
-            return;
-        }
         // The board's own controls take clicks before the board does: a
         // press runs one; a press between them does nothing.
         if self.read.is_none() && button == MouseButton::Left {
@@ -4697,8 +4688,7 @@ impl App {
             None
         };
         let on_chrome = over.is_some()
-            || (matches!(self.drag, Drag::None) && self.read.is_none() && (self.hud.covers(p) || self.nudge.is_some_and(|(r, _)| r.contains(p))))
-            || self.read_exit.is_some_and(|r| r.contains(p));
+            || (matches!(self.drag, Drag::None) && self.read.is_none() && (self.hud.covers(p) || self.nudge.is_some_and(|(r, _)| r.contains(p))));
         match (over, self.hud_hover) {
             (Some(c), Some((old, _))) if c == old => {}
             (Some(c), _) => self.hud_hover = Some((c, Instant::now())),
@@ -4707,7 +4697,7 @@ impl App {
         if on_chrome {
             self.hover = Hit::Board;
             self.cursor = p;
-            let button = over.is_some() || self.nudge.is_some_and(|(r, _)| r.contains(p)) || self.read_exit.is_some_and(|r| r.contains(p));
+            let button = over.is_some() || self.nudge.is_some_and(|(r, _)| r.contains(p));
             self.set_cursor(if button { web::Cursor::Pointer } else { web::Cursor::Default });
             return;
         }
@@ -6094,7 +6084,6 @@ impl App {
         // nears the top of the window.
         let chrome_shown = self.read.is_none() && self.read_morph.is_none();
         self.nudge = None;
-        self.read_exit = None;
         let mut tip_shown = None;
         if chrome_shown {
             let entry = self.spaces.active_entry();
@@ -6135,14 +6124,6 @@ impl App {
                 }
             }
             tip_shown = hud_hover.filter(|(_, since)| !self.hud_down && since.elapsed() >= crate::hud::TIP_DWELL).map(|(c, _)| c);
-        } else if self.read.is_some() && self.pointer_in && self.cursor.y < 72.0 * ui && self.omnibox.is_none() && self.menu.is_none() {
-            let mid_x = vp.x / 2.0;
-            if let Some(r) = self.renderer.as_mut() {
-                let probe = crate::hud::nudge(r, "Read Mode", "Back to the board", "Esc", mid_x, 56.0 * ui, false, &th, ui).1;
-                let (l, button) = crate::hud::nudge(r, "Read Mode", "Back to the board", "Esc", mid_x, 56.0 * ui, probe.contains(self.cursor), &th, ui);
-                layers.push(l);
-                self.read_exit = Some(button);
-            }
         }
 
         let shown = self.omnibox.as_ref().map(|ob| anim_key(std::mem::discriminant(&ob.target)));

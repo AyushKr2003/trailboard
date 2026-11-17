@@ -116,8 +116,7 @@ All notable changes to Trailboard. The format follows
     at the top left, beside a button for the sidebar. Controls say their
     name and key when the pointer rests on them.
   - **Finding your way**: a view with no card in it offers *Fit everything*;
-    an empty board offers *Open a page*; Read Mode shows *Back to the board*
-    when the pointer nears the top.
+    an empty board offers *Open a page*.
   - **Palette, history, downloads**: a sheet a seventh of the way down the
     window; each row starts with its site's icon or an icon for its kind;
     a foot lists the keys (Open, Open beside, Forget…) instead of a

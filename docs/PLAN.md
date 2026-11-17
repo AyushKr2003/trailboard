@@ -1535,12 +1535,33 @@ and light):**
     space's name and its own hide button. Hit testing is pure
     (`Panel::spot_at`, `sidebar::Spot`) with unit tests. No B keycap in
     the head any more (the tooltip and the guide teach it).
-- ⬜ 5. Command bar and overlays finish: the Ctrl+K palette as the
-  centred hero sheet (larger input text, small spaced section labels
-  "GO TO / RECENT / ACTIONS", site icons on rows, keycaps right-aligned);
-  menus with an icon column and right-aligned keys; a floating page bar
-  (back, forward, reload, address, more) above the page in Read Mode;
-  toasts as the same dark sheet.
+- ✅ 5. Command bar and overlays finish (2026-11-17).
+  - Palette: rows come in sections, each headed by a small spaced
+    capital label (`chrome::spaced`, caption size, 10% tracking, text3):
+    nothing typed: RECENT (cards), CLOSED, SPACES, ACTIONS; typed: GO TO
+    (cards and spaces), CLOSED, HISTORY, WEB (the address or search row),
+    ACTIONS. Sections come in the order of their best row, so the top
+    match stays first and Enter does what it did; rows keep their rank
+    inside a section (`palette::group`, `section`, `sections`). The first
+    row shown always carries its section's label, so a scrolled list
+    still says what it shows. `palette::Panel` now lays out rows and
+    labels of mixed height like the sidebar's (`fits`, `max_scroll`,
+    `keep_visible`, `scroll_by`, `label_rect`); the sheet keeps one
+    height while scrolling (nine rows and two labels at most). History,
+    downloads, allowed sites and photos stay unsectioned (`Panel::plain`).
+    Field 56 px, input text 18 px (`type_::INPUT`). Site icons on rows and
+    right-aligned keycaps were already there.
+  - Menus: a 16 px icon column (`menu::Entry::icon`: a command's palette
+    icon, and one per page action; new icons Copy, Cut, Paste, Link, Redo,
+    Code), the tick moves into that column for rows without an icon
+    (stack members, spaces), rows 32 px. Page items show their keys too
+    (Ctrl+Z/X/C/V/A, Alt+←/→, Ctrl+R).
+  - Toasts and questions: the same sheet as the palette (panel fill,
+    hairline, panel radius, high lift), 40 px, cut with "…" when too long.
+  - **Read Mode page bar: dropped (owner, 2026-11-17).** Read Mode stays a
+    full-window page with no bar and no inset, as principle 1 says; Tab or
+    Esc goes back. The bar's controls are in the sidebar's head and the
+    page's right-click menu.
 - 🟡 6. Motion pass. Done (2026-11-15): Read Mode in and out
   (`scene::read::morph`, 200 ms ease-out): the card's header and content
   move to the read bar and window, screen px per CSS px moving evenly, the
@@ -1595,40 +1616,37 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-17 (fifteenth). Owner asked: study the
-reference browser's site and screenshots and make Trailboard look premium
-and professional, planned in M11 and built step by step.
-**Repo state:** on `master`, committed; working tree clean.
+**Last session:** 2026-11-17 (sixteenth). Owner asked: do the next M11
+(premium look) step: step 5, the command bar and overlays finish.
+**Repo state:** on `master`, uncommitted (palette, menus, icons, toasts,
+docs).
 **Done this session:**
-- M11 re-planned from the owner's answers (rounded corners by default with
-  a setting, quiet labels, a background setting with mood / photo / plain)
-  and steps 1–3 built; decisions under each step in M11, rules in
-  `docs/DESIGN.md` (principles 2 and 5, Shape, The board).
-- Verified e2e in `~/.cache/trailboard-e2e-premium` (`run.sh N shots…`;
-  serve the test site with `python3 -I server.py 8781`, which now draws
-  pages with a header, a colour picture and text; `settingsN.json` is
-  copied in when present; `LIGHT=1` for the light theme): fitted board
-  (all labels), zoomed board (only the hovered label, rounded pages),
-  board menu and settings page (Corners row), sleeping placeholders,
-  the dark neutral and green moods, the light blue mood, Photo with the
-  real desktop wallpaper (labels on sheets), the photo list from the
-  palette, filtering it and choosing a picture (saved in `spaces.json`,
-  setting switched to Photo).
-- Not checked: the *Custom* corner slider by pointer (its message and
-  handler are unit-tested, the page row was seen), Follow Hyprland with a
-  non-zero rounding, HiDPI, a live wallpaper change, a window resize with
-  a photo (the worker cuts again; unit-tested), a huge PNG. A debug build
-  takes ~4 s to read a 2560 px WebP (the mood shows meanwhile); check a
-  release build.
+- Palette sections with spaced capital labels, a mixed-height
+  `palette::Panel`, 56 px field with 18 px input; menus with an icon column
+  and page keys; six new icons; toasts and questions on the palette's
+  sheet. Decisions in M11 step 5; rules in `docs/DESIGN.md` (Type, Lists
+  and menus).
+- Owner dropped the Read Mode page bar (Read Mode stays a bare page).
+- Verified e2e in `~/.cache/trailboard-e2e-premium` (`script8`–`script10`;
+  `DELAY=0.4 ./run.sh N shots…`, the delay must be shorter than the
+  script's wait after `log shot`, or the shot misses what Esc closed):
+  palette empty (`p1`: RECENT…), scrolled (`p2`: SPACES / ACTIONS, the
+  first row's label repeated), typed "rust" (`p3`: GO TO / WEB); board menu
+  (`m1_dark`) and page menu (`m2_light`) with icons and keys; the cookie
+  question on the new sheet (`t2_light`).
+- Not checked: a plain toast on screen (same code as the question, without
+  the red edge), HiDPI, the palette in a very short window, the stack
+  outline and spaces menus (tick in the icon column), a real wheel over
+  the sectioned list (`scroll_by` is unit-tested).
 **Owner decisions (2026-11-15):** no AppImage, Flatpak or AUR work (the owner
 publishes later, on their own); no UI translations; licence is Apache-2.0
 only (`LICENSE-APACHE`); all AI features (semantic search, Explain, any
 other AI/ML), imports from other browsers, and password managers and
 passkeys are all on hold until the owner says otherwise (see M10).
-**Next up:** M11 step 5, the command bar and overlays finish (palette
-section labels, menus with icons, the floating page bar in Read Mode with
-its inset rounded page, toasts), then the rest of step 6 (motion), 7 and
-8; retake the README's screenshots (`docs/images/`) once step 5 lands.
+**Next up:** the rest of M11 step 6 (motion: space switch, sidebar slide
+out, card open beside / close, Tidy glide), then 7 (empty board and first
+start) and 8 (review pass); retake the README's screenshots
+(`docs/images/`) now that step 5 has landed.
 No M10 work: its items are on hold or wait for the owner.
 
 After that, the other small follow-ups below. Sandbox follow-ups: verify the setuid path on a kernel without unprivileged user namespaces (needs `kernel.unprivileged_userns_clone=0` or linux-hardened, and the package installed). Consent follow-ups: more platforms as real sites show them (TCF

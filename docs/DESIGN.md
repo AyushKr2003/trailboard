@@ -66,7 +66,9 @@ wide ambient), offset and blur growing together with the lift (`Lift::Low`,
 
 Inter, bundled (regular and semibold only; semibold is the one emphasis).
 One scale, in logical px × the desktop's text scale: 11 caption (keycaps,
-counts), 12 small (secondary), 13 body (rows, menus), 15 input, 18 title.
+counts), 12 small (secondary), 13 body (rows, menus), 18 input (the
+palette's and address field), 18 title. Section labels in lists are
+caption capitals, semibold, spaced 10% (`chrome::spaced`).
 
 ## Shape and size
 
@@ -140,4 +142,15 @@ and embedding it would put a megabyte in every note), so they ask for
   host, shield count and buttons. Its place is the card's handle whether
   it shows or not.
 - Trails leave and arrive near the top of a card with a dot at each end.
-- Messages (toasts, questions, key guides) sit at the foot of the board.
+- Messages (toasts, questions, key guides) sit at the foot of the board,
+  on the same sheet as the palette (high lift); a question that loses
+  something has a red edge.
+
+## Lists and menus
+
+- The palette groups its rows under small capital labels (Recent, Spaces,
+  Actions; Go to, History, Web when typing). Sections follow their best
+  match, so the first row is always the best one. The first row shown
+  repeats its section's label.
+- Menus have an icon column (16 px icons, the tick of a current row
+  where there is no icon) and keys right-aligned as keycaps.

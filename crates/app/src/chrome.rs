@@ -23,8 +23,8 @@ pub mod type_ {
     pub const SMALL: f32 = 12.0;
     /// Rows, menus, buttons, titles of cards.
     pub const BODY: f32 = 13.0;
-    /// What you type into.
-    pub const INPUT: f32 = 15.0;
+    /// What you type into: the palette's and the address bar's field.
+    pub const INPUT: f32 = 18.0;
     /// A sheet's heading.
     pub const TITLE: f32 = 18.0;
 }
@@ -114,6 +114,24 @@ pub fn scrim(screen: Rect, th: &Theme, strength: f32) -> Layer {
 #[allow(clippy::too_many_arguments)]
 pub fn text(l: &mut Layer, s: impl Into<String>, x: f32, mid_y: f32, size: f32, colour: [f32; 4], clip: Rect, bold: bool) {
     l.texts.push(Text { text: s.into(), pos: [x, text_y(mid_y, size)], size, color: colour, clip, bold });
+}
+
+/// A small label in spaced letters (a section's name in capitals),
+/// starting at `x`, centred on `mid_y`: each letter set apart by a tenth
+/// of the size, as small capitals need to read.
+#[allow(clippy::too_many_arguments)]
+pub fn spaced(l: &mut Layer, r: &mut Renderer, s: &str, x: f32, mid_y: f32, size: f32, colour: [f32; 4], clip: Rect) {
+    let track = size * 0.1;
+    let mut x = x;
+    let mut buf = [0u8; 4];
+    for ch in s.chars() {
+        let c: &str = ch.encode_utf8(&mut buf);
+        let w = if ch.is_whitespace() { size * 0.3 } else { r.measure(c, size, true) };
+        if !ch.is_whitespace() {
+            text(l, c.to_string(), x.round(), mid_y, size, colour, clip, true);
+        }
+        x += w + track;
+    }
 }
 
 /// How a button looks for what the pointer is doing.

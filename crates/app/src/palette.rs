@@ -352,7 +352,51 @@ pub fn rows(
         let row = Row { item: Item::Open(url), label, detail: "New card".into(), positions: Vec::new(), dot: None, history: None };
         if search { out.push(row) } else { out.insert(0, row) }
     }
+    group(out, query.trim().is_empty())
+}
+
+/// The section a row of the palette is listed under; `empty`: nothing is typed.
+pub fn section(row: &Row, empty: bool) -> &'static str {
+    match &row.item {
+        Item::Card(_) if empty => "Recent",
+        Item::Card(_) => "Go to",
+        Item::Space(_) if !empty => "Go to",
+        Item::Space(_) => "Spaces",
+        Item::Closed(_) => "Closed",
+        Item::Open(_) if row.history.is_some() => "History",
+        Item::Open(_) => "Web",
+        Item::Command(_) => "Actions",
+        Item::Download(_) | Item::AllowedSite(_) | Item::Photo(_) => "",
+    }
+}
+
+/// `rows` gathered into their sections, the sections in the order their
+/// best row came: the first row stays first, and rows keep their order
+/// within a section.
+fn group(rows: Vec<Row>, empty: bool) -> Vec<Row> {
+    let mut order: Vec<&'static str> = Vec::new();
+    for r in &rows {
+        let s = section(r, empty);
+        if !order.contains(&s) {
+            order.push(s);
+        }
+    }
+    let mut out = Vec::with_capacity(rows.len());
+    let mut rows: Vec<Option<Row>> = rows.into_iter().map(Some).collect();
+    for s in order {
+        for slot in rows.iter_mut() {
+            if slot.as_ref().is_some_and(|r| section(r, empty) == s) {
+                out.push(slot.take().expect("checked"));
+            }
+        }
+    }
     out
+}
+
+/// Each row's section label, for the palette's list (`rows` as `rows` gave them).
+pub fn sections(rows: &[Row], query: &str) -> Vec<Option<&'static str>> {
+    let empty = query.trim().is_empty();
+    rows.iter().map(|r| Some(section(r, empty)).filter(|s| !s.is_empty())).collect()
 }
 
 /// Pages the history view lists at most.
@@ -509,7 +553,7 @@ pub fn command_icon(c: Command) -> Icon {
         Arrange => Icon::Grip,
         SaveMarkdown | Downloads => Icon::Download,
         Undo | Reopen => Icon::Undo,
-        Redo => Icon::Forward,
+        Redo => Icon::Redo,
         CloseCard | Quit | DeleteSpace => Icon::Close,
         Reload => Icon::Reload,
         FindInPage => Icon::Find,
@@ -549,8 +593,10 @@ fn row_icon(row: &Row) -> Icon {
 /// Sizes in logical px; multiplied by the UI scale.
 pub const ROW_H: f32 = 36.0;
 pub const MAX_ROWS: usize = 9;
+/// A section's small label over its first row.
+pub const HEAD_H: f32 = 28.0;
 /// Height of the field, and of the line of keys under a list.
-pub const FIELD_H: f32 = 48.0;
+pub const FIELD_H: f32 = 56.0;
 pub const FOOT_H: f32 = 32.0;
 const WIDTH: f32 = 680.0;
 const PAD: f32 = 6.0;
@@ -579,48 +625,131 @@ pub fn field_rect_from(viewport: Vec2, ui: f32, left: f32) -> Rect {
     Rect::new((left + (room - w) / 2.0).round(), y.round(), w.round(), FIELD_H * ui)
 }
 
-/// Where the result list is, in screen px.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Where the result list is, in screen px. Rows are [`ROW_H`] high; the
+/// first row of a section, and the first row shown, carry the section's
+/// label above them, so the list says what it is showing wherever it is
+/// scrolled. The sheet keeps its height while the list scrolls.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Panel {
     pub field: Rect,
-    /// The list's background (sized to the rows shown).
+    /// The list's background.
     pub rect: Rect,
     /// The line of keys under the list.
     pub foot: Rect,
     pub row_h: f32,
-    /// Rows shown at once.
-    pub shown: usize,
+    head_h: f32,
+    /// Each row's section label (all `None` for a list without sections).
+    heads: Vec<Option<&'static str>>,
 }
 
 impl Panel {
-    pub fn new(viewport: Vec2, ui: f32, len: usize) -> Panel {
+    /// The panel for a list whose rows have the section labels `heads`.
+    pub fn new(viewport: Vec2, ui: f32, heads: Vec<Option<&'static str>>) -> Panel {
         let field = field_rect(viewport, ui);
         let top = field.bottom();
-        let row_h = ROW_H * ui;
-        let fit = ((viewport.y - top - 2.0 * PAD * ui - FOOT_H * ui - 16.0 * ui) / row_h).floor().max(1.0) as usize;
-        let shown = MAX_ROWS.min(fit).min(len.max(1));
-        let rect = Rect::new(field.x, top, field.w, shown as f32 * row_h + 2.0 * PAD * ui);
-        let foot = Rect::new(field.x, rect.bottom(), field.w, FOOT_H * ui);
-        Panel { field, rect, foot, row_h, shown }
+        let (row_h, head_h) = (ROW_H * ui, HEAD_H * ui);
+        let mut p = Panel { field, rect: Rect::new(field.x, top, field.w, 0.0), foot: Rect::default(), row_h, head_h, heads };
+        let room = (viewport.y - top - 2.0 * PAD * ui - FOOT_H * ui - 16.0 * ui).max(row_h);
+        let labels = if p.heads.iter().any(Option::is_some) { 2.0 * head_h } else { 0.0 };
+        let budget = (MAX_ROWS as f32 * row_h + labels).min(room);
+        let all: f32 = (0..p.len()).map(|k| p.slot_h(k, 0)).sum();
+        let list_h = all.min(budget).max(p.slot_h(0, 0).min(room));
+        p.rect.h = list_h + 2.0 * PAD * ui;
+        p.foot = Rect::new(field.x, p.rect.bottom(), field.w, FOOT_H * ui);
+        p
     }
 
-    fn rows_top(&self) -> f32 {
-        self.rect.y + (self.rect.h - self.shown as f32 * self.row_h) / 2.0
+    /// A panel for a list of `len` rows without sections.
+    pub fn plain(viewport: Vec2, ui: f32, len: usize) -> Panel {
+        Panel::new(viewport, ui, vec![None; len])
+    }
+
+    pub fn len(&self) -> usize {
+        self.heads.len()
+    }
+
+    /// Row `k`'s label shows: it starts its section, or is the first shown.
+    fn labelled(&self, k: usize, scroll: usize) -> Option<&'static str> {
+        let head = (*self.heads.get(k)?)?;
+        (k == scroll || k == 0 || self.heads[k - 1] != Some(head)).then_some(head)
+    }
+
+    /// Height of row `k` with its label, if it shows one.
+    fn slot_h(&self, k: usize, scroll: usize) -> f32 {
+        self.row_h + if self.labelled(k, scroll).is_some() { self.head_h } else { 0.0 }
+    }
+
+    fn list_h(&self) -> f32 {
+        self.rect.h - 2.0 * PAD * (self.row_h / ROW_H)
+    }
+
+    /// How many rows show whole from `scroll` on (at least one).
+    pub fn fits(&self, scroll: usize) -> usize {
+        let mut y = 0.0;
+        let mut n = 0;
+        for k in scroll..self.len() {
+            y += self.slot_h(k, scroll);
+            if y > self.list_h() + 0.5 {
+                break;
+            }
+            n += 1;
+        }
+        n.max(1)
+    }
+
+    /// The largest useful scroll: the last row just shown.
+    pub fn max_scroll(&self) -> usize {
+        (0..self.len()).find(|&s| s + self.fits(s) >= self.len()).unwrap_or(0)
+    }
+
+    /// The scroll that shows row `index`, closest to `scroll`.
+    pub fn keep_visible(&self, index: usize, scroll: usize) -> usize {
+        let mut s = scroll.min(self.max_scroll());
+        if index < self.len() {
+            if index < s {
+                s = index;
+            }
+            while index >= s + self.fits(s) && s < index {
+                s += 1;
+            }
+        }
+        s.min(self.max_scroll())
+    }
+
+    /// Wheel: `scroll` moved by `step` rows, within the list.
+    pub fn scroll_by(&self, scroll: usize, step: isize) -> usize {
+        (scroll.min(self.max_scroll()) as isize + step).clamp(0, self.max_scroll() as isize) as usize
     }
 
     /// Rect of row `index` with the list scrolled to `scroll`, if it is shown.
     pub fn row_rect(&self, index: usize, scroll: usize) -> Option<Rect> {
-        let at = index.checked_sub(scroll).filter(|&i| i < self.shown)?;
-        Some(Rect::new(self.rect.x, self.rows_top() + at as f32 * self.row_h, self.rect.w, self.row_h))
-    }
-
-    /// Index of the row at `p` among `len` rows scrolled to `scroll`.
-    pub fn row_at(&self, p: Vec2, scroll: usize, len: usize) -> Option<usize> {
-        if !self.rect.contains(p) || p.y < self.rows_top() {
+        if index >= self.len() || index < scroll || index >= scroll + self.fits(scroll) {
             return None;
         }
-        let i = scroll + ((p.y - self.rows_top()) / self.row_h) as usize;
-        (i < len && i < scroll + self.shown).then_some(i)
+        let ui = self.row_h / ROW_H;
+        let mut y = self.rect.y + PAD * ui;
+        for k in scroll..index {
+            y += self.slot_h(k, scroll);
+        }
+        if self.labelled(index, scroll).is_some() {
+            y += self.head_h;
+        }
+        Some(Rect::new(self.rect.x, y, self.rect.w, self.row_h))
+    }
+
+    /// Where row `index`'s section label goes, if it shows one.
+    pub fn label_rect(&self, index: usize, scroll: usize) -> Option<(Rect, &'static str)> {
+        let label = self.labelled(index, scroll)?;
+        let row = self.row_rect(index, scroll)?;
+        Some((Rect::new(row.x, row.y - self.head_h, row.w, self.head_h), label))
+    }
+
+    /// Index of the row at `p` with the list scrolled to `scroll`.
+    pub fn row_at(&self, p: Vec2, scroll: usize) -> Option<usize> {
+        if !self.rect.contains(p) {
+            return None;
+        }
+        (scroll..(scroll + self.fits(scroll)).min(self.len())).find(|&i| self.row_rect(i, scroll).is_some_and(|r| r.contains(p)))
     }
 
     /// Where the highlighted page's thumbnail (`size` px) goes: right of the
@@ -774,6 +903,12 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], site_icons: &[Option
     }
     for (i, row) in rows.iter().enumerate() {
         let Some(rr) = panel.row_rect(i, scroll) else { continue };
+        if let Some((lr, label)) = panel.label_rect(i, scroll) {
+            // A small, spaced capital label, sitting just over its rows.
+            let ls = type_::CAPTION * ui;
+            let mid = lr.bottom() - chrome::line_h(ls) / 2.0 - 4.0 * ui;
+            chrome::spaced(&mut l, r, &label.to_uppercase(), lr.x + INSET * ui, mid, ls, rgb(th.text3(), 1.0), lr);
+        }
         let selected = i == sel;
         let mid = rr.center().y;
         if selected {
@@ -829,11 +964,12 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], site_icons: &[Option
         }
     }
     // A thin scroll bar when not all rows fit.
-    if rows.len() > panel.shown {
+    let (shown, max) = (panel.fits(scroll), panel.max_scroll());
+    if max > 0 {
         let w = (3.0 * ui).round().max(2.0);
         let track = Rect::new(p.right() - w - 2.0 * ui, p.y + PAD * ui, w, p.h - 2.0 * PAD * ui);
-        let h = (track.h * panel.shown as f32 / rows.len() as f32).max(16.0 * ui);
-        let y = track.y + (track.h - h) * scroll as f32 / (rows.len() - panel.shown) as f32;
+        let h = (track.h * shown as f32 / rows.len() as f32).max(16.0 * ui);
+        let y = track.y + (track.h - h) * scroll.min(max) as f32 / max as f32;
         chrome::fill(&mut l, Rect::new(track.x, y, track.w, h), track.w / 2.0, rgb(th.line_strong(), 0.8));
     }
     l
@@ -883,7 +1019,7 @@ mod tests {
     #[test]
     fn preview_sits_right_of_the_list_when_there_is_room() {
         let vp = Vec2::new(1600.0, 900.0);
-        let panel = Panel::new(vp, 1.0, 5);
+        let panel = Panel::plain(vp, 1.0, 5);
         let r = panel.preview_rect(vp, (480, 360), 1.0).unwrap();
         assert_eq!((r.x, r.y, r.w, r.h), (panel.rect.right() + 12.0, panel.field.y, PREVIEW_W, 240.0));
         // A tall page is cut to the window's height and narrows to keep its shape.
@@ -891,16 +1027,16 @@ mod tests {
         assert!(tall.bottom() <= vp.y - 16.0 + 0.01 && (tall.w / tall.h - 1.0 / 3.0).abs() < 0.01, "{tall:?}");
         // Some room: a narrower preview.
         let mid = Vec2::new(1150.0, 900.0);
-        let m = Panel::new(mid, 1.0, 5).preview_rect(mid, (480, 360), 1.0).unwrap();
+        let m = Panel::plain(mid, 1.0, 5).preview_rect(mid, (480, 360), 1.0).unwrap();
         assert!(m.w < PREVIEW_W && m.w >= PREVIEW_MIN && m.right() <= mid.x - 16.0 + 0.01, "{m:?}");
         // A narrow window: under the list, at its right edge.
         let small = Vec2::new(900.0, 900.0);
-        let p = Panel::new(small, 1.0, 5);
+        let p = Panel::plain(small, 1.0, 5);
         let u = p.preview_rect(small, (480, 360), 1.0).unwrap();
         assert_eq!((u.right(), u.y, u.w, u.h), (p.rect.right(), p.foot.bottom() + 12.0, PREVIEW_W, 240.0));
         // No room under a long list in a short window either: none.
         let short = Vec2::new(900.0, 420.0);
-        let p = Panel::new(short, 1.0, 9);
+        let p = Panel::plain(short, 1.0, 9);
         assert_eq!(p.preview_rect(short, (480, 360), 1.0), None);
     }
 
@@ -1122,21 +1258,76 @@ mod tests {
     #[test]
     fn panel_layout() {
         let vp = Vec2::new(1000.0, 800.0);
-        let p = Panel::new(vp, 1.0, 20);
-        assert_eq!(p.shown, MAX_ROWS);
-        assert_eq!(p.field, Rect::new(160.0, 112.0, 680.0, 48.0));
+        let p = Panel::plain(vp, 1.0, 20);
+        assert_eq!(p.fits(0), MAX_ROWS);
+        assert_eq!(p.field, Rect::new(160.0, 112.0, 680.0, FIELD_H));
         let r0 = p.row_rect(0, 0).expect("row 0");
-        assert_eq!(p.row_at(r0.center(), 0, 20), Some(0));
-        assert_eq!(p.row_at(r0.center(), 3, 20), Some(3));
+        assert_eq!(r0.y, p.rect.y + PAD);
+        assert_eq!(p.row_at(r0.center(), 0), Some(0));
+        assert_eq!(p.row_at(r0.center(), 3), Some(3));
         assert!(p.row_rect(MAX_ROWS, 0).is_none());
-        assert_eq!(p.row_at(Vec2::new(10.0, r0.center().y), 0, 20), None);
+        assert_eq!(p.row_at(Vec2::new(10.0, r0.center().y), 0), None);
+        assert_eq!(p.max_scroll(), 20 - MAX_ROWS);
+        assert_eq!(p.keep_visible(15, 0), 15 + 1 - MAX_ROWS);
+        assert_eq!(p.keep_visible(2, 10), 2);
+        assert_eq!(p.scroll_by(5, 100), p.max_scroll());
         // Few rows: the list shrinks to them; a short window fits fewer.
-        assert_eq!(Panel::new(vp, 1.0, 2).shown, 2);
-        assert_eq!(Panel::new(Vec2::new(1000.0, 250.0), 1.0, 20).shown, 2);
+        let few = Panel::plain(vp, 1.0, 2);
+        assert_eq!((few.fits(0), few.rect.h), (2, 2.0 * ROW_H + 2.0 * PAD));
+        assert_eq!(Panel::plain(Vec2::new(1000.0, 200.0), 1.0, 20).fits(0), 1);
         assert!(p.contains(Vec2::new(500.0, 130.0)));
         // The line of keys under the list is part of the sheet.
         assert!(p.contains(p.foot.center()));
         assert!(!p.contains(Vec2::new(500.0, 790.0)));
+    }
+
+    #[test]
+    fn sections_label_their_first_row_and_the_first_shown() {
+        let vp = Vec2::new(1000.0, 800.0);
+        let mut heads = vec![Some("Recent"); 3];
+        heads.extend(vec![Some("Actions"); 20]);
+        let p = Panel::new(vp, 1.0, heads);
+        // Room for the rows and two labels; the sheet keeps that height.
+        assert_eq!(p.rect.h, MAX_ROWS as f32 * ROW_H + 2.0 * HEAD_H + 2.0 * PAD);
+        assert_eq!(p.label_rect(0, 0).map(|(_, l)| l), Some("Recent"));
+        assert!(p.label_rect(1, 0).is_none());
+        let (lr, l) = p.label_rect(3, 0).expect("second section");
+        assert_eq!(l, "Actions");
+        assert_eq!(lr.bottom(), p.row_rect(3, 0).unwrap().y);
+        assert_eq!(p.row_rect(3, 0).unwrap().y, p.rect.y + PAD + 3.0 * ROW_H + 2.0 * HEAD_H);
+        assert_eq!(p.fits(0), MAX_ROWS);
+        // Scrolled into a section: its first shown row carries the label.
+        assert_eq!(p.label_rect(5, 5).map(|(_, l)| l), Some("Actions"));
+        assert_eq!(p.fits(5), MAX_ROWS);
+        assert_eq!(p.row_at(p.row_rect(6, 5).unwrap().center(), 5), Some(6));
+        // A label is not a row.
+        assert_eq!(p.row_at(lr.center(), 0), None);
+        let last = p.max_scroll();
+        assert!(last + p.fits(last) >= 23 && last > 0);
+        assert_eq!(p.keep_visible(22, 0), last);
+    }
+
+    #[test]
+    fn rows_come_in_sections_in_the_order_of_their_best_row() {
+        let s = board();
+        let r = rows("", &s, &HashMap::new(), &[], &SpaceIndex::default(), &[], SearchEngine::DuckDuckGo);
+        let heads = sections(&r, "");
+        assert_eq!(heads[0], Some("Recent"));
+        assert_eq!(heads[2], Some("Actions"));
+        // Typed: the best match stays first and its section leads; the
+        // rest of a section follows it before the next section starts.
+        let r = rows("trail", &s, &HashMap::new(), &[], &SpaceIndex::default(), &[], SearchEngine::DuckDuckGo);
+        assert_eq!(r[0].label, "Trail - Wikipedia");
+        let heads = sections(&r, "trail");
+        assert_eq!(heads[0], Some("Go to"));
+        let mut seen: Vec<Option<&str>> = Vec::new();
+        for h in &heads {
+            if seen.last() != Some(h) {
+                assert!(!seen.contains(h), "section {h:?} comes back: {heads:?}");
+                seen.push(*h);
+            }
+        }
+        assert_eq!(heads.last().copied().flatten(), Some("Web"));
     }
 
     #[test]

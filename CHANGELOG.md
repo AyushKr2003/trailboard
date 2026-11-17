@@ -52,6 +52,14 @@ All notable changes to Trailboard. The format follows
     pages update at once.
 
 ### Changed
+- **The palette in sections.** Results sit under small labels (Recent,
+  Spaces, Actions; Go to, History, Web while typing), with the best match
+  still first; the label stays in view while scrolling. The text you type
+  is larger.
+- **Menus with icons.** Every menu has an icon column, and the page menu
+  shows keys for undo, cut, copy, paste, select all, back, forward and
+  reload.
+- **Messages** use the same sheet as the palette and menus.
 - **Cards are sheets.** The page fills the card's rounded shape, shadows
   are softer and wider (a little higher under the pointer, higher still
   for the current card), and the current card has a thinner, calmer ring.

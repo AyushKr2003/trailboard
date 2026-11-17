@@ -44,6 +44,12 @@ pub enum Icon {
     Grip,
     Find,
     Picture,
+    Copy,
+    Cut,
+    Paste,
+    Link,
+    Redo,
+    Code,
 }
 
 enum Prim {
@@ -254,6 +260,34 @@ fn strokes(icon: Icon) -> Vec<Prim> {
             p.rrect(3.5, 4.5, 17.0, 15.0, 2.5).circle(15.5, 9.5, 1.8);
             p.poly(&[(4.0, 17.5), (9.5, 11.5), (14.0, 16.0), (16.0, 14.0), (20.0, 18.0)]);
         }
+        Icon::Copy => {
+            // A sheet with another behind it, up and to the left.
+            p.rrect(9.0, 9.0, 11.0, 11.0, 2.0);
+            p.poly(&[(15.0, 9.0), (15.0, 5.5), (13.5, 4.0), (5.5, 4.0), (4.0, 5.5), (4.0, 13.5), (5.5, 15.0), (9.0, 15.0)]);
+        }
+        Icon::Cut => {
+            // Scissors, blades up.
+            p.circle(7.0, 17.0, 3.0).circle(17.0, 17.0, 3.0);
+            p.line(9.2, 15.0, 17.5, 4.0).line(14.8, 15.0, 6.5, 4.0);
+        }
+        Icon::Paste => {
+            // A clipboard.
+            p.rrect(5.0, 5.0, 14.0, 16.0, 2.0).rrect(9.0, 3.0, 6.0, 4.0, 1.0);
+            p.line(8.5, 12.0, 15.5, 12.0).line(8.5, 16.0, 13.0, 16.0);
+        }
+        Icon::Link => {
+            // Two links of a chain, on a slant.
+            p.arc(8.0, 16.0, 3.6, 45.0, 315.0).arc(16.0, 8.0, 3.6, 225.0, 495.0);
+            p.line(9.0, 15.0, 15.0, 9.0);
+        }
+        Icon::Redo => {
+            // Undo, mirrored.
+            p.poly(&[(15.5, 5.0), (20.0, 9.5), (15.5, 14.0)]).line(20.0, 9.5, 9.5, 9.5);
+            p.arc(9.5, 14.25, 4.75, 90.0, 270.0).line(9.5, 19.0, 14.0, 19.0);
+        }
+        Icon::Code => {
+            p.poly(&[(8.0, 7.0), (3.5, 12.0), (8.0, 17.0)]).poly(&[(16.0, 7.0), (20.5, 12.0), (16.0, 17.0)]).line(13.5, 5.0, 10.5, 19.0);
+        }
     }
     p.0
 }
@@ -349,7 +383,7 @@ mod tests {
         Icon::Note, Icon::Sticky, Icon::Tidy, Icon::Stack, Icon::Fit, Icon::Sidebar, Icon::More, Icon::Settings,
         Icon::History, Icon::Download, Icon::Shield, Icon::ChevronRight, Icon::ChevronDown, Icon::Lock, Icon::Expand,
         Icon::Keyboard, Icon::Trail, Icon::Undo, Icon::Moon, Icon::Help, Icon::Check, Icon::Board, Icon::Grip,
-        Icon::Find, Icon::Picture,
+        Icon::Find, Icon::Picture, Icon::Copy, Icon::Cut, Icon::Paste, Icon::Link, Icon::Redo, Icon::Code,
     ];
 
     fn alpha(px: &[u8], size: u32, x: u32, y: u32) -> u8 {

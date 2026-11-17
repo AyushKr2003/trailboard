@@ -5,8 +5,9 @@
 
 use scene::{NodeId, Rect, Vec2};
 use storage::spaces::SpaceId;
-use web::menu::MenuItem;
+use web::menu::{MenuAction, MenuItem};
 
+use crate::icons::Icon;
 use crate::palette::Command;
 
 /// The card a menu of the board's own controls belongs to: none.
@@ -52,11 +53,56 @@ impl Entry {
         }
     }
 
-    /// The keys shown at the row's right end.
+    /// The keys shown at the row's right end: a command's, or the page
+    /// keys an editing or navigation item also has.
     pub fn keys(&self) -> &str {
         match self {
             Entry::Command { keys, .. } => keys,
+            Entry::Page(MenuItem::Action { action, .. }) => match action {
+                MenuAction::Undo => "Ctrl+Z",
+                MenuAction::Redo => "Ctrl+Shift+Z",
+                MenuAction::Cut => "Ctrl+X",
+                MenuAction::Copy => "Ctrl+C",
+                MenuAction::Paste => "Ctrl+V",
+                MenuAction::SelectAll => "Ctrl+A",
+                MenuAction::Back => "Alt+←",
+                MenuAction::Forward => "Alt+→",
+                MenuAction::Reload => "Ctrl+R",
+                _ => "",
+            },
             _ => "",
+        }
+    }
+
+    /// The icon in the row's lead column, if it has one. Rows without one
+    /// (stack members, spaces, spelling fixes) keep the column for the tick.
+    pub fn icon(&self) -> Option<Icon> {
+        match self {
+            Entry::Command { cmd, .. } => Some(crate::palette::command_icon(*cmd)),
+            Entry::Unfold => Some(Icon::Expand),
+            Entry::Page(MenuItem::Action { action, label, .. }) => Some(match action {
+                MenuAction::OpenBeside(_) => Icon::Trail,
+                MenuAction::CopyText(_) if label.contains("link") => Icon::Link,
+                MenuAction::CopyText(_) | MenuAction::Copy => Icon::Copy,
+                MenuAction::Download(_) | MenuAction::SaveMarkdown => Icon::Download,
+                MenuAction::Search(_) => Icon::Search,
+                MenuAction::AddToNote(_) => Icon::Note,
+                MenuAction::ToggleSticky => Icon::Sticky,
+                MenuAction::ToggleBlocking => Icon::Shield,
+                MenuAction::ToggleJavaScript => Icon::Code,
+                MenuAction::ToggleImages => Icon::Picture,
+                MenuAction::AddToDictionary(_) => Icon::Plus,
+                MenuAction::ReplaceMisspelling(_) => return None,
+                MenuAction::Undo => Icon::Undo,
+                MenuAction::Redo => Icon::Redo,
+                MenuAction::Cut => Icon::Cut,
+                MenuAction::Paste => Icon::Paste,
+                MenuAction::SelectAll => Icon::Fit,
+                MenuAction::Back => Icon::Back,
+                MenuAction::Forward => Icon::Forward,
+                MenuAction::Reload => Icon::Reload,
+            }),
+            _ => None,
         }
     }
 
@@ -106,11 +152,13 @@ pub fn outline(members: &[(NodeId, &str)], front: NodeId) -> Vec<Entry> {
 }
 
 /// Sizes in logical px; multiplied by the window scale.
-pub const ITEM_H: f32 = 30.0;
+pub const ITEM_H: f32 = 32.0;
 pub const SEP_H: f32 = 9.0;
 pub const PAD: f32 = 4.0;
-/// From the menu's edge to a row's text: room for the tick of the current row.
-pub const TEXT_PAD: f32 = 32.0;
+/// From a row's left edge to the middle of its icon (or tick).
+pub const ICON_X: f32 = 16.0;
+/// From the menu's edge to a row's text: room for the icon column.
+pub const TEXT_PAD: f32 = 40.0;
 pub const FONT: f32 = 13.0;
 pub const MIN_W: f32 = 200.0;
 

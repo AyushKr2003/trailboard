@@ -2757,6 +2757,15 @@ impl App {
         palette::rows(&ob.text, &self.scene, &self.used, &closed, &self.spaces, &visits, self.settings.search)
     }
 
+    /// The panel the list under field `ob` is laid out in, for its `rows`:
+    /// the palette's rows sit in labelled sections.
+    fn list_panel(&self, ob: &Omnibox, rows: &[palette::Row]) -> palette::Panel {
+        match ob.target {
+            Target::Palette => palette::Panel::new(self.viewport(), self.ui(), palette::sections(rows, &ob.text)),
+            _ => palette::Panel::plain(self.viewport(), self.ui(), rows.len()),
+        }
+    }
+
     /// Ctrl+H: the history view, every page kept, newest first.
     fn open_history(&mut self) {
         self.menu = None;
@@ -3027,11 +3036,10 @@ impl App {
             Err(e) => log::warn!("history: forgetting {url}: {e}"),
         }
         // Keep the highlight on the row that took its place.
-        let (vp, ui) = (self.viewport(), self.ui());
-        let len = self.omnibox.as_ref().map_or(0, |ob| self.list_rows(ob).len());
-        if let Some(ob) = self.omnibox.as_mut() {
-            ob.sel = ob.sel.min(len.saturating_sub(1));
-            ob.scroll = scene::palette::keep_visible(ob.sel, ob.scroll, palette::Panel::new(vp, ui, len).shown, len);
+        let panel = self.omnibox.as_ref().map(|ob| self.list_panel(ob, &self.list_rows(ob)));
+        if let (Some(ob), Some(panel)) = (self.omnibox.as_mut(), panel) {
+            ob.sel = ob.sel.min(panel.len().saturating_sub(1));
+            ob.scroll = panel.keep_visible(ob.sel, ob.scroll);
         }
     }
 
@@ -4446,9 +4454,9 @@ impl App {
             && let Some(ob) = self.omnibox.as_ref().filter(|ob| ob.target.is_list())
         {
             let rows = self.list_rows(ob);
-            let panel = palette::Panel::new(self.viewport(), self.ui(), rows.len());
-            let scroll = ob.scroll.min(rows.len().saturating_sub(panel.shown));
-            if let Some(i) = panel.row_at(p, scroll, rows.len()) {
+            let panel = self.list_panel(ob, &rows);
+            let scroll = ob.scroll.min(panel.max_scroll());
+            if let Some(i) = panel.row_at(p, scroll) {
                 self.menu_pressed = true; // swallow the release
                 // An allowed site is blocked again; the list stays.
                 if let Item::AllowedSite(site) = &rows[i].item {
@@ -4665,18 +4673,16 @@ impl App {
         if let Some(m) = self.menu.as_mut() {
             m.hover = None;
         }
-        let (vp, ui) = (self.viewport(), self.ui());
-        let list_len = self.omnibox.as_ref().filter(|ob| ob.target.is_list()).map(|ob| self.list_rows(ob).len());
-        if let (Some(len), Some(ob)) = (list_len, self.omnibox.as_mut()) {
-            let panel = palette::Panel::new(vp, ui, len);
-            if panel.contains(p) {
-                if let Some(i) = panel.row_at(p, ob.scroll.min(len.saturating_sub(panel.shown)), len) {
-                    ob.sel = i;
-                }
-                self.cursor = p;
-                self.set_cursor(web::Cursor::Default);
-                return;
+        let list = self.omnibox.as_ref().filter(|ob| ob.target.is_list()).map(|ob| self.list_panel(ob, &self.list_rows(ob)));
+        if let (Some(panel), Some(ob)) = (list, self.omnibox.as_mut())
+            && panel.contains(p)
+        {
+            if let Some(i) = panel.row_at(p, ob.scroll.min(panel.max_scroll())) {
+                ob.sel = i;
             }
+            self.cursor = p;
+            self.set_cursor(web::Cursor::Default);
+            return;
         }
         self.sidebar_hover = None;
         self.sidebar_spot = None;
@@ -4807,14 +4813,11 @@ impl App {
         self.menu = None;
         self.link_hints = None; // scrolling a page moves its links
         if let Some(ob) = self.omnibox.as_ref().filter(|ob| ob.target.is_list()) {
-            let len = self.list_rows(ob).len();
-            let panel = palette::Panel::new(self.viewport(), self.ui(), len);
+            let panel = self.list_panel(ob, &self.list_rows(ob));
             if panel.rect.contains(self.cursor) {
                 let rows = if lines { -dy * 3.0 } else { -dy / panel.row_h };
-                let max = len.saturating_sub(panel.shown) as isize;
                 let ob = self.omnibox.as_mut().expect("palette open");
-                ob.scroll = (ob.scroll.min(max as usize) as isize + rows.round() as isize)
-                    .clamp(0, max) as usize;
+                ob.scroll = panel.scroll_by(ob.scroll, rows.round() as isize);
                 return;
             }
         }
@@ -5022,13 +5025,7 @@ impl App {
             .omnibox
             .as_ref()
             .filter(|ob| ob.target.is_list())
-            .map(|ob| {
-                let len = self.list_rows(ob).len();
-                (
-                    len,
-                    palette::Panel::new(self.viewport(), self.ui(), len).shown,
-                )
-            });
+            .map(|ob| self.list_panel(ob, &self.list_rows(ob)));
         // The allowed-sites list's highlighted site.
         let setting_sel = self
             .omnibox
@@ -5045,19 +5042,20 @@ impl App {
                 return;
             }
             // Palette: Up/Down (Ctrl+K/J, Ctrl+P/N), PgUp/PgDn move the highlight.
-            let step = palette_len.and_then(|(_, shown)| match ev.named {
+            let step = palette_len.as_ref().and_then(|panel| match ev.named {
                 Some(NamedKey::ArrowDown) => Some(1),
                 Some(NamedKey::ArrowUp) => Some(-1),
-                Some(NamedKey::PageDown) => Some(shown as isize),
-                Some(NamedKey::PageUp) => Some(-(shown as isize)),
+                Some(NamedKey::PageDown) => Some(panel.fits(ob.scroll) as isize),
+                Some(NamedKey::PageUp) => Some(-(panel.fits(ob.scroll) as isize)),
                 _ if ctrl && matches!(code, Some(KeyCode::KeyJ | KeyCode::KeyN)) => Some(1),
                 _ if ctrl && code == Some(KeyCode::KeyP) => Some(-1),
                 _ => None,
             });
-            if let (Some(step), Some((len, shown))) = (step, palette_len) {
+            if let (Some(step), Some(panel)) = (step, palette_len) {
+                let len = panel.len();
                 if len > 0 {
                     ob.sel = (ob.sel as isize + step).clamp(0, len as isize - 1) as usize;
-                    ob.scroll = scene::palette::keep_visible(ob.sel, ob.scroll, shown, len);
+                    ob.scroll = panel.keep_visible(ob.sel, ob.scroll);
                 }
                 return;
             }
@@ -6160,8 +6158,8 @@ impl App {
             // The list (if this field has one) hangs from the field: one sheet.
             let list = ob.target.is_list().then(|| {
                 let rows = self.list_rows(ob);
-                let panel = palette::Panel::new(vp, ui, rows.len());
-                let scroll = ob.scroll.min(rows.len().saturating_sub(panel.shown));
+                let panel = self.list_panel(ob, &rows);
+                let scroll = ob.scroll.min(panel.max_scroll());
                 (rows, panel, scroll)
             });
             // Find in page: "3 of 17" (or "No matches") at the right end.
@@ -6385,7 +6383,9 @@ impl App {
         let th = &self.theme;
         let ui = self.scale() * th.text_scale;
         let size = crate::chrome::type_::BODY * ui;
-        let (pad, h) = (14.0 * ui, 36.0 * ui);
+        // The palette's and menus' sheet: same fill, edge, corners and a
+        // high lift, so it reads over cards as well as over the board.
+        let (pad, h) = (16.0 * ui, 40.0 * ui);
         let vp = self.viewport();
         let max_w = (vp.x - 32.0 * ui).max(80.0);
         let tw = self.renderer.as_mut().map_or(200.0, |r| r.measure(text, size, false));
@@ -6393,8 +6393,10 @@ impl App {
         let r = Rect::new((mid_x - w / 2.0).clamp(16.0 * ui, (vp.x - w - 16.0 * ui).max(16.0 * ui)).round(), (bottom - h).round(), w.round(), h);
         let mut l = Layer::default();
         let (rim, bw) = if warn { (th.danger(), (1.5 * ui).max(1.0)) } else { (crate::chrome::edge(th), crate::chrome::hair(ui)) };
-        crate::chrome::panel_edged(&mut l, r, th.radius(self.scale()), th, ui, crate::chrome::Lift::Mid, th.panel(), rim, bw);
-        crate::chrome::text(&mut l, text, r.x + pad, r.center().y, size, rgb(th.text(), 1.0), r.inflate(-pad * 0.5), false);
+        crate::chrome::panel_edged(&mut l, r, th.radius(self.scale()), th, ui, crate::chrome::Lift::High, th.panel(), rim, bw);
+        let clip = Rect::new(r.x + pad, r.y, (r.w - 2.0 * pad).max(1.0), r.h);
+        let shown = self.renderer.as_mut().map_or_else(|| text.to_string(), |rd| rd.ellipsize(text, size, false, clip.w));
+        crate::chrome::text(&mut l, shown, r.x + pad, r.center().y, size, rgb(th.text(), 1.0), clip, false);
         l
     }
 
@@ -6527,9 +6529,8 @@ impl App {
             self.ime_page = None;
         }
         let area = if self.omnibox.is_some() {
-            let (vp, s) = (self.viewport(), self.ui());
-            let w = (720.0 * s).min(vp.x - 32.0 * s);
-            Some([((vp.x - w) / 2.0) as i32, (18.0 * s) as i32, w as i32, (48.0 * s) as i32])
+            let f = palette::field_rect(self.viewport(), self.ui());
+            Some([f.x as i32, f.y as i32, f.w as i32, f.h as i32])
         } else if page_keys {
             self.focused.and_then(|id| {
                 let (x, y, w, h) = self.cards.get(&id)?.page.ime_caret()?;
@@ -6857,9 +6858,20 @@ fn menu_layer(r: &mut Renderer, m: &ContextMenu, ui: f32, th: &Theme) -> Layer {
             crate::chrome::fill(&mut l, *row, small, rgb(th.active(), 1.0));
         }
         let mid = row.center().y;
-        if item.is_current() {
-            // A tick marks the card in front, or the space showing.
-            crate::icons::draw(&mut l, r, crate::icons::Icon::Check, row.x + 14.0 * ui, mid, 14.0 * ui, rgb(th.accent_text(), 1.0));
+        // The lead column: the row's icon, or a tick on the card in front
+        // (or the space showing) for rows that have none.
+        let icon_x = row.x + menu::ICON_X * ui;
+        match item.icon() {
+            Some(icon) => {
+                let ink = match (item.is_enabled(), hot) {
+                    (false, _) => th.text3(),
+                    (true, true) => th.text(),
+                    (true, false) => th.text2(),
+                };
+                crate::icons::draw(&mut l, r, icon, icon_x, mid, 16.0 * ui, rgb(ink, 1.0));
+            }
+            None if item.is_current() => crate::icons::draw(&mut l, r, crate::icons::Icon::Check, icon_x, mid, 14.0 * ui, rgb(th.accent_text(), 1.0)),
+            None => {}
         }
         let mut right = row.right() - 8.0 * ui;
         if let Some(keys) = crate::chrome::keycaps(item.keys()) {
@@ -7118,17 +7130,18 @@ impl App {
                     None => log::info!("script palette: closed"),
                     Some(ob) => {
                         let rows = self.list_rows(ob);
-                        let panel = palette::Panel::new(self.viewport(), self.ui(), rows.len());
-                        let scroll = ob.scroll.min(rows.len().saturating_sub(panel.shown));
+                        let panel = self.list_panel(ob, &rows);
+                        let scroll = ob.scroll.min(panel.max_scroll());
                         log::info!(
                             "script palette: query={:?} sel={} scroll={} shown={} rows={}",
-                            ob.text, ob.sel, scroll, panel.shown, rows.len()
+                            ob.text, ob.sel, scroll, panel.fits(scroll), rows.len()
                         );
                         for (i, row) in rows.iter().enumerate() {
                             let at = panel.row_rect(i, scroll).map(|r| r.center());
                             let at = at.map_or_else(|| "off".to_string(), |c| format!("({:.0},{:.0})", c.x, c.y));
+                            let head = panel.label_rect(i, scroll).map_or("", |(_, h)| h);
                             log::info!(
-                                "script palette row {i} at {at}: {:?} {:?} detail={:?} marks={:?}",
+                                "script palette row {i} at {at}: {:?} {:?} detail={:?} marks={:?} section={head:?}",
                                 row.item, row.label, row.detail, row.positions
                             );
                         }

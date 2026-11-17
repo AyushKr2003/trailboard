@@ -1458,6 +1458,31 @@ and light):**
     Read Mode, the palette, a menu, the shortcut sheet or a drag is on.
   - Opening slides it in from past the edge (150 ms ease-out, as before).
     Closing is instant; the slide out belongs to step 6.
+  - **Redone as a browser's side panel (2026-11-17, owner asked for a
+    professional, premium sidebar).** Replaces the head, row and foot
+    decisions above where they differ; groups, labels, guides, peek and
+    scrolling stay. 288 px wide. Head (160 px): back, forward, reload of
+    the current card (disabled unless it is a live web page) and on the
+    right a keep button (on while kept: a press keeps a peek, hides a kept
+    sheet); an address pill in the well colour with lock / globe / search
+    glyph and the current card's host past "www." (a press = Ctrl+L,
+    `App::open_address_bar`; placeholder "Search or enter address" for a
+    note, a start page or no current card); the space line (dot, name,
+    counts; a press opens the spaces menu under it, `space_menu_items`
+    shared with the top-left panel); a *New card* row (its Ctrl T keys
+    under the pointer). Rows 32 px, body type, 16 px icons; trail headers
+    in small semibold. Current card: a raised tab (a step lighter than the
+    sheet, low lift, hairline) plus the accent bar; with the keys on it, an
+    accent ring instead of the selection fill so the tab stays. Hovered
+    card rows show a close button (danger tint under the pointer). Foot:
+    settings gear left, a dot per space in 24 px cells (the current larger
+    and ringed, private hollow), "+" right, a tooltip above whatever the
+    pointer is on (with its keys). The sheet is the panel colour blended
+    6–8% toward the space's tint (flat, no gradient). The top-left space
+    panel is hidden while the sidebar shows: the sidebar carries the
+    space's name and its own hide button. Hit testing is pure
+    (`Panel::spot_at`, `sidebar::Spot`) with unit tests. No B keycap in
+    the head any more (the tooltip and the guide teach it).
 - ⬜ 5. Command bar finish: the Ctrl+K palette as the centred hero sheet
   (larger input text, section labels in small caps, site icons on rows,
   keycaps right-aligned), and the same finish for the address bar, menus,
@@ -1516,21 +1541,27 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-15 (thirteenth). Follow-up: Shift+Enter in the
-palette to open beside.
+**Last session:** 2026-11-17 (fourteenth). Owner asked: redesign the
+sidebar to look like a professional, premium browser's side panel.
 **Repo state:** on `master`, committed; working tree clean.
 **Done this session:**
-- Shift+Enter / Shift+click on a page row of Ctrl+K or Ctrl+H, and
-  Shift+Enter in the address bar, open the page beside the current card with
-  a trail edge (`App::open_beside_current`). Decisions under M5 (Palette →
-  Open beside). Guide note and README mention it.
-- Owner asked: Read Mode no longer cuts or squashes. Tab grows the card into
-  the window and back (M11 step 6, now 🟡); page frames are drawn at the
-  CSS size they were painted at (`PaintFrame::css`, `Shape::Page`).
-- Owner asked: overlay scrollbars instead of the classic grey bar (M6
-  settings → Scrollbars).
-- Owner asked: a complete, professional welcome as a designed web page
-  (`welcome.html` in `PageKind::App`; First-run defaults in M9).
+- The sidebar redone as a browser side panel (M11 step 4, decisions under
+  "Redone as a browser's side panel"): back / forward / reload and a keep
+  button on top, an address pill (Ctrl+L), the space line (spaces menu),
+  *New card*, raised current tab, close on hovered rows, foot with
+  settings, space dots and "+", a faint space tint. The top-left space
+  panel hides while the sidebar shows. `sidebar::Spot` / `Panel::spot_at`
+  hit testing with unit tests; `App::open_address_bar` and
+  `App::space_menu_items` factored out for sharing.
+- Verified e2e in `~/.cache/trailboard-e2e-sidebar3` (`run.sh N`, with the
+  test site `python3 -I server.py 8781`, `LIGHT=1` for the light theme):
+  dark and light screenshots, hover close, address pill, spaces menu from
+  the space line, space-dot tooltip, keep button closing a kept sheet, the
+  edge peek still opening it, keep tooltip.
+- Not done: `docs/images/sidebar.png` in the README still shows the old
+  sidebar; retake it from a board like the README's when convenient. Not
+  checked: a very short window (head 160 px + foot 48 px leave little
+  list), many spaces (dots stop before "+", the rest only via the menu).
 **Owner decisions (2026-11-15):** no AppImage, Flatpak or AUR work (the owner
 publishes later, on their own); no UI translations; licence is Apache-2.0
 only (`LICENSE-APACHE`); all AI features (semantic search, Explain, any

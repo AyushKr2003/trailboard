@@ -346,7 +346,7 @@ pub struct App {
     sidebar_peek: bool,
     peek: crate::sidebar::Peek,
     /// The space chip under the pointer in the sidebar's foot.
-    sidebar_chip_hover: Option<usize>,
+    sidebar_spot: Option<crate::sidebar::Spot>,
     /// The current mouse press started inside the context menu.
     menu_pressed: bool,
     clipboard: Clipboard,
@@ -625,7 +625,7 @@ impl App {
             sidebar_toggled: None,
             sidebar_peek: false,
             peek: Default::default(),
-            sidebar_chip_hover: None,
+            sidebar_spot: None,
             menu_pressed: false,
             clipboard: Clipboard::new(),
             ime_allowed: false,
@@ -1264,6 +1264,16 @@ impl App {
 
     /// Ctrl+T, *New card*: the floating address bar or a start page card,
     /// as the *New card opens* setting says.
+    /// Ctrl+L or the sidebar's address pill: the address bar with the current
+    /// card's address, to load something else there. A note has no address:
+    /// the bar opens a new card instead.
+    fn open_address_bar(&mut self) {
+        let page = self.focused.and_then(|id| self.scene.node(id)).filter(|n| !n.is_note());
+        let url = page.filter(|n| n.url != scene::note::START_URL).map(|n| n.url.clone()).unwrap_or_default();
+        let target = if page.is_some() { Target::Focused } else { Target::NewCard };
+        self.omnibox = Some(Omnibox::new(&url, target));
+    }
+
     fn new_card(&mut self) {
         match self.settings.new_card {
             prefs::NewCard::AddressBar => self.omnibox = Some(Omnibox::new("", Target::NewCard)),
@@ -1897,7 +1907,7 @@ impl App {
     fn close_sidebar(&mut self) {
         self.sidebar_open = false;
         self.sidebar_peek = false;
-        self.sidebar_chip_hover = None;
+        self.sidebar_spot = None;
         self.sidebar_keys = false;
         self.sidebar_hover = None;
         self.sidebar_press = None;
@@ -3067,16 +3077,48 @@ impl App {
         if button != MouseButton::Left {
             return;
         }
+        use crate::sidebar::Spot;
         let (rows, panel) = self.sidebar_layout();
         let n = self.spaces.spaces.len();
-        if let Some(c) = panel.chip_at(p, n) {
-            if c == n {
-                self.close_sidebar();
-                self.new_space(false);
-            } else if let Some(to) = self.spaces.spaces.get(c).map(|s| s.id)
-                && to != self.spaces.active
-            {
-                self.switch_space(to);
+        let closable = |i: usize| matches!(rows.get(i), Some(Row::Card { .. }));
+        if let Some(spot) = panel.spot_at(p, n, self.sidebar.scroll, &closable) {
+            match spot {
+                Spot::Back | Spot::Forward | Spot::Reload => {
+                    if let Some(c) = self.focused.and_then(|id| self.cards.get(&id)).filter(|c| c.page.kind() == web::PageKind::Web) {
+                        match spot {
+                            Spot::Back => c.page.back(),
+                            Spot::Forward => c.page.forward(),
+                            _ => c.page.reload(),
+                        }
+                    }
+                }
+                // A peek stays; a kept sheet goes.
+                Spot::Keep if self.sidebar_peek => self.sidebar_peek = false,
+                Spot::Keep => self.close_sidebar(),
+                Spot::Address => self.open_address_bar(),
+                Spot::SpaceName => self.open_sidebar_space_menu(panel.space_line()),
+                Spot::NewCard => self.new_card(),
+                Spot::Close(i) => {
+                    if let Some(Row::Card { id, .. }) = rows.get(i) {
+                        self.close_card(*id);
+                    }
+                    self.sidebar_spot = None;
+                }
+                Spot::Settings => {
+                    self.close_sidebar();
+                    self.open_settings();
+                }
+                Spot::NewSpace => {
+                    self.close_sidebar();
+                    self.new_space(false);
+                }
+                Spot::Space(c) => {
+                    if let Some(to) = self.spaces.spaces.get(c).map(|s| s.id)
+                        && to != self.spaces.active
+                    {
+                        self.switch_space(to);
+                    }
+                }
             }
             return;
         }
@@ -4540,7 +4582,7 @@ impl App {
             }
         }
         self.sidebar_hover = None;
-        self.sidebar_chip_hover = None;
+        self.sidebar_spot = None;
         // Over one of the board's own controls: it lights up, and after a
         // moment says its name and key.
         let over = if matches!(self.drag, Drag::None) && self.read.is_none() && self.sidebar_press.is_none() && self.omnibox.as_ref().is_none_or(|ob| !ob.target.is_list()) {
@@ -4570,12 +4612,13 @@ impl App {
             return;
         }
         if self.sidebar_shown() && matches!(self.drag, Drag::None) && self.sidebar_rect().contains(p) {
-            let (_, panel) = self.sidebar_layout();
+            let (rows, panel) = self.sidebar_layout();
+            let closable = |i: usize| matches!(rows.get(i), Some(scene::sidebar::Row::Card { .. }));
             self.sidebar_hover = panel.row_at(p, self.sidebar.scroll);
-            self.sidebar_chip_hover = panel.chip_at(p, self.spaces.spaces.len());
+            self.sidebar_spot = panel.spot_at(p, self.spaces.spaces.len(), self.sidebar.scroll, &closable);
             self.cursor = p;
-            // The space chips are buttons.
-            self.set_cursor(if self.sidebar_chip_hover.is_some() { web::Cursor::Pointer } else { web::Cursor::Default });
+            // The head's controls, the close buttons and the foot are buttons.
+            self.set_cursor(if self.sidebar_spot.is_some() { web::Cursor::Pointer } else { web::Cursor::Default });
             return;
         }
         let prev = self.cursor;
@@ -5107,11 +5150,7 @@ impl App {
                     true
                 }
                 Some(KeyCode::KeyL) if ctrl => {
-                    // A note has no address: the bar opens a new card instead.
-                    let page = self.focused.and_then(|id| self.scene.node(id)).filter(|n| !n.is_note());
-                    let url = page.filter(|n| n.url != scene::note::START_URL).map(|n| n.url.clone()).unwrap_or_default();
-                    let target = if page.is_some() { Target::Focused } else { Target::NewCard };
-                    self.omnibox = Some(Omnibox::new(&url, target));
+                    self.open_address_bar();
                     true
                 }
                 Some(KeyCode::KeyC | KeyCode::KeyX) if ctrl && !alt && self.focused_page().is_some() => {
@@ -5807,16 +5846,35 @@ impl App {
                 .map(|e| crate::sidebar::SpaceChip { name: e.name.clone(), colour: e.tint.as_deref().map(|t| th.color(t)), private: e.private })
                 .collect();
             let space = self.spaces.active_entry().name.clone();
+            // What the head shows of the current card.
+            let head = self
+                .focused
+                .and_then(|id| Some((self.scene.node(id)?, self.cards.get(&id))))
+                .map(|(n, c)| {
+                    let web = c.is_some_and(|c| c.page.kind() == web::PageKind::Web);
+                    let addressed = !n.is_note() && n.url != scene::note::START_URL;
+                    crate::sidebar::Current {
+                        web,
+                        can_back: c.is_some_and(|c| c.can_back),
+                        can_forward: c.is_some_and(|c| c.can_forward),
+                        host: if addressed { crate::sidebar::pill_host(&n.url) } else { String::new() },
+                        secure: n.url.starts_with("https:"),
+                    }
+                })
+                .unwrap_or_default();
             let marks = crate::sidebar::View {
                 scroll: self.sidebar.scroll,
                 sel: if keys { self.sidebar.index(&rows) } else { None },
                 hover: self.sidebar_hover,
+                spot: self.sidebar_spot,
+                head,
+                kept: !self.sidebar_peek,
+                viewport: vp,
                 current: self.focused,
                 drop_line: self.sidebar_drop_line(&rows, &panel),
                 space: &space,
                 spaces: &chips,
                 active_space: self.spaces.position(self.spaces.active).unwrap_or(0),
-                hover_chip: self.sidebar_chip_hover,
                 icon: &icon,
             };
             let came = self.anim.sidebar.update(Some(0), Instant::now());
@@ -5844,7 +5902,8 @@ impl App {
             let (space, private, swatch) = (entry.name.clone(), entry.private, th.swatch(tint.as_deref()));
             let space_w = self.renderer.as_mut().map_or(80.0, |r| r.measure(&space, crate::chrome::type_::BODY * ui, true));
             // The panel can be turned off in the settings (*Show the space panel*).
-            self.hud = if self.settings.space_panel { crate::hud::layout(vp, ui, sidebar_w, space_w) } else { crate::hud::Hud::default() };
+            // The open sidebar carries the space's name and its own buttons.
+            self.hud = if self.settings.space_panel && !self.sidebar_shown() { crate::hud::layout(vp, ui, sidebar_w, space_w) } else { crate::hud::Hud::default() };
             let free = self.menu.is_none() && self.omnibox.is_none() && !self.hints && self.confirm.is_none();
             let hud_hover = self.hud_hover.filter(|_| free && self.pointer_in);
             let view = crate::hud::View {
@@ -6362,17 +6421,7 @@ impl App {
         self.keys_in_page = false;
         match c {
             Control::Space => {
-                let active = self.spaces.active;
-                let mut items: Vec<Entry> = self
-                    .spaces
-                    .spaces
-                    .iter()
-                    .map(|e| Entry::Space { id: e.id, label: if e.private { format!("{} · private", e.name) } else { e.name.clone() }, current: e.id == active })
-                    .collect();
-                items.push(Entry::separator());
-                items.extend([Command::NewSpace, Command::NewPrivateSpace].map(Entry::command));
-                items.push(Entry::separator());
-                items.extend([Command::RenameSpace, Command::NextTint, Command::PrivateSpace, Command::DeleteSpace].map(Entry::command));
+                let items = self.space_menu_items();
                 self.open_hud_menu(c, items);
             }
             _ => {
@@ -6385,6 +6434,32 @@ impl App {
 
     /// Opens `items` as the menu of control `c`, under it. A second press
     /// on the control closes it.
+    /// The spaces menu: every space, then making, renaming, tinting and deleting them.
+    fn space_menu_items(&self) -> Vec<Entry> {
+        let active = self.spaces.active;
+        let mut items: Vec<Entry> = self
+            .spaces
+            .spaces
+            .iter()
+            .map(|e| Entry::Space { id: e.id, label: if e.private { format!("{} · private", e.name) } else { e.name.clone() }, current: e.id == active })
+            .collect();
+        items.push(Entry::separator());
+        items.extend([Command::NewSpace, Command::NewPrivateSpace].map(Entry::command));
+        items.push(Entry::separator());
+        items.extend([Command::RenameSpace, Command::NextTint, Command::PrivateSpace, Command::DeleteSpace].map(Entry::command));
+        items
+    }
+
+    /// The sidebar's space line: the spaces menu under it.
+    fn open_sidebar_space_menu(&mut self, at: Rect) {
+        let anchor = Vec2::new(at.x + 6.0 * self.ui(), at.bottom() + 4.0 * self.ui());
+        let m = self.layout_menu(menu::NO_CARD, self.space_menu_items(), anchor);
+        log::info!("sidebar space menu: {:?}", menu_labels(&m.items));
+        self.menu = Some(m);
+        self.hud_open = None;
+        self.menu_pressed = false;
+    }
+
     fn open_hud_menu(&mut self, c: crate::hud::Control, items: Vec<Entry>) {
         if self.hud_open == Some(c) && self.menu.is_some() {
             self.menu = None;

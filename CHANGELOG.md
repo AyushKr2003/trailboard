@@ -39,6 +39,16 @@ All notable changes to Trailboard. The format follows
     pages update at once.
 
 ### Changed
+- **The sidebar is now a browser's side panel.** Its top has back, forward
+  and reload for the current card and a button that keeps a peeking sidebar
+  open (or hides it); under them an address pill shows the current card's
+  site (a press edits its address, as Ctrl+L does), then the space's name
+  and counts (a press opens the spaces menu) and a *New card* row. Rows are
+  taller with 16 px site icons; the current card is a raised tab; a card row
+  under the pointer shows a close button. The foot has Settings, a dot per
+  space (named above it under the pointer) and "+" for a new space. The
+  sheet takes a faint tint from the space's colour, and the top-left space
+  panel steps aside while the sidebar is open.
 - **A new README** built around real screenshots (`docs/images/`): the board
   with a trail, how it works in three steps, the palette and sidebar, install
   for Arch and other distros, and the ten keys you need.

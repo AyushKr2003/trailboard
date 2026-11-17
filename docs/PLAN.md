@@ -1352,7 +1352,7 @@ See [FUTURE.md](FUTURE.md). Each item starts only when the owner picks it.
   not start until the owner says so.
 - ⬜ CEF extensions (a curated set); only when the owner picks it.
 
-### M11: Premium look 🟡
+### M11: Premium look ✅
 Started by the owner on 2026-11-15 with the sidebar (step 4). On
 2026-11-17 the owner asked for the whole premium pass, planned here and
 built step by step in order (1, 2, 3, 5, then the rest of 6, then 7).
@@ -1622,8 +1622,30 @@ and light):**
     shadows over a blue → violet mood tile (grain, faint dots), the trail
     with a dot at each end and the new page ringed as the current card.
     The symbolic icon keeps its shape and is unchanged.
-- ⬜ 8. Review pass: every overlay and state in dark and light, at small
+- ✅ 8. Review pass (2026-11-17): every overlay and state in dark and light, at small
   and large windows and a HiDPI scale; fix what looks off.
+  - Tour (2026-11-17, `~/.cache/trailboard-e2e-review`: `run.sh TAG` runs
+    `tour` and shoots every `shot` mark into `shots/TAG/`; `LIGHT=1`,
+    `SIZE=WxH` floats and resizes the window, `X11SCALE=2` runs under
+    XWayland at that scale; `sheet.sh TAG` makes contact sheets). 17
+    states: board, current card, palette (empty, typed), address bar,
+    sidebar, key sheet, history, downloads, page menu, board menu, space
+    menu, question, Read Mode, after a close, settings, welcome.
+  - Done: dark and light at 941×1030, dark at 800×600, light at
+    1900×1060. Everything sits and reads right except one thing, fixed:
+    on a light theme a sticky note's paper was the theme's "yellow",
+    which light themes make dark enough to be text (Tokyo Night Day's
+    `#8c6c3e`: a brown slab). Paper now keeps the hue at OKLab lightness
+    ≥ 0.88, with less chroma where sRGB can't hold it (`STICKY_LIGHT`,
+    tested).
+  - Then, with the screen unlocked: HiDPI (`SIZE=1600x1000 X11SCALE=2`,
+    XWayland at 2×): text, icons, hairlines and keycaps all crisp,
+    everything at twice the size. The light rerun shows the sticky as pale
+    paper. A photo backdrop (`SETTINGS=photo.json`) under every overlay:
+    labels on their sheets, the welcome on its panel, the question's red
+    edge kept. Nothing else to fix.
+  - Not covered: a fractional scale (1.25, 1.5), Wayland's own scaling
+    (the run used XWayland's), the *Follow Hyprland* and *Custom* corners.
 
 **Not in scope:** features that aren't about the look (site restyling,
 split view, auto-archiving tabs, link previews); user CSS themes or mods.
@@ -1661,32 +1683,30 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-17 (eighteenth). Owner asked: do M11's next
-step, step 7 (empty board and first start).
-**Repo state:** on `master`, step 6 (`c2a55f0`) committed; step 7 uncommitted.
+**Last session:** 2026-11-17 (nineteenth). Owner asked: commit step 7
+(`dd5d0ca`) and do M11 step 8, the review pass.
+**Repo state:** on `master`, step 8 uncommitted.
 **Done this session:**
-- The empty board's welcome (`hud::welcome`, `welcome_layout` with tests,
-  `type_::DISPLAY`), its chips pressable (`hud::Go`); the stray *Fit
-  everything* over an empty board fixed; the app icon redrawn. Decisions
-  in M11 step 7; DESIGN (Type, The board), GUIDE and CHANGELOG updated.
-- Verified e2e in `~/.cache/trailboard-e2e-welcome` (`run.sh N shots…`,
-  `SEED=seed2` for a seed with an empty space): a new space and a private
-  one (`script1`, `w1`/`w2`); hover, each chip opening the palette, the
-  address bar and the key sheet, the sidebar open in dark and light
-  (`script2`/`3`, `h1`–`h5`, `l5`); a photo backdrop and the welcome
-  coming back after the last card closes (`script4`, `p2`). Icon checked
-  with `rsvg-convert` at 512, 32 and 24 px.
-- Not checked: HiDPI, a very narrow window (the stacked chips are only
-  unit-tested), the icon in a real launcher.
+- A scripted review tour (M11 step 8) run in dark and light at the usual
+  size, a small dark window, a large light one, HiDPI (2× under XWayland)
+  and a photo backdrop; contact sheets in
+  `~/.cache/trailboard-e2e-review/shots/<tag>/sheet-*.png`.
+- Fixed: sticky paper on light themes (`Theme::sticky_paper`, test
+  `sticky_paper_is_light_on_a_light_theme`), checked on screen.
+- Notes: grim hangs while the display is off (DPMS) and catches the lock
+  screen while locked; run screenshot sessions with the screen unlocked.
+  CEF needs `XDG_SESSION_TYPE=x11` (and no `WAYLAND_DISPLAY`) to start
+  under XWayland.
+- M11 is done.
 **Owner decisions (2026-11-15):** no AppImage, Flatpak or AUR work (the owner
 publishes later, on their own); no UI translations; licence is Apache-2.0
 only (`LICENSE-APACHE`); all AI features (semantic search, Explain, any
 other AI/ML), imports from other browsers, and password managers and
 passkeys are all on hold until the owner says otherwise (see M10).
-**Next up:** M11 step 8 (review pass: every overlay and state in dark and
-light, small and large windows, HiDPI); retake the README's screenshots
-(`docs/images/`) now that steps 5–7 have landed. Follow-ups from 6:
-glide on undo/redo of moves; follow the desktop's animation switch live.
+**Next up:** retake the README's screenshots (`docs/images/`) in the new
+look (the review tour's `board`, `palette` and `sidebar` states are a
+start). Follow-ups from M11 step 6: glide on undo/redo of moves; follow
+the desktop's animation switch live.
 No M10 work: its items are on hold or wait for the owner.
 
 After that, the other small follow-ups below. Sandbox follow-ups: verify the setuid path on a kernel without unprivileged user namespaces (needs `kernel.unprivileged_userns_clone=0` or linux-hardened, and the package installed). Consent follow-ups: more platforms as real sites show them (TCF

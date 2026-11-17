@@ -307,6 +307,8 @@ All notable changes to Trailboard. The format follows
   shrinks it back into its place. It used to be an instant cut.
 
 ### Fixed
+- Sticky notes on a light theme are light paper in their colour again,
+  not a dark brown slab.
 - An empty board no longer offers *Fit everything* at its foot while the
   palette or the address bar is open.
 - **Every settings section can be lit in the side column.** The last short

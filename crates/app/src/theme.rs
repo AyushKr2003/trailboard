@@ -239,6 +239,9 @@ fn from_oklab(c: [f32; 3]) -> Rgb {
     ]
 }
 
+/// The least OKLab lightness of a sticky note's paper on a light theme.
+const STICKY_LIGHT: f32 = 0.88;
+
 /// `c` made lighter (`d` > 0) or darker by `d` of OKLab lightness, keeping its hue.
 pub fn shade(c: Rgb, d: f32) -> Rgb {
     let [l, a, b] = to_oklab(c);
@@ -381,7 +384,25 @@ impl Theme {
     /// A sticky note's paper: theme colour `colour` itself, a little softened
     /// toward the background so it doesn't glare, like paper on the board.
     pub fn sticky_paper(&self, colour: &str) -> Rgb {
-        mix(self.color(colour), self.background(), 0.08)
+        let paper = mix(self.color(colour), self.background(), 0.08);
+        if !self.light() {
+            return paper;
+        }
+        // A light theme's named colours are dark enough to be text (a
+        // brown "yellow"); paper on a light board is the same hue, light.
+        let [l, a, b] = to_oklab(paper);
+        if l >= STICKY_LIGHT {
+            return paper;
+        }
+        // Bright hues don't fit in sRGB that light: less colour until they do.
+        let mut k = 0.8;
+        loop {
+            let c = from_oklab([STICKY_LIGHT, a * k, b * k]);
+            if k < 0.05 || (to_oklab(c)[0] - STICKY_LIGHT).abs() < 0.008 {
+                return c;
+            }
+            k *= 0.85;
+        }
     }
 
     /// Text on a sticky note: black or white for its paper, softened.
@@ -770,6 +791,20 @@ red = "#f7768e"
             assert!(contrast(th.line_strong(), panel) >= 1.5);
             assert!(contrast(th.dots(), board) < 1.6, "dots stay faint");
         }
+    }
+
+    #[test]
+    fn sticky_paper_is_light_on_a_light_theme() {
+        let day = "mode = \"light\"\nbackground = \"#e8e9ee\"\nforeground = \"#343b58\"\nyellow = \"#8c6c3e\"\ngreen = \"#587539\"\nred = \"#c64343\"\n";
+        let th = Theme { palette: parse_palette(day, true), ..Theme::default() };
+        for c in scene::note::STICKY_COLOURS {
+            let (paper, ink) = (th.sticky_paper(c), th.sticky_ink(c));
+            assert!(to_oklab(paper)[0] >= STICKY_LIGHT - 0.01, "{c}: {paper:?}");
+            assert!(contrast(paper, ink) >= 4.5);
+        }
+        // The hue stays: yellow paper is warmer than blue paper.
+        let (y, b) = (th.sticky_paper("yellow"), th.sticky_paper("blue"));
+        assert!(y[0] > y[2] && b[2] > b[0], "{y:?} {b:?}");
     }
 
     #[test]

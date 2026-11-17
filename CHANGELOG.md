@@ -288,6 +288,10 @@ All notable changes to Trailboard. The format follows
   shrinks it back into its place. It used to be an instant cut.
 
 ### Fixed
+- **Every settings section can be lit in the side column.** The last short
+  sections (*Performance and network*, *About*) could never scroll up far
+  enough to be marked as the one in view, even when clicked. The page now
+  leaves just enough room under the last section for it to reach the top.
 - **The start page is ready at once.** It used to stay "loading" until
   every site's icon had arrived, and a site that is slow to answer kept it
   loading for up to about 45 seconds. Until then it was drawn zoomed in and

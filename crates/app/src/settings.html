@@ -284,8 +284,20 @@ function render() {
     rd.onchange = () => { D.cornerRadius = +rd.value; act("corner-radius:", rd.value); };
   }
   if (keepFocus && $(keepFocus)) $(keepFocus).focus();
+  fitTail();
   spy();
 }
+
+// Leaves just enough room under the last section for it to scroll up to the
+// top, so every section (About too) can be reached and lit in the side column.
+function fitTail() {
+  const wrap = $("body"), last = wrap.querySelector("section:last-of-type");
+  if (!last) { wrap.style.paddingBottom = ""; return; }
+  const cs = getComputedStyle(last);
+  const room = $("main").clientHeight - parseFloat(cs.scrollMarginTop) - last.offsetHeight - parseFloat(cs.marginBottom);
+  wrap.style.paddingBottom = Math.max(32, Math.ceil(room)) + "px";
+}
+window.addEventListener("resize", () => { fitTail(); spy(); });
 
 // Shows the change at once; the app saves it and sends the data back.
 function set(key, v) {

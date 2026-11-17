@@ -8,6 +8,7 @@ pub mod export;
 pub mod icons;
 pub mod marks;
 pub mod pagetext;
+pub mod photo;
 pub mod privacy;
 pub mod settings;
 pub mod sitesettings;

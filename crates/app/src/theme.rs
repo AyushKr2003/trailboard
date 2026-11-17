@@ -307,15 +307,19 @@ pub fn loud(ink: Rgb, on: Rgb, target: f32) -> Rgb {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Theme {
     pub palette: Palette,
-    /// Hyprland's window rounding in logical px (0, sharp, without Hyprland: Omarchy's default).
+    /// The corner radius in use, logical px: from the *Corners* setting
+    /// (`scene::settings::Settings::corner_radius`), set by the app.
     pub rounding: f32,
+    /// Hyprland's window rounding in logical px (0, sharp, without Hyprland:
+    /// Omarchy's default), for *Corners: Follow Hyprland*.
+    pub hyprland: f32,
     /// The desktop's text size over Omarchy's default 12 px.
     pub text_scale: f32,
 }
 
 impl Default for Theme {
     fn default() -> Self {
-        Theme { palette: Palette::default(), rounding: 0.0, text_scale: 1.0 }
+        Theme { palette: Palette::default(), rounding: 0.0, hyprland: 0.0, text_scale: 1.0 }
     }
 }
 
@@ -492,9 +496,25 @@ impl Theme {
         rgb(c, strength * if self.light() { 0.42 } else { 1.0 })
     }
 
-    /// Corner radius of a panel, in screen px.
+    /// Corner radius of a floating panel (sidebar, menus, palette, toasts),
+    /// in screen px: a little rounder than a card, so sheets read softer
+    /// than pages; sharp when the corners are.
     pub fn radius(&self, scale: f32) -> f32 {
+        if self.rounding > 0.0 { (self.rounding + 2.0) * scale } else { 0.0 }
+    }
+
+    /// Corner radius of a card (a page on the board) at zoom 1, in screen px.
+    pub fn card_radius(&self, scale: f32) -> f32 {
         self.rounding * scale
+    }
+
+    /// Corner radius of a card `w`×`h` screen px on screen at `k` screen px
+    /// per board unit: the card's radius scaled with the zoom, but kept
+    /// visible when zoomed out (at least 4 px or the full radius, whichever
+    /// is less) and never more than a sixth of the card's short side.
+    pub fn card_corner(&self, k: f32, scale: f32, w: f32, h: f32) -> f32 {
+        let full = self.card_radius(scale);
+        (self.rounding * k).max(full.min(4.0 * scale)).min(full).min(w.min(h) / 6.0).max(0.0)
     }
 
     /// Corner radius of small elements (rows, buttons, keycaps): at most 6 px.
@@ -508,6 +528,39 @@ impl Theme {
             Some(name) => mix(self.background(), self.color(name), if self.light() { 0.10 } else { 0.07 }),
             None => self.background(),
         }
+    }
+
+    /// A space's colour mood (*Board background: Colour mood*): the board
+    /// at its top left and at its bottom right. The tint comes in stronger
+    /// at the top left, a neighbouring hue deepens the far corner, and the
+    /// two sit a little either side of the plain board's lightness, so the
+    /// board has depth without losing the theme's mood. With no tint, the
+    /// theme's background lifted and lowered.
+    pub fn mood(&self, tint: Option<&str>) -> (Rgb, Rgb) {
+        let bg = self.background();
+        let light = self.light();
+        let (lift, sink) = if light { (0.012, -0.035) } else { (0.03, -0.022) };
+        let Some(name) = tint else {
+            return (shade(bg, lift), shade(bg, sink));
+        };
+        // The far corner leans to a neighbouring hue: the mood has two colours.
+        let other = match name {
+            "blue" => "magenta",
+            "magenta" => "blue",
+            "green" => "cyan",
+            "cyan" => "blue",
+            "orange" => "red",
+            "red" => "magenta",
+            "yellow" => "orange",
+            _ => name,
+        };
+        // Hue from the tint, lightness from the board: every tint sits at
+        // the same lightness, so none reads brighter than another.
+        let tinted = |c: Rgb, t: f32, dl: f32| {
+            let (b, c) = (to_oklab(bg), to_oklab(c));
+            from_oklab([(b[0] + dl).clamp(0.0, 1.0), b[1] + (c[1] - b[1]) * t, b[2] + (c[2] - b[2]) * t])
+        };
+        (tinted(self.color(name), 0.30, lift), tinted(self.color(other), 0.20, sink))
     }
 
     /// The colour dot that stands for a space's tint.
@@ -599,9 +652,42 @@ red = "#f7768e"
     }
 
     #[test]
+    fn moods_keep_labels_readable() {
+        let light = parse_palette("background = \"#fafafa\"\nforeground = \"#222222\"\naccent = \"#3366cc\"\n", false);
+        let themes = [Theme { palette: parse_palette(TOKYO, false), ..Theme::default() }, Theme { palette: light, ..Theme::default() }];
+        for th in &themes {
+            for tint in [None, Some("blue"), Some("green"), Some("magenta"), Some("orange"), Some("cyan"), Some("red")] {
+                let (near, far) = th.mood(tint);
+                assert_ne!(near, far, "{tint:?}: a gradient, not flat");
+                for c in [near, far] {
+                    // Card labels are drawn on the board in text2.
+                    assert!(contrast(th.text2(), c) >= 4.0, "{tint:?} {c:?}: {}", contrast(th.text2(), c));
+                    // Still the theme's mood: near its background.
+                    assert!((to_oklab(c)[0] - to_oklab(th.background())[0]).abs() < 0.08, "{tint:?} {c:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn card_corners_stay_visible_when_zoomed_out() {
+        let t = Theme { rounding: 10.0, ..Theme::default() };
+        assert_eq!(t.card_corner(1.0, 1.0, 640.0, 420.0), 10.0);
+        assert_eq!(t.card_corner(2.0, 1.0, 640.0, 420.0), 10.0, "no rounder than the setting");
+        assert_eq!(t.card_corner(0.25, 1.0, 160.0, 105.0), 4.0, "kept visible");
+        assert_eq!(t.card_corner(0.05, 1.0, 18.0, 12.0), 2.0, "a sixth of a tiny card");
+        assert_eq!(t.card_corner(0.25, 2.0, 320.0, 210.0), 8.0, "HiDPI");
+        let sharp = Theme { rounding: 0.0, ..Theme::default() };
+        assert_eq!(sharp.card_corner(0.25, 1.0, 160.0, 105.0), 0.0);
+        let small = Theme { rounding: 2.0, ..Theme::default() };
+        assert_eq!(small.card_corner(0.25, 1.0, 160.0, 105.0), 2.0);
+    }
+
+    #[test]
     fn rounding_caps_small_elements() {
         let t = Theme { rounding: 10.0, ..Theme::default() };
-        assert_eq!(t.radius(2.0), 20.0);
+        assert_eq!(t.radius(2.0), 24.0);
+        assert_eq!(t.card_radius(2.0), 20.0);
         assert_eq!(t.small_radius(2.0), 12.0);
         assert_eq!(Theme::default().radius(2.0), 0.0);
     }

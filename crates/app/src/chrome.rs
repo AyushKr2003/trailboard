@@ -279,6 +279,46 @@ impl Appear {
     }
 }
 
+/// How long a card's label takes to fade in or out.
+pub const LABEL_FADE: Duration = Duration::from_millis(120);
+
+/// Per-item fades (cards' labels): each moves toward shown or hidden at a
+/// steady speed (all the way in [`LABEL_FADE`]), turning back from wherever
+/// it is when the wish changes.
+#[derive(Debug, Default)]
+pub struct Fades {
+    /// Item → (wanted shown, alpha when that was decided, when).
+    items: std::collections::HashMap<u64, (bool, f32, Instant)>,
+}
+
+impl Fades {
+    /// The alpha of `id` now, given whether it should be shown. An item
+    /// seen for the first time starts where it should be, without fading.
+    pub fn alpha(&mut self, id: u64, shown: bool, now: Instant) -> f32 {
+        let at = |(want, from, t): (bool, f32, Instant)| {
+            let p = now.saturating_duration_since(t).as_secs_f32() / LABEL_FADE.as_secs_f32();
+            if want { (from + p).min(1.0) } else { (from - p).max(0.0) }
+        };
+        match self.items.get(&id).copied() {
+            None => {
+                self.items.insert(id, (shown, if shown { 1.0 } else { 0.0 }, now));
+                if shown { 1.0 } else { 0.0 }
+            }
+            Some(e) if e.0 == shown => at(e),
+            Some(e) => {
+                let a = at(e);
+                self.items.insert(id, (shown, a, now));
+                a
+            }
+        }
+    }
+
+    /// Forgets items no longer drawn.
+    pub fn retain(&mut self, keep: impl Fn(u64) -> bool) {
+        self.items.retain(|&id, _| keep(id));
+    }
+}
+
 /// Cubic ease-out over 0..1, clamped.
 pub fn ease_out(t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
@@ -318,6 +358,24 @@ pub fn arrive(l: &mut Layer, came: f32, px: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fades_turn_back_midway() {
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        let mut f = Fades::default();
+        assert_eq!(f.alpha(1, false, t0), 0.0, "first seen: no fade");
+        assert_eq!(f.alpha(2, true, t0), 1.0);
+        assert_eq!(f.alpha(1, true, t0), 0.0);
+        assert!((f.alpha(1, true, ms(60)) - 0.5).abs() < 0.01);
+        // Hidden again halfway: back down from 0.5, at the same speed.
+        assert!((f.alpha(1, false, ms(60)) - 0.5).abs() < 0.01);
+        assert!((f.alpha(1, false, ms(90)) - 0.25).abs() < 0.01);
+        assert!((f.alpha(1, false, ms(120)) - 0.0).abs() < 0.01);
+        assert_eq!(f.alpha(1, false, ms(500)), 0.0);
+        f.retain(|id| id == 2);
+        assert_eq!(f.alpha(1, true, ms(500)), 1.0, "forgotten: starts shown");
+    }
 
     #[test]
     fn keycaps_split_shortcuts_only() {

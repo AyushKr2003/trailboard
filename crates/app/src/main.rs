@@ -2,6 +2,7 @@
 //! board; links open beside the page they came from.
 
 mod app;
+mod backdrop;
 mod blocking;
 mod chrome;
 mod clipboard;

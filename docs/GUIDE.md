@@ -74,6 +74,7 @@ with *Welcome page* in Ctrl+K.
 | Leave the page | Esc |
 | New space / next / previous | Ctrl+Shift+N / Ctrl+PageDown / Ctrl+PageUp |
 | Rename space / next tint | F2 / Ctrl+Shift+B |
+| Space's background photo | *Background photo…* in the space's menu or the palette: the desktop's wallpaper, a picture from the theme's backgrounds or `~/Pictures`, or type a picture's path (JPEG, PNG or WebP) |
 | Delete space | Ctrl+Shift+W (asks first if it has cards) |
 | Private space on / off | Ctrl+Shift+P: pages there aren't kept in history, their site icons and zoom aren't saved, and cookies live in memory until you quit (the board itself is still saved) |
 | Show shortcuts | ? (while no page has the keys) or F1 |
@@ -161,12 +162,20 @@ draws pages off screen, so `chrome://settings` isn't there):
   site still hears "position unavailable".
 - *Proxy*: System, None, or Custom (asks for `host:port`, or
   `socks5://host:port`); it applies at once.
+- *Corners*: Rounded (Trailboard's own, the default), Follow Hyprland (your
+  windows' rounding; sharp on Omarchy's default), or Custom (a slider from
+  0 to 24 px). Cards, panels, menus and the app's own pages follow at once.
+- *Board background*: Colour mood (the default: a soft gradient from the
+  space's tint, with fine grain), Photo (the space's own picture, else your
+  desktop wallpaper; labels get a small sheet so they read over it), or
+  Plain (the space's flat colour).
 
 On [Omarchy](https://omarchy.org/), Trailboard follows the current theme live
 (colours, light or dark, including the pages' `prefers-color-scheme`, unless
-*Page colours* in the settings says Light or Dark),
-Hyprland's window rounding and the desktop text size. Elsewhere it uses a dark
-palette with a yellow accent and square corners.
+*Page colours* in the settings says Light or Dark), the desktop text size,
+its wallpaper (for *Board background: Photo*) and, with *Corners: Follow
+Hyprland*, Hyprland's window rounding. Elsewhere it uses a dark palette with
+a yellow accent.
 
 ## Running it
 

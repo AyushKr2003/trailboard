@@ -9,9 +9,10 @@ struct Globals {
     grid_spacing: f32,
     dot_radius: f32,
     fine: f32,
-    _pad: f32,
+    grain: f32,
     bg: vec4f,
     dot: vec4f,
+    bg2: vec4f,
 };
 
 @group(0) @binding(0) var<uniform> g: Globals;
@@ -26,9 +27,24 @@ fn vs_bg(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4f {
     return vec4f(uv * 2.0 - 1.0, 0.0, 1.0);
 }
 
+// A cheap per-pixel hash in 0..1, for grain.
+fn hash2(p: vec2f) -> f32 {
+    let q = fract(p * vec2f(0.1031, 0.1030));
+    let r = q + dot(q, q.yx + 33.33);
+    return fract((r.x + r.y) * r.x);
+}
+
 @fragment
 fn fs_bg(@builtin(position) pos: vec4f) -> @location(0) vec4f {
-    var c = g.bg;
+    // `bg` at the top left easing into `bg2` at the bottom right (the
+    // window's own diagonal, so the mood fills any shape the same way).
+    let uv = pos.xy / max(g.viewport, vec2f(1.0));
+    let t = smoothstep(0.0, 1.0, clamp(uv.x * 0.45 + uv.y * 0.55, 0.0, 1.0));
+    var c = vec4f(mix(g.bg.rgb, g.bg2.rgb, t), 1.0);
+    if (g.grain > 0.0) {
+        let n = hash2(floor(pos.xy)) + hash2(floor(pos.xy) + 17.0) - 1.0;
+        c = vec4f(clamp(c.rgb + vec3f(n * g.grain / 255.0), vec3f(0.0), vec3f(1.0)), 1.0);
+    }
     if (g.grid_spacing > 4.0) {
         // Main dots every `grid_spacing`; between them, dots that fade in
         // with `fine` as the board zooms in.

@@ -80,11 +80,12 @@ impl Desktop {
         d
     }
 
-    /// The look as the files say now (rounding stays as it was).
-    pub fn read(&self, rounding: f32) -> Theme {
+    /// The look as the files say now (the corners stay as `now` has them).
+    pub fn read(&self, now: &Theme) -> Theme {
         Theme {
             palette: theme::read_palette(&self.state.join("theme")),
-            rounding,
+            rounding: now.rounding,
+            hyprland: now.hyprland,
             text_scale: theme::read_base_size(&self.user_shell, &self.state) / 12.0,
         }
     }
@@ -129,10 +130,10 @@ impl Desktop {
         if self.pending.is_some_and(|t| t.elapsed() >= DEBOUNCE) {
             self.pending = None;
             self.arm();
-            next = Some(self.read(current.rounding));
+            next = Some(self.read(current));
         }
         if let Some(r) = rounding {
-            next.get_or_insert_with(|| current.clone()).rounding = r;
+            next.get_or_insert_with(|| current.clone()).hyprland = r;
         }
         next.filter(|t| t != current)
     }
@@ -334,7 +335,7 @@ mod tests {
         std::fs::create_dir_all(state.join("theme")).unwrap();
         std::fs::write(state.join("theme/colors.toml"), "background = \"#101010\"\n").unwrap();
         let mut d = Desktop::new(state.clone(), dir.path().join("cfg/shell.toml"), false);
-        let first = d.read(0.0);
+        let first = d.read(&Theme::default());
         assert_eq!(first.background(), [0x10, 0x10, 0x10]);
 
         // A theme switch replaces the directory.

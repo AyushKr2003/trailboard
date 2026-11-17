@@ -104,7 +104,7 @@ pub fn fit(w: u32, h: u32, max_w: u32, max_h: u32) -> (u32, u32) {
 
 /// `src` (BGRA, `sw × sh`) shrunk to `dw × dh` by averaging each output
 /// pixel's area.
-fn shrink(sw: u32, sh: u32, src: &[u8], dw: u32, dh: u32) -> Thumb {
+pub(crate) fn shrink(sw: u32, sh: u32, src: &[u8], dw: u32, dh: u32) -> Thumb {
     let (sw, sh, dw, dh) = (sw as usize, sh as usize, dw as usize, dh as usize);
     let mut out = Vec::with_capacity(dw * dh * 4);
     for y in 0..dh {

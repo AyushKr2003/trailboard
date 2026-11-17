@@ -26,6 +26,9 @@ pub enum Target {
     /// Where to save the download Chromium is waiting about (a path; *Save
     /// downloads to: Ask each time*). Closing the field cancels the download.
     SaveAs(u32),
+    /// The space's background photo (`palette::photo_rows`): the text filters
+    /// the pictures offered, or is a picture file's path.
+    Photo,
 }
 
 impl Target {
@@ -33,7 +36,7 @@ impl Target {
     pub fn is_list(&self) -> bool {
         matches!(
             self,
-            Target::Palette | Target::History | Target::Downloads | Target::AllowedSites
+            Target::Palette | Target::History | Target::Downloads | Target::AllowedSites | Target::Photo
         )
     }
 }

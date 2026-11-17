@@ -7,6 +7,19 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **A premium look for the board.**
+  - **Rounded corners** on cards, panels, menus and the app's own pages,
+    with a *Corners* setting: Rounded (the default), Follow Hyprland
+    (your windows' rounding, the old behaviour) or Custom (a 0–24 px
+    slider). Cards keep visibly rounded corners when zoomed far out.
+  - **Board background** setting: *Colour mood* (the default), a soft
+    gradient from each space's tint into a neighbouring hue, with fine
+    grain so it never bands; *Photo*, the space's own picture or else your
+    desktop wallpaper, read in the background and cut to the window; or
+    *Plain*, the old flat colour.
+  - **Background photo…** in the space's menu and the palette: the
+    desktop wallpaper, pictures from the theme's backgrounds and
+    `~/Pictures`, or a typed path (JPEG, PNG or WebP).
 - **A redesigned start page you can make your own**, modelled on the most
   liked community start pages (Bonjourr and Tabliss for the clock-first
   calm, Bento and the Homepage/Dashy dashboards for grouped links, Tilde for
@@ -39,6 +52,15 @@ All notable changes to Trailboard. The format follows
     pages update at once.
 
 ### Changed
+- **Cards are sheets.** The page fills the card's rounded shape, shadows
+  are softer and wider (a little higher under the pointer, higher still
+  for the current card), and the current card has a thinner, calmer ring.
+- **Quiet labels.** A card's title shows above the current card, the one
+  under the pointer, selected cards and stacks, and on every card once
+  you zoom far out; labels fade in and out. Trail tags always show. Over
+  a photo, labels sit on a small dark sheet.
+- A sleeping card that never loaded shows its site icon and title instead
+  of "Asleep · click to load".
 - **The sidebar is now a browser's side panel.** Its top has back, forward
   and reload for the current card and a button that keeps a peeking sidebar
   open (or hides it); under them an address pill shows the current card's

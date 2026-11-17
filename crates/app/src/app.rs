@@ -86,6 +86,7 @@
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -142,6 +143,10 @@ const BAR_BTN: f32 = 24.0;
 /// reload on its label; narrower than `BAR_CLOSE_MIN`, none for close either.
 const BAR_NAV_MIN: f32 = 280.0;
 const BAR_CLOSE_MIN: f32 = 96.0;
+/// Below this zoom every card shows its label (landmarks on a far-out
+/// board); above it only the current card, the one under the pointer and
+/// selected ones do.
+const LABELS_ALL_BELOW: f32 = 0.45;
 /// Height of the Read Mode title bar, in overlay px (scaled by `ui()`).
 /// None: the page fills the whole window (Tab or Esc goes back).
 const READ_BAR: f32 = 0.0;
@@ -388,6 +393,15 @@ pub struct App {
     sandbox: Option<web::sandbox::Sandbox>,
     /// How far each overlay has come in (see `chrome::Appear`).
     anim: Anims,
+    /// Cards' labels fading in and out (quiet labels).
+    label_fades: crate::chrome::Fades,
+    /// The board's photo (*Board background: Photo*), read off the main thread.
+    photo: crate::backdrop::Photo,
+    /// The desktop's wallpaper file, looked up now and then (`backdrop::desktop_wallpaper`).
+    wallpaper: Option<PathBuf>,
+    wallpaper_checked: Option<Instant>,
+    /// Pictures the photo list offers, found when it opens.
+    photo_files: Vec<PathBuf>,
     /// Waiting for Enter to do something that can't be undone.
     confirm: Option<Confirm>,
     /// Board changed since the last save.
@@ -652,6 +666,11 @@ impl App {
             toast: None,
             sandbox: None,
             anim: Anims::default(),
+            label_fades: crate::chrome::Fades::default(),
+            photo: crate::backdrop::Photo::default(),
+            wallpaper: None,
+            wallpaper_checked: None,
+            photo_files: Vec::new(),
             confirm: None,
             dirty: false,
             last_save: Instant::now(),
@@ -997,7 +1016,7 @@ impl App {
     /// Start following the desktop's look (once the window exists).
     fn start_desktop(&mut self) {
         let d = Desktop::new(crate::theme::state_dir(), crate::theme::user_shell_toml(), true);
-        let t = d.read(self.theme.rounding);
+        let t = d.read(&self.theme);
         self.desktop = Some(d);
         self.set_theme(t);
     }
@@ -1015,7 +1034,8 @@ impl App {
         }
     }
 
-    fn set_theme(&mut self, t: Theme) {
+    fn set_theme(&mut self, mut t: Theme) {
+        t.rounding = self.settings.corner_radius(t.hyprland);
         log::info!(
             "theme: {} accent={:?} background={:?} rounding={} text-scale={:.2}",
             if t.light() { "light" } else { "dark" },
@@ -1035,6 +1055,7 @@ impl App {
     }
 
     fn follow_desktop(&mut self) {
+        self.check_wallpaper(false);
         let before = self.desktop.as_ref().and_then(Desktop::full_window);
         if let Some(t) = self.desktop.as_mut().and_then(|d| d.poll(&self.theme)) {
             self.set_theme(t);
@@ -2197,6 +2218,7 @@ impl App {
             Item::Command(c) => self.run_command(c),
             Item::Download(key) => self.open_download(key),
             Item::AllowedSite(site) => self.block_site_again(&site),
+            Item::Photo(path) => self.set_space_photo(path),
         }
     }
 
@@ -2265,6 +2287,69 @@ impl App {
             }
         }
         log::info!("blocking {} {site}: {reloaded} page(s) reloaded", if on { "back on for" } else { "off for" });
+    }
+
+    // ---------------------------------------------------------------- board background
+
+    /// The picture the board shows now, if *Board background* is *Photo*:
+    /// the space's own, else the desktop's wallpaper.
+    fn board_photo(&self) -> Option<PathBuf> {
+        if self.settings.backdrop != prefs::Backdrop::Photo {
+            return None;
+        }
+        self.spaces.active_entry().photo.as_ref().map(PathBuf::from).or_else(|| self.wallpaper.clone())
+    }
+
+    /// Looks the desktop's wallpaper up again (it changes without the theme
+    /// changing), at most every two seconds unless `now`.
+    fn check_wallpaper(&mut self, now: bool) {
+        if !now && self.wallpaper_checked.is_some_and(|t| t.elapsed() < Duration::from_secs(2)) {
+            return;
+        }
+        self.wallpaper_checked = Some(Instant::now());
+        let w = crate::backdrop::desktop_wallpaper();
+        if w != self.wallpaper {
+            log::info!("desktop wallpaper: {w:?}");
+            self.wallpaper = w;
+        }
+    }
+
+    /// *Board background* changed in the settings.
+    fn backdrop_changed(&mut self) {
+        self.check_wallpaper(true);
+        self.photo.retry();
+        if self.settings.backdrop == prefs::Backdrop::Photo && self.board_photo().is_none() {
+            self.toast("No desktop wallpaper found · pick a photo from the space's menu");
+        }
+    }
+
+    /// *Background photo…*: the list of pictures to show behind this space.
+    fn open_photo_list(&mut self) {
+        self.menu = None;
+        self.link_hints = None;
+        self.finish_arrange(true);
+        self.check_wallpaper(true);
+        self.photo_files = storage::photo::pictures(&crate::backdrop::picture_dirs(), 400);
+        self.omnibox = Some(Omnibox::new("", Target::Photo));
+        log::info!("photo list open: {} pictures, wallpaper {:?}", self.photo_files.len(), self.wallpaper);
+    }
+
+    /// The space's background becomes `path` (`None`: the desktop's
+    /// wallpaper), and the board shows photos if it didn't.
+    fn set_space_photo(&mut self, path: Option<String>) {
+        let id = self.spaces.active;
+        let name = path.as_deref().map_or_else(
+            || "desktop wallpaper".to_string(),
+            |p| Path::new(p).file_stem().map_or_else(|| p.to_string(), |s| s.to_string_lossy().to_string()),
+        );
+        self.spaces.set_photo(id, path);
+        self.save_index();
+        self.photo.retry();
+        if self.settings.backdrop != prefs::Backdrop::Photo {
+            self.choose_setting(prefs::Key::Backdrop, prefs::Backdrop::Photo.id());
+        }
+        log::info!("space {} photo {:?}", id.0, self.spaces.active_entry().photo);
+        self.toast(format!("Background: {name}"));
     }
 
     /// The list of sites where ads are allowed, from the palette.
@@ -2362,6 +2447,8 @@ impl App {
             }
         } else if let Some(server) = action.strip_prefix(sp::PROXY) {
             self.set_proxy_server(server);
+        } else if let Some(px) = action.strip_prefix(sp::CORNER_RADIUS) {
+            self.set_corner_radius(px);
         } else if let Some(name) = action.strip_prefix(sp::RUN) {
             match sp::command(name) {
                 Some(c) => {
@@ -2394,6 +2481,8 @@ impl App {
         match key {
             prefs::Key::Search => self.engine_changed(),
             prefs::Key::NewCard | prefs::Key::ScrollSpeed | prefs::Key::DownloadTo | prefs::Key::SpacePanel => {}
+            prefs::Key::Corners => self.set_theme(self.theme.clone()),
+            prefs::Key::Backdrop => self.backdrop_changed(),
             prefs::Key::LivePages => {
                 self.max_live = self.settings.live_pages;
                 self.live_from_env = false;
@@ -2555,6 +2644,18 @@ impl App {
         self.toast(format!("{} {} on {site}", what.name(), if on { "on" } else { "off" }));
     }
 
+    /// The slider under *Corners: Custom* let go at `text` px.
+    fn set_corner_radius(&mut self, text: &str) {
+        let Some(px) = text.trim().parse::<u8>().ok().filter(|&r| r <= prefs::MAX_CORNER_RADIUS) else {
+            log::warn!("settings page: bad corner radius {text:?}");
+            return;
+        };
+        self.settings.corner_radius = px;
+        log::info!("setting Corners = {}", self.settings.value(prefs::Key::Corners));
+        self.set_theme(self.theme.clone());
+        self.save_settings();
+    }
+
     /// Enter in the proxy field: the server for *Proxy: Custom*.
     fn set_proxy_server(&mut self, text: &str) {
         let server = text.trim().to_string();
@@ -2639,6 +2740,10 @@ impl App {
 
     /// The rows under a list field: the palette's or the history view's.
     fn list_rows(&self, ob: &Omnibox) -> Vec<palette::Row> {
+        if ob.target == Target::Photo {
+            let current = self.spaces.active_entry().photo.as_deref();
+            return palette::photo_rows(&ob.text, &self.photo_files, current, self.wallpaper.is_some());
+        }
         if ob.target == Target::AllowedSites {
             return palette::allowed_rows(&ob.text, &self.blocking.allowed_sites(), &self.scene);
         }
@@ -3053,6 +3158,7 @@ impl App {
                 self.omnibox = Some(Omnibox::new(&name, Target::RenameSpace));
             }
             Command::NextTint => self.cycle_tint(),
+            Command::BackgroundPhoto => self.open_photo_list(),
             Command::DeleteSpace => self.ask_delete_space(),
             Command::History => self.open_history(),
             Command::ClearHistory => self.ask_clear_history(),
@@ -5451,9 +5557,30 @@ impl App {
         // grid: its density never jumps.
         let base = (32.0 * k).max(1e-3);
         let spacing = base * 2f32.powf((20.0 * scale / base).log2().ceil());
+        // Behind the cards: the space's photo once it is read, else its
+        // colour mood (a soft gradient with grain), else its flat colour.
+        let photo = self.board_photo();
+        let update = self.photo.update(photo.as_deref(), (vp.x.max(0.0) as u32, vp.y.max(0.0) as u32));
+        if let (Some(t), Some(r)) = (update.upload, self.renderer.as_mut()) {
+            r.update_page(crate::backdrop::TEXTURE, t.width, t.height, &t.pixels, self.photo.serial);
+        }
+        if let Some((p, e)) = update.failed {
+            let name = p.file_name().map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().to_string());
+            self.toast(format!("Can't show {name} as the background: {e}"));
+        }
+        let photo_on = photo.as_deref().is_some_and(|p| self.photo.ready(p)) && !board_hidden;
+        let (near, far, grain, dots) = match self.settings.backdrop {
+            prefs::Backdrop::Plain => (th.board(tint.as_deref()), th.board(tint.as_deref()), 0.0, 1.0),
+            _ => {
+                let (a, b) = th.mood(tint.as_deref());
+                (a, b, 1.5, if photo_on { 0.0 } else { 0.7 })
+            }
+        };
         let bg = Background {
-            color: rgb(th.board(tint.as_deref()), 1.0),
-            dot: rgb(th.dots(), 1.0),
+            color: rgb(near, 1.0),
+            color2: rgb(far, 1.0),
+            grain,
+            dot: rgb(th.dots(), dots),
             grid_origin: [origin.x, origin.y],
             grid_spacing: spacing,
             dot_radius: (1.0 * scale).max(0.75),
@@ -5461,6 +5588,18 @@ impl App {
         };
 
         let mut layers: Vec<Layer> = Vec::new();
+        if photo_on {
+            // The photo fills the window and stays put while the board moves,
+            // a little dimmed so cards and labels stand off it.
+            let dim = if th.light() { 0.94 } else { 0.78 };
+            let mut l = Layer::default();
+            l.quads.push(Quad {
+                shape: Shape::Rect { rect: Rect::new(0.0, 0.0, vp.x, vp.y), radius: 0.0 },
+                color: [dim, dim, dim, 1.0],
+                texture: Some(crate::backdrop::TEXTURE),
+            });
+            layers.push(l);
+        }
         let line = crate::chrome::hair(scale);
         // What the pointer is over lights up, unless something else has the pointer.
         let hover = if matches!(self.drag, Drag::None) && self.menu.is_none() && self.omnibox.is_none() && !self.hints && self.pointer_in {
@@ -5531,6 +5670,8 @@ impl App {
         self.bars.clear();
         self.bar_buttons.clear();
         let mut in_view = false;
+        let now = Instant::now();
+        let crowd = k / scale < LABELS_ALL_BELOW;
         for n in board_cards {
             // The card on its way to or from Read Mode is drawn by `read_morph_layer`.
             if morphing == Some(n.id) {
@@ -5543,8 +5684,9 @@ impl App {
                 continue;
             }
             let content = self.to_screen_rect(n.rect);
-            // Cards are windows on the board: Hyprland's rounding, scaled with the zoom.
-            let radius = (th.rounding * k).min(th.radius(scale));
+            // Cards are sheets: the corner radius in use, scaled with the
+            // zoom but kept visible when zoomed far out.
+            let radius = th.card_corner(k, scale, frame.w, frame.h);
             let focused = self.focused == Some(n.id);
             let hovered = hover.id() == Some(n.id);
             let selected = self.selection.contains(n.id) || in_band.contains(&n.id);
@@ -5571,12 +5713,21 @@ impl App {
                     crate::chrome::outline(&mut l, back, radius, line, rgb(th.line_strong(), 1.0));
                 }
             }
-            // One light from above: a soft shadow around the card and a tight
-            // one under its edge. The current card floats a little higher.
-            let (ambient, key) = if focused { ((14.0, 40.0, 0.34), (2.0, 5.0, 0.30)) } else { ((6.0, 20.0, 0.24), (1.0, 3.0, 0.24)) };
+            // One light from above: a wide, soft shadow around the card and a
+            // tight one under its edge. The current card floats a little
+            // higher, the one under the pointer a touch. Both keep some size
+            // when zoomed out, so cards still float over the board.
+            let (ambient, key) = if focused {
+                ((12.0, 44.0, 0.40), (2.0, 6.0, 0.30))
+            } else if hovered {
+                ((9.0, 34.0, 0.32), (1.5, 4.0, 0.26))
+            } else {
+                ((6.0, 26.0, 0.26), (1.0, 3.0, 0.22))
+            };
             for (dy, blur, a) in [ambient, key] {
+                let lo = 0.35 * scale;
                 l.quads.push(Quad {
-                    shape: Shape::Shadow { rect: frame.translate(Vec2::new(0.0, dy * k)), radius, blur: (blur * k).max(1.5) },
+                    shape: Shape::Shadow { rect: frame.translate(Vec2::new(0.0, (dy * k).max(dy * lo))), radius, blur: (blur * k).max(blur * lo).max(1.5) },
                     color: th.shadow(a),
                     texture: None,
                 });
@@ -5593,8 +5744,9 @@ impl App {
                 _ => [1.0, 1.0],
             };
             l.quads.push(Quad {
-                // Round the bottom corners like the frame, so the page doesn't square them off.
-                shape: Shape::Page { rect: content, radius, round_bottom: true, extent },
+                // The page is the card: clipped to its rounded shape. (A
+                // sticky note's page sits under its strip: rounded below only.)
+                shape: Shape::Page { rect: content, radius, round_bottom: sticky.is_some(), extent },
                 color: match (has_tex, asleep) {
                     (true, false) => [1.0; 4],
                     (true, true) => [0.72, 0.72, 0.74, 1.0], // a sleeping card's last frame, dimmed
@@ -5603,18 +5755,39 @@ impl App {
                 },
                 texture: has_tex.then_some(key),
             });
-            if asleep && !has_tex {
-                let size = 13.0 * k;
+            if asleep && !has_tex && sticky.is_none() {
+                // Never painted: the site's icon and the title, centred, so
+                // the card still says what it is.
+                let s = (32.0 * k).clamp(12.0 * scale, 32.0 * scale);
+                // Readable when the card has room for it, else left out.
+                let size = (14.0 * k).max(11.0 * scale).min(14.0 * scale);
+                let size = if content.w >= 120.0 * scale && content.h >= 60.0 * scale { size } else { 0.0 };
+                let gap = (10.0 * k).max(6.0 * scale);
+                let block = s + if size >= 9.0 { gap + size } else { 0.0 };
+                let top = content.center().y - block / 2.0;
+                if let Some(key) = self.icon_key(&n.url) {
+                    l.quads.push(Quad {
+                        shape: Shape::Rect { rect: Rect::new((content.center().x - s / 2.0).round(), top.round(), s, s), radius: 0.0 },
+                        color: [0.85, 0.85, 0.87, 1.0],
+                        texture: Some(key),
+                    });
+                } else if let Some(r) = self.renderer.as_mut() {
+                    crate::icons::draw(&mut l, r, crate::icons::Icon::Moon, content.center().x, top + s / 2.0, s * 0.7, rgb(th.text3(), 1.0));
+                }
                 if size >= 9.0 {
-                    let msg = "Asleep · click to load";
-                    let w = self.renderer.as_mut().map_or(100.0, |r| r.measure(msg, size, false));
-                    crate::chrome::text(&mut l, msg, content.x + (content.w - w) / 2.0, content.center().y, size, rgb(th.text3(), 1.0), content, false);
+                    let title = if n.title.trim().is_empty() { palette::host(&n.url).to_string() } else { n.title.trim().to_string() };
+                    let room = content.w - 24.0 * k;
+                    let w = self.renderer.as_mut().map_or(room, |r| r.measure(&title, size, false)).min(room);
+                    let clip = Rect::new(content.center().x - w / 2.0, top + s + gap - size, w, size * 2.0);
+                    crate::chrome::text(&mut l, title, clip.x, top + s + gap + size / 2.0, size, rgb(th.text2(), 1.0), clip, false);
                 }
             }
             if sticky.is_none() {
                 // The hairline that keeps a card crisp against the board, over
-                // the page's own edge too (a white page on a light board).
-                crate::chrome::outline(&mut l, frame, radius, line, rgb(th.line(), 1.0));
+                // the page's own edge too (a white page on a light board);
+                // a step stronger under the pointer.
+                let edge = if hovered && !focused { th.line_strong() } else { th.line() };
+                crate::chrome::outline(&mut l, frame, radius, line, rgb(edge, 1.0));
             }
             // Loading: a bar gliding along the card's top edge.
             if sticky.is_none() && card.is_some_and(|c| c.loading) {
@@ -5639,12 +5812,12 @@ impl App {
             }
             // Rings sit outside the frame: the selection's, then the current
             // card's. The page with the keys (or a card being moved by
-            // keyboard) gets a heavy, solid ring; a card that is only current
-            // a thin, softer one.
+            // keyboard) gets a solid ring; a card that is only current a
+            // thin, calm one.
             let arranging = self.arrange.as_ref().is_some_and(|a| a.id == n.id);
-            let ring_w = if !focused { 0.0 } else if typing || arranging { 3.0 * scale.max(1.0) } else { 2.0 * scale.max(1.0) };
+            let ring_w = if !focused { 0.0 } else if typing || arranging { 2.5 * scale.max(1.0) } else { 1.5 * scale.max(1.0) };
             if focused {
-                let alpha = if typing || arranging { 1.0 } else { 0.7 };
+                let alpha = if typing || arranging { 1.0 } else { 0.8 };
                 crate::chrome::outline(&mut l, frame.inflate(ring_w), if radius > 0.0 { radius + ring_w } else { 0.0 }, ring_w, rgb(th.accent(), alpha));
             }
             if selected {
@@ -5692,6 +5865,13 @@ impl App {
                 }
                 lead += w + 8.0 * ui;
             }
+            // Quiet labels: the title shows on the current card, the one
+            // under the pointer, selected ones and stacks, and on every card
+            // when zoomed far out; it fades in and out. The label's place
+            // stays the card's handle either way.
+            let label_on = focused || hovered || selected || stack.is_some() || crowd;
+            let label_alpha = self.label_fades.alpha(n.id.0, label_on, now);
+            let label_from = (l.quads.len(), l.texts.len());
             if sticky.is_none() && frame.w - lead >= 40.0 * ui {
                 self.bars.push((n.id, bar));
                 let mut right = bar.right();
@@ -5763,6 +5943,7 @@ impl App {
                     right -= 22.0 * ui;
                 }
                 let mut x = frame.x + lead;
+                let label_x0 = x;
                 let size = 12.0 * ui;
                 let icon = self.icon_key(&n.url);
                 if let Some(key) = icon {
@@ -5798,9 +5979,27 @@ impl App {
                         crate::chrome::text(&mut l, host, hx, mid, hs, rgb(th.text3(), 1.0), bar, false);
                     }
                 }
+                if photo_on {
+                    // Over a photo the label sits on a small sheet of the
+                    // panel colour, so it reads whatever the picture is.
+                    let wide = controls || asleep;
+                    let end = if wide { bar.right() } else { (x + tw + 9.0 * ui).min(bar.right()) };
+                    let sheet = Rect::new(label_x0 - 7.0 * ui, bar.y + 2.0 * ui, end - label_x0 + 7.0 * ui, bar.h - 4.0 * ui);
+                    let round = if th.rounding > 0.0 { sheet.h / 2.0 } else { 0.0 };
+                    let mut back = Layer::default();
+                    crate::chrome::fill(&mut back, sheet, round, rgb(th.panel(), 0.82));
+                    l.quads.splice(label_from.0..label_from.0, back.quads);
+                }
+            }
+            if label_alpha < 1.0 {
+                let ease = crate::chrome::ease_out(label_alpha);
+                l.quads[label_from.0..].iter_mut().for_each(|q| q.color[3] *= ease);
+                l.texts[label_from.1..].iter_mut().for_each(|t| t.color[3] *= ease);
             }
             layers.push(l);
         }
+        let scene = &self.scene;
+        self.label_fades.retain(|id| scene.node(NodeId(id)).is_some());
 
         if let Some(m) = self.read_morph {
             if let Some(l) = self.read_morph_layer(m) {
@@ -5973,6 +6172,7 @@ impl App {
                     &[("Enter", "Open file"), ("Ctrl+Enter", "Show folder"), ("Shift+Del", "Cancel or remove"), ("Esc", "Close")],
                 ),
                 Target::AllowedSites => (Icon::Shield, "Sites with ads allowed", &[("Enter", "Block ads again"), ("Esc", "Close")]),
+                Target::Photo => (Icon::Picture, "Find a picture or type its path", &[("Enter", "Use as background"), ("Esc", "Close")]),
                 Target::SaveAs(_) => (Icon::Download, "Save download as", &[("Enter", "Save"), ("Esc", "Cancel")]),
                 _ => (Icon::Globe, "Search or enter address", &[("Enter", "Open"), ("Shift+Enter", "Open beside")]),
             };
@@ -6031,6 +6231,7 @@ impl App {
                     (Target::History, true, _) => "No pages in history yet",
                     (Target::Downloads, true, _) => "No downloads yet",
                     (Target::AllowedSites, true, _) => "Ads are blocked on every site",
+                    (Target::Photo, true, _) => "No pictures in Pictures or the theme's backgrounds · type a picture's path",
                     _ => "Nothing found",
                 };
                 // Site icons are looked up before the renderer is borrowed to draw.
@@ -6139,7 +6340,7 @@ impl App {
         let scale = self.scale();
         let vp = self.viewport();
         let k = self.camera.pixels_per_unit(scale);
-        let radius = (th.rounding * k).min(th.radius(scale)) * (1.0 - p);
+        let radius = th.card_corner(k, scale, content.w, content.h) * (1.0 - p);
         let tint = self.spaces.active_entry().tint.clone();
         let key = self.page_key(m.id);
         let has_tex = self.renderer.as_ref().is_some_and(|r| r.has_page(key));
@@ -6446,7 +6647,7 @@ impl App {
         items.push(Entry::separator());
         items.extend([Command::NewSpace, Command::NewPrivateSpace].map(Entry::command));
         items.push(Entry::separator());
-        items.extend([Command::RenameSpace, Command::NextTint, Command::PrivateSpace, Command::DeleteSpace].map(Entry::command));
+        items.extend([Command::RenameSpace, Command::NextTint, Command::BackgroundPhoto, Command::PrivateSpace, Command::DeleteSpace].map(Entry::command));
         items
     }
 

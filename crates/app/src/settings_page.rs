@@ -6,7 +6,7 @@
 //!
 //! The page's messages (after `web::APP_ACTION`) are [`SET`] `key=value`
 //! (`scene::settings::Key::id` and an id of `Settings::choices`),
-//! [`PROXY`] and the server typed, [`RUN`] and a name of [`command`], and
+//! [`PROXY`] and the server typed, [`CORNER_RADIUS`] and a number of px, [`RUN`] and a name of [`command`], and
 //! `start::GUIDE` for the search engine guide. The app sends the page its
 //! data again with [`data_script`] whenever a setting changes.
 
@@ -22,6 +22,8 @@ const PAGE: &str = include_str!("settings.html");
 pub const SET: &str = "set:";
 /// Before the proxy server typed for *Proxy: Custom*.
 pub const PROXY: &str = "proxy-server:";
+/// Before the radius (px) chosen for *Corners: Custom*.
+pub const CORNER_RADIUS: &str = "corner-radius:";
 /// Before the name of a board command the page has a button for.
 pub const RUN: &str = "run:";
 
@@ -44,7 +46,7 @@ const SECTIONS: &[Section] = &[
     Section {
         id: "appearance",
         name: "Appearance",
-        keys: &[Key::PageColours, Key::DefaultZoom, Key::ScrollSpeed, Key::SpacePanel],
+        keys: &[Key::Corners, Key::Backdrop, Key::PageColours, Key::DefaultZoom, Key::ScrollSpeed, Key::SpacePanel],
         buttons: &[("Keyboard shortcuts", "shortcuts")],
     },
     Section {
@@ -121,6 +123,8 @@ fn help(key: Key) -> &'static str {
         Key::DownloadTo => "Where files you download are saved.",
         Key::LivePages => "Cards that keep a running page. The rest sleep and wake when you go to them; fewer saves memory.",
         Key::SpacePanel => "The sidebar button and the space's name at the board's top left. Off, B opens the sidebar and the palette (Ctrl+K) switches spaces.",
+        Key::Backdrop => "Behind the cards: a soft gradient from the space's colour, a photo (the space's own from its menu, else your desktop wallpaper), or a plain colour.",
+        Key::Corners => "How round cards, panels and menus are: Trailboard's own, your Hyprland windows', or a size you pick.",
         Key::Proxy => "How pages reach the internet: as the system says, directly, or through a server you give.",
     }
 }
@@ -165,7 +169,14 @@ pub fn data(s: &Settings, notes: &[(Key, String)], facts: &[(&str, String, Strin
         })
         .collect();
     let facts: Vec<String> = facts.iter().map(|(l, v, more)| format!("[{},{},{}]", q(l), q(v), q(more))).collect();
-    format!("{{\"sections\":[{}],\"proxyServer\":{},\"facts\":[{}]}}", sections.join(","), q(&s.proxy_server), facts.join(","))
+    format!(
+        "{{\"sections\":[{}],\"proxyServer\":{},\"cornerRadius\":{},\"maxCornerRadius\":{},\"facts\":[{}]}}",
+        sections.join(","),
+        q(&s.proxy_server),
+        s.corner_radius,
+        scene::settings::MAX_CORNER_RADIUS,
+        facts.join(",")
+    )
 }
 
 /// The settings page for theme `th`, showing `data` (from [`data`]).
@@ -216,10 +227,11 @@ mod tests {
         let url = page_url(&Theme::default(), &d);
         assert!(!url.contains("__DATA__") && !url.contains("__THEME__") && !url.contains("__PREFIX__"));
         for msg in PAGE.split("act(\"").skip(1).filter_map(|s| s.split('"').next()) {
-            assert!([SET, PROXY, RUN, crate::start::GUIDE].contains(&msg), "unknown message {msg}");
+            assert!([SET, PROXY, CORNER_RADIUS, RUN, crate::start::GUIDE].contains(&msg), "unknown message {msg}");
         }
         let rounded = Theme { rounding: 10.0, ..Theme::default() };
-        assert!(crate::welcome::colors(&rounded).contains("\"radius\":\"10px\""), "corners follow Hyprland");
+        assert!(crate::welcome::colors(&rounded).contains("\"radius\":\"10px\""), "pages follow the corners in use");
+        assert!(d.contains("\"cornerRadius\":10") && d.contains("\"key\":\"corners\""), "{d}");
         assert_eq!(parse_set("block_ads=off"), Some((Key::BlockAds, "off")));
         assert_eq!(parse_set("nope=off"), None);
         assert_eq!(parse_set("block_ads"), None);

@@ -6,7 +6,8 @@
 //! "do_not_track": false, "javascript": true, "images": true, "camera": "ask",
 //! "microphone": "ask", "location": "ask", "notifications": "ask",
 //! "download_to": "downloads", "proxy": "system", "proxy_server": "",
-//! "space_panel": true }`.
+//! "space_panel": true, "corners": "rounded", "corner_radius": 10,
+//! "board_background": "mood" }`.
 //!
 //! Each field is read on its own: a missing or unknown value (say, an engine
 //! a newer build added, or a field an older build didn't write) keeps its
@@ -16,7 +17,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use scene::settings::{self, DownloadTo, NewCard, PageColours, Permission, Proxy, ScrollSpeed, SearchEngine, Settings};
+use scene::settings::{self, Backdrop, Corners, DownloadTo, NewCard, PageColours, Permission, Proxy, ScrollSpeed, SearchEngine, Settings};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -49,6 +50,9 @@ struct SettingsFile<'a> {
     proxy: &'a str,
     proxy_server: &'a str,
     space_panel: bool,
+    corners: &'a str,
+    corner_radius: u8,
+    board_background: &'a str,
 }
 
 #[derive(Deserialize)]
@@ -131,6 +135,15 @@ pub fn load_settings(data_dir: &Path) -> Settings {
     if let Some(p) = text("proxy_server") {
         s.proxy_server = p.trim().to_string();
     }
+    if let Some(b) = text("board_background").and_then(Backdrop::from_id) {
+        s.backdrop = b;
+    }
+    if let Some(c) = text("corners").and_then(Corners::from_id) {
+        s.corners = c;
+    }
+    if let Some(r) = v["corner_radius"].as_u64().filter(|&r| r <= u64::from(settings::MAX_CORNER_RADIUS)) {
+        s.corner_radius = r as u8;
+    }
     s
 }
 
@@ -159,6 +172,9 @@ pub fn save_settings(data_dir: &Path, s: &Settings) -> std::io::Result<()> {
         proxy: s.proxy.id(),
         proxy_server: &s.proxy_server,
         space_panel: s.space_panel,
+        corners: s.corners.id(),
+        corner_radius: s.corner_radius,
+        board_background: s.backdrop.id(),
     };
     let json = serde_json::to_vec_pretty(&file).map_err(std::io::Error::other)?;
     write_atomic(&settings_path(data_dir), &json)
@@ -195,6 +211,9 @@ mod tests {
             proxy: Proxy::Custom,
             proxy_server: "socks5://127.0.0.1:9050".into(),
             space_panel: false,
+            corners: Corners::Custom,
+            corner_radius: 6,
+            backdrop: Backdrop::Photo,
         };
         save_settings(dir.path(), &s).unwrap();
         assert_eq!(load_settings(dir.path()), s);

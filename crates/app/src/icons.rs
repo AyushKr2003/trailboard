@@ -43,6 +43,7 @@ pub enum Icon {
     Board,
     Grip,
     Find,
+    Picture,
 }
 
 enum Prim {
@@ -248,6 +249,11 @@ fn strokes(icon: Icon) -> Vec<Prim> {
         Icon::Grip => {
             p.line(20.0, 9.0, 9.0, 20.0).line(20.0, 15.0, 15.0, 20.0);
         }
+        Icon::Picture => {
+            // A framed picture: a sun over two hills.
+            p.rrect(3.5, 4.5, 17.0, 15.0, 2.5).circle(15.5, 9.5, 1.8);
+            p.poly(&[(4.0, 17.5), (9.5, 11.5), (14.0, 16.0), (16.0, 14.0), (20.0, 18.0)]);
+        }
     }
     p.0
 }
@@ -343,7 +349,7 @@ mod tests {
         Icon::Note, Icon::Sticky, Icon::Tidy, Icon::Stack, Icon::Fit, Icon::Sidebar, Icon::More, Icon::Settings,
         Icon::History, Icon::Download, Icon::Shield, Icon::ChevronRight, Icon::ChevronDown, Icon::Lock, Icon::Expand,
         Icon::Keyboard, Icon::Trail, Icon::Undo, Icon::Moon, Icon::Help, Icon::Check, Icon::Board, Icon::Grip,
-        Icon::Find,
+        Icon::Find, Icon::Picture,
     ];
 
     fn alpha(px: &[u8], size: u32, x: u32, y: u32) -> u8 {

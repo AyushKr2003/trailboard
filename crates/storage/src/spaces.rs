@@ -42,6 +42,10 @@ pub struct SpaceEntry {
     /// cookie jar and cache in memory only, dropped when the app quits.
     #[serde(default)]
     pub private: bool,
+    /// A picture file for *Board background: Photo* (`None`: the desktop's
+    /// wallpaper). Added without a version step: older builds ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub photo: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -67,7 +71,7 @@ impl SpaceIndex {
             idx.next_id = idx.next_id.max(id);
             let name = idx.default_name();
             let tint = tint_name(TINTS[idx.spaces.len() % TINTS.len()]);
-            idx.spaces.push(SpaceEntry { id: SpaceId(id), name, tint, private: false });
+            idx.spaces.push(SpaceEntry { id: SpaceId(id), name, tint, private: false, photo: None });
         }
         idx
     }
@@ -100,7 +104,7 @@ impl SpaceIndex {
         let name = self.default_name();
         let tint = self.unused_tint();
         let at = self.position(self.active).map_or(self.spaces.len(), |p| p + 1);
-        self.spaces.insert(at, SpaceEntry { id, name, tint, private: false });
+        self.spaces.insert(at, SpaceEntry { id, name, tint, private: false, photo: None });
         id
     }
 
@@ -135,6 +139,18 @@ impl SpaceIndex {
         let i = TINTS.iter().position(|t| *t == s.tint.as_deref()).map_or(0, |i| i + 1);
         s.tint = tint_name(TINTS[i % TINTS.len()]);
         Some(s.tint.clone())
+    }
+
+    /// Sets a space's background photo (`None`: the desktop's wallpaper).
+    /// Returns false if it is not listed.
+    pub fn set_photo(&mut self, id: SpaceId, photo: Option<String>) -> bool {
+        match self.spaces.iter_mut().find(|s| s.id == id) {
+            Some(s) => {
+                s.photo = photo;
+                true
+            }
+            None => false,
+        }
     }
 
     /// Makes a space private or not. Returns false if it is not listed.
@@ -523,6 +539,19 @@ mod tests {
         let mut back = back;
         back.remove(b);
         assert_eq!(back.add(), SpaceId(3));
+    }
+
+    #[test]
+    fn photo_round_trips_and_is_left_out_when_unset() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut idx = open_spaces(dir.path()).unwrap();
+        save_index(dir.path(), &idx).unwrap();
+        assert!(!String::from_utf8(fs::read(index_path(dir.path())).unwrap()).unwrap().contains("photo"));
+        assert!(idx.set_photo(SpaceId(1), Some("/pics/lake.webp".into())));
+        assert!(!idx.set_photo(SpaceId(9), None));
+        save_index(dir.path(), &idx).unwrap();
+        let back = open_spaces(dir.path()).unwrap();
+        assert_eq!(back.active_entry().photo.as_deref(), Some("/pics/lake.webp"));
     }
 
     #[test]

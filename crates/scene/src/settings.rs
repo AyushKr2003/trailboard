@@ -331,6 +331,81 @@ impl Proxy {
     }
 }
 
+/// How round corners are: cards, panels, menus and the app's own pages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Corners {
+    /// Trailboard's own look: [`ROUNDED_RADIUS`] px.
+    Rounded,
+    /// Hyprland's window rounding (sharp on Omarchy's default).
+    Hyprland,
+    /// The radius in `Settings::corner_radius`.
+    Custom,
+}
+
+/// The radius of [`Corners::Rounded`], in logical px.
+pub const ROUNDED_RADIUS: f32 = 10.0;
+/// The largest radius *Custom* takes.
+pub const MAX_CORNER_RADIUS: u8 = 24;
+
+impl Corners {
+    pub const ALL: [Corners; 3] = [Corners::Rounded, Corners::Hyprland, Corners::Custom];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Corners::Rounded => "rounded",
+            Corners::Hyprland => "hyprland",
+            Corners::Custom => "custom",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Corners> {
+        Corners::ALL.into_iter().find(|c| c.id() == id)
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Corners::Rounded => "Rounded",
+            Corners::Hyprland => "Follow Hyprland",
+            Corners::Custom => "Custom",
+        }
+    }
+}
+
+/// What the board shows behind the cards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Backdrop {
+    /// A soft two-colour gradient from the space's tint, with fine grain and faint dots.
+    Mood,
+    /// A picture: the space's own, else the desktop's wallpaper; the mood until one loads.
+    Photo,
+    /// The space's flat colour with dots.
+    Plain,
+}
+
+impl Backdrop {
+    pub const ALL: [Backdrop; 3] = [Backdrop::Mood, Backdrop::Photo, Backdrop::Plain];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Backdrop::Mood => "mood",
+            Backdrop::Photo => "photo",
+            Backdrop::Plain => "plain",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Backdrop> {
+        Backdrop::ALL.into_iter().find(|c| c.id() == id)
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Backdrop::Mood => "Colour mood",
+            Backdrop::Photo => "Photo",
+            Backdrop::Plain => "Plain",
+        }
+    }
+}
+
 /// The languages pages are asked for, as (id, name). `system` follows `$LANG`.
 pub const LANGUAGES: [(&str, &str); 22] = [
     ("system", "System"),
@@ -437,6 +512,10 @@ pub struct Settings {
     pub proxy_server: String,
     /// The panel at the board's top left (sidebar button, the space's name).
     pub space_panel: bool,
+    pub corners: Corners,
+    pub backdrop: Backdrop,
+    /// Radius in logical px for [`Corners::Custom`] (0 to [`MAX_CORNER_RADIUS`]).
+    pub corner_radius: u8,
 }
 
 impl Default for Settings {
@@ -464,12 +543,24 @@ impl Default for Settings {
             proxy: Proxy::System,
             proxy_server: String::new(),
             space_panel: true,
+            corners: Corners::Rounded,
+            backdrop: Backdrop::Mood,
+            corner_radius: ROUNDED_RADIUS as u8,
         }
     }
 }
 
 impl Settings {
     /// The page zoom factor for sites without their own.
+    /// The corner radius in use (logical px), given Hyprland's rounding.
+    pub fn corner_radius(&self, hyprland: f32) -> f32 {
+        match self.corners {
+            Corners::Rounded => ROUNDED_RADIUS,
+            Corners::Hyprland => hyprland.max(0.0),
+            Corners::Custom => f32::from(self.corner_radius.min(MAX_CORNER_RADIUS)),
+        }
+    }
+
     pub fn default_zoom_factor(&self) -> f64 {
         f64::from(self.default_zoom) / 100.0
     }
@@ -510,11 +601,13 @@ pub enum Key {
     DownloadTo,
     Proxy,
     SpacePanel,
+    Corners,
+    Backdrop,
 }
 
 impl Key {
     /// In the panel's order.
-    pub const ALL: [Key; 21] = [
+    pub const ALL: [Key; 23] = [
         Key::Search,
         Key::NewCard,
         Key::DefaultZoom,
@@ -534,6 +627,8 @@ impl Key {
         Key::DownloadTo,
         Key::Proxy,
         Key::SpacePanel,
+        Key::Corners,
+        Key::Backdrop,
         Key::PageColours,
         Key::ScrollSpeed,
     ];
@@ -561,6 +656,8 @@ impl Key {
             Key::DownloadTo => "Save downloads to",
             Key::Proxy => "Proxy",
             Key::SpacePanel => "Show the space panel",
+            Key::Corners => "Corners",
+            Key::Backdrop => "Board background",
         }
     }
 
@@ -587,6 +684,8 @@ impl Key {
             Key::DownloadTo => ("downloads folder save location directory", DownloadTo::ALL.iter().map(|d| d.name()).collect()),
             Key::Proxy => ("proxy server network socks http", Proxy::ALL.iter().map(|p| p.name()).collect()),
             Key::SpacePanel => ("space name top left corner sidebar button chrome hide", vec!["on", "off"]),
+            Key::Backdrop => ("board background wallpaper photo picture image gradient colour color mood grain plain", Backdrop::ALL.iter().map(|c| c.name()).collect()),
+            Key::Corners => ("rounded round corner radius sharp square look hyprland", Corners::ALL.iter().map(|c| c.name()).collect()),
         };
         let mut s = words.to_string();
         for v in values {
@@ -628,6 +727,11 @@ impl Settings {
             Key::Location => self.location.name().to_string(),
             Key::Notifications => self.notifications.name().to_string(),
             Key::DownloadTo => self.download_to.name().to_string(),
+            Key::Corners => match self.corners {
+                Corners::Custom => format!("Custom · {} px", self.corner_radius),
+                c => c.name().to_string(),
+            },
+            Key::Backdrop => self.backdrop.name().to_string(),
             Key::Proxy => match self.proxy {
                 Proxy::Custom if !self.proxy_server.is_empty() => format!("Custom · {}", self.proxy_server),
                 p => p.name().to_string(),
@@ -660,6 +764,8 @@ impl Settings {
             Key::Notifications => self.notifications = cycle(&Permission::ALL, self.notifications, dir),
             Key::DownloadTo => self.download_to = cycle(&DownloadTo::ALL, self.download_to, dir),
             Key::Proxy => self.proxy = cycle(&Proxy::ALL, self.proxy, dir),
+            Key::Corners => self.corners = cycle(&Corners::ALL, self.corners, dir),
+            Key::Backdrop => self.backdrop = cycle(&Backdrop::ALL, self.backdrop, dir),
             Key::Language => {
                 let ids: Vec<&'static str> = LANGUAGES.iter().map(|(i, _)| *i).collect();
                 self.language = cycle(&ids, self.language, dir);
@@ -717,6 +823,8 @@ impl Key {
             Key::DownloadTo => "download_to",
             Key::Proxy => "proxy",
             Key::SpacePanel => "space_panel",
+            Key::Corners => "corners",
+            Key::Backdrop => "board_background",
         }
     }
 
@@ -760,6 +868,8 @@ impl Settings {
             Key::Camera | Key::Microphone | Key::Location | Key::Notifications => ids(&Permission::ALL, Permission::id, Permission::name),
             Key::DownloadTo => ids(&DownloadTo::ALL, DownloadTo::id, DownloadTo::name),
             Key::Proxy => ids(&Proxy::ALL, Proxy::id, Proxy::name),
+            Key::Corners => ids(&Corners::ALL, Corners::id, Corners::name),
+            Key::Backdrop => ids(&Backdrop::ALL, Backdrop::id, Backdrop::name),
             Key::Language => LANGUAGES.iter().map(|(i, n)| (i.to_string(), n.to_string())).collect(),
             Key::DefaultZoom => {
                 let mut v: Vec<u16> = DEFAULT_ZOOMS.to_vec();
@@ -806,6 +916,8 @@ impl Settings {
             Key::DownloadTo => self.download_to.id().into(),
             Key::Proxy => self.proxy.id().into(),
             Key::SpacePanel => on(self.space_panel),
+            Key::Corners => self.corners.id().into(),
+            Key::Backdrop => self.backdrop.id().into(),
         }
     }
 
@@ -829,6 +941,8 @@ impl Settings {
             Key::Notifications => Permission::from_id(id).into_iter().for_each(|v| self.notifications = v),
             Key::DownloadTo => DownloadTo::from_id(id).into_iter().for_each(|v| self.download_to = v),
             Key::Proxy => Proxy::from_id(id).into_iter().for_each(|v| self.proxy = v),
+            Key::Corners => Corners::from_id(id).into_iter().for_each(|v| self.corners = v),
+            Key::Backdrop => Backdrop::from_id(id).into_iter().for_each(|v| self.backdrop = v),
             Key::Language => language_from_id(id).into_iter().for_each(|v| self.language = v),
             Key::DefaultZoom => {
                 if let Some(z) = id.parse::<u16>().ok().filter(|z| (25..=500).contains(z)) {
@@ -860,6 +974,24 @@ fn on_off(on: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn corner_radius_by_choice() {
+        let mut s = Settings::default();
+        assert_eq!(s.corner_radius(0.0), ROUNDED_RADIUS);
+        s.corners = Corners::Hyprland;
+        assert_eq!(s.corner_radius(8.0), 8.0);
+        assert_eq!(s.corner_radius(-1.0), 0.0);
+        s.corners = Corners::Custom;
+        s.corner_radius = 4;
+        assert_eq!(s.corner_radius(8.0), 4.0);
+        assert_eq!(s.value(Key::Corners), "Custom · 4 px");
+        s.corner_radius = 200;
+        assert_eq!(s.corner_radius(0.0), f32::from(MAX_CORNER_RADIUS));
+        assert!(s.choose(Key::Corners, "rounded"));
+        assert_eq!(s.corners, Corners::Rounded);
+        assert!(!s.choose(Key::Corners, "soft"));
+    }
 
     #[test]
     fn choices_wrap_and_numbers_stop() {

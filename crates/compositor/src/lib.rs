@@ -24,7 +24,13 @@ pub fn rgba(r: u8, g: u8, b: u8, a: f32) -> Rgba {
 /// Background parameters for one frame.
 #[derive(Clone, Copy)]
 pub struct Background {
+    /// The board's colour at its top left; it eases into `color2` towards
+    /// the bottom right (the same colour twice: flat).
     pub color: Rgba,
+    pub color2: Rgba,
+    /// Fine noise over the colour, in 8-bit levels either way (0: none);
+    /// it keeps a soft gradient from banding.
+    pub grain: f32,
     pub dot: Rgba,
     /// Screen position of world origin, px.
     pub grid_origin: [f32; 2],
@@ -103,9 +109,10 @@ struct Globals {
     grid_spacing: f32,
     dot_radius: f32,
     fine: f32,
-    _pad: f32,
+    grain: f32,
     bg: [f32; 4],
     dot: [f32; 4],
+    bg2: [f32; 4],
 }
 
 struct PageTexture {
@@ -463,9 +470,10 @@ impl Renderer {
             grid_spacing: bg.grid_spacing,
             dot_radius: bg.dot_radius,
             fine: bg.fine,
-            _pad: 0.0,
+            grain: bg.grain,
             bg: bg.color,
             dot: bg.dot,
+            bg2: bg.color2,
         };
         self.queue.write_buffer(&self.globals_buf, 0, bytemuck::bytes_of(&globals));
 

@@ -61,6 +61,7 @@ pub enum Command {
     PreviousSpace,
     RenameSpace,
     NextTint,
+    BackgroundPhoto,
     PrivateSpace,
     NewPrivateSpace,
     DeleteSpace,
@@ -121,7 +122,8 @@ pub const COMMANDS: &[CommandInfo] = &[
     c(Command::NextSpace, "Next space", "Ctrl+PgDn", "board workspace"),
     c(Command::PreviousSpace, "Previous space", "Ctrl+PgUp", "board workspace"),
     c(Command::RenameSpace, "Rename space", "F2", "board workspace name"),
-    c(Command::NextTint, "Next space tint", "Ctrl+Shift+B", "background colour color"),
+    c(Command::NextTint, "Next space tint", "Ctrl+Shift+B", "background colour color mood"),
+    c(Command::BackgroundPhoto, "Background photo…", "", "board space wallpaper picture image backdrop"),
     c(Command::PrivateSpace, "Private space on or off", "Ctrl+Shift+P", "incognito history cookies unrecorded privacy"),
     c(Command::NewPrivateSpace, "New private space", "", "incognito board workspace unrecorded privacy"),
     c(Command::DeleteSpace, "Delete space", "Ctrl+Shift+W", "board workspace remove"),
@@ -152,6 +154,9 @@ pub enum Item {
     /// A row of the allowed-sites list: Enter, a click or Shift+Delete
     /// blocks ads on the site again.
     AllowedSite(String),
+    /// A row of the photo list: the space's background becomes this
+    /// picture file (`None`: the desktop's wallpaper).
+    Photo(Option<String>),
 }
 
 /// A result row.
@@ -438,6 +443,55 @@ pub fn allowed_rows(query: &str, sites: &[(String, bool)], scene: &Scene) -> Vec
     palette::rank(query, &cands).into_iter().map(|r| Row { positions: r.positions, ..items[r.index].clone() }).collect()
 }
 
+/// The photo list (*Background photo…*): the desktop's wallpaper first,
+/// then `files` (each with its folder's name), filtered by `query`. A query
+/// that is the path of a picture file adds it on top. `current` (the
+/// space's photo) is marked.
+pub fn photo_rows(query: &str, files: &[std::path::PathBuf], current: Option<&str>, wallpaper: bool) -> Vec<Row> {
+    let mark = |on: bool, s: &str| if on { format!("Current · {s}") } else { s.to_string() };
+    let mut items = Vec::new();
+    if wallpaper {
+        items.push(Row {
+            item: Item::Photo(None),
+            label: "Desktop wallpaper".into(),
+            detail: mark(current.is_none(), "Follows your desktop"),
+            positions: Vec::new(),
+            dot: None,
+            history: None,
+        });
+    }
+    for f in files {
+        let path = f.to_string_lossy().to_string();
+        let name = f.file_stem().map_or_else(|| path.clone(), |s| s.to_string_lossy().to_string());
+        let folder = f.parent().and_then(|p| p.file_name()).map_or(String::new(), |s| s.to_string_lossy().to_string());
+        items.push(Row {
+            item: Item::Photo(Some(path.clone())),
+            label: name,
+            detail: mark(current == Some(path.as_str()), &folder),
+            positions: Vec::new(),
+            dot: None,
+            history: None,
+        });
+    }
+    let q = query.trim();
+    let typed = q.strip_prefix("~/").map_or_else(
+        || std::path::PathBuf::from(q),
+        |rest| std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(rest),
+    );
+    let mut out = Vec::new();
+    if typed.is_absolute() && storage::photo::is_picture(&typed) && typed.is_file() {
+        let path = typed.to_string_lossy().to_string();
+        out.push(Row { item: Item::Photo(Some(path.clone())), label: path, detail: "Use this file".into(), positions: Vec::new(), dot: None, history: None });
+    }
+    if q.is_empty() {
+        out.extend(items);
+        return out;
+    }
+    let cands: Vec<Candidate> = items.iter().map(|r| Candidate { text: &r.label, alt: &r.detail }).collect();
+    out.extend(palette::rank(q, &cands).into_iter().map(|r| Row { positions: r.positions, ..items[r.index].clone() }));
+    out
+}
+
 /// The icon that stands for a command in the list.
 pub fn command_icon(c: Command) -> Icon {
     use Command::*;
@@ -465,6 +519,7 @@ pub fn command_icon(c: Command) -> Icon {
         ZoomOut => Icon::Minus,
         ZoomReset => Icon::Search,
         NewSpace | NextSpace | PreviousSpace | RenameSpace | NextTint => Icon::Board,
+        BackgroundPhoto => Icon::Picture,
         PrivateSpace | NewPrivateSpace => Icon::Lock,
         History | ClearHistory => Icon::History,
         ClearCookies | ToggleBlocking | AllowedSites => Icon::Shield,
@@ -487,6 +542,7 @@ fn row_icon(row: &Row) -> Icon {
         Item::Closed(_) => Icon::Undo,
         Item::Download(_) => Icon::Download,
         Item::AllowedSite(_) => Icon::Shield,
+        Item::Photo(_) => Icon::Picture,
     }
 }
 

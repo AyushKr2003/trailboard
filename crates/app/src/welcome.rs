@@ -34,8 +34,8 @@ pub(crate) fn shade(th: &Theme) -> Rgb {
     [(c[0] * 255.0).round() as u8, (c[1] * 255.0).round() as u8, (c[2] * 255.0).round() as u8]
 }
 
-/// The theme as the page's CSS variables (colours and `radius`, Hyprland's
-/// window rounding) and a `light` flag, a JSON object.
+/// The theme as the page's CSS variables (colours and `radius`, the corner
+/// radius in use) and a `light` flag, a JSON object.
 pub(crate) fn colors(th: &Theme) -> String {
     // An app page is a card: its ground is the card level, the boxes on it
     // the panel level, its text the same three strengths as the chrome.
@@ -71,7 +71,7 @@ pub(crate) fn colors(th: &Theme) -> String {
         .iter()
         .map(|(k, c)| format!("\"{k}\":\"{}\"", hex(*c)))
         .collect();
-    // Hyprland's window rounding, so app pages' corners match the windows'.
+    // The corner radius in use (the *Corners* setting), so app pages match the chrome.
     format!(
         "{{{},\"radius\":\"{}px\",\"light\":{}}}",
         body.join(","),

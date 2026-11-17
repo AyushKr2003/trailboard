@@ -1353,8 +1353,28 @@ See [FUTURE.md](FUTURE.md). Each item starts only when the owner picks it.
 - ⬜ CEF extensions (a curated set); only when the owner picks it.
 
 ### M11: Premium look 🟡
-Started by the owner on 2026-11-15 with the sidebar (step 4); take the
-other steps only when the owner asks for them.
+Started by the owner on 2026-11-15 with the sidebar (step 4). On
+2026-11-17 the owner asked for the whole premium pass, planned here and
+built step by step in order (1, 2, 3, 5, then the rest of 6, then 7).
+
+**Owner answers (2026-11-17), after studying the reference's published
+screenshots** (they replace the 2026-11-15 corner answer below):
+- *Corners:* rounded by default, whatever Hyprland says. A *Corners*
+  setting offers **Rounded** (default), **Follow Hyprland** (today's
+  behaviour) and **Custom** (a number of px the owner types).
+- *Card labels:* quiet. A label shows above the current card and the card
+  under the pointer; when cards are small on screen (zoomed far out) every
+  card shows one again, as landmarks. Label buttons only on hover.
+- *Board background:* a setting chooses the style: **Colour mood** (each
+  space a soft two-stop gradient from our presets, fine grain, faint dots)
+  or **Photo** (a picture per space, chosen from disk; the mood shows
+  until one is chosen). **Plain** stays as a third choice (today's flat
+  board, the Omarchy look).
+- What reads as premium in the reference, to aim for in our own way: the
+  board has an atmosphere and cards float over it; a card is just its
+  page with small rounded corners and a soft shadow; controls float as
+  dark rounded sheets (menus with icons and right-aligned keys; a command
+  bar with small spaced section labels); colour comes from the space.
 
 **Owner answers (2026-11-15):** corners keep following Hyprland's rounding
 (sharp on this machine, no separate *Look* setting for now), so "premium"
@@ -1397,7 +1417,9 @@ overlays, vignette, keycaps). Solid, but flat and "tool-like": cards have
 square title bars, the board is a plain dotted colour, spaces differ only by
 background colour, and the sidebar is a plain list.
 
-**Open question for the owner (ask at the start):** the premium look needs
+**Answered 2026-11-17 (see the owner's answers above): separate
+*Corners* and *Board background* settings instead of one *Look*.** The
+question was: the premium look needs
 rounded corners and per-space colour, which the Omarchy look deliberately
 doesn't do (corners follow Hyprland, colours follow the Omarchy theme).
 Proposed answer: a *Look* setting with two choices, **Trailboard** (the new
@@ -1406,22 +1428,52 @@ a matching app. Light/dark keeps following the system in both.
 
 **Steps, in order (each a session or two, each screenshot-checked in dark
 and light):**
-- ⬜ 1. Design tokens: one table of surface steps, hairlines, radii (small
-  controls, panels, cards), shadows, spacing (4 px grid) and a type scale,
-  in `app::chrome`/`app::theme`, used by every overlay; the *Look* setting
-  (`scene::settings`, `storage::settings` with a migration).
-- ⬜ 2. Space colour: each space gets a colour mood (a two-stop soft gradient
-  picked from a small set of our own presets, or a single colour) that tints
-  the board, the sidebar and the accent; optional subtle grain to stop
-  banding. Picked from the space's menu / palette; stored in the board file
-  (board version bump + migration). Spaces' existing background colours
-  migrate to the nearest preset.
-- ⬜ 3. Cards as sheets: rounded corners on the card and its page (page
-  texture clipped by an SDF in the shader), a slimmer title bar that merges
-  with the page top, site icon + title + quiet controls that appear on
-  hover, softer depth for unfocused cards and a calm accent ring for the
-  current one; Read Mode's single page inset with a margin and rounded
-  instead of edge to edge.
+- ✅ 1. Corners and tokens (2026-11-17). `scene::settings::Corners`
+  (Rounded / Follow Hyprland / Custom) and `corner_radius` (0–24 px),
+  saved in `settings.json` (fields added, version stays 1; old files get
+  Rounded). `Theme::hyprland` holds Hyprland's value, `Theme::rounding` the
+  radius in use, set in `App::set_theme` from the setting (Rounded:
+  `ROUNDED_RADIUS`, 10 px). Tokens in `theme.rs`: `card_radius`, `radius`
+  (panels: rounding + 2, 0 when sharp), `small_radius` (≤ 6), `card_corner`
+  (on screen: scaled with the zoom, at least min(4 px, full), at most a
+  sixth of the card's short side). The settings page shows *Corners* as
+  three segments; under *Custom* a 0–24 px slider with a live sample,
+  sent on release (`corner-radius:` message). App pages follow through
+  `--radius` as before.
+- ✅ 2. Cards as sheets and quiet labels (2026-11-17). The page is clipped
+  to the full rounded shape (sticky notes keep square tops under their
+  strip). Shadows: ambient (6, 26, .26), hovered (9, 34, .32), current
+  (12, 44, .40) plus a tight contact shadow, each with a floor of 0.35 of
+  its size so cards still float when zoomed out. Hovered cards get the
+  strong hairline. Current ring 1.5 px at 80% (2.5 px solid with the
+  keys). Labels by the owner's rule (`LABELS_ALL_BELOW` = 0.45 zoom),
+  faded at a steady speed by `chrome::Fades` (120 ms all the way, turning
+  back midway); the label's rectangle stays the card's handle even when
+  hidden, so pointing at it brings it back. A never-painted sleeping card
+  shows its icon (or a moon) and title instead of "Asleep · click to
+  load". Read Mode's page inset is left for step 5's floating page bar.
+- ✅ 3. Board background (2026-11-17). Setting *Board background*: Colour
+  mood (default) / Photo / Plain (`scene::settings::Backdrop`, saved as
+  `board_background`). Mood: `Theme::mood(tint)`, hue-only blends in OKLab
+  (tint 30% near, a neighbouring hue 20% far: blue→magenta, green→cyan,
+  magenta→blue, cyan→blue, orange→red, red→magenta, yellow→orange) at the
+  board's lightness ±; tested to keep text2 ≥ 4:1 and stay within 0.08 L
+  of the background on dark and light themes. Drawn in `fs_bg`
+  (`Background::{color2, grain}`): smoothstep along the window diagonal,
+  ±1.5 levels of hashed grain, dots at 70%. Photo: `SpaceEntry::photo`
+  (optional field, no version step: older builds ignore it), else the
+  desktop wallpaper (`~/.local/state/omarchy/current/background`, checked
+  every 2 s); `storage::photo` reads JPEG / PNG / WebP (zune-jpeg,
+  zune-png, image-webp), shrinks to 2560 px and cuts to the window
+  (`cover`); `app::backdrop::Photo` does it on a worker thread, keeps the
+  read picture for resizes and reports a bad file once. Drawn as the
+  first layer (texture key `1 << 60`), dimmed, no dots; labels get a
+  panel sheet at 82%. Picked with *Background photo…* (space menu,
+  palette): a list (`Target::Photo`, `palette::photo_rows`) of the
+  desktop wallpaper, the theme's backgrounds, `~/Pictures` and its
+  wallpaper folders, or a typed path; choosing one switches the setting
+  to Photo. No xdg-desktop-portal: it needs a D-Bus library, and the list
+  covers where wallpapers live; revisit if a typed path proves awkward.
 - ✅ 4. Sidebar (2026-11-15, `app::sidebar`). Decisions:
   - A sheet floating 8 px in from the window's top, left and bottom
     (`chrome::panel`, mid lift, hairline edge), 280 px wide, corners from
@@ -1483,10 +1535,12 @@ and light):**
     space's name and its own hide button. Hit testing is pure
     (`Panel::spot_at`, `sidebar::Spot`) with unit tests. No B keycap in
     the head any more (the tooltip and the guide teach it).
-- ⬜ 5. Command bar finish: the Ctrl+K palette as the centred hero sheet
-  (larger input text, section labels in small caps, site icons on rows,
-  keycaps right-aligned), and the same finish for the address bar, menus,
-  settings and toasts.
+- ⬜ 5. Command bar and overlays finish: the Ctrl+K palette as the
+  centred hero sheet (larger input text, small spaced section labels
+  "GO TO / RECENT / ACTIONS", site icons on rows, keycaps right-aligned);
+  menus with an icon column and right-aligned keys; a floating page bar
+  (back, forward, reload, address, more) above the page in Read Mode;
+  toasts as the same dark sheet.
 - 🟡 6. Motion pass. Done (2026-11-15): Read Mode in and out
   (`scene::read::morph`, 200 ms ease-out): the card's header and content
   move to the read bar and window, screen px per CSS px moving evenly, the
@@ -1541,37 +1595,41 @@ Every milestone ends with: tests green, clippy clean, one scripted e2e run, one 
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-17 (fourteenth). Owner asked: redesign the
-sidebar to look like a professional, premium browser's side panel.
+**Last session:** 2026-11-17 (fifteenth). Owner asked: study the
+reference browser's site and screenshots and make Trailboard look premium
+and professional, planned in M11 and built step by step.
 **Repo state:** on `master`, committed; working tree clean.
 **Done this session:**
-- The sidebar redone as a browser side panel (M11 step 4, decisions under
-  "Redone as a browser's side panel"): back / forward / reload and a keep
-  button on top, an address pill (Ctrl+L), the space line (spaces menu),
-  *New card*, raised current tab, close on hovered rows, foot with
-  settings, space dots and "+", a faint space tint. The top-left space
-  panel hides while the sidebar shows. `sidebar::Spot` / `Panel::spot_at`
-  hit testing with unit tests; `App::open_address_bar` and
-  `App::space_menu_items` factored out for sharing.
-- Verified e2e in `~/.cache/trailboard-e2e-sidebar3` (`run.sh N`, with the
-  test site `python3 -I server.py 8781`, `LIGHT=1` for the light theme):
-  dark and light screenshots, hover close, address pill, spaces menu from
-  the space line, space-dot tooltip, keep button closing a kept sheet, the
-  edge peek still opening it, keep tooltip.
-- Not done: `docs/images/sidebar.png` in the README still shows the old
-  sidebar; retake it from a board like the README's when convenient. Not
-  checked: a very short window (head 160 px + foot 48 px leave little
-  list), many spaces (dots stop before "+", the rest only via the menu).
+- M11 re-planned from the owner's answers (rounded corners by default with
+  a setting, quiet labels, a background setting with mood / photo / plain)
+  and steps 1–3 built; decisions under each step in M11, rules in
+  `docs/DESIGN.md` (principles 2 and 5, Shape, The board).
+- Verified e2e in `~/.cache/trailboard-e2e-premium` (`run.sh N shots…`;
+  serve the test site with `python3 -I server.py 8781`, which now draws
+  pages with a header, a colour picture and text; `settingsN.json` is
+  copied in when present; `LIGHT=1` for the light theme): fitted board
+  (all labels), zoomed board (only the hovered label, rounded pages),
+  board menu and settings page (Corners row), sleeping placeholders,
+  the dark neutral and green moods, the light blue mood, Photo with the
+  real desktop wallpaper (labels on sheets), the photo list from the
+  palette, filtering it and choosing a picture (saved in `spaces.json`,
+  setting switched to Photo).
+- Not checked: the *Custom* corner slider by pointer (its message and
+  handler are unit-tested, the page row was seen), Follow Hyprland with a
+  non-zero rounding, HiDPI, a live wallpaper change, a window resize with
+  a photo (the worker cuts again; unit-tested), a huge PNG. A debug build
+  takes ~4 s to read a 2560 px WebP (the mood shows meanwhile); check a
+  release build.
 **Owner decisions (2026-11-15):** no AppImage, Flatpak or AUR work (the owner
 publishes later, on their own); no UI translations; licence is Apache-2.0
 only (`LICENSE-APACHE`); all AI features (semantic search, Explain, any
 other AI/ML), imports from other browsers, and password managers and
 passkeys are all on hold until the owner says otherwise (see M10).
-**Next up:** no M10 work: its items are on hold or wait for the owner to
-pick them. M11 (premium look): step 4 is done; the other steps wait for
-the owner to ask (corners stay Hyprland's, see M11). Take the small
-follow-ups below; a good next one is auto-scrolling the sidebar while a
-header is dragged, or keyboard selection of several cards.
+**Next up:** M11 step 5, the command bar and overlays finish (palette
+section labels, menus with icons, the floating page bar in Read Mode with
+its inset rounded page, toasts), then the rest of step 6 (motion), 7 and
+8; retake the README's screenshots (`docs/images/`) once step 5 lands.
+No M10 work: its items are on hold or wait for the owner.
 
 After that, the other small follow-ups below. Sandbox follow-ups: verify the setuid path on a kernel without unprivileged user namespaces (needs `kernel.unprivileged_userns_clone=0` or linux-hardened, and the package installed). Consent follow-ups: more platforms as real sites show them (TCF
 `__tcfapi` frames, Ketch, Termly, Borlabs, Axeptio); a separate *Reject cookie banners* switch

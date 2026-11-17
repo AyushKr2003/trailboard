@@ -418,6 +418,13 @@ pub enum Action {
     FindPrev,
     /// All keys to the page, Esc included, until Shift+Esc.
     Passthrough,
+    /// Label the page's scroll sections to pick one (`s`).
+    Sections,
+    /// The next / previous scroll section in reading order (`]s` / `[s`).
+    NextSection,
+    PrevSection,
+    /// The section around the scroll target (`S`).
+    OuterSection,
 }
 
 impl Action {
@@ -546,6 +553,10 @@ pub fn page() -> Bindings<Action> {
         ("n", FindNext),
         ("N", FindPrev),
         ("<C-v>", Passthrough),
+        ("s", Sections),
+        ("]s", NextSection),
+        ("[s", PrevSection),
+        ("S", OuterSection),
     ];
     for (seq, a) in table {
         b.bind(seq, *a).expect("page keys parse");
@@ -728,6 +739,10 @@ mod tests {
         assert_eq!(feed("$"), Outcome::Run { action: Action::RightEdge, count: None });
         assert_eq!(feed("f"), Outcome::Run { action: Action::LinkHintsHere, count: None });
         assert_eq!(feed("F"), Outcome::Run { action: Action::LinkHints, count: None });
+        assert_eq!(feed("s"), Outcome::Run { action: Action::Sections, count: None });
+        assert_eq!(feed("]s"), Outcome::Run { action: Action::NextSection, count: None });
+        assert_eq!(feed("[s"), Outcome::Run { action: Action::PrevSection, count: None });
+        assert_eq!(feed("S"), Outcome::Run { action: Action::OuterSection, count: None });
         // g waits; a key that isn't a g-sequence ends it, and is swallowed.
         assert_eq!(feed("g"), Outcome::Wait);
         assert_eq!(feed("x"), Outcome::Unbound { swallow: true });

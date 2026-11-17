@@ -16,6 +16,7 @@ pub mod popup;
 pub mod prefs;
 pub(crate) mod resources;
 pub mod sandbox;
+pub mod scroll;
 pub mod shield;
 pub mod text;
 pub mod youtube;
@@ -83,6 +84,9 @@ pub enum WebEvent {
     /// Where page `page`'s keyboard focus went (see [`focus`]). Any page can
     /// send this about itself; the app only acts on the card it is using.
     Focus { page: u64, report: focus::Report },
+    /// An answer about page `page`'s scroll sections (see [`scroll`]),
+    /// to one of [`Page::scroll_command`]. Any page can send this.
+    Scroll { page: u64, report: scroll::Report },
 }
 
 /// Largest favicon side asked of Chromium, px (title bars draw 16 px icons, sharp at 2×).
@@ -1012,6 +1016,12 @@ wrap_display_handler! {
                 }
                 return 1;
             }
+            if let Some(body) = message.strip_prefix(scroll::PREFIX) {
+                if let Some(report) = scroll::parse(body) {
+                    emit(WebEvent::Scroll { page: self.shared.key, report });
+                }
+                return 1;
+            }
             if let Some(body) = message.strip_prefix(links::PREFIX) {
                 if let Some((width, links)) = links::parse(body) {
                     emit(WebEvent::Links { page: self.shared.key, width, links });
@@ -1728,6 +1738,12 @@ impl Page {
     /// Ask for the links visible in the page; they arrive as [`WebEvent::Links`].
     pub fn request_links(&self) {
         self.run_script(links::SCRIPT);
+    }
+
+    /// Run a scroll section command ([`scroll::list`], [`scroll::by`]…); the
+    /// answer arrives as [`WebEvent::Scroll`].
+    pub fn scroll_command(&self, script: &str) {
+        self.run_script(script);
     }
 
     /// Ask for the page's address, title and text; they arrive as [`WebEvent::PageText`].

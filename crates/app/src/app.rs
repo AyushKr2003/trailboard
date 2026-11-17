@@ -97,6 +97,7 @@ use scene::hint;
 use scene::keys::{self, Action as KeyAction, Outcome};
 use scene::nav::{self, Dir};
 use scene::pagezoom::{self, SiteZooms};
+use scene::scrolltarget;
 use scene::settings::{self as prefs, Settings};
 use scene::{liveness, motion, placement, read, selection, tidy, Camera, Change, Edge, History, Node, NodeId, Rect, Scene, Selection, TrailStep, Vec2};
 use storage::spaces::{self, SpaceId, SpaceIndex};
@@ -125,6 +126,8 @@ use crate::sidebar::Panel;
 const MIN_CARD: f32 = 240.0;
 /// How long after a page loads (or retitles itself) its text is read for history.
 const TEXT_SETTLE: Duration = Duration::from_millis(1200);
+/// How long the outline around a newly chosen scroll section shows.
+const SCROLL_FLASH: Duration = Duration::from_millis(900);
 /// One keyboard move or resize step (M, then h/j/k/l), in logical px on screen.
 const ARRANGE_STEP: f32 = 40.0;
 /// The fine step with Ctrl.
@@ -269,7 +272,32 @@ struct LinkHints {
     /// Follow a link in the same card (Page mode's f) instead of beside it.
     here: bool,
     links: Vec<(Rect, web::links::Action)>,
+    /// `s`: labels on the page's scroll sections instead of its links
+    /// (section number, where it is in the view's CSS px), in label order.
+    sections: Vec<(u32, Rect)>,
     hints: Option<hint::Hints>,
+}
+
+/// Why a card's scroll sections were asked for (M12 step 3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SectionAsk {
+    /// `s`: label them.
+    Label,
+    /// `]s` / `[s`: step to the next / previous one.
+    Step(bool),
+    /// `S`: step out to the one around the target.
+    Out,
+    /// Only to name them in the mode pill.
+    Name,
+}
+
+/// A brief outline around the section a key just chose or scrolled.
+struct ScrollFlash {
+    id: NodeId,
+    section: u32,
+    /// In the view's CSS px.
+    rect: Rect,
+    at: Instant,
 }
 
 struct Card {
@@ -357,6 +385,17 @@ pub struct App {
     sheet: crate::hints::Sheet,
     /// Link hints (`f`) on a card's page: asked for, or showing labels.
     link_hints: Option<LinkHints>,
+    /// Each card's chosen scroll section (`web::scroll`); a card not here
+    /// scrolls the automatic pick. Forgotten when its page navigates.
+    scroll_targets: HashMap<NodeId, u32>,
+    /// The sections a card reported last, for naming them in the pill.
+    sections: HashMap<NodeId, Vec<scrolltarget::Section>>,
+    /// A section list asked of a card, and what for.
+    section_ask: Option<(NodeId, SectionAsk)>,
+    /// What the last scroll key moved, for the mode pill (`section 2.1 · 40%`):
+    /// the card, the section, and what to say after its name.
+    scroll_note: Option<(NodeId, u32, String)>,
+    scroll_flash: Option<ScrollFlash>,
     /// Moving or resizing the current card from the keyboard (M).
     arrange: Option<Arrange>,
     /// Solo: this card fills the window (see `scene::read`).
@@ -679,6 +718,11 @@ impl App {
             hints: false,
             sheet: Default::default(),
             link_hints: None,
+            scroll_targets: HashMap::new(),
+            sections: HashMap::new(),
+            section_ask: None,
+            scroll_note: None,
+            scroll_flash: None,
             arrange: None,
             read: None,
             read_morph: None,
@@ -2070,27 +2114,28 @@ impl App {
         let times = if action.repeats() { count.unwrap_or(1).clamp(1, MAX_REPEAT) } else { 1 };
         let Some(id) = self.focused else { return };
         log::debug!("page key: {action:?} ×{times}");
-        // How far j/k/h/l move, CSS px, as about three lines of text.
-        const LINE: i32 = 60;
-        // Further than any page: Top, Bottom and the edges.
-        const FAR: i32 = 10_000_000;
-        let half = self.page_view(id).map_or(300, |(_, css)| (css.y / 2.0).round() as i32);
+        use web::scroll::{Axis, Edge as ScrollEdge, Unit};
+        let n = times as i32;
         match action {
             KeyAction::Scroll(dir) => {
-                let (dx, dy) = match dir {
-                    Dir::Down => (0, -LINE),
-                    Dir::Up => (0, LINE),
-                    Dir::Left => (LINE, 0),
-                    Dir::Right => (-LINE, 0),
+                let (axis, n) = match dir {
+                    Dir::Down => (Axis::Y, n),
+                    Dir::Up => (Axis::Y, -n),
+                    Dir::Left => (Axis::X, -n),
+                    Dir::Right => (Axis::X, n),
                 };
-                self.wheel_page(id, dx * times as i32, dy * times as i32, false);
+                self.scroll_section(id, axis, n, Unit::Line);
             }
-            KeyAction::ScrollDown => self.wheel_page(id, 0, -half * times as i32, false),
-            KeyAction::ScrollUp => self.wheel_page(id, 0, half * times as i32, false),
-            KeyAction::Top => self.wheel_page(id, 0, FAR, true),
-            KeyAction::Bottom => self.wheel_page(id, 0, -FAR, true),
-            KeyAction::LeftEdge => self.wheel_page(id, FAR, 0, true),
-            KeyAction::RightEdge => self.wheel_page(id, -FAR, 0, true),
+            KeyAction::ScrollDown => self.scroll_section(id, Axis::Y, n, Unit::Half),
+            KeyAction::ScrollUp => self.scroll_section(id, Axis::Y, -n, Unit::Half),
+            KeyAction::Top => self.scroll_edge(id, ScrollEdge::Top),
+            KeyAction::Bottom => self.scroll_edge(id, ScrollEdge::Bottom),
+            KeyAction::LeftEdge => self.scroll_edge(id, ScrollEdge::Left),
+            KeyAction::RightEdge => self.scroll_edge(id, ScrollEdge::Right),
+            KeyAction::Sections => self.ask_sections(id, SectionAsk::Label),
+            KeyAction::NextSection => self.ask_sections(id, SectionAsk::Step(true)),
+            KeyAction::PrevSection => self.ask_sections(id, SectionAsk::Step(false)),
+            KeyAction::OuterSection => self.ask_sections(id, SectionAsk::Out),
             KeyAction::LinkHintsHere => self.show_link_hints_to(true),
             KeyAction::LinkHints => self.show_link_hints_to(false),
             KeyAction::Back | KeyAction::Forward => {
@@ -2136,14 +2181,223 @@ impl App {
         }
     }
 
-    /// Scrolls card `id`'s page as a wheel over its middle would (CSS px;
-    /// positive is up / left). `jump`: at once, without the smooth glide.
-    fn wheel_page(&mut self, id: NodeId, dx: i32, dy: i32, jump: bool) {
+    // ------------------------------------------------------------ scroll sections
+
+    /// Scrolls card `id`'s scroll target (else the automatic pick) `n` steps
+    /// (positive: down / right), going on to the section around it at its
+    /// edge. The page answers with what moved (`got_scroll`).
+    fn scroll_section(&mut self, id: NodeId, axis: web::scroll::Axis, n: i32, unit: web::scroll::Unit) {
+        let Some(card) = self.cards.get(&id) else { return };
+        let target = self.scroll_targets.get(&id).copied();
+        card.page.scroll_command(&web::scroll::by(target, axis, n, unit, !self.still));
+        self.link_hints = None; // scrolling moves the targets
+    }
+
+    /// gg / G / 0 / $: the scroll target to an edge, at once.
+    fn scroll_edge(&mut self, id: NodeId, edge: web::scroll::Edge) {
+        let Some(card) = self.cards.get(&id) else { return };
+        let target = self.scroll_targets.get(&id).copied();
+        card.page.scroll_command(&web::scroll::to(target, edge));
+        self.link_hints = None;
+    }
+
+    /// Ask card `id`'s page for its sections in view; `got_scroll` acts on
+    /// the answer as `why` says.
+    fn ask_sections(&mut self, id: NodeId, why: SectionAsk) {
+        let Some(card) = self.cards.get(&id) else { return };
+        card.page.scroll_command(&web::scroll::list());
+        self.section_ask = Some((id, why));
+        log::debug!("sections asked of card {} ({why:?})", id.0);
+    }
+
+    /// A click (or a hint's click) at `(x, y)` in card `id`'s page (CSS px
+    /// of the view): the innermost section there becomes the scroll target.
+    fn pick_section_at(&mut self, id: NodeId, x: i32, y: i32) {
         let Some((_, css)) = self.page_view(id) else { return };
         let Some(card) = self.cards.get(&id) else { return };
-        let (x, y) = ((css.x / 2.0) as i32, (css.y / 2.0) as i32);
-        card.page.mouse_wheel(x, y, 0, dx, dy, jump);
-        self.link_hints = None; // scrolling moves the targets
+        card.page.scroll_command(&web::scroll::pick(x as f32, y as f32, css.x));
+    }
+
+    /// Choose section `section` as card `id`'s scroll target (the page's
+    /// own number goes back to the automatic pick, as after a navigation,
+    /// except when chosen on purpose with `keep_page`).
+    fn set_scroll_target(&mut self, id: NodeId, section: u32, keep_page: bool) {
+        if section == web::scroll::PAGE && !keep_page {
+            self.scroll_targets.remove(&id);
+        } else {
+            self.scroll_targets.insert(id, section);
+        }
+        log::info!("scroll target of card {}: {} (#{section})", id.0, self.section_name(id, section));
+        let rect = self.sections.get(&id).and_then(|v| v.iter().find(|s| s.id == section)).map(|s| s.rect);
+        if let Some(rect) = rect {
+            self.scroll_flash = Some(ScrollFlash { id, section, rect, at: Instant::now() });
+        }
+        self.scroll_note = Some((id, section, String::new()));
+    }
+
+    /// The pill's name for a section of card `id`: `page`, `section 2.1`.
+    fn section_name(&self, id: NodeId, section: u32) -> String {
+        if section == web::scroll::PAGE {
+            return "page".into();
+        }
+        let named = self.sections.get(&id).and_then(|v| scrolltarget::names(v).remove(&section));
+        match named {
+            Some(n) if n != "page" => format!("section {n}"),
+            _ => "section".into(),
+        }
+    }
+
+    /// A page forgets its sections when it navigates (or closes): its
+    /// scroll target goes back to the automatic pick.
+    fn forget_sections(&mut self, id: NodeId) {
+        self.scroll_targets.remove(&id);
+        self.sections.remove(&id);
+        if self.scroll_note.as_ref().is_some_and(|(n, ..)| *n == id) {
+            self.scroll_note = None;
+        }
+        if self.scroll_flash.as_ref().is_some_and(|f| f.id == id) {
+            self.scroll_flash = None;
+        }
+        if self.section_ask.is_some_and(|(n, _)| n == id) {
+            self.section_ask = None;
+        }
+    }
+
+    /// An answer from card `id`'s page about its scroll sections.
+    fn got_scroll(&mut self, id: NodeId, report: web::scroll::Report) {
+        use web::scroll::{Note, Report};
+        let Some((_, css)) = self.page_view(id) else { return };
+        let scaled = |width: f32, r: [f32; 4]| {
+            let k = css.x / width.max(1.0);
+            Rect::new(r[0] * k, r[1] * k, r[2] * k, r[3] * k)
+        };
+        match report {
+            Report::List { width, auto, sections } => {
+                let Some((_, why)) = self.section_ask.filter(|(n, _)| *n == id) else {
+                    log::debug!("sections from card {} not asked for", id.0);
+                    return;
+                };
+                self.section_ask = None;
+                let list: Vec<scrolltarget::Section> = sections
+                    .iter()
+                    .map(|s| scrolltarget::Section { id: s.id, parent: s.parent, rect: scaled(width, s.rect) })
+                    .collect();
+                log::info!(
+                    "sections of card {}: {} ({})",
+                    id.0,
+                    list.len(),
+                    sections.iter().map(|s| format!("#{}<{}", s.id, s.parent.map_or(-1, i64::from))).collect::<Vec<_>>().join(" ")
+                );
+                self.sections.insert(id, list.clone());
+                // Where stepping starts: the chosen target if it is still in
+                // view, else what the automatic pick would scroll now.
+                let current = self.scroll_targets.get(&id).copied().filter(|t| list.iter().any(|s| s.id == *t)).unwrap_or(auto);
+                match why {
+                    SectionAsk::Label => self.label_sections(id, &list),
+                    SectionAsk::Step(forward) => {
+                        if list.len() < 2 {
+                            self.toast("Only the page scrolls here");
+                        }
+                        if let Some(next) = scrolltarget::step(&list, Some(current), forward) {
+                            self.set_scroll_target(id, next, true);
+                        }
+                    }
+                    SectionAsk::Out => match scrolltarget::outer(&list, current) {
+                        Some(o) => self.set_scroll_target(id, o, true),
+                        None => {
+                            self.set_scroll_target(id, current, true);
+                            self.toast("This is the whole page");
+                        }
+                    },
+                    // The pill names sections from the list just kept.
+                    SectionAsk::Name => {}
+                }
+            }
+            Report::Did { width, scrolled, rect, pct, note, reset } => {
+                if self.focused != Some(id) {
+                    return;
+                }
+                if reset {
+                    log::info!("scroll target of card {} is gone; automatic again", id.0);
+                    self.scroll_targets.remove(&id);
+                }
+                let rect = scaled(width, rect);
+                let known = scrolled == web::scroll::PAGE || self.sections.get(&id).is_some_and(|v| v.iter().any(|s| s.id == scrolled));
+                let text = match note {
+                    Note::NoSideways => {
+                        self.toast("Nothing here scrolls sideways");
+                        String::new()
+                    }
+                    Note::Shown => "back in view".to_string(),
+                    Note::Moved | Note::Edge => format!("{pct}%"),
+                };
+                log::info!("scrolled card {}: {} · {text} ({note:?})", id.0, self.section_name(id, scrolled));
+                // Outline what moved when it isn't what moved last (the
+                // target changed, or the scroll went on to an outer section).
+                let fresh = self.scroll_flash.as_ref().is_none_or(|f| f.id != id || f.section != scrolled || f.at.elapsed() > SCROLL_FLASH);
+                let changed = self.scroll_flash.as_ref().is_none_or(|f| f.id != id || f.section != scrolled);
+                if changed || (fresh && note == Note::Shown) {
+                    self.scroll_flash = Some(ScrollFlash { id, section: scrolled, rect, at: Instant::now() });
+                } else if let Some(f) = self.scroll_flash.as_mut() {
+                    f.rect = rect;
+                }
+                self.scroll_note = Some((id, scrolled, text));
+                if !known && self.section_ask.is_none() {
+                    self.ask_sections(id, SectionAsk::Name);
+                }
+            }
+            Report::Wheel { width, at, delta, jump } => {
+                // Only the card whose keys asked; and a wheel can only scroll
+                // the page that asked for it.
+                if self.focused != Some(id) {
+                    return;
+                }
+                let k = css.x / width.max(1.0);
+                let Some(card) = self.cards.get(&id) else { return };
+                let (x, y) = ((at.0 * k).round() as i32, (at.1 * k).round() as i32);
+                let (dx, dy) = ((delta.0 as f32 * k).round() as i32, (delta.1 as f32 * k).round() as i32);
+                log::info!("scrolled card {} by wheel at {x},{y} ({dx},{dy})", id.0);
+                card.page.mouse_wheel(x, y, 0, dx, dy, jump);
+            }
+            Report::Picked { id: section } => {
+                if self.focused != Some(id) {
+                    return;
+                }
+                if section == web::scroll::PAGE {
+                    self.scroll_targets.remove(&id);
+                } else {
+                    self.scroll_targets.insert(id, section);
+                }
+                log::info!("scroll target of card {} by click: #{section}", id.0);
+                if self.scroll_note.as_ref().is_some_and(|(n, ..)| *n == id) {
+                    self.scroll_note = None;
+                }
+            }
+        }
+    }
+
+    /// `s`: labels on card `id`'s sections in view; typing one picks it.
+    fn label_sections(&mut self, id: NodeId, list: &[scrolltarget::Section]) {
+        let order = scrolltarget::order(list);
+        let sections: Vec<(u32, Rect)> = order
+            .iter()
+            .filter_map(|o| list.iter().find(|s| s.id == *o))
+            .map(|s| (s.id, s.rect))
+            .collect();
+        if sections.len() < 2 {
+            self.toast("Only the page scrolls here");
+            if let Some(&(only, _)) = sections.first() {
+                self.set_scroll_target(id, only, false);
+            }
+            return;
+        }
+        let hints = hint::Hints::new(sections.len());
+        log::info!(
+            "section labels on card {}: {}",
+            id.0,
+            hints.labels.iter().zip(&sections).map(|(l, (s, _))| format!("{l}=#{s}")).collect::<Vec<_>>().join(" ")
+        );
+        self.link_hints = Some(LinkHints { id, here: true, links: Vec::new(), sections, hints: Some(hints) });
     }
 
     /// Where the entered page's focus went: a field the user put the caret
@@ -3721,7 +3975,7 @@ impl App {
             return;
         };
         card.page.request_links();
-        self.link_hints = Some(LinkHints { id, here, links: Vec::new(), hints: None });
+        self.link_hints = Some(LinkHints { id, here, links: Vec::new(), sections: Vec::new(), hints: None });
         log::info!("link hints asked of card {}", id.0);
     }
 
@@ -3778,6 +4032,11 @@ impl App {
                 h.backspace();
             }
             (_, Some(c), Some(h)) if !chord => match h.type_char(c) {
+                hint::Typed::Follow(i) if !lh.sections.is_empty() => {
+                    let (id, (section, _)) = (lh.id, lh.sections[i]);
+                    self.link_hints = None;
+                    self.set_scroll_target(id, section, true);
+                }
                 hint::Typed::Follow(i) => {
                     let (id, here, (rect, action)) = (lh.id, lh.here, lh.links[i].clone());
                     self.link_hints = None;
@@ -3817,6 +4076,8 @@ impl App {
         card.page.mouse_button(x, y, 0, WebButton::Left, false, 1);
         card.page.mouse_button(x, y, 0, WebButton::Left, true, 1);
         log::info!("clicked a hint on card {} at {x},{y}{}", id.0, if typing { ", keys to the page" } else { "" });
+        // What was clicked is where the reader is: scroll there next.
+        self.pick_section_at(id, x, y);
     }
 
     /// v: add the current card to the selection, or take it out. Going to
@@ -3849,12 +4110,7 @@ impl App {
         let Some(id) = self.current() else { return };
         self.focus(Some(id));
         self.ensure_visible(id);
-        let Some((_, css)) = self.page_view(id) else { return };
-        let Some(card) = self.cards.get(&id) else { return };
-        let half = (css.y / 2.0).round() as i32;
-        let (x, y) = ((css.x / 2.0) as i32, (css.y / 2.0) as i32);
-        card.page.mouse_wheel(x, y, 0, 0, if down { -half } else { half }, false);
-        self.link_hints = None; // scrolling moves the targets
+        self.scroll_section(id, web::scroll::Axis::Y, if down { 1 } else { -1 }, web::scroll::Unit::Half);
     }
 
     /// Menu key or Shift+F10: the page's own menu, as a right-click gives, at
@@ -3913,16 +4169,39 @@ impl App {
         let border = rgb(th.background(), 0.9);
         let radius = th.small_radius(scale);
         let mut items = Vec::new();
-        for (i, (rect, _)) in lh.links.iter().enumerate() {
+        let mut l = Layer::default();
+        // Section labels (`s`) sit at their sections' top-left corners, each
+        // section outlined; link labels at the middle of their link's start.
+        let spots = if lh.sections.is_empty() {
+            None
+        } else {
+            let rects: Vec<Rect> = lh.sections.iter().filter_map(|(_, r)| self.page_rect_to_screen(lh.id, *r)).collect();
+            let longest = h.labels.iter().map(|l| l.chars().count()).max().unwrap_or(1) as f32;
+            let label = Vec2::new(longest * size * 0.75 + pad * 2.0, bh);
+            for (i, r) in rects.iter().enumerate() {
+                if h.shown(i) {
+                    crate::chrome::outline(&mut l, r.inflate(-scale), radius, (1.5 * ui).max(1.0), rgb(th.accent(), 0.55));
+                }
+            }
+            (rects.len() == lh.sections.len()).then(|| scrolltarget::label_spots(&rects, label, view))
+        };
+        let count = if lh.sections.is_empty() { lh.links.len() } else { lh.sections.len() };
+        for i in 0..count {
             if !h.shown(i) {
                 continue;
             }
-            let Some(at) = self.page_rect_to_screen(lh.id, *rect) else { continue };
+            let at = match &spots {
+                Some(s) => Rect::new(s[i].x, s[i].y, 0.0, bh),
+                None => {
+                    let rect = if lh.sections.is_empty() { lh.links[i].0 } else { continue };
+                    let Some(at) = self.page_rect_to_screen(lh.id, rect) else { continue };
+                    at
+                }
+            };
             let label = h.labels[i].to_uppercase();
             let (head, tail): (String, String) = (label.chars().take(typed_n).collect(), label.chars().skip(typed_n).collect());
             items.push((at, head, tail));
         }
-        let mut l = Layer::default();
         let r = self.renderer.as_mut()?;
         for (at, head, tail) in items {
             let head_w = r.measure(&head, size, true);
@@ -3939,6 +4218,31 @@ impl App {
             }
             l.texts.push(Text { text: tail, pos: [x + pad + head_w, ty], size, color: fg, clip: view, bold: true });
         }
+        Some(l)
+    }
+
+    /// The brief outline around a newly chosen or scrolled section, fading.
+    fn scroll_flash_layer(&mut self) -> Option<Layer> {
+        let f = self.scroll_flash.as_ref()?;
+        let age = f.at.elapsed();
+        if age > SCROLL_FLASH || self.focused != Some(f.id) {
+            return None;
+        }
+        let (view, _) = self.page_view(f.id)?;
+        let at = self.page_rect_to_screen(f.id, f.rect)?;
+        // Inside the page's view, so the page's own outline stays visible.
+        let x0 = at.x.max(view.x);
+        let y0 = at.y.max(view.y);
+        let rect = Rect::new(x0, y0, at.right().min(view.right()) - x0, at.bottom().min(view.bottom()) - y0);
+        if rect.w < 4.0 || rect.h < 4.0 {
+            return None;
+        }
+        let t = age.as_secs_f32() / SCROLL_FLASH.as_secs_f32();
+        let alpha = if self.still { 0.9 } else { 0.9 * (1.0 - t * t) };
+        let ui = self.ui();
+        let mut l = Layer::default();
+        let radius = self.theme.small_radius(self.scale());
+        crate::chrome::outline(&mut l, rect, radius, (2.0 * ui).max(1.5), rgb(self.theme.accent(), alpha));
         Some(l)
     }
 
@@ -4384,6 +4688,9 @@ impl App {
                     if self.link_hints.as_ref().is_some_and(|h| Some(h.id) == self.node_of(page)) {
                         self.link_hints = None; // its links went with the old page
                     }
+                    if let Some(id) = self.node_of(page) {
+                        self.forget_sections(id);
+                    }
                     if let Some(n) = self.node_of(page).and_then(|id| self.scene.node_mut(id)) {
                         n.url = url;
                         self.dirty = true;
@@ -4416,6 +4723,11 @@ impl App {
                 WebEvent::Focus { page, report } => {
                     if let Some(id) = self.node_of(page) {
                         self.page_focus(id, report);
+                    }
+                }
+                WebEvent::Scroll { page, report } => {
+                    if let Some(id) = self.node_of(page) {
+                        self.got_scroll(id, report);
                     }
                 }
                 WebEvent::Links { page, width, links } => {
@@ -4982,6 +5294,10 @@ impl App {
                     self.give_keys(PageKeys::Insert);
                     if let (Some(card), Some((x, y))) = (self.cards.get(&id), self.page_point(id, p)) {
                         card.page.mouse_button(x, y, mods, web_button, false, self.click_count.min(3));
+                        // The innermost section clicked in becomes the scroll target.
+                        if web_button == WebButton::Left {
+                            self.pick_section_at(id, x, y);
+                        }
                     }
                     self.drag = Drag::Page { id, button: web_button };
                 }
@@ -6358,6 +6674,9 @@ impl App {
         }
 
         // Over the board's cards, or over the page in Solo.
+        if let Some(l) = self.scroll_flash_layer() {
+            layers.push(l);
+        }
         if let Some(l) = self.link_hint_layer() {
             layers.push(l);
         }
@@ -6663,7 +6982,18 @@ impl App {
         // An entered card's mode, and what is half-typed in it, in the corner.
         if self.entered() && self.omnibox.is_none() && self.link_hints.is_none() {
             let typed = self.pending.display();
-            let text = if typed.is_empty() { self.page_keys.label().to_string() } else { format!("{} · {typed}", self.page_keys.label()) };
+            let mut text = self.page_keys.label().to_string();
+            if self.page_keys == PageKeys::Page
+                && let Some((id, section, note)) = self.scroll_note.as_ref().filter(|(n, ..)| Some(*n) == self.focused)
+            {
+                text = format!("{text} · {}", self.section_name(*id, *section));
+                if !note.is_empty() {
+                    text = format!("{text} · {note}");
+                }
+            }
+            if !typed.is_empty() {
+                text = format!("{text} · {typed}");
+            }
             let l = self.message(&text, 0.0, vp.y - 16.0 * ui, false);
             layers.push(l);
         }

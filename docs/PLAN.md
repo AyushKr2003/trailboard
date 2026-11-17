@@ -217,9 +217,53 @@ typing in one field and scrolling another pane both work.
   - Not done: the per-site "start in Insert" setting. Not verified: a real
     keyboard, fields in iframes and shadow DOM, IME in Insert, the light
     theme for the mode pill, the sidebar open under the pill.
-- ⬜ 3. Scroll sections (above). Verified on a local test page with three
-  panes, three-level nesting, a wide table, a carousel, a modal and an
-  iframe: `s`, `]s`, `S`, chaining at every edge, an off-screen target.
+- ✅ 3. Scroll sections (2026-11-17; `web::scroll`, `scene::scrolltarget`,
+  `App::got_scroll`). Decisions:
+  - The page script keeps a numbered registry of sections per document
+    (`0` = the page; weak refs), so the app names a target by number. Each
+    command (`list`, `by`, `to`, `pick`) answers with one console message.
+  - Done in the page, not in `scene` (it needs live positions, and a round
+    trip per key would lag): the automatic pick (innermost section at the
+    view's middle; if that is the page and the page doesn't scroll, the
+    largest section; else the page), chaining at an edge (skipping outer
+    sections that don't scroll that way; `overscroll-behavior` contain or
+    none stops it), bringing an out-of-view target back (less than a
+    quarter of it showing → `scrollIntoView`, which is that key's whole
+    effect), and adding up quick smooth scrolls (each starts from where the
+    last one is heading). `scene::scrolltarget` has the reading order,
+    `]s`/`[s` (going round), `S`, pill names (`page`, `2`, `2.1`) and label
+    spots (nested labels step down past their parent's), unit-tested.
+  - A target that something else covers at its middle (a modal) gives way
+    to the automatic pick while covered, so a click on the button that
+    opened a dialog doesn't keep scrolling the pane behind it.
+  - A click picks the innermost section under it; a click on the page itself
+    (or a section number gone stale) means automatic again. Hint clicks
+    pick too; following a link resets with the navigation (`UrlChanged`).
+  - A section is an element with `overflow` auto/scroll/overlay and more
+    than 8 px to scroll (smaller overflows are borders and rounding), at
+    least 40×24 px in view, not a form field; or a frame at that size. Rects
+    are clipped to the view and to the sections around them.
+  - Frames: a same-site frame is scrolled by script (no chaining inside
+    it); another site's frame, and a page where nothing scrolls up and down
+    by script (custom scrollers), get a real wheel at a point inside the
+    area not covered by a sticky bar. h/l with nothing sideways toast.
+  - `s`, `]s`, `[s` and `S` ask for a fresh list; a scroll of a section not
+    in the last list asks for one quietly, to name it in the pill. Smooth
+    scrolls follow the motion setting (`still` → instant).
+  - Full-section paging stays with the page's own Space / PgDn (Space is
+    the page's since step 2, Ctrl+F is Find), so there is no Ctrl+F/B.
+  - Verified e2e on `site/sec.html` (`~/.cache/trailboard-e2e-m12`,
+    `script9`–`script12`): automatic pick of the main pane (`3j`), `gg`,
+    labels (`labels.png`, `modallabels.png`), a nested list and its inner
+    list, `S` to the pane and the page with the toast at the top, `G` then
+    `j` chaining from the pane into the page, `]s` past hidden sections,
+    the wide table's `$`/`0`/`2l`, the carousel stopping at its end
+    (contain), a same-site frame by script, a file frame by wheel, an
+    off-screen target brought back, a modal as the automatic pick and a
+    list behind it giving way, the outline and pill (`flash.png`). Not
+    verified: a real keyboard, RTL pages (negative `scrollLeft`), scroll
+    snapping, shadow-DOM scrollers, a page zoomed away from 100 %, the
+    light theme for the outline.
 - ⬜ 4. Page keys: H/L back/forward, r/R reload, `/` with n/N, gi first
   field, yy/yt/ym copy URL/title/Markdown link, p/P open the clipboard URL
   here/beside, o/O address bar here/beside.
@@ -288,18 +332,17 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-17 (twentieth). The owner asked for a vim-like,
-fully keyboard-driven Trailboard (including pages with several and nested
-scroll areas) and for this file to be condensed. Planned M12, recorded the
-owner's answers, built M12 step 1 (key engine, counts on board keys),
-renamed Read Mode to Solo, and built most of step 2 (Page / Insert /
-Passthrough modes, with the first page keys so Solo works by keyboard).
-**Repo state:** on `master`; M11 committed (`74e0f01`); M12 steps 1–2,
-the Solo rename and this file uncommitted.
-**Next up:** M12 step 3 (scroll sections), replacing step 2's interim
-wheel-at-the-middle scrolling; then the per-site "start in Insert"
-setting left from step 2. In between: retake the README screenshots
-(`docs/images/`) in the new look.
+**Last session:** 2026-11-17 (twenty-first). Built M12 step 3, scroll
+sections (`web::scroll` page script, `scene::scrolltarget`, `s` / `]s` /
+`[s` / `S`, the outline and the pill), replacing step 2's interim
+wheel-at-the-middle scrolling. Page and board scroll keys now go through
+the card's scroll target.
+**Repo state:** on `master`; M12 steps 1–2 committed (`e6a09af`); step 3
+uncommitted.
+**Next up:** the owner tries steps 1–3 and decides on the rest (owner
+answer 4). Until then: the per-site "start in Insert" setting left from
+step 2, and retaking the README screenshots (`docs/images/`) in the new
+look.
 
 **Small follow-ups (backlog):** glide on undo/redo of moves; follow the
 desktop's animation switch live; verify the setuid sandbox path without

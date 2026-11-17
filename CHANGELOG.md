@@ -21,6 +21,19 @@ All notable changes to Trailboard. The format follows
   - *Passthrough* (Ctrl+V) gives a site every key, Esc included, for sites
     with their own shortcuts; Shift+Esc ends it.
   - Link hints now show in Solo too.
+- **Scroll areas from the keyboard.** Pages with several scrolling parts (a
+  sidebar, the main pane, a list inside it, a wide table, a carousel, a
+  frame, an open dialog) now scroll the right one: j/k/h/l, d/u, gg/G and
+  0/$ move the area you clicked in last, else the one in the middle of the
+  view. s labels every area in view (type a label to pick one), ]s / [s
+  step to the next / previous one, S to the one around it. At an area's end
+  the scroll goes on to the one around it, as a wheel does (unless the page
+  says not to); h/l use the nearest area that scrolls sideways. An area
+  scrolled out of sight comes back into view first, and one hidden behind a
+  dialog gives way to the dialog. The chosen area flashes an outline and the
+  corner says which it is and how far down (*Page · section 2.1 · 40%*).
+  Frames from other sites scroll by a real wheel; d/u on the board use the
+  card's area too.
 - **Counts for board keys:** type a number before a move, pan, zoom or
   scroll key to do it that many times (`3j`, `2L`, `2+`, `4d`). The number
   shows at the bottom while you type; Esc drops it. The board's keys now

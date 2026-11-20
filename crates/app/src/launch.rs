@@ -4,16 +4,14 @@
 
 use std::path::Path;
 
-use scene::settings::SearchEngine;
-
-use crate::omnibox;
+use scene::settings::Settings;
 
 /// The page to open for one command-line argument, read against the directory
 /// the command ran in: an existing file or folder becomes a `file://` URL, a
 /// URL is kept, a host gets `https://`, and anything else is searched for
-/// with `engine`.
+/// with the settings' engine (or a keyword's site: `gh foo`).
 /// Switches (`-x`, `--x`) and blank words open nothing.
-pub fn target(arg: &str, cwd: &Path, engine: SearchEngine) -> Option<String> {
+pub fn target(arg: &str, cwd: &Path, settings: &Settings) -> Option<String> {
     let arg = arg.trim();
     if arg.is_empty() || arg.starts_with('-') {
         return None;
@@ -30,7 +28,7 @@ pub fn target(arg: &str, cwd: &Path, engine: SearchEngine) -> Option<String> {
             return Some(file_url(&path));
         }
     }
-    omnibox::resolve(arg, engine)
+    settings.resolve_url(arg)
 }
 
 /// What a command line asks for before anything starts.
@@ -113,12 +111,12 @@ mod tests {
     #[test]
     fn urls_hosts_and_searches() {
         let cwd = Path::new("/nonexistent-dir");
-        assert_eq!(target("https://a.b/c?d", cwd, SearchEngine::DuckDuckGo).as_deref(), Some("https://a.b/c?d"));
-        assert_eq!(target("example.com", cwd, SearchEngine::DuckDuckGo).as_deref(), Some("https://example.com"));
-        assert_eq!(target("about:blank", cwd, SearchEngine::DuckDuckGo).as_deref(), Some("about:blank"));
-        assert_eq!(target("rust lang", cwd, SearchEngine::DuckDuckGo).as_deref(), Some("https://duckduckgo.com/?q=rust+lang"));
-        assert_eq!(target("--new-window", cwd, SearchEngine::DuckDuckGo), None);
-        assert_eq!(target("  ", cwd, SearchEngine::DuckDuckGo), None);
+        assert_eq!(target("https://a.b/c?d", cwd, &Settings::default()).as_deref(), Some("https://a.b/c?d"));
+        assert_eq!(target("example.com", cwd, &Settings::default()).as_deref(), Some("https://example.com"));
+        assert_eq!(target("about:blank", cwd, &Settings::default()).as_deref(), Some("about:blank"));
+        assert_eq!(target("rust lang", cwd, &Settings::default()).as_deref(), Some("https://duckduckgo.com/?q=rust+lang"));
+        assert_eq!(target("--new-window", cwd, &Settings::default()), None);
+        assert_eq!(target("  ", cwd, &Settings::default()), None);
     }
 
     #[test]
@@ -130,12 +128,12 @@ mod tests {
         std::fs::write(root.join("sub/page.html"), "x").unwrap();
         let base = format!("file://{}", root.display());
 
-        assert_eq!(target("a b#1.html", &root, SearchEngine::DuckDuckGo), Some(format!("{base}/a%20b%231.html")));
-        assert_eq!(target("sub/../sub/page.html", &root, SearchEngine::DuckDuckGo), Some(format!("{base}/sub/page.html")));
+        assert_eq!(target("a b#1.html", &root, &Settings::default()), Some(format!("{base}/a%20b%231.html")));
+        assert_eq!(target("sub/../sub/page.html", &root, &Settings::default()), Some(format!("{base}/sub/page.html")));
         let abs = root.join("sub/page.html");
-        assert_eq!(target(abs.to_str().unwrap(), Path::new("/"), SearchEngine::DuckDuckGo), Some(format!("{base}/sub/page.html")));
-        assert_eq!(target("sub", &root, SearchEngine::DuckDuckGo), Some(format!("{base}/sub")));
+        assert_eq!(target(abs.to_str().unwrap(), Path::new("/"), &Settings::default()), Some(format!("{base}/sub/page.html")));
+        assert_eq!(target("sub", &root, &Settings::default()), Some(format!("{base}/sub")));
         // A missing file that looks like a host is a host, as typed.
-        assert_eq!(target("missing.html", &root, SearchEngine::DuckDuckGo).as_deref(), Some("https://missing.html"));
+        assert_eq!(target("missing.html", &root, &Settings::default()).as_deref(), Some("https://missing.html"));
     }
 }

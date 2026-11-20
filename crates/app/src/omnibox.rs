@@ -123,59 +123,14 @@ impl Omnibox {
     }
 }
 
-/// Turn what the user typed into a URL: keep URLs, add a scheme to bare hosts,
-/// and send everything else to `engine`.
-pub fn resolve(input: &str, engine: SearchEngine) -> Option<String> {
-    let s = input.trim();
-    if s.is_empty() {
-        return None;
-    }
-    let has_scheme = ["http://", "https://", "file://", "about:", "chrome://", "data:"]
-        .iter()
-        .any(|p| s.starts_with(p));
-    if has_scheme {
-        return Some(s.to_string());
-    }
-    let looks_like_host = !s.contains(char::is_whitespace)
-        && (s.contains('.') || s.starts_with("localhost"))
-        && !s.ends_with('.');
-    if looks_like_host {
-        return Some(format!("https://{s}"));
-    }
-    Some(search_url(s, engine))
-}
-
-/// `engine`'s results page for `query`.
+/// `engine`'s results page for `query` (no keywords: the text is the query).
 pub fn search_url(query: &str, engine: SearchEngine) -> String {
-    engine.url(&encode_query(query.trim()))
-}
-
-fn encode_query(s: &str) -> String {
-    let mut out = String::new();
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
-            b' ' => out.push('+'),
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
+    engine.url(&scene::search::encode_query(query.trim()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn resolves_inputs() {
-        let ddg = SearchEngine::DuckDuckGo;
-        assert_eq!(resolve("example.com", ddg).as_deref(), Some("https://example.com"));
-        assert_eq!(resolve("http://a.b/c", ddg).as_deref(), Some("http://a.b/c"));
-        assert_eq!(resolve("rust lang", ddg).as_deref(), Some("https://duckduckgo.com/?q=rust+lang"));
-        assert_eq!(resolve("c++", ddg).as_deref(), Some("https://duckduckgo.com/?q=c%2B%2B"));
-        assert_eq!(resolve("rust lang", SearchEngine::Google).as_deref(), Some("https://www.google.com/search?q=rust+lang"));
-        assert_eq!(resolve("  ", ddg), None);
-    }
 
     #[test]
     fn editing() {

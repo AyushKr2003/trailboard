@@ -16,14 +16,14 @@ use scene::command;
 use scene::download::{self, Downloads, State};
 use scene::pagetext;
 use scene::palette::{self, Candidate};
-use scene::settings::SearchEngine;
+use scene::search::Resolved;
+use scene::settings::Settings;
 use scene::{Node, NodeId, Rect, Scene, Vec2};
 use storage::pagetext::Visit;
 use storage::spaces::{SpaceId, SpaceIndex};
 
 use crate::chrome::{self, type_};
 use crate::icons::{self, Icon};
-use crate::omnibox;
 use crate::theme::{rgb, Theme};
 
 /// Board actions the palette can run, each with the keys that also do it.
@@ -265,7 +265,7 @@ pub fn rows(
     closed: &[&Node],
     spaces: &SpaceIndex,
     visits: &[Visit],
-    engine: SearchEngine,
+    settings: &Settings,
 ) -> Vec<Row> {
     let mut cards: Vec<_> = scene.all_nodes().collect();
     cards.sort_by_key(|n| std::cmp::Reverse((used.get(&n.id).copied().unwrap_or(0), n.z)));
@@ -354,12 +354,14 @@ pub fn rows(
         }
     }
 
-    if let Some(url) = omnibox::resolve(query, engine) {
-        let q = query.trim();
-        let search = url == omnibox::search_url(q, engine);
-        let label = if search { format!("Search {} for “{q}”", engine.name()) } else { format!("Open {q}") };
-        let row = Row { item: Item::Open(url), label, detail: "New card".into(), positions: Vec::new(), dot: None, history: None };
-        if search { out.push(row) } else { out.insert(0, row) }
+    if let Some(r) = settings.resolve(query) {
+        // A keyword search was asked for by name: it comes first, as an address does.
+        let (label, first) = match &r {
+            Resolved::Address(_) => (format!("Open {}", query.trim()), true),
+            Resolved::Search { keyword, .. } => (r.label(), keyword.is_some()),
+        };
+        let row = Row { item: Item::Open(r.into_url()), label, detail: "New card".into(), positions: Vec::new(), dot: None, history: None };
+        if first { out.insert(0, row) } else { out.push(row) }
     }
     group(out, query.trim().is_empty())
 }
@@ -1111,7 +1113,7 @@ mod tests {
         let ids: Vec<NodeId> = s.nodes().map(|n| n.id).collect();
         let mut used = HashMap::new();
         used.insert(ids[0], 5);
-        let r = rows("", &s, &used, &[], &SpaceIndex::default(), &[], SearchEngine::DuckDuckGo);
+        let r = rows("", &s, &used, &[], &SpaceIndex::default(), &[], &Settings::default());
         assert_eq!(r[0].item, Item::Card(ids[0]));
         assert_eq!(r[0].detail, "rust-lang.org");
         assert_eq!(r[1].item, Item::Card(ids[1]));
@@ -1123,7 +1125,7 @@ mod tests {
     #[test]
     fn query_ranks_cards_commands_and_search() {
         let s = board();
-        let r = rows("trail", &s, &HashMap::new(), &[], &SpaceIndex::default(), &[], SearchEngine::DuckDuckGo);
+        let r = rows("trail", &s, &HashMap::new(), &[], &SpaceIndex::default(), &[], &Settings::default());
         assert_eq!(r[0].label, "Trail - Wikipedia");
         assert_eq!(r[0].positions, vec![0, 1, 2, 3, 4]);
         assert!(r.iter().any(|r| r.label == "Trails sidebar"));
@@ -1131,16 +1133,26 @@ mod tests {
         assert_eq!(last.item, Item::Open("https://duckduckgo.com/?q=trail".into()));
         assert_eq!(last.label, "Search DuckDuckGo for “trail”");
         // Found by its URL.
-        let r = rows("rust-lang", &s, &HashMap::new(), &[], &SpaceIndex::default(), &[], SearchEngine::DuckDuckGo);
+        let r = rows("rust-lang", &s, &HashMap::new(), &[], &SpaceIndex::default(), &[], &Settings::default());
         assert_eq!(r[0].label, "Learn Rust");
         assert!(r[0].positions.is_empty());
     }
 
     #[test]
     fn an_address_opens_first() {
-        let r = rows("example.com", &board(), &HashMap::new(), &[], &SpaceIndex::default(), &[], SearchEngine::DuckDuckGo);
+        let r = rows("example.com", &board(), &HashMap::new(), &[], &SpaceIndex::default(), &[], &Settings::default());
         assert_eq!(r[0].item, Item::Open("https://example.com".into()));
         assert_eq!(r[0].label, "Open example.com");
+    }
+
+    #[test]
+    fn a_keyword_search_opens_first_and_names_its_site() {
+        let r = rows("gh trail", &board(), &HashMap::new(), &[], &SpaceIndex::default(), &[], &Settings::default());
+        assert_eq!(r[0].item, Item::Open("https://github.com/search?q=trail".into()));
+        assert_eq!(r[0].label, "Search GitHub for “trail”");
+        // A plain search comes last, with the default engine's name.
+        let r = rows("trail", &board(), &HashMap::new(), &[], &SpaceIndex::default(), &[], &Settings::default());
+        assert_eq!(r.last().unwrap().label, "Search DuckDuckGo for “trail”");
     }
 
     #[test]
@@ -1148,10 +1160,10 @@ mod tests {
         let mut spaces = SpaceIndex::default();
         let other = spaces.add();
         spaces.rename(other, "Reading");
-        let r = rows("read", &Scene::new(), &HashMap::new(), &[], &spaces, &[], SearchEngine::DuckDuckGo);
+        let r = rows("read", &Scene::new(), &HashMap::new(), &[], &spaces, &[], &Settings::default());
         assert_eq!(r[0].item, Item::Space(other));
         assert!(r.iter().any(|r| r.item == Item::Command(Command::Read)));
-        let r = rows("", &Scene::new(), &HashMap::new(), &[], &spaces, &[], SearchEngine::DuckDuckGo);
+        let r = rows("", &Scene::new(), &HashMap::new(), &[], &spaces, &[], &Settings::default());
         assert!(r.iter().any(|r| r.item == Item::Command(Command::NextSpace)));
         // The active space is not offered.
         assert!(!r.iter().any(|r| r.item == Item::Space(spaces.active)));
@@ -1165,7 +1177,7 @@ mod tests {
             v("https://doc.rust-lang.org/book/", "The Rust Book"),
             v("https://example.org/x", ""),
         ];
-        let r = rows("rust", &board(), &HashMap::new(), &[], &SpaceIndex::default(), &visits, SearchEngine::DuckDuckGo);
+        let r = rows("rust", &board(), &HashMap::new(), &[], &SpaceIndex::default(), &visits, &Settings::default());
         // The card showing the first page is found by its title already, and only once.
         assert_eq!(r.iter().filter(|r| r.label == "Learn Rust").count(), 1);
         let hist: Vec<&Row> = r.iter().filter(|r| r.detail.starts_with("History")).collect();
@@ -1177,12 +1189,12 @@ mod tests {
         assert_eq!(r[r.len() - 2].label, "https://example.org/x");
         assert!(r.last().unwrap().label.starts_with("Search DuckDuckGo"));
         // Text only the index matched finds the card that shows it.
-        let r = rows("borrowing", &board(), &HashMap::new(), &[], &SpaceIndex::default(), &visits[..1], SearchEngine::DuckDuckGo);
+        let r = rows("borrowing", &board(), &HashMap::new(), &[], &SpaceIndex::default(), &visits[..1], &Settings::default());
         assert_eq!(r[0].label, "Learn Rust");
         assert!(matches!(r[0].item, Item::Card(_)));
         assert_eq!(r[0].detail, "rust-lang.org");
         // Nothing typed: no history.
-        let r = rows("", &board(), &HashMap::new(), &[], &SpaceIndex::default(), &visits, SearchEngine::DuckDuckGo);
+        let r = rows("", &board(), &HashMap::new(), &[], &SpaceIndex::default(), &visits, &Settings::default());
         assert!(!r.iter().any(|r| r.detail.starts_with("History")));
     }
 
@@ -1204,7 +1216,7 @@ mod tests {
         let used = HashMap::new();
 
         // Nothing typed: the newest few, after the open cards, before the commands.
-        let rows0 = rows("", &s, &used, &closed, &SpaceIndex::default(), &[], SearchEngine::DuckDuckGo);
+        let rows0 = rows("", &s, &used, &closed, &SpaceIndex::default(), &[], &Settings::default());
         let items: Vec<&Item> = rows0.iter().map(|r| &r.item).collect();
         assert!(matches!(items[0], Item::Card(_)) && matches!(items[1], Item::Card(_)));
         assert_eq!(&items[2..5], &[&Item::Closed(d.id), &Item::Closed(b.id), &Item::Closed(c.id)]);
@@ -1212,22 +1224,22 @@ mod tests {
         assert_eq!(rows0[2].detail, "Closed · hypr.land");
 
         // Typed: found by title or address.
-        let found = rows("gnu", &s, &used, &closed, &SpaceIndex::default(), &[], SearchEngine::DuckDuckGo);
+        let found = rows("gnu", &s, &used, &closed, &SpaceIndex::default(), &[], &Settings::default());
         assert_eq!(found[0].item, Item::Closed(a.id));
         assert_eq!(found[0].label, "GNU");
-        let found = rows("kernel.org", &s, &used, &closed, &SpaceIndex::default(), &[], SearchEngine::DuckDuckGo);
+        let found = rows("kernel.org", &s, &used, &closed, &SpaceIndex::default(), &[], &Settings::default());
         assert_eq!(found[1].item, Item::Closed(c.id), "after the Open row");
 
         // A history page a closed card showed is that card's row.
         let visits = [Visit { url: "https://archlinux.org/".into(), title: "Arch Linux".into(), seen_ms: 0 }];
-        let found = rows("wiki pacman", &s, &used, &closed, &SpaceIndex::default(), &visits, SearchEngine::DuckDuckGo);
+        let found = rows("wiki pacman", &s, &used, &closed, &SpaceIndex::default(), &visits, &Settings::default());
         assert_eq!(found[0].item, Item::Closed(b.id));
         assert!(found[0].history.is_some());
 
         // A closed card that is back on the board (undo) is not offered.
         let mut s2 = s.clone();
         assert!(s2.insert(d.clone(), &[]));
-        let r2 = rows("hypr", &s2, &used, &closed, &SpaceIndex::default(), &[], SearchEngine::DuckDuckGo);
+        let r2 = rows("hypr", &s2, &used, &closed, &SpaceIndex::default(), &[], &Settings::default());
         assert!(!r2.iter().any(|r| r.item == Item::Closed(d.id)));
         assert!(r2.iter().any(|r| r.item == Item::Card(d.id)));
     }
@@ -1367,13 +1379,13 @@ mod tests {
     #[test]
     fn rows_come_in_sections_in_the_order_of_their_best_row() {
         let s = board();
-        let r = rows("", &s, &HashMap::new(), &[], &SpaceIndex::default(), &[], SearchEngine::DuckDuckGo);
+        let r = rows("", &s, &HashMap::new(), &[], &SpaceIndex::default(), &[], &Settings::default());
         let heads = sections(&r, "");
         assert_eq!(heads[0], Some("Recent"));
         assert_eq!(heads[2], Some("Actions"));
         // Typed: the best match stays first and its section leads; the
         // rest of a section follows it before the next section starts.
-        let r = rows("trail", &s, &HashMap::new(), &[], &SpaceIndex::default(), &[], SearchEngine::DuckDuckGo);
+        let r = rows("trail", &s, &HashMap::new(), &[], &SpaceIndex::default(), &[], &Settings::default());
         assert_eq!(r[0].label, "Trail - Wikipedia");
         let heads = sections(&r, "trail");
         assert_eq!(heads[0], Some("Go to"));

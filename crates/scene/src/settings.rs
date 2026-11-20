@@ -516,6 +516,8 @@ pub struct Settings {
     pub backdrop: Backdrop,
     /// Radius in logical px for [`Corners::Custom`] (0 to [`MAX_CORNER_RADIUS`]).
     pub corner_radius: u8,
+    /// Search keywords (`gh foo`), in the order the settings page lists them.
+    pub keywords: Vec<crate::search::Keyword>,
 }
 
 impl Default for Settings {
@@ -546,11 +548,22 @@ impl Default for Settings {
             corners: Corners::Rounded,
             backdrop: Backdrop::Mood,
             corner_radius: ROUNDED_RADIUS as u8,
+            keywords: crate::search::defaults(),
         }
     }
 }
 
 impl Settings {
+    /// What typed text opens, with this engine and these keywords (`search::resolve`).
+    pub fn resolve(&self, input: &str) -> Option<crate::search::Resolved> {
+        crate::search::resolve(input, self.search, &self.keywords)
+    }
+
+    /// The address typed text opens (see [`Settings::resolve`]).
+    pub fn resolve_url(&self, input: &str) -> Option<String> {
+        self.resolve(input).map(crate::search::Resolved::into_url)
+    }
+
     /// The page zoom factor for sites without their own.
     /// The corner radius in use (logical px), given Hyprland's rounding.
     pub fn corner_radius(&self, hyprland: f32) -> f32 {

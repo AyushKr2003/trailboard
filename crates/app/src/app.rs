@@ -1466,7 +1466,7 @@ impl App {
     /// Something was typed in start page `id`: load it there, so the card
     /// becomes an ordinary page.
     fn start_go(&mut self, id: NodeId, input: &str) {
-        let Some(url) = crate::omnibox::resolve(input, self.settings.search) else { return };
+        let Some(url) = self.settings.resolve_url(input) else { return };
         let Some(n) = self.scene.node_mut(id) else { return };
         log::info!("start page {}: {url}", id.0);
         n.url = url.clone();
@@ -1789,7 +1789,7 @@ impl App {
     fn open_clipboard(&mut self, beside: bool) {
         let text = self.clipboard.text().unwrap_or_default();
         let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
-        let Some(url) = omnibox::resolve(&line, self.settings.search) else {
+        let Some(url) = self.settings.resolve_url(&line) else {
             self.toast("The clipboard has no text to open");
             return;
         };
@@ -1809,7 +1809,7 @@ impl App {
     /// Trailboard was started again while running: open what it was given as
     /// new cards in the space on screen and ask for the window to come forward.
     fn relaunched(&mut self, args: &[String], cwd: &str) {
-        let urls: Vec<String> = args.iter().filter_map(|a| launch::target(a, std::path::Path::new(cwd), self.settings.search)).collect();
+        let urls: Vec<String> = args.iter().filter_map(|a| launch::target(a, std::path::Path::new(cwd), &self.settings)).collect();
         log::info!("relaunched with {} page(s): {urls:?}", urls.len());
         if !urls.is_empty() && self.read.is_some() {
             self.leave_read();
@@ -3037,7 +3037,7 @@ impl App {
             self.save_recent_commands();
         }
         let arg = parsed.arg.clone().unwrap_or_default();
-        let url = || omnibox::resolve(&arg, self.settings.search);
+        let url = || self.settings.resolve_url(&arg);
         let page = |app: &mut Self, action: KeyAction, count: Option<u32>| {
             if app.focused_page().is_some() {
                 app.page_action(action, count);
@@ -3436,6 +3436,18 @@ impl App {
             self.set_proxy_server(server);
         } else if let Some(px) = action.strip_prefix(sp::CORNER_RADIUS) {
             self.set_corner_radius(px);
+        } else if let Some(msg) = action.strip_prefix(sp::KEYWORD_SET) {
+            match sp::parse_keyword(msg) {
+                Some((key, name, url)) => self.set_keyword(key, name, url),
+                None => log::warn!("settings page: bad keyword {msg:?}"),
+            }
+        } else if let Some(key) = action.strip_prefix(sp::KEYWORD_REMOVE) {
+            self.remove_keyword(key);
+        } else if action == sp::KEYWORD_RESET {
+            self.settings.keywords = scene::search::defaults();
+            log::info!("setting keywords = defaults");
+            self.toast("Search keywords back to the defaults");
+            self.save_settings();
         } else if let Some(name) = action.strip_prefix(sp::RUN) {
             match sp::command(name) {
                 Some(c) => {
@@ -3644,6 +3656,28 @@ impl App {
     }
 
     /// Enter in the proxy field: the server for *Proxy: Custom*.
+    /// Adds a search keyword, or changes the one with that keyword.
+    fn set_keyword(&mut self, key: &str, name: &str, url: &str) {
+        match scene::search::check(key, name, url) {
+            Ok(k) => {
+                log::info!("setting keyword {} = {} ({})", k.key, k.url, k.name);
+                self.toast(format!("“{} …” searches {}", k.key, k.name));
+                scene::search::put(&mut self.settings.keywords, k);
+                self.save_settings();
+            }
+            Err(e) => self.toast(e),
+        }
+    }
+
+    fn remove_keyword(&mut self, key: &str) {
+        let before = self.settings.keywords.len();
+        self.settings.keywords.retain(|k| k.key != key);
+        if self.settings.keywords.len() != before {
+            log::info!("setting keyword {key} removed");
+            self.save_settings();
+        }
+    }
+
     fn set_proxy_server(&mut self, text: &str) {
         let server = text.trim().to_string();
         if server.is_empty() {
@@ -3747,7 +3781,7 @@ impl App {
         }
         let visits = visits_for(&self.page_index, &self.visits_cache, &ob.text, false);
         let closed: Vec<&Node> = self.closed.iter().map(|(n, _)| n).collect();
-        palette::rows(&ob.text, &self.scene, &self.used, &closed, &self.spaces, &visits, self.settings.search)
+        palette::rows(&ob.text, &self.scene, &self.used, &closed, &self.spaces, &visits, &self.settings)
     }
 
     /// The panel the list under field `ob` is laid out in, for its `rows`:
@@ -6316,7 +6350,7 @@ impl App {
                         self.save_download_as(id, &ob.text);
                     } else if let Target::NameTrail(id) = ob.target {
                         self.name_trail(id, &ob.text);
-                    } else if let Some(url) = omnibox::resolve(&ob.text, self.settings.search) {
+                    } else if let Some(url) = self.settings.resolve_url(&ob.text) {
                         match ob.target {
                             // Shift+Enter: beside the current card instead.
                             _ if shift => self.open_beside_current(&url),
@@ -7414,6 +7448,12 @@ impl App {
                     (n, 0) => format!("{n} matches"),
                     (n, a) => format!("{a} of {n}"),
                 }),
+                // An address bar: a keyword names the site it searches (`gh foo`).
+                (Target::Focused | Target::NewCard | Target::Beside, _) => match self.settings.resolve(&ob.text) {
+                    // Short: the query is in the field already.
+                    Some(scene::search::Resolved::Search { keyword: Some(_), site, .. }) => Some(format!("Search {site}")),
+                    _ => None,
+                },
                 _ => None,
             };
             let field = palette::Field {

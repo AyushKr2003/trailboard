@@ -25,6 +25,7 @@ pub mod privacy;
 pub mod read;
 pub mod scroll;
 pub mod scrolltarget;
+pub mod search;
 pub mod selection;
 pub mod settings;
 pub mod sidebar;

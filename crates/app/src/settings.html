@@ -123,6 +123,25 @@ section .about { margin: 0 0 14px 28px; color: var(--dim); }
 .btn.danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); }
 .btn svg { width: 14px; height: 14px; }
 
+/* the search keywords: a list (click a row to change it) and a form to add one */
+.kw { border-top: 1px solid var(--rule); max-height: 324px; overflow-y: auto; padding: 4px 0; }
+.kwrow { display: grid; grid-template-columns: 72px minmax(0, 150px) minmax(0, 1fr) 24px; align-items: center; gap: 12px;
+  height: 34px; padding: 0 12px 0 16px; cursor: pointer; }
+.kwrow:hover, .kwrow.on { background: var(--hover); }
+.kwrow code { justify-self: start; font: 600 12px/1 ui-monospace, "JetBrains Mono", monospace; padding: 4px 6px;
+  border-radius: min(4px, var(--radius)); background: var(--well); border: 1px solid var(--rule); }
+.kwrow .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kwrow .url { color: var(--dim); font: 12px ui-monospace, "JetBrains Mono", monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kwrow .x { width: 24px; height: 24px; display: grid; place-items: center; border: 0; padding: 0; background: transparent;
+  border-radius: var(--r-sm); color: var(--faint); cursor: pointer; visibility: hidden; }
+.kwrow:hover .x, .kwrow .x:focus-visible { visibility: visible; }
+.kwrow .x:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.kwrow .x svg { width: 14px; height: 14px; }
+.kwempty { padding: 10px 16px; color: var(--dim); }
+.sub.kwadd { padding-top: 12px; margin-top: 0; border-top: 1px solid var(--rule); }
+.sub.kwadd #kwKey { flex: none; width: 88px; }
+.sub.kwadd #kwName { flex: none; width: 140px; font-family: var(--font); font-size: 13px; }
+
 .fact .value { font-weight: 500; color: var(--dim); text-align: right; max-width: 280px; overflow-wrap: anywhere; }
 .empty { padding: 72px 0; text-align: center; color: var(--dim); }
 .empty b { display: block; margin-bottom: 4px; font-size: 15px; color: var(--fg); font-weight: 600; }
@@ -142,6 +161,10 @@ mark { background: var(--accentsoft); color: inherit; border-radius: 2px; paddin
   section .about { margin-left: 0; }
   section h2 svg { display: none; }
   .row { flex-wrap: wrap; gap: 10px 16px; }
+  .kwrow { grid-template-columns: 64px minmax(0, 1fr) 24px; }
+  .kwrow .url { display: none; }
+  .sub.kwadd { flex-wrap: wrap; }
+  .sub.kwadd #kwUrl { flex-basis: 100%; }
 }
 </style>
 </head>
@@ -164,6 +187,8 @@ function act(msg, rest) { console.log(PREFIX + msg + (rest || "")); }
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 let query = "";
 let proxyDraft = null;
+// The keyword being typed in the form (kept while the page redraws).
+let kwDraft = { key: "", name: "", url: "" };
 
 // Each section's icon and one line on what it covers; the strokes follow
 // the app's own icon set (24-unit grid, round ends).
@@ -235,6 +260,47 @@ function row(it) {
   return html;
 }
 
+// ---- search keywords ----
+const CROSS = '<svg class="i" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg>';
+function kwHit() {
+  if (!query) return true;
+  const hay = ("search keywords keyword shortcut " + D.keywords.map((k) => k.join(" ")).join(" ")).toLowerCase();
+  return words(query).every((w) => hay.includes(w));
+}
+function keywords() {
+  const key = kwDraft.key.trim().toLowerCase();
+  const known = D.keywords.some(([k]) => k === key);
+  const list = D.keywords.length
+    ? D.keywords.map(([k, n, u]) => `<div class="kwrow${k === key ? " on" : ""}" data-kw="${esc(k)}" title="Click to change"><code>${mark(k)}</code><span class="name">${mark(n)}</span><span class="url">${esc(u)}</span><button class="x" data-kwx="${esc(k)}" aria-label="Remove ${esc(k)}">${CROSS}</button></div>`).join("")
+    : `<div class="kwempty">No keywords. Add one below, or bring back the defaults.</div>`;
+  return `<div class="row" data-k="keywords"><div class="text"><div class="label">${mark("Search keywords")}</div><div class="help">${mark("Type a keyword, a space and your search in the address bar, o, O or :open. gh rust searches GitHub for “rust”.")}</div></div><div class="ctl"><button class="btn" id="kwReset">Defaults</button></div></div>`
+    + `<div class="kw" id="kwList">${list}</div>`
+    + `<div class="sub kwadd"><input id="kwKey" placeholder="Keyword" value="${esc(kwDraft.key)}" spellcheck="false" aria-label="Keyword"><input id="kwName" placeholder="Name" value="${esc(kwDraft.name)}" spellcheck="false" aria-label="Name"><input id="kwUrl" placeholder="https://example.com/search?q={}" value="${esc(kwDraft.url)}" spellcheck="false" aria-label="Search address, {} for the search"><button class="btn primary" id="kwSave">${known ? "Save" : "Add"}</button></div>`;
+}
+function wireKeywords() {
+  if (!$("kwSave")) return;
+  for (const r of document.querySelectorAll("[data-kw]")) r.onclick = () => {
+    const k = D.keywords.find(([x]) => x === r.dataset.kw);
+    if (!k) return;
+    kwDraft = { key: k[0], name: k[1], url: k[2] };
+    render();
+    $("kwUrl").focus();
+  };
+  for (const b of document.querySelectorAll("[data-kwx]")) b.onclick = (e) => { e.stopPropagation(); act("keyword-remove:", b.dataset.kwx); };
+  $("kwReset").onclick = () => act("keyword-reset");
+  const draft = () => { kwDraft = { key: $("kwKey").value, name: $("kwName").value, url: $("kwUrl").value }; };
+  const save = () => { draft(); act("keyword-set:", [kwDraft.key, kwDraft.name, kwDraft.url].join("\t")); };
+  for (const id of ["kwKey", "kwName", "kwUrl"]) {
+    $(id).oninput = () => {
+      draft();
+      const known = D.keywords.some(([k]) => k === kwDraft.key.trim().toLowerCase());
+      $("kwSave").textContent = known ? "Save" : "Add";
+    };
+    $(id).onkeydown = (e) => { if (e.key === "Enter") save(); };
+  }
+  $("kwSave").onclick = save;
+}
+
 function section(id, name, rows, actions) {
   return `<section id="s-${id}"><h2>${icon(id)}${mark(name)}</h2>${query ? "" : `<p class="about">${ABOUT[id] || ""}</p>`}<div class="box">${rows}${actions}</div></section>`;
 }
@@ -246,8 +312,9 @@ function render() {
   for (const sec of D.sections) {
     const items = sec.items.filter(hit);
     const secHit = query && words(query).every((w) => sec.name.toLowerCase().includes(w));
-    if (!items.length && !secHit) continue;
-    const list = items.length ? items : sec.items;
+    const kw = sec.id === "search" && (secHit || kwHit());
+    if (!items.length && !secHit && !kw) continue;
+    const list = items.length || (kw && !secHit) ? items : sec.items;
     shown.push({ id: sec.id, name: sec.name, n: query ? list.length : 0 });
     const links = !query || secHit ? sec.buttons : [];
     const actions = links.length
@@ -255,7 +322,7 @@ function render() {
           links.some(([, c]) => DANGER.includes(c)) ? `<span class="gap"></span>` : ""}${
           links.filter(([, c]) => DANGER.includes(c)).map(([l, c]) => `<button class="btn danger" data-run="${c}">${esc(l)}</button>`).join("")}</div>`
       : "";
-    html += section(sec.id, sec.name, list.map(row).join(""), actions);
+    html += section(sec.id, sec.name, list.map(row).join("") + (kw ? keywords() : ""), actions);
   }
   const facts = D.facts.filter(([l, v, m]) => !query || words(query).every((w) => (l + " " + v + " " + m).toLowerCase().includes(w)));
   if (facts.length) {
@@ -283,6 +350,7 @@ function render() {
     rd.oninput = () => { $("radiusOut").textContent = rd.value + " px"; $("radiusSample").style.borderRadius = rd.value + "px"; };
     rd.onchange = () => { D.cornerRadius = +rd.value; act("corner-radius:", rd.value); };
   }
+  wireKeywords();
   if (keepFocus && $(keepFocus)) $(keepFocus).focus();
   fitTail();
   spy();
@@ -329,7 +397,13 @@ document.addEventListener("keydown", (e) => {
 });
 
 // The app sends new data whenever a setting changes (here or elsewhere).
-window.tbSettings = function (d) { D = d; render(); };
+window.tbSettings = function (d) {
+  D = d;
+  // A keyword saved as typed: the form is done with it.
+  const k = kwDraft.key.trim().toLowerCase();
+  if (k && D.keywords.some(([x, , u]) => x === k && u === kwDraft.url.trim())) kwDraft = { key: "", name: "", url: "" };
+  render();
+};
 // The app sets the theme's colours, now and whenever the theme changes.
 window.tbTheme = function (t) {
   for (const k in t) if (k !== "light") document.documentElement.style.setProperty("--" + k, t[k]);

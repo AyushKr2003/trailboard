@@ -31,6 +31,17 @@ All notable changes to Trailboard. The format follows
     you stay where you are, ;m keeps the labels up to open several that way
     (chosen ones dim; Esc ends), ;e types in a field. The corner says what
     the labels do.
+- **Search keywords.** Type a keyword, a space and your search in the
+  address bar, o, O, `:open`, a start page or the palette to search one
+  site: `gh trailboard` searches GitHub, `w rust` Wikipedia, `g`, `b`,
+  `br`, `k` the big engines, and `yt`, `map`, `mdn`, `rs`, `cr`, `aw`,
+  `aur` more. The address bar says which site (*Search GitHub*) and the
+  palette's row reads *Search GitHub for “trailboard”*. Settings →
+  *Search keywords* lists them: click one to change it, add your own
+  (an address with `{}` where the search goes), remove one, or bring
+  back the defaults. An address always wins over a keyword, and a
+  keyword alone is searched for as a word. `settings.json` is now
+  version 2; older files get the default keywords.
 - **Cards as tabs, from the keyboard.** Without leaving a page: J / K go
   to the next / previous card in reading order (as Tidy lays them out),
   gt or T to a card by title, g0 / g$ to the first / last, Alt+1…8 to the

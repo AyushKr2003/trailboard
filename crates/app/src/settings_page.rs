@@ -6,8 +6,9 @@
 //!
 //! The page's messages (after `web::APP_ACTION`) are [`SET`] `key=value`
 //! (`scene::settings::Key::id` and an id of `Settings::choices`),
-//! [`PROXY`] and the server typed, [`CORNER_RADIUS`] and a number of px, [`RUN`] and a name of [`command`], and
-//! `start::GUIDE` for the search engine guide. The app sends the page its
+//! [`PROXY`] and the server typed, [`CORNER_RADIUS`] and a number of px, [`RUN`] and a name of [`command`],
+//! [`KEYWORD_SET`] / [`KEYWORD_REMOVE`] / [`KEYWORD_RESET`] for the search
+//! keywords table, and `start::GUIDE` for the search engine guide. The app sends the page its
 //! data again with [`data_script`] whenever a setting changes.
 
 use scene::settings::{Key, Settings};
@@ -26,6 +27,18 @@ pub const PROXY: &str = "proxy-server:";
 pub const CORNER_RADIUS: &str = "corner-radius:";
 /// Before the name of a board command the page has a button for.
 pub const RUN: &str = "run:";
+/// Before a keyword added or changed: keyword, name and address, separated by tabs.
+pub const KEYWORD_SET: &str = "keyword-set:";
+/// Before a keyword removed.
+pub const KEYWORD_REMOVE: &str = "keyword-remove:";
+/// The keywords table back to the defaults.
+pub const KEYWORD_RESET: &str = "keyword-reset";
+
+/// A [`KEYWORD_SET`] message's keyword, name and address (as typed).
+pub fn parse_keyword(msg: &str) -> Option<(&str, &str, &str)> {
+    let mut parts = msg.splitn(3, '\t');
+    Some((parts.next()?, parts.next()?, parts.next()?))
+}
 
 /// A section of the page: its id, name, the settings in it and buttons
 /// (label, [`command`] name) under them.
@@ -169,9 +182,11 @@ pub fn data(s: &Settings, notes: &[(Key, String)], facts: &[(&str, String, Strin
         })
         .collect();
     let facts: Vec<String> = facts.iter().map(|(l, v, more)| format!("[{},{},{}]", q(l), q(v), q(more))).collect();
+    let keywords: Vec<String> = s.keywords.iter().map(|k| format!("[{},{},{}]", q(&k.key), q(&k.name), q(&k.url))).collect();
     format!(
-        "{{\"sections\":[{}],\"proxyServer\":{},\"cornerRadius\":{},\"maxCornerRadius\":{},\"facts\":[{}]}}",
+        "{{\"sections\":[{}],\"keywords\":[{}],\"proxyServer\":{},\"cornerRadius\":{},\"maxCornerRadius\":{},\"facts\":[{}]}}",
         sections.join(","),
+        keywords.join(","),
         q(&s.proxy_server),
         s.corner_radius,
         scene::settings::MAX_CORNER_RADIUS,
@@ -227,7 +242,7 @@ mod tests {
         let url = page_url(&Theme::default(), &d);
         assert!(!url.contains("__DATA__") && !url.contains("__THEME__") && !url.contains("__PREFIX__"));
         for msg in PAGE.split("act(\"").skip(1).filter_map(|s| s.split('"').next()) {
-            assert!([SET, PROXY, CORNER_RADIUS, RUN, crate::start::GUIDE].contains(&msg), "unknown message {msg}");
+            assert!([SET, PROXY, CORNER_RADIUS, RUN, KEYWORD_SET, KEYWORD_REMOVE, KEYWORD_RESET, crate::start::GUIDE].contains(&msg), "unknown message {msg}");
         }
         let rounded = Theme { rounding: 10.0, ..Theme::default() };
         assert!(crate::welcome::colors(&rounded).contains("\"radius\":\"10px\""), "pages follow the corners in use");
@@ -235,5 +250,8 @@ mod tests {
         assert_eq!(parse_set("block_ads=off"), Some((Key::BlockAds, "off")));
         assert_eq!(parse_set("nope=off"), None);
         assert_eq!(parse_set("block_ads"), None);
+        assert!(d.contains(r#""keywords":[["d","DuckDuckGo","https://duckduckgo.com/?q={}"]"#), "{d}");
+        assert_eq!(parse_keyword("gh\tGitHub\thttps://github.com/search?q={}"), Some(("gh", "GitHub", "https://github.com/search?q={}")));
+        assert_eq!(parse_keyword("gh\tGitHub"), None);
     }
 }

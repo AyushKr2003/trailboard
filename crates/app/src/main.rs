@@ -101,7 +101,7 @@ fn main() -> ExitCode {
 
     let cwd = std::env::current_dir().unwrap_or_default();
     let settings = storage::settings::load_settings(&data_dir());
-    let urls = args.iter().filter_map(|a| launch::target(a, &cwd, settings.search)).collect();
+    let urls = args.iter().filter_map(|a| launch::target(a, &cwd, &settings)).collect();
     let mut event_loop = EventLoop::new().expect("event loop");
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = app::App::new(urls, data_dir(), settings);

@@ -48,6 +48,7 @@ with *Welcome page* in Ctrl+K.
 | Spaces menu | click the space's name, top left (the button beside it opens the sidebar); *Show the space panel* in the settings hides both |
 | Undo / redo board edits | Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y (after clicking the board or a card's label) |
 | Address bar / new card | Ctrl+L / Ctrl+T; Shift+Enter opens what you typed beside the current card instead |
+| Search one site by keyword | Type a keyword, a space and your search in the address bar, o, O, `:open` or the palette: `gh trailboard` searches GitHub, `w rust` Wikipedia, `g …` Google, `yt …` YouTube. The bar names the site it will search. Change, add or remove keywords in Settings → *Search keywords* (click one to edit it; *Defaults* brings the original set back) |
 | Start page: a search box and the pages you opened last (none in a private space) | *New start page* in Ctrl+K, or *New card opens: Start page* in the settings for Ctrl+T; ↓ from the box walks the pages, Enter opens one in the card |
 | Pin a site to the start page | the pin on a *Jump back in* card, or *Add a site* in a group; a site's ⋯ or right-click edits, moves or unpins it; drag to reorder or move between groups |
 | Open a start page link beside it (with a trail) | Ctrl+click or middle-click; Alt+1–9 opens the first nine pinned sites |

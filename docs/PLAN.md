@@ -55,7 +55,7 @@ app (trailboard)  winit window · input · omnibox · chrome UI · main loop
 | ✅ | M9 Packaging | Bundle script, `--version`, crash reports, PKGBUILD, Chromium sandbox, first-run welcome |
 | ⬜ | M10 Optional extras | See below; most items on hold |
 | ✅ | M11 Premium look | Corners setting, cards as sheets, board backgrounds, sidebar, command bar, motion, empty board, review pass |
-| 🟡 | **M12 Keyboard first** | Vim-like modes, page keys, scroll sections, command line, then (steps 7–17) cards from a page, search keywords, marks, user keys, settings, navigation, caret mode, dialogs (below) |
+| 🟡 | **M12 Keyboard first** | Vim-like modes, page keys, scroll sections, command line, cards from a page, search keywords, then (steps 9–17) marks, user keys, settings, navigation, caret mode, dialogs (below) |
 | ⬜ | **M13 Full media support** | Our own CEF build with H.264/AAC (and HEVC, Widevine if they work), built off this machine, opt-in (below) |
 
 ### Owner decisions that still bind
@@ -426,13 +426,52 @@ marked **Ask** are the owner's call and get asked when their step starts
     closed one in Page mode (this replaces the 2026-11-17 answer 2); half
     a section scrolls with `Ctrl+d`/`Ctrl+u` only. The board's `d`/`u`
     follow the same rule.
-- ⬜ 8. **Search keywords.** `g rust` / `gh foo` / `w trail` typed in the
-  address bar, `o`, `O` and `:open` search that engine; the rest uses the
-  default engine. A keyword table in Settings (keyword → URL with `{}`),
-  versioned in `settings.json` with a migration; defaults for common
-  engines. The address bar's suggestion row says which engine
-  (*Search GitHub for “foo”*). Pure resolution in `scene` with tests
-  (a keyword must be followed by a space; an address still wins).
+- ✅ 8. **Search keywords** (2026-11-20; `scene::search`,
+  `Settings::resolve`, `storage::settings` v2, `settings_page`
+  `keyword-set:` / `keyword-remove:` / `keyword-reset`). Decisions:
+  - Resolution moved from `app::omnibox` to `scene::search` (tested):
+    an address (a scheme, or one word with a dot / `localhost`) first;
+    then `keyword␣query` with a non-empty query; else the default
+    engine. A keyword alone, or glued to its query (`ghfoo`), is a plain
+    search. Keywords match ignoring case. Everything that turns typed
+    text into a page goes through it: the address bar (Ctrl+L, Ctrl+T,
+    o, O), `:open`/`:beside`/`:new`, the palette, start pages, p/P, and
+    `trailboard 'gh foo'` from a shell. The page menu's *Search for*
+    stays with the default engine (the text is never a keyword line).
+  - A keyword is 1–16 letters, digits, `-` or `_` (no dot, so it can't
+    look like an address), stored lower case; its address must be http(s)
+    with exactly one `{}` (the query, `+` for spaces). A missing name
+    becomes the address's host. Adding a keyword that exists replaces it
+    in place.
+  - Defaults (16): `d` DuckDuckGo, `g` Google, `b` Bing, `br` Brave, `sp`
+    Startpage, `k` Kagi, `wa` WolframAlpha, `w` Wikipedia, `gh` GitHub,
+    `yt` YouTube, `map` OpenStreetMap, `mdn` MDN, `rs` Docs.rs, `cr`
+    crates.io, `aw` ArchWiki, `aur` AUR.
+  - `settings.json` version 2 adds `keywords` (the whole table; `[]` is
+    none). Version 1 files are migrated to the defaults (a v1 file's
+    `keywords` is ignored); bad or repeated rows are skipped with a log
+    line. An older build reading a v2 file uses its defaults (the usual
+    newer-version rule).
+  - Shown: the palette's row says *Search GitHub for “foo”* and comes
+    first (a plain search stays last); the lone address bar shows
+    *Search GitHub* at its right end only for a keyword (plain searches
+    stay quiet).
+  - Settings: a *Search keywords* row under *Search and new cards* with a
+    list (keyword, name, address; × removes on hover), a form (keyword,
+    name, address; Enter or Add/Save), and *Defaults*. Clicking a row
+    loads it into the form; Save replaces. Bad input toasts why and the
+    form keeps it. The settings search finds the table by "keyword" or
+    any keyword, name or address.
+  - Verified e2e (`~/.cache/trailboard-e2e-m12`, `script21`, `script22`):
+    o + `gh trailboard` (`kw_bar.png`, the note) loads GitHub's search,
+    `:open w rust` Wikipedia, `:beside gh` searches DuckDuckGo for "gh",
+    Ctrl+K `yt lofi` lists *Search YouTube for “lofi”* (`kw_palette.png`);
+    in Settings, filtering by "keyword" (`kw_filter.png`), adding `rs2`
+    → Rust std (`kw_added_crop.png`), saved as version 2 in
+    `settings.json`, a bad keyword toasts, `:open rs2 vec` opens the
+    Rust docs search. Not verified: removing with × and editing by a
+    click (only the reset button, pressed by mistake in one run), the
+    narrow-card layout of the table, the light theme, a real keyboard.
 - ⬜ 9. **Jumps, marks and saved pages.**
   - `Ctrl+o` / `Ctrl+i` back / forward through the cards visited (a jump
     list per space, kept across restarts).
@@ -631,19 +670,18 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-20 (twenty-fifth). Finished M12 step 7, cards
-from a page: J/K in reading order (`scene::tidy::order`), gt/T, g0/g$,
-Alt+1…9, Ctrl+^, Ctrl+w h/j/k/l, d close / u reopen (board too; half-page
-scroll moved to Ctrl+d/u), co, gC, and `:card N`, `:card-next`,
-`:card-prev`, `:card-only`, `:clone`.
-**Repo state:** on `master`; M12 steps 1–7 done (step 7 not yet
-committed); M12 steps 8–17 and M13 planned.
-**Next up:** M12 step 8, search keywords (`g rust`, a keyword table in
-Settings, versioned in `settings.json` with a migration). Steps 9–17
-follow in order. M13 (full media support, our own CEF build) runs beside
-M12; its builds need a cloud machine. Still open from step 2: the
-per-site "start in Insert" setting (fits step 11). Also retake the README
-screenshots (`docs/images/`) in the new look.
+**Last session:** 2026-11-20 (twenty-sixth). Finished M12 step 8, search
+keywords: `scene::search` resolves typed text (address, `gh foo`, default
+engine) for every address entry point; a keyword table in Settings;
+`settings.json` version 2 with a migration from 1.
+**Repo state:** on `master`; M12 steps 1–8 done and committed; M12 steps 9–17 and M13 planned.
+**Next up:** M12 step 9, jumps, marks and saved pages (`Ctrl+o`/`Ctrl+i`,
+`m{a-z}`/`'{a-z}`, saved pages on `b`/`B`, the sidebar moving to
+`Ctrl+B`; owner's answers recorded under step 9). Steps 10–17 follow in
+order. M13 (full media support, our own CEF build) runs beside M12; its
+builds need a cloud machine. Still open from step 2: the per-site "start
+in Insert" setting (fits step 11). Also retake the README screenshots
+(`docs/images/`) in the new look.
 
 **Small follow-ups (backlog):** glide on undo/redo of moves; follow the
 desktop's animation switch live; verify the setuid sandbox path without
@@ -660,7 +698,9 @@ sites without an icon; a zoom badge on zoomed cards; Ctrl+scroll in a page
 to zoom it; keyboard selection of several cards; link hints inside
 iframes; a portal file chooser for Save as Markdown; open `crash.log` from
 the crash toast; undoing the close of a stack member puts it back in the
-stack.
+stack; gi on the settings page toasts "No text field here" although its
+search box is an `input type=search` in view (seen in step 8's e2e; a
+click into it works).
 
 **Notes:**
 - grim hangs while the display is off and catches the lock screen while

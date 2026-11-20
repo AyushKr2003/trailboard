@@ -40,6 +40,10 @@ pub enum Cmd {
     Solo,
     Sidebar,
     Card,
+    CardNext,
+    CardPrev,
+    CardOnly,
+    Clone,
     Name,
     Colour,
     SelectAll,
@@ -128,7 +132,11 @@ pub const COMMANDS: &[Spec] = &[
     s(Cmd::StartPage, "start", &[], No, "", "New start page"),
     s(Cmd::Note, "note", &[], No, "", "New note"),
     s(Cmd::Sticky, "sticky", &[], No, "", "New sticky note"),
-    s(Cmd::Card, "card", &[], Req(Kind::Card), "<title>", "Go to a card"),
+    s(Cmd::Card, "card", &[], Req(Kind::Card), "<title or number>", "Go to a card (a number counts in reading order)"),
+    s(Cmd::CardNext, "card-next", &[], Opt(Kind::Count), "[times]", "Next card in reading order"),
+    s(Cmd::CardPrev, "card-prev", &[], Opt(Kind::Count), "[times]", "Previous card in reading order"),
+    s(Cmd::CardOnly, "card-only", &["only"], No, "", "Close the other cards in this space"),
+    s(Cmd::Clone, "clone", &[], No, "", "Open the card's page again beside it"),
     s(Cmd::Space, "space", &[], Req(Kind::Space), "<name>", "Go to a space"),
     s(Cmd::Close, "close", &["q"], No, "", "Close the card (or the selection)"),
     s(Cmd::Reopen, "reopen", &[], No, "", "Reopen the last closed card"),
@@ -459,6 +467,12 @@ mod tests {
         assert_eq!(parse("space Work").unwrap().spec.cmd, Cmd::Space);
         assert_eq!(parse("ads").unwrap().spec.cmd, Cmd::Ads);
         assert_eq!(parse("t"), Err(Error::Ambiguous(vec!["tidy", "tint"])));
+        // `card` is exact; its longer names need more.
+        assert_eq!(parse("card 3").unwrap().spec.cmd, Cmd::Card);
+        assert_eq!(parse("card-n").unwrap().spec.cmd, Cmd::CardNext);
+        assert_eq!(parse("card-next 2").unwrap().count(), Some(2));
+        assert_eq!(parse("only").unwrap().spec.cmd, Cmd::CardOnly);
+        assert_eq!(parse("clo"), Err(Error::Ambiguous(vec!["clone", "close"])));
         assert_eq!(parse("nope"), Err(Error::Unknown("nope".into())));
         assert_eq!(parse(":"), Err(Error::Empty));
         assert_eq!(parse(""), Err(Error::Empty));

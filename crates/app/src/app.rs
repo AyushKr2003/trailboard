@@ -9,7 +9,7 @@
 //!   them (`App::typing`). h/j/k/l or arrows go to the nearest card that way
 //!   (`scene::nav`), Shift with them pans, +/- zoom, Enter/Space give the current card
 //!   the keys, Esc takes them back (the card stays current) and a second Esc lets go
-//!   of the card, Delete closes it, Q quits. Board keys (f, N, T, S, O, R, C, [, ])
+//!   of the card, Delete or d closes it (u reopens), Q quits. Board keys (f, N, T, S, O, R, C, [, ])
 //!   act on the current card, else the one in the middle of the view.
 //! - B opens the trails sidebar (`scene::sidebar`, `sidebar`) with the keys:
 //!   j/k move its highlight and go to that card, h/l collapse / expand a trail,
@@ -24,7 +24,7 @@
 //!   current, or clicks a control (a field also gets the keys). Esc, another
 //!   key, a click or a scroll ends the labels. Shift+F fits everything.
 //! - Mouse-only actions have keys too: v selects / deselects the current card
-//!   (h/j/k/l keep the selection), z fills the view with it, d/u scroll its
+//!   (h/j/k/l keep the selection), z fills the view with it, Ctrl+d/u scroll its
 //!   page, and the Menu key or Shift+F10 opens its page menu (Chromium picks
 //!   the spot and context; j/k, Enter, Esc in menus).
 //! - M arranges the current card (`scene::arrange`): h/j/k/l move it (the
@@ -357,6 +357,8 @@ pub struct App {
     used: HashMap<NodeId, u64>,
     use_clock: u64,
     focused: Option<NodeId>,
+    /// The card current before `focused`, for Ctrl+^ (this space's).
+    alt_card: Option<NodeId>,
     /// Closed cards for Ctrl+Shift+T, newest last.
     closed: Vec<(Node, Vec<Edge>)>,
     history: History,
@@ -627,6 +629,8 @@ fn visits_for(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Confirm {
     DeleteSpace,
+    /// Close every card but this one (co).
+    CloseOthers(NodeId),
     ClearHistory,
     ClearCookies,
     /// The first of `App::asks`: Enter allows, anything else blocks.
@@ -708,6 +712,7 @@ impl App {
             used: HashMap::new(),
             use_clock: 0,
             focused: None,
+            alt_card: None,
             closed: Vec::new(),
             history: History::new(),
             selection: Selection::new(),
@@ -1028,6 +1033,7 @@ impl App {
         self.used.clear();
         self.use_clock = 0;
         self.focused = None;
+        self.alt_card = None;
         self.note_target = None;
         self.keys_in_page = false;
         self.selection.clear();
@@ -1876,12 +1882,13 @@ impl App {
     }
 
     /// Ctrl+Shift+T: bring back the newest closed card that isn't already back (via undo).
-    fn reopen_closed(&mut self) {
+    fn reopen_closed(&mut self) -> bool {
         while let Some((node, edges)) = self.closed.pop() {
             if self.restore_closed(node, edges) {
-                return;
+                return true;
             }
         }
+        false
     }
 
     /// A closed card picked in the palette: bring back that one, where it was.
@@ -1947,6 +1954,9 @@ impl App {
         self.finish_arrange(true);
         if let Some(old) = self.focused.and_then(|o| self.cards.get(&o)) {
             old.page.set_focus(false);
+        }
+        if let (Some(old), Some(_)) = (self.focused, id) {
+            self.alt_card = Some(old);
         }
         self.focused = id;
         if let Some(id) = id {
@@ -2140,7 +2150,161 @@ impl App {
             KeyAction::Undo => self.undo(false),
             KeyAction::Redo => self.undo(true),
             KeyAction::CommandLine => self.open_command_line(),
+            _ if idle && self.card_key(action, count) => {}
             _ => {}
+        }
+    }
+
+    /// Keys that go from card to card (M12 step 7), on the board and in a
+    /// page; false for any other action. From a page, the keys stay with
+    /// the page of the card gone to, in Page mode.
+    fn card_key(&mut self, action: KeyAction, count: Option<u32>) -> bool {
+        const MAX_REPEAT: u32 = 100;
+        let times = count.unwrap_or(1).clamp(1, MAX_REPEAT) as i64;
+        let order = || scene::tidy::order(&self.scene);
+        match action {
+            KeyAction::NextCard | KeyAction::PrevCard => {
+                let by = if action == KeyAction::NextCard { times } else { -times };
+                match nav::step(&order(), self.focused, by) {
+                    Some(to) => self.switch_card(to),
+                    None => self.toast("No cards here"),
+                }
+            }
+            KeyAction::FirstCard | KeyAction::LastCard => {
+                let o = order();
+                let to = if action == KeyAction::FirstCard { o.first() } else { o.last() };
+                match to.copied() {
+                    Some(to) => self.switch_card(to),
+                    None => self.toast("No cards here"),
+                }
+            }
+            KeyAction::NthCard(n) => match nav::nth(&order(), n) {
+                Some(to) => self.switch_card(to),
+                None => self.toast(format!("No card {n} here")),
+            },
+            KeyAction::OtherCard => match self.alt_card.filter(|&a| Some(a) != self.focused && self.scene.node(a).is_some()) {
+                Some(to) => self.switch_card(to),
+                None => self.toast("No card used before this one"),
+            },
+            KeyAction::Move(dir) => {
+                // Ctrl+w then a direction, from a page.
+                if let Some(to) = self.focused.and_then(|from| nav::neighbour(&self.scene, from, dir)) {
+                    self.switch_card(to);
+                }
+            }
+            KeyAction::PickCard => {
+                self.open_command_line();
+                if let Some(ob) = self.omnibox.as_mut() {
+                    ob.insert("card ");
+                }
+            }
+            KeyAction::Reopen => {
+                let page = self.entered();
+                let mut any = false;
+                for _ in 0..times {
+                    any |= self.reopen_closed();
+                }
+                if !any {
+                    self.toast("No closed card to reopen");
+                } else if page {
+                    self.keep_page_keys();
+                }
+            }
+            KeyAction::CloseOthers => self.ask_close_others(),
+            KeyAction::Clone => self.clone_card(),
+            _ => return false,
+        }
+        true
+    }
+
+    /// Makes card `to` current from a key: shown if folded away, brought on
+    /// screen (read, in Solo). From a page, the keys go with it in Page mode.
+    fn switch_card(&mut self, to: NodeId) {
+        let page = self.entered();
+        if self.focused == Some(to) {
+            self.ensure_visible(to);
+            return;
+        }
+        self.go_to_card(to);
+        if page {
+            self.keep_page_keys();
+        }
+        log::info!("card keys: to card {}", to.0);
+    }
+
+    /// The focused card's page has the keys, in Page mode (as after Enter,
+    /// or as Solo gives them).
+    fn keep_page_keys(&mut self) {
+        let Some(id) = self.focused else { return };
+        if self.read.is_none() {
+            self.keys_in_page = true;
+        }
+        self.set_page_keys(PageKeys::Page);
+        if let Some(c) = self.cards.get(&id) {
+            c.page.set_focus(true);
+        }
+    }
+
+    /// d (or Ctrl+w) in a page: close the card and go on to the next one in
+    /// reading order (the previous, at the end), keeping Page mode and Solo.
+    fn close_from_page(&mut self, id: NodeId) {
+        let solo = self.read.is_some();
+        let next = nav::step(&scene::tidy::order(&self.scene), Some(id), 1).filter(|&n| n != id);
+        self.close_card(id);
+        log::info!("closed card {} from its page; next {:?}", id.0, next.map(|n| n.0));
+        let Some(next) = next else { return };
+        if solo {
+            self.read_card(next);
+        } else {
+            self.go_to_card(next);
+            self.keep_page_keys();
+        }
+    }
+
+    /// co / `:card-only`: close every other card in the space, asking first.
+    fn ask_close_others(&mut self) {
+        let Some(id) = self.focused.filter(|&id| self.scene.node(id).is_some()) else {
+            self.toast("Pick a card to keep first");
+            return;
+        };
+        let n = self.scene.all_nodes().filter(|n| n.id != id).count();
+        if n == 0 {
+            self.toast("No other cards here");
+            return;
+        }
+        let cards = if n == 1 { "the 1 other card".to_string() } else { format!("the {n} other cards") };
+        self.confirm = Some(Confirm::CloseOthers(id));
+        self.toast(format!("Close {cards} in {}? Enter closes · Esc keeps them", self.spaces.active_entry().name));
+    }
+
+    fn close_others(&mut self, keep: NodeId) {
+        if self.scene.node(keep).is_none() {
+            return;
+        }
+        let others: Vec<NodeId> = self.scene.all_nodes().map(|n| n.id).filter(|&id| id != keep).collect();
+        log::info!("closing the {} card(s) other than card {}", others.len(), keep.0);
+        self.close_cards(&others);
+        self.go_to_card(keep);
+        let n = others.len();
+        self.toast(format!("Closed {n} card{} · :undo brings them back", if n == 1 { "" } else { "s" }));
+    }
+
+    /// gC / `:clone`: the card's page opened again beside it, joined by a
+    /// trail edge (its own back and forward list starts afresh).
+    fn clone_card(&mut self) {
+        let Some(n) = self.focused.and_then(|id| self.scene.node(id)) else {
+            self.toast("Pick a card to clone first");
+            return;
+        };
+        if n.is_note() || n.url.is_empty() {
+            self.toast("Only a page can be cloned");
+            return;
+        }
+        let url = n.url.clone();
+        let page = self.entered();
+        self.open_beside_current(&url);
+        if !page {
+            self.keys_in_page = false;
         }
     }
 
@@ -2226,8 +2390,12 @@ impl App {
             }
             KeyAction::FindNext | KeyAction::FindPrev => self.open_find(),
             KeyAction::CommandLine => self.open_command_line(),
-            // Board actions don't come from the page table.
-            _ => {}
+            KeyAction::Close => self.close_from_page(id),
+            // Cards from the page (`card_key`); board actions don't come
+            // from the page table.
+            _ => {
+                self.card_key(action, count);
+            }
         }
     }
 
@@ -2933,6 +3101,22 @@ impl App {
             Cmd::Reopen => self.run_command(Command::Reopen),
             Cmd::Solo => self.run_command(Command::Read),
             Cmd::Sidebar => self.run_command(Command::Sidebar),
+            Cmd::CardNext => {
+                self.card_key(KeyAction::NextCard, parsed.count());
+            }
+            Cmd::CardPrev => {
+                self.card_key(KeyAction::PrevCard, parsed.count());
+            }
+            Cmd::CardOnly => self.ask_close_others(),
+            Cmd::Clone => self.clone_card(),
+            Cmd::Card if arg.parse::<usize>().is_ok() => {
+                // A number counts in reading order (`:card 3`).
+                let n: usize = arg.parse().unwrap_or(0);
+                match n.checked_sub(1).and_then(|i| scene::tidy::order(&self.scene).get(i).copied()) {
+                    Some(to) => self.switch_card(to),
+                    None => self.toast(format!("No card {n} here")),
+                }
+            }
             Cmd::Card => {
                 let cards: Vec<(NodeId, String)> = self.scene.all_nodes().map(|n| (n.id, n.title.trim().to_string())).collect();
                 let names: Vec<String> = cards.iter().map(|(_, t)| t.clone()).collect();
@@ -2941,12 +3125,8 @@ impl App {
                 order.sort_by_key(|&i| std::cmp::Reverse(self.used.get(&cards[i].0).copied().unwrap_or(0)));
                 let sorted: Vec<String> = order.iter().map(|&i| names[i].clone()).collect();
                 match Self::best_name(&arg, &sorted) {
-                    Some(i) => {
-                        if self.read.is_some() {
-                            self.leave_read();
-                        }
-                        self.go_to_card(cards[order[i]].0);
-                    }
+                    // From a page the keys go with it (and Solo reads it), as gt does.
+                    Some(i) => self.switch_card(cards[order[i]].0),
                     None => self.toast(format!("No card called “{arg}”")),
                 }
             }
@@ -3907,6 +4087,7 @@ impl App {
     fn kept(&self, confirm: Confirm) -> String {
         match confirm {
             Confirm::DeleteSpace => format!("Kept {}", self.spaces.active_entry().name),
+            Confirm::CloseOthers(_) => "Kept the cards".to_string(),
             Confirm::ClearHistory => "Kept history".to_string(),
             Confirm::ClearCookies => "Kept cookies".to_string(),
             Confirm::Permission => String::new(), // `answer_ask` says what happened
@@ -3951,7 +4132,9 @@ impl App {
             }
             Command::Undo => self.undo(false),
             Command::Redo => self.undo(true),
-            Command::Reopen => self.reopen_closed(),
+            Command::Reopen => {
+                self.reopen_closed();
+            }
             Command::CloseCard => {
                 if !self.selection.is_empty() {
                     let ids = self.selection.ids();
@@ -5983,6 +6166,7 @@ impl App {
                 self.confirm = None;
                 match (ev.named, confirm) {
                     (Some(NamedKey::Enter), Confirm::DeleteSpace) => self.delete_space(),
+                    (Some(NamedKey::Enter), Confirm::CloseOthers(keep)) => self.close_others(keep),
                     (Some(NamedKey::Enter), Confirm::ClearHistory) => self.clear_history(),
                     (Some(NamedKey::Enter), Confirm::ClearCookies) => self.clear_cookies(),
                     (Some(NamedKey::Enter), Confirm::Permission) => self.answer_ask(true),
@@ -8153,6 +8337,11 @@ impl App {
                     for (head, mark) in self.scene.trail_labels() {
                         log::info!("script label on {}: name={:?} colour={:?}", head.0, mark.name, mark.colour);
                     }
+                    log::info!(
+                        "script focus: card {:?} entered={} mode={:?} solo={:?} order={:?}",
+                        self.focused.map(|f| f.0), self.entered(), self.page_keys, self.read.map(|r| r.0),
+                        scene::tidy::order(&self.scene).iter().map(|i| i.0).collect::<Vec<_>>()
+                    );
                     let l = self.read_layout();
                     log::info!(
                         "script read: {:?} css={:?} page_scale={} focused={:?} keys_in_page={} mode={} camera=({:.0},{:.0} z{:.3})",

@@ -26,7 +26,58 @@ pub const TRAIL_GAP: f32 = GAP;
 pub fn tidy(scene: &Scene) -> Vec<(NodeId, Rect)> {
     let Some(bounds) = scene.bounds() else { return Vec::new() };
     let nodes: BTreeMap<NodeId, &Node> = scene.nodes().map(|n| (n.id, n)).collect();
+    let (parent, trees) = trees(&nodes, scene);
 
+
+    let mut out: BTreeMap<NodeId, Rect> = BTreeMap::new();
+    let origin = Vec2::new(bounds.x.round(), bounds.y.round());
+    let mut y = origin.y;
+    let mut widest = 0.0f32;
+    let (trails, lone): (Vec<_>, Vec<_>) = trees.into_iter().partition(|t| t.len() > 1);
+    for tree in &trails {
+        let (w, h) = layout_tree(tree, &nodes, &parent, Vec2::new(origin.x, y), &mut out);
+        widest = widest.max(w);
+        y += h + GAP + TRAIL_GAP;
+    }
+
+    // Lone cards in rows.
+    let lone: Vec<&Node> = lone.iter().map(|t| nodes[&t[0]]).collect();
+    if !lone.is_empty() {
+        let per_row = (lone.len() as f32).sqrt().ceil() as usize;
+        let grid_w = lone.iter().take(per_row).map(|n| n.rect.w).sum::<f32>() + GAP * (per_row - 1) as f32;
+        let limit = widest.max(grid_w);
+        let (mut x, mut row_h) = (origin.x, 0.0f32);
+        for n in lone {
+            let f = n.frame();
+            if x > origin.x && x - origin.x + f.w > limit + 0.5 {
+                x = origin.x;
+                y += row_h + GAP;
+                row_h = 0.0;
+            }
+            out.insert(n.id, Rect::new(x, y + n.header_h(), n.rect.w, n.rect.h));
+            x += f.w + GAP;
+            row_h = row_h.max(f.h);
+        }
+    }
+    out.into_iter().collect()
+}
+
+/// The reading order of the cards on the board (folded-away ones left out),
+/// as Tidy lays them out: each trail root first, then down its branches in
+/// order (a card's first child, that child's children, then the next
+/// child), trails from top to bottom; then the lone cards, top to bottom
+/// and left to right. J / K and Alt+digits walk it (M12 step 7).
+pub fn order(scene: &Scene) -> Vec<NodeId> {
+    let nodes: BTreeMap<NodeId, &Node> = scene.nodes().map(|n| (n.id, n)).collect();
+    let (_, trees) = trees(&nodes, scene);
+    let (trails, lone): (Vec<_>, Vec<_>) = trees.into_iter().partition(|t| t.len() > 1);
+    trails.into_iter().chain(lone).flatten().collect()
+}
+
+/// Each card's parent, and the trees (pre-order, root first) in the order
+/// of their roots.
+#[allow(clippy::type_complexity)]
+fn trees(nodes: &BTreeMap<NodeId, &Node>, scene: &Scene) -> (BTreeMap<NodeId, NodeId>, Vec<Vec<NodeId>>) {
     // One parent per card: the first edge into it from a card that exists.
     let mut parent: BTreeMap<NodeId, NodeId> = BTreeMap::new();
     for e in scene.edges() {
@@ -73,38 +124,7 @@ pub fn tidy(scene: &Scene) -> Vec<(NodeId, Rect)> {
         trees.push(order);
     }
     trees.sort_by(|a, b| reading_order(nodes[&a[0]], nodes[&b[0]]));
-
-    let mut out: BTreeMap<NodeId, Rect> = BTreeMap::new();
-    let origin = Vec2::new(bounds.x.round(), bounds.y.round());
-    let mut y = origin.y;
-    let mut widest = 0.0f32;
-    let (trails, lone): (Vec<_>, Vec<_>) = trees.into_iter().partition(|t| t.len() > 1);
-    for tree in &trails {
-        let (w, h) = layout_tree(tree, &nodes, &parent, Vec2::new(origin.x, y), &mut out);
-        widest = widest.max(w);
-        y += h + GAP + TRAIL_GAP;
-    }
-
-    // Lone cards in rows.
-    let lone: Vec<&Node> = lone.iter().map(|t| nodes[&t[0]]).collect();
-    if !lone.is_empty() {
-        let per_row = (lone.len() as f32).sqrt().ceil() as usize;
-        let grid_w = lone.iter().take(per_row).map(|n| n.rect.w).sum::<f32>() + GAP * (per_row - 1) as f32;
-        let limit = widest.max(grid_w);
-        let (mut x, mut row_h) = (origin.x, 0.0f32);
-        for n in lone {
-            let f = n.frame();
-            if x > origin.x && x - origin.x + f.w > limit + 0.5 {
-                x = origin.x;
-                y += row_h + GAP;
-                row_h = 0.0;
-            }
-            out.insert(n.id, Rect::new(x, y + n.header_h(), n.rect.w, n.rect.h));
-            x += f.w + GAP;
-            row_h = row_h.max(f.h);
-        }
-    }
-    out.into_iter().collect()
+    (parent, trees)
 }
 
 /// Lays out one trail (pre-order, root first) with its top-left frame corner at
@@ -193,6 +213,31 @@ mod tests {
     #[test]
     fn empty_board() {
         assert!(tidy(&Scene::new()).is_empty());
+        assert!(order(&Scene::new()).is_empty());
+    }
+
+    #[test]
+    fn order_reads_trails_then_lone_cards() {
+        let mut s = Scene::new();
+        // A lone card at the very top still comes after the trails.
+        let lone_b = s.add_page(Rect::new(900.0, -900.0, 400.0, 300.0), "lone b");
+        let lone_a = s.add_page(Rect::new(0.0, -900.0, 400.0, 300.0), "lone a");
+        let a = s.add_page(Rect::new(0.0, 0.0, 400.0, 300.0), "a");
+        let b = s.add_page(Rect::new(500.0, 400.0, 400.0, 300.0), "b");
+        let c = s.add_page(Rect::new(500.0, 0.0, 400.0, 300.0), "c");
+        let d = s.add_page(Rect::new(1000.0, 0.0, 400.0, 300.0), "d");
+        let x = s.add_page(Rect::new(0.0, 2000.0, 400.0, 300.0), "x");
+        let y = s.add_page(Rect::new(500.0, 2000.0, 400.0, 300.0), "y");
+        s.insert_edge(Edge { from: a, to: b });
+        s.insert_edge(Edge { from: a, to: c });
+        s.insert_edge(Edge { from: c, to: d });
+        s.insert_edge(Edge { from: x, to: y });
+        // c is above b, so it is a's first child; d follows its parent c.
+        assert_eq!(order(&s), vec![a, c, d, b, x, y, lone_a, lone_b]);
+        // The same order after Tidy has laid the board out.
+        let r = tidy(&s);
+        apply(&mut s, &r);
+        assert_eq!(order(&s), vec![a, c, d, b, x, y, lone_a, lone_b]);
     }
 
     #[test]

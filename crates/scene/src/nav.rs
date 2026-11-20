@@ -32,6 +32,32 @@ pub fn neighbour(scene: &Scene, from: NodeId, dir: Dir) -> Option<NodeId> {
         .map(|(_, id)| id)
 }
 
+/// `by` cards on from `from` in `order` (the reading order,
+/// [`crate::tidy::order`]), going round at either end; J / K. With `from`
+/// not in the order, forward starts at the first card and back at the last.
+pub fn step(order: &[NodeId], from: Option<NodeId>, by: i64) -> Option<NodeId> {
+    if order.is_empty() {
+        return None;
+    }
+    let len = order.len() as i64;
+    let at = match from.and_then(|f| order.iter().position(|&id| id == f)) {
+        Some(i) => i as i64 + by,
+        None if by > 0 => by - 1,
+        None => len + by,
+    };
+    Some(order[at.rem_euclid(len) as usize])
+}
+
+/// The `n`th card (from 1) in `order`, as Alt+digit picks it: 9 is always
+/// the last, and a number past the end is no card.
+pub fn nth(order: &[NodeId], n: u8) -> Option<NodeId> {
+    match n {
+        9 => order.last().copied(),
+        0 => None,
+        n => order.get(n as usize - 1).copied(),
+    }
+}
+
 /// Cost of moving from `a` to `b` in `dir`; `None` if `b` isn't that way.
 fn score(a: Rect, b: Rect, dir: Dir) -> Option<f32> {
     let (ca, cb) = (a.center(), b.center());
@@ -54,6 +80,24 @@ fn range_gap(a0: f32, a1: f32, b0: f32, b1: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn steps_go_round() {
+        let o = [NodeId(5), NodeId(2), NodeId(9)];
+        assert_eq!(step(&o, Some(NodeId(5)), 1), Some(NodeId(2)));
+        assert_eq!(step(&o, Some(NodeId(9)), 1), Some(NodeId(5)));
+        assert_eq!(step(&o, Some(NodeId(5)), -1), Some(NodeId(9)));
+        assert_eq!(step(&o, Some(NodeId(2)), 4), Some(NodeId(9)));
+        assert_eq!(step(&o, Some(NodeId(2)), -7), Some(NodeId(5)));
+        assert_eq!(step(&o, None, 1), Some(NodeId(5)));
+        assert_eq!(step(&o, Some(NodeId(1)), -1), Some(NodeId(9)));
+        assert_eq!(step(&[], None, 1), None);
+        assert_eq!(nth(&o, 1), Some(NodeId(5)));
+        assert_eq!(nth(&o, 3), Some(NodeId(9)));
+        assert_eq!(nth(&o, 4), None);
+        assert_eq!(nth(&o, 9), Some(NodeId(9)));
+        assert_eq!(nth(&[], 9), None);
+    }
 
     /// A 3×2 grid of 400×300 cards, 100 apart, plus one far off to the right
     /// and low.

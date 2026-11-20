@@ -29,15 +29,17 @@ with *Welcome page* in Ctrl+K.
 | Move / resize a card with the keyboard | M, then h/j/k/l (Shift resizes, Ctrl takes fine steps); Enter keeps, Esc puts it back |
 | Follow a link by keyboard | f labels the links in the current card's page; type a label to open it beside (Esc cancels) |
 | Do something else with a link, image or field | ; then a letter labels only what that letter uses; type a label: ;y copies a link's address, ;d downloads a link or image, ;i opens an image beside, ;b opens a link beside while you stay where you are, ;m does that for as many links as you like (the labels stay up; Esc ends), ;e types in a field. Works on the board and in a page; the corner says what the labels do |
-| Close the current card / quit | Delete / Q (Ctrl+Q works everywhere) |
+| Close the current card / reopen the last closed / quit | Delete or d / u / Q (Ctrl+Q works everywhere) |
 | Focus a page | click it (keyboard and scroll then go to the page) |
 | Move / resize a card | drag the label above it / its bottom-right corner |
 | Select cards | Shift+drag on the board, Shift+click labels, Ctrl+A (Esc clears) |
 | Move / close selected cards | drag a selected card's label / Delete |
 | Fill the view with a card | double-click its label |
 | Solo (the card fills the window) | Tab (Tab or Esc to go back) |
-| Use a page from the keyboard (after Enter, or in Solo) | j/k scroll, h/l sideways, d/u half a section, gg/G top/bottom, 0/$ left/right edge, f follow a link here, F beside, H/L back/forward, r reload, / find, n/N next/previous, yy copy the address, yt the title, ym a Markdown link, p/P open the copied address (or search for the copied text) here/beside, o address bar, O an address bar that opens beside; a number repeats (5j). The corner shows *Page* |
-| Scroll one part of a page (a sidebar, a list, a wide table, a carousel, a frame) | The scroll keys move the page's *scroll area*: the one you clicked in last, else the one in the middle of the view (an open dialog, the main pane). s labels every scroll area in view (type a label to pick it), ]s / [s step to the next / previous, S to the one around it. At an area's end the scroll goes on to the one around it, as a wheel does. The chosen area flashes an outline and the corner names it (*section 2.1 · 40%*); a new page starts afresh. d/u on the board use the card's scroll area too |
+| Use a page from the keyboard (after Enter, or in Solo) | j/k scroll, h/l sideways, Ctrl+d/Ctrl+u half a section, gg/G top/bottom, 0/$ left/right edge, f follow a link here, F beside, H/L back/forward, r reload, / find, n/N next/previous, yy copy the address, yt the title, ym a Markdown link, p/P open the copied address (or search for the copied text) here/beside, o address bar, O an address bar that opens beside; a number repeats (5j). The corner shows *Page* |
+| Scroll one part of a page (a sidebar, a list, a wide table, a carousel, a frame) | The scroll keys move the page's *scroll area*: the one you clicked in last, else the one in the middle of the view (an open dialog, the main pane). s labels every scroll area in view (type a label to pick it), ]s / [s step to the next / previous, S to the one around it. At an area's end the scroll goes on to the one around it, as a wheel does. The chosen area flashes an outline and the corner names it (*section 2.1 · 40%*); a new page starts afresh. Ctrl+d/Ctrl+u on the board use the card's scroll area too |
+| Go from card to card without leaving the page (cards are your tabs) | J / K the next / previous card in reading order (as Tidy lays them out: each trail from its first card, then the lone cards), gt or T a card by title (the `:card` list), g0 / g$ the first / last, Alt+1…8 the nth and Alt+9 the last, Ctrl+^ the card you were on before, Ctrl+W then h/j/k/l the nearest card that way. The keys stay in the page (*Page*); in Solo, Solo follows. Alt+1…9 and Ctrl+^ work on the board too. `:card 3`, `:card-next`, `:card-prev` do the same from the command line |
+| Close / reopen / clone cards from a page | d closes the card and goes on to the next one (Ctrl+W alone too, after a short pause); u reopens the last closed card (a number reopens that many); co closes every other card in the space after asking (`:card-only`; `:undo` brings them back); gC opens the page again beside it (`:clone`) |
 | Type in a page | click a field, choose one with f, or press gi (first field) or i (anywhere); the corner shows *Insert*. Esc leaves the field and gives the keys back; Esc again goes to the board |
 | Let a site have every key (its own shortcuts) | Ctrl+V in a page; the corner shows *Passthrough*; Shift+Esc ends it |
 | Close card / reopen closed | × on its label or Ctrl+W / Ctrl+Shift+T |
@@ -68,7 +70,7 @@ with *Welcome page* in Ctrl+K.
 | Click a link, button, checkbox or field by keyboard | f, then type its label (links open beside; a field gets the keys) |
 | Select / deselect the current card | v (h/j/k/l keep the selection) |
 | Fill the view with the current card | z |
-| Scroll the current page without entering it | d / u |
+| Scroll the current page without entering it | Ctrl+d / Ctrl+u |
 | Page menu by keyboard | Menu key or Shift+F10; j/k or ↑/↓, Enter, Esc |
 | Command line: run a command by name, with what it needs (`:open rust docs`, `:space Work`, `:zoom out`, `:back 2`) | `:` on the board or in a page (or type `:` first in Ctrl+K). The list offers the commands, or the values a command takes (spaces, card titles, choices); Tab puts the highlighted one in the line, Enter runs it. A unique start of a name is enough (`:tid`); `:q` closes the card, `:w` saves as Markdown, `:e` opens, `:exit` quits. Lines you ran come back under *Recent* (Shift+Delete forgets one; not kept in a private space) |
 | History: pages you opened, newest first | Ctrl+H, type to filter by words in them, Enter opens (Shift+Enter beside the current card), Shift+Delete forgets the page; *Clear history* in Ctrl+K forgets all |

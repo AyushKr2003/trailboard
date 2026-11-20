@@ -77,8 +77,8 @@ app (trailboard)  winit window · input · omnibox · chrome UI · main loop
   click in the page gives the keys; Esc takes them back; Esc again lets go.
   Solo always gives the read card the keys.
 - Board keys: h/j/k/l and arrows move between cards (`scene::nav`),
-  Shift+h/j/k/l pan, +/- zoom, f link hints (open beside), Shift+F fit, d/u
-  scroll the current page half a height (a wheel at its middle), v select,
+  Shift+h/j/k/l pan, +/- zoom, f link hints (open beside), Shift+F fit, Ctrl+d/u
+  scroll the current page half a height (since M12 step 7; d/u close and reopen), v select,
   z fill, M arrange, N note, Shift+N sticky, T tidy, S fold, `[`/`]` stack,
   O outline, R/C trail name/colour, B sidebar, Tab Solo, Delete close,
   Q quit, `?` sheet. Ctrl+K palette, Ctrl+L address, Ctrl+F find, Ctrl+H
@@ -365,7 +365,53 @@ plays elsewhere. Steps 7–17 below, one per session, in order; questions
 marked **Ask** are the owner's call and get asked when their step starts
 (the suggested answer is used if the owner says "your call").
 
-- ⬜ 7. **Cards from a page** (cards as tabs). In Page mode, without going
+- ✅ 7. **Cards from a page** (cards as tabs; 2026-11-20; `scene::tidy::order`,
+  `scene::nav::step`/`nth`, `App::card_key`, `App::switch_card`,
+  `App::close_from_page`). Decisions:
+  - Reading order is Tidy's: each trail from its root, depth first
+    (children top to bottom), trails by their roots' places; then the lone
+    cards top to bottom, left to right. Folded-away cards are skipped. J/K
+    go round at the ends; a count repeats (`3J`).
+  - Alt+1…8 is the nth card, Alt+9 always the last; a number past the end
+    toasts. Ctrl+^ is the card current before this one (remembered per
+    space in `App::focus`); it is bound as `<C-^>`, `<C-6>` and
+    `<C-S-6>`, since Ctrl+Shift+6 reaches us as a digit (`KeyIn::chord`
+    now keeps a digit with Ctrl/Alt even with Shift). Alt+digits and
+    Ctrl+^ work on the board too (no Page mode there).
+  - Moving from a page keeps Page mode on the new card (a note too: i to
+    write). In Solo, Solo follows the card.
+  - gt / T open the command line with `card ` typed (the title list).
+    `:card <title>` from a page keeps Page mode and Solo now (it used to
+    leave Solo). `:card N` with a number counts in reading order (a card
+    titled only with digits loses to that).
+  - d in a page closes the card and goes on to the next card in reading
+    order (the previous at the end), keeping Page mode and Solo; with no
+    card left it is the board. On the board, d is Delete (the selection,
+    else the current card, nothing current after). u reopens the newest
+    closed card (a count reopens that many); in a page the keys go to it.
+  - Ctrl+W in Page mode starts `Ctrl+w` sequences: h/j/k/l and arrows the
+    nearest card that way (`scene::nav`), w / W next / previous, p the card
+    before, c / q close. Alone it still closes the card once the 1 s pause
+    passes. Ctrl+W on the board and in Insert closes at once, as before.
+  - co asks first (`Confirm::CloseOthers`, Enter closes), counting folded
+    cards too; it is one undo step, so `:undo` (or Ctrl+Z on the board)
+    brings them all back and u brings them one at a time. Ctrl+Z in a page
+    is the page's, so the toast names `:undo`.
+  - gC clones a page (not a note) beside itself with a trail edge, by
+    address: the clone's back/forward list starts afresh.
+  - Commands: `card-next [n]`, `card-prev [n]`, `card-only` (alias
+    `only`), `clone`; `:clo` is now ambiguous (clone, close).
+  - Verified e2e (`~/.cache/trailboard-e2e-m12`, `script19`, five cards:
+    welcome, start page, a → b → c): K, 2J going round, Ctrl+Shift+6,
+    g$, g0, Alt+2, Alt+9, Ctrl+w h, gt + `Page a` + Enter (`cardpick.png`)
+    keeping Page mode, gC (edge 3 → 6), d going on to the next card in
+    Page mode, u, co + Enter (`closeothers.png`) leaving one card, board d
+    and u, J in Solo (Solo follows), d in Solo (Solo reads the next),
+    Ctrl+W alone closing after the pause, `:card 1`, `:card-next 2`;
+    `script20`: co + Esc keeps the cards, co + Enter then `:undo` brings
+    both back. Not verified: a real keyboard (Ctrl+^ on non-US layouts,
+    Alt+digits under the desktop's own Alt bindings), the light theme.
+  - Planned, in Page mode without going
   back to the board:
   - `J` / `K` next / previous card; `gt` and `T` pick a card by title (the
     `:card` list); `g0` / `g$` first / last; `Alt+1…9` the nth card
@@ -585,16 +631,19 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-20 (twenty-fourth). Finished M12 step 6, the
-`:` command line in the palette: our own command table with arguments,
-completion (Tab), and saved recent lines; decided the extra vim keys.
-**Repo state:** on `master`; M12 steps 1–6 committed; M12 steps 7–17 and M13 planned.
-**Next up:** M12 step 7, cards from a page (J/K, gt/T, Alt+digits,
-close/reopen, Ctrl+w h/j/k/l); ask its two questions first. Steps 7–17
-(planned 2026-11-20 for a fully keyboard-driven browser) follow in order.
-M13 (full media support, our own CEF build) was planned the same day and
-runs beside M12; its builds need a cloud machine. Still open from step 2: the per-site "start in Insert" setting (fits step
-11). Also retake the README screenshots (`docs/images/`) in the new look.
+**Last session:** 2026-11-20 (twenty-fifth). Finished M12 step 7, cards
+from a page: J/K in reading order (`scene::tidy::order`), gt/T, g0/g$,
+Alt+1…9, Ctrl+^, Ctrl+w h/j/k/l, d close / u reopen (board too; half-page
+scroll moved to Ctrl+d/u), co, gC, and `:card N`, `:card-next`,
+`:card-prev`, `:card-only`, `:clone`.
+**Repo state:** on `master`; M12 steps 1–7 done (step 7 not yet
+committed); M12 steps 8–17 and M13 planned.
+**Next up:** M12 step 8, search keywords (`g rust`, a keyword table in
+Settings, versioned in `settings.json` with a migration). Steps 9–17
+follow in order. M13 (full media support, our own CEF build) runs beside
+M12; its builds need a cloud machine. Still open from step 2: the
+per-site "start in Insert" setting (fits step 11). Also retake the README
+screenshots (`docs/images/`) in the new look.
 
 **Small follow-ups (backlog):** glide on undo/redo of moves; follow the
 desktop's animation switch live; verify the setuid sandbox path without

@@ -437,6 +437,26 @@ pub enum Action {
     OuterSection,
     /// The palette as a command line (`:`), on the board and in a page.
     CommandLine,
+    // Cards from a page (M12 step 7); in Page mode the keys stay with the
+    // page of the card moved to.
+    /// The next / previous card in reading order (`J` / `K`), going round.
+    NextCard,
+    PrevCard,
+    /// The first / last card in reading order (`g0` / `g$`).
+    FirstCard,
+    LastCard,
+    /// The nth card in reading order (`Alt+1`…`Alt+8`); 9 is the last.
+    NthCard(u8),
+    /// The card used before this one (`Ctrl+^`).
+    OtherCard,
+    /// Pick a card by title (`gt`, `T`): the command line's `card` list.
+    PickCard,
+    /// Reopen the card closed last (`u`).
+    Reopen,
+    /// Close the other cards in the space, after asking (`co`).
+    CloseOthers,
+    /// Open the card's page again beside it (`gC`).
+    Clone,
 }
 
 impl Action {
@@ -455,6 +475,9 @@ impl Action {
                 | Action::Forward
                 | Action::FindNext
                 | Action::FindPrev
+                | Action::NextCard
+                | Action::PrevCard
+                | Action::Reopen
         )
     }
 }
@@ -505,8 +528,15 @@ pub fn board() -> Bindings<Action> {
         ("v", Select),
         ("<C-a>", SelectAll),
         ("z", Fill),
-        ("d", ScrollDown),
-        ("u", ScrollUp),
+        // Owner (2026-11-20): d closes and u reopens, as in a page; half a
+        // page scrolls with Ctrl+d / Ctrl+u.
+        ("d", Close),
+        ("u", Reopen),
+        ("<C-d>", ScrollDown),
+        ("<C-u>", ScrollUp),
+        ("<C-^>", OtherCard),
+        ("<C-6>", OtherCard),
+        ("<C-S-6>", OtherCard),
         ("r", NameTrail),
         ("c", TrailColour),
         ("s", Fold),
@@ -527,7 +557,15 @@ pub fn board() -> Bindings<Action> {
         b.bind(seq, *a).expect("board keys parse");
     }
     bind_hint_kinds(&mut b);
+    bind_card_numbers(&mut b);
     b
+}
+
+/// `Alt+1`…`Alt+9`: the nth card in reading order (9: the last).
+fn bind_card_numbers(b: &mut Bindings<Action>) {
+    for n in 1..=9u8 {
+        b.bind(&format!("<A-{n}>"), Action::NthCard(n)).expect("card number keys parse");
+    }
 }
 
 /// `;` then a letter: link hints of that kind, on the board and in a page.
@@ -551,8 +589,10 @@ pub fn page() -> Bindings<Action> {
         ("k", Scroll(Dir::Up)),
         ("h", Scroll(Dir::Left)),
         ("l", Scroll(Dir::Right)),
-        ("d", ScrollDown),
-        ("u", ScrollUp),
+        // Owner (2026-11-20): d closes the card, u reopens; Ctrl+d / Ctrl+u
+        // scroll half a section.
+        ("d", Close),
+        ("u", Reopen),
         ("<C-d>", ScrollDown),
         ("<C-u>", ScrollUp),
         ("gg", Top),
@@ -583,11 +623,40 @@ pub fn page() -> Bindings<Action> {
         ("[s", PrevSection),
         ("S", OuterSection),
         (":", CommandLine),
+        // Cards, as tabs are elsewhere.
+        ("J", NextCard),
+        ("K", PrevCard),
+        ("gt", PickCard),
+        ("T", PickCard),
+        ("g0", FirstCard),
+        ("g$", LastCard),
+        ("<C-^>", OtherCard),
+        ("<C-6>", OtherCard),
+        ("<C-S-6>", OtherCard),
+        ("co", CloseOthers),
+        ("gC", Clone),
+        // Ctrl+w then a direction: the nearest card that way. Ctrl+w alone
+        // still closes the card, once the pause shows nothing follows.
+        ("<C-w>", Close),
+        ("<C-w>c", Close),
+        ("<C-w>q", Close),
+        ("<C-w>h", Move(Dir::Left)),
+        ("<C-w>j", Move(Dir::Down)),
+        ("<C-w>k", Move(Dir::Up)),
+        ("<C-w>l", Move(Dir::Right)),
+        ("<C-w><Left>", Move(Dir::Left)),
+        ("<C-w><Down>", Move(Dir::Down)),
+        ("<C-w><Up>", Move(Dir::Up)),
+        ("<C-w><Right>", Move(Dir::Right)),
+        ("<C-w>w", NextCard),
+        ("<C-w>W", PrevCard),
+        ("<C-w>p", OtherCard),
     ];
     for (seq, a) in table {
         b.bind(seq, *a).expect("page keys parse");
     }
     bind_hint_kinds(&mut b);
+    bind_card_numbers(&mut b);
     b
 }
 
@@ -742,6 +811,13 @@ mod tests {
         for s in ["<Esc>", "<Tab>", "?", "<F1>", "<F2>", "<Menu>", "1", "0"] {
             assert_eq!(b.lookup(&parse(s).unwrap()), Lookup::None, "{s}");
         }
+        // d / u close and reopen; Ctrl+d / Ctrl+u scroll.
+        assert_eq!(get("d"), Some(Action::Close));
+        assert_eq!(get("u"), Some(Action::Reopen));
+        assert_eq!(get("<C-d>"), Some(Action::ScrollDown));
+        assert_eq!(get("<C-u>"), Some(Action::ScrollUp));
+        assert_eq!(get("<A-3>"), Some(Action::NthCard(3)));
+        assert_eq!(get("<C-S-6>"), Some(Action::OtherCard));
         // Only the hint kinds wait for another key.
         assert!(b.iter().all(|(seq, a)| seq.len() == 1 || matches!(a, Action::Hint(_))));
         assert_eq!(get(";y"), Some(Action::Hint(hint::Kind::Yank)));
@@ -786,6 +862,25 @@ mod tests {
         // g waits; a key that isn't a g-sequence ends it, and is swallowed.
         assert_eq!(feed("g"), Outcome::Wait);
         assert_eq!(feed("x"), Outcome::Unbound { swallow: true });
+        // Cards from a page.
+        assert_eq!(feed("d"), Outcome::Run { action: Action::Close, count: None });
+        assert_eq!(feed("2u"), Outcome::Run { action: Action::Reopen, count: Some(2) });
+        assert_eq!(feed("<C-d>"), Outcome::Run { action: Action::ScrollDown, count: None });
+        assert_eq!(feed("3J"), Outcome::Run { action: Action::NextCard, count: Some(3) });
+        assert_eq!(feed("K"), Outcome::Run { action: Action::PrevCard, count: None });
+        assert_eq!(feed("gt"), Outcome::Run { action: Action::PickCard, count: None });
+        assert_eq!(feed("T"), Outcome::Run { action: Action::PickCard, count: None });
+        assert_eq!(feed("g0"), Outcome::Run { action: Action::FirstCard, count: None });
+        assert_eq!(feed("g$"), Outcome::Run { action: Action::LastCard, count: None });
+        assert_eq!(feed("<A-9>"), Outcome::Run { action: Action::NthCard(9), count: None });
+        assert_eq!(feed("<C-^>"), Outcome::Run { action: Action::OtherCard, count: None });
+        assert_eq!(feed("co"), Outcome::Run { action: Action::CloseOthers, count: None });
+        assert_eq!(feed("gC"), Outcome::Run { action: Action::Clone, count: None });
+        assert_eq!(feed("<C-w>l"), Outcome::Run { action: Action::Move(Dir::Right), count: None });
+        assert_eq!(feed("<C-w>p"), Outcome::Run { action: Action::OtherCard, count: None });
+        // Ctrl+w alone waits, then closes.
+        assert_eq!(feed("<C-w>"), Outcome::Wait);
+        assert_eq!(p.expire(&b, t + TIMEOUT), Some(Outcome::Run { action: Action::Close, count: None }));
         // Keys that switch modes stay out of the table.
         for s in ["<Esc>", "<S-Esc>", "<Tab>", "<Enter>", "<Space>", "<C-f>", "?"] {
             assert_eq!(b.lookup(&parse(s).unwrap()), Lookup::None, "{s}");

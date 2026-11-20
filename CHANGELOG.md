@@ -31,6 +31,19 @@ All notable changes to Trailboard. The format follows
     you stay where you are, ;m keeps the labels up to open several that way
     (chosen ones dim; Esc ends), ;e types in a field. The corner says what
     the labels do.
+- **Cards as tabs, from the keyboard.** Without leaving a page: J / K go
+  to the next / previous card in reading order (as Tidy lays them out),
+  gt or T to a card by title, g0 / g$ to the first / last, Alt+1…8 to the
+  nth and Alt+9 to the last, Ctrl+^ back to the card you were on before,
+  and Ctrl+W then h/j/k/l to the nearest card that way; the keys stay in
+  the new card's page, and Solo follows. d closes the card and moves on
+  to the next, u reopens the last closed one, co closes every other card
+  in the space (after asking), gC opens the page again beside it. New
+  commands: `:card 3` (by number), `:card-next`, `:card-prev`,
+  `:card-only`, `:clone`.
+  - **Changed:** d / u now close and reopen on the board too; half a
+    page scrolls with Ctrl+D / Ctrl+U (board and page). Alt+1…9 and
+    Ctrl+^ work on the board.
 - **A command line.** `:` on the board or in a page turns the palette into
   a command line: `:open rust docs`, `:beside example.com`, `:space Work`,
   `:card Inbox`, `:zoom out`, `:back 2`, `:find words`, `:copy title`,

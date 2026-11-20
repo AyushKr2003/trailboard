@@ -262,7 +262,9 @@ impl KeyIn {
                 match (letter, digit) {
                     (Some(c), _) if shift && !ctrl && !alt => Some(K::Char(c.to_ascii_uppercase())),
                     (Some(c), _) => Some(K::Char(c)),
-                    (None, Some(c)) if !shift => Some(K::Char(c)),
+                    // Shift+digit types a symbol (taken from the text below);
+                    // with Ctrl or Alt it stays the digit (`<C-S-6>` is Ctrl+^).
+                    (None, Some(c)) if !shift || ctrl || alt => Some(K::Char(c)),
                     _ => None,
                 }
             })
@@ -490,6 +492,9 @@ mod tests {
         assert_eq!(KeyIn::from_name("+", true, false).unwrap().chord(ModifiersState::empty()), one("+"));
         assert_eq!(chord("ctrl+-"), one("<C-->"));
         assert_eq!(chord("f2"), one("<F2>"));
+        // Digits with Ctrl or Alt stay digits: Alt+1, and Ctrl+^ as Ctrl+Shift+6.
+        assert_eq!(chord("alt+1"), one("<A-1>"));
+        assert_eq!(chord("ctrl+shift+6"), one("<C-S-6>"));
         // A real Shift+4 types "$": the text wins over the digit.
         let dollar = KeyIn { text: Some("$".into()), ..KeyIn::from_name("4", true, true).unwrap() };
         assert_eq!(dollar.chord(ModifiersState::SHIFT), one("$"));

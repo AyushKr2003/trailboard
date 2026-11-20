@@ -376,6 +376,8 @@ pub struct App {
     /// Keys pressed in Page mode that went on to the page, so their release does too.
     forwarded: HashSet<i32>,
     omnibox: Option<Omnibox>,
+    /// Lines run on the `:` command line, newest first (`storage::commands`).
+    recent_commands: scene::command::Recent,
     menu: Option<ContextMenu>,
     /// Where the title-bar shields were drawn last frame (screen px, with a
     /// little room around them), for clicks.
@@ -675,6 +677,7 @@ impl App {
         let zooms = Rc::new(RefCell::new(zooms));
         let sites = storage::sitesettings::load_sites(&data_dir);
         let start_page = storage::start::load_start(&data_dir);
+        let recent_commands = storage::commands::load_recent(&data_dir);
         let lookup = zooms.clone();
         web::set_page_zoom(move |url| lookup.borrow().get(url));
         let icons = storage::icons::load_icons(&data_dir)
@@ -716,6 +719,7 @@ impl App {
             page_keys: PageKeys::Page,
             forwarded: HashSet::new(),
             omnibox: None,
+            recent_commands,
             menu: None,
             shields: Vec::new(),
             tags: Vec::new(),
@@ -2135,6 +2139,7 @@ impl App {
             KeyAction::StackNext if idle => self.peek_stack(1),
             KeyAction::Undo => self.undo(false),
             KeyAction::Redo => self.undo(true),
+            KeyAction::CommandLine => self.open_command_line(),
             _ => {}
         }
     }
@@ -2220,6 +2225,7 @@ impl App {
                 }
             }
             KeyAction::FindNext | KeyAction::FindPrev => self.open_find(),
+            KeyAction::CommandLine => self.open_command_line(),
             // Board actions don't come from the page table.
             _ => {}
         }
@@ -2793,6 +2799,201 @@ impl App {
         log::info!("palette open");
     }
 
+    /// `:`: the palette as a command line (`scene::command`).
+    fn open_command_line(&mut self) {
+        self.open_palette();
+        let mut ob = Omnibox::new(":", Target::Palette);
+        ob.select_all = false;
+        self.omnibox = Some(ob);
+        log::info!("command line open");
+    }
+
+    /// The command line again, holding `line` (a completion to finish).
+    fn fill_command_line(&mut self, line: &str) {
+        let mut ob = Omnibox::new(&format!(":{line}"), Target::Palette);
+        ob.select_all = false;
+        self.omnibox = Some(ob);
+    }
+
+    /// Values the command line offers for an argument: the spaces' names
+    /// (this one last) or the cards' titles (most recently used first).
+    fn command_values(&self, kind: scene::command::Kind) -> Vec<String> {
+        use scene::command::Kind;
+        match kind {
+            Kind::Space => {
+                let mut names: Vec<String> = self.spaces.spaces.iter().filter(|s| s.id != self.spaces.active).map(|s| s.name.clone()).collect();
+                names.push(self.spaces.active_entry().name.clone());
+                names
+            }
+            Kind::Card => {
+                let mut cards: Vec<&Node> = self.scene.all_nodes().filter(|n| !n.title.trim().is_empty()).collect();
+                cards.sort_by_key(|n| std::cmp::Reverse((self.used.get(&n.id).copied().unwrap_or(0), n.z)));
+                let mut seen = HashSet::new();
+                cards.into_iter().map(|n| n.title.trim().to_string()).filter(|t| seen.insert(t.clone())).collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// The best of `names` for `typed`: the same name (case ignored), else
+    /// the best fuzzy match.
+    fn best_name(typed: &str, names: &[String]) -> Option<usize> {
+        if let Some(i) = names.iter().position(|n| n.trim().eq_ignore_ascii_case(typed.trim())) {
+            return Some(i);
+        }
+        let cands: Vec<scene::palette::Candidate> = names.iter().map(|n| scene::palette::Candidate { text: n, alt: "" }).collect();
+        scene::palette::rank(typed, &cands).first().map(|r| r.index)
+    }
+
+    fn save_recent_commands(&self) {
+        if let Err(e) = storage::commands::save_recent(&self.data_dir, &self.recent_commands) {
+            log::warn!("command line: saving recent lines: {e}");
+        }
+    }
+
+    /// Runs a command line (`scene::command`); a line that isn't a command
+    /// says why. Lines are remembered, except in a private space.
+    fn run_line(&mut self, line: &str) {
+        use scene::command::Cmd;
+        let parsed = match scene::command::parse(line) {
+            Ok(p) => p,
+            Err(e) => {
+                log::info!("command line: {line:?}: {e}");
+                self.toast(e.to_string());
+                return;
+            }
+        };
+        log::info!("command line: {:?} → {:?} {:?}", line, parsed.spec.cmd, parsed.arg);
+        if !self.is_private() {
+            self.recent_commands.push(line.trim().trim_start_matches(':').trim());
+            self.save_recent_commands();
+        }
+        let arg = parsed.arg.clone().unwrap_or_default();
+        let url = || omnibox::resolve(&arg, self.settings.search);
+        let page = |app: &mut Self, action: KeyAction, count: Option<u32>| {
+            if app.focused_page().is_some() {
+                app.page_action(action, count);
+            } else {
+                app.toast("No page here");
+            }
+        };
+        match parsed.spec.cmd {
+            Cmd::Open => match url() {
+                Some(u) if self.focused_page().is_some() => self.load_here(&u),
+                Some(u) if self.new_card_at_center(&u).is_some() => self.give_keys(PageKeys::Page),
+                _ => {}
+            },
+            Cmd::Beside => {
+                if let Some(u) = url() {
+                    self.open_beside_current(&u);
+                }
+            }
+            Cmd::New => match parsed.arg.as_ref().and_then(|_| url()) {
+                Some(u) => {
+                    if self.new_card_at_center(&u).is_some() {
+                        self.give_keys(PageKeys::Page);
+                    }
+                }
+                None => self.run_command(Command::NewCard),
+            },
+            Cmd::StartPage => self.run_command(Command::StartPage),
+            Cmd::Note => self.run_command(Command::NewNote),
+            Cmd::Sticky => self.run_command(Command::NewSticky),
+            Cmd::Close => self.run_command(Command::CloseCard),
+            Cmd::Exit => self.run_command(Command::Quit),
+            Cmd::Save => self.run_command(Command::SaveMarkdown),
+            Cmd::Reload if parsed.arg.is_some() => page(self, KeyAction::ReloadFresh, None),
+            Cmd::Reload => page(self, KeyAction::Reload, None),
+            Cmd::Back => page(self, KeyAction::Back, parsed.count()),
+            Cmd::Forward => page(self, KeyAction::Forward, parsed.count()),
+            Cmd::Find => {
+                if parsed.arg.is_some() {
+                    self.last_find = arg.clone();
+                }
+                self.open_find();
+            }
+            Cmd::Copy => {
+                let action = match arg.as_str() {
+                    "title" => KeyAction::CopyTitle,
+                    "markdown" => KeyAction::CopyMarkdown,
+                    _ => KeyAction::CopyUrl,
+                };
+                page(self, action, None);
+            }
+            Cmd::Zoom => self.run_command(match arg.as_str() {
+                "in" => Command::ZoomIn,
+                "out" => Command::ZoomOut,
+                _ => Command::ZoomReset,
+            }),
+            Cmd::Tidy => self.run_command(Command::Tidy),
+            Cmd::Fit => self.run_command(Command::Fit),
+            Cmd::Fold => self.run_command(Command::Fold),
+            Cmd::Undo => self.run_command(Command::Undo),
+            Cmd::Redo => self.run_command(Command::Redo),
+            Cmd::Reopen => self.run_command(Command::Reopen),
+            Cmd::Solo => self.run_command(Command::Read),
+            Cmd::Sidebar => self.run_command(Command::Sidebar),
+            Cmd::Card => {
+                let cards: Vec<(NodeId, String)> = self.scene.all_nodes().map(|n| (n.id, n.title.trim().to_string())).collect();
+                let names: Vec<String> = cards.iter().map(|(_, t)| t.clone()).collect();
+                // Most recently used first, so the same title goes to the card used last.
+                let mut order: Vec<usize> = (0..cards.len()).collect();
+                order.sort_by_key(|&i| std::cmp::Reverse(self.used.get(&cards[i].0).copied().unwrap_or(0)));
+                let sorted: Vec<String> = order.iter().map(|&i| names[i].clone()).collect();
+                match Self::best_name(&arg, &sorted) {
+                    Some(i) => {
+                        if self.read.is_some() {
+                            self.leave_read();
+                        }
+                        self.go_to_card(cards[order[i]].0);
+                    }
+                    None => self.toast(format!("No card called “{arg}”")),
+                }
+            }
+            Cmd::Name if parsed.arg.is_some() => match read::pick(&self.scene, self.focused, self.camera.center) {
+                Some(id) => self.name_trail(id, &arg),
+                None => self.toast("No trail here"),
+            },
+            Cmd::Name => self.run_command(Command::NameTrail),
+            Cmd::Colour => self.run_command(Command::ColourTrail),
+            Cmd::SelectAll => self.run_command(Command::SelectAll),
+            Cmd::Space => {
+                let names: Vec<String> = self.spaces.spaces.iter().map(|s| s.name.clone()).collect();
+                match Self::best_name(&arg, &names) {
+                    Some(i) => self.switch_space(self.spaces.spaces[i].id),
+                    None => self.toast(format!("No space called “{arg}”")),
+                }
+            }
+            Cmd::SpaceNew | Cmd::SpacePrivate => {
+                self.new_space(parsed.spec.cmd == Cmd::SpacePrivate);
+                if parsed.arg.is_some() {
+                    self.rename_space(&arg);
+                }
+            }
+            Cmd::SpaceRename => self.rename_space(&arg),
+            Cmd::SpaceDelete => self.run_command(Command::DeleteSpace),
+            Cmd::Private => self.run_command(Command::PrivateSpace),
+            Cmd::Tint => self.run_command(Command::NextTint),
+            Cmd::Photo => self.run_command(Command::BackgroundPhoto),
+            Cmd::History => {
+                self.open_history();
+                if parsed.arg.is_some()
+                    && let Some(ob) = self.omnibox.as_mut()
+                {
+                    ob.insert(&arg);
+                }
+            }
+            Cmd::Downloads => self.run_command(Command::Downloads),
+            Cmd::Settings => self.run_command(Command::Settings),
+            Cmd::Keys => self.run_command(Command::Shortcuts),
+            Cmd::Welcome => self.run_command(Command::Welcome),
+            Cmd::Ads => self.run_command(Command::ToggleBlocking),
+            Cmd::AdsAllowed => self.run_command(Command::AllowedSites),
+            Cmd::ClearHistory => self.run_command(Command::ClearHistory),
+            Cmd::ClearCookies => self.run_command(Command::ClearCookies),
+        }
+    }
+
     /// Runs a palette row (the palette is already closed). `beside` (Shift+Enter
     /// or Shift+click) opens a page row beside the current card instead of
     /// in the middle of the view; other rows run as usual.
@@ -2822,6 +3023,9 @@ impl App {
             Item::Download(key) => self.open_download(key),
             Item::AllowedSite(site) => self.block_site_again(&site),
             Item::Photo(path) => self.set_space_photo(path),
+            Item::Run(line) | Item::Recent(line) => self.run_line(&line),
+            Item::Complete(line) if scene::command::parse(&line).is_ok() => self.run_line(&line),
+            Item::Complete(line) => self.fill_command_line(&line),
         }
     }
 
@@ -3358,6 +3562,9 @@ impl App {
             let visits = visits_for(&self.page_index, &self.visits_cache, &ob.text, true);
             return palette::history_rows(&ob.text, &self.scene, &visits, local_ms(now_ms()), local_ms);
         }
+        if palette::is_command(&ob.text) {
+            return palette::command_rows(&ob.text, &self.recent_commands, &|k| self.command_values(k));
+        }
         let visits = visits_for(&self.page_index, &self.visits_cache, &ob.text, false);
         let closed: Vec<&Node> = self.closed.iter().map(|(n, _)| n).collect();
         palette::rows(&ob.text, &self.scene, &self.used, &closed, &self.spaces, &visits, self.settings.search)
@@ -3629,7 +3836,20 @@ impl App {
     /// highlighted row's page.
     fn forget_selected(&mut self) {
         let Some(ob) = self.omnibox.as_ref() else { return };
-        let Some(url) = self.list_rows(ob).into_iter().nth(ob.sel).and_then(|r| r.history) else { return };
+        let row = self.list_rows(ob).into_iter().nth(ob.sel);
+        if let Some(palette::Item::Recent(line)) = row.as_ref().map(|r| &r.item) {
+            if self.recent_commands.forget(line) {
+                log::info!("command line: forgot {line:?}");
+                self.save_recent_commands();
+            }
+            let panel = self.omnibox.as_ref().map(|ob| self.list_panel(ob, &self.list_rows(ob)));
+            if let (Some(ob), Some(panel)) = (self.omnibox.as_mut(), panel) {
+                ob.sel = ob.sel.min(panel.len().saturating_sub(1));
+                ob.scroll = panel.keep_visible(ob.sel, ob.scroll);
+            }
+            return;
+        }
+        let Some(url) = row.and_then(|r| r.history) else { return };
         let Some(index) = self.page_index.as_mut() else { return };
         match index.forget(&url) {
             Ok(true) => {
@@ -5857,6 +6077,15 @@ impl App {
             }
             match ev.named {
                 Some(NamedKey::Escape) => self.omnibox = None,
+                // Command line: Tab puts the highlighted row's line in the field.
+                Some(NamedKey::Tab) if ob.target == Target::Palette && palette::is_command(&ob.text) => {
+                    let ob = self.omnibox.take().expect("palette open");
+                    let row = self.list_rows(&ob).into_iter().nth(ob.sel).map(|r| r.item);
+                    match row {
+                        Some(Item::Run(line) | Item::Recent(line) | Item::Complete(line)) => self.fill_command_line(&line),
+                        _ => self.omnibox = Some(ob),
+                    }
+                }
                 _ if ctrl && code == Some(KeyCode::KeyK) && ob.target == Target::Palette => self.omnibox = None,
                 _ if ctrl && code == Some(KeyCode::KeyF) && matches!(ob.target, Target::Find(_)) => ob.select_all = true,
                 Some(NamedKey::Enter) if matches!(ob.target, Target::Find(_)) => {
@@ -6958,9 +7187,14 @@ impl App {
             let (icon, placeholder, hint): (Icon, &str, &[(&str, &str)]) = match ob.target {
                 Target::RenameSpace => (Icon::Board, "Space name", &[("Enter", "Rename")]),
                 Target::NameTrail(_) => (Icon::Trail, "Trail name (empty to clear)", &[("Enter", "Name")]),
+                Target::Palette if palette::is_command(&ob.text) => (
+                    Icon::Search,
+                    "",
+                    &[("↑", ""), ("↓", "Move"), ("Tab", "Complete"), ("Enter", "Run"), ("Esc", "Close")],
+                ),
                 Target::Palette => (
                     Icon::Search,
-                    "Find a card, space or command",
+                    "Find a card, space or command · : for a command line",
                     &[("↑", ""), ("↓", "Move"), ("Enter", "Open"), ("Shift+Enter", "Open beside"), ("Esc", "Close")],
                 ),
                 Target::Find(_) => (Icon::Find, "Find in page", &[("Enter", "Next"), ("Shift+Enter", "Previous")]),
@@ -7030,7 +7264,9 @@ impl App {
                 fading.push(palette::field_layer(rd, r, &field, &th, ui));
             }
             if let Some((rows, panel, scroll)) = list {
+                let command_empty = palette::is_command(&ob.text).then(|| palette::command_empty(&ob.text));
                 let empty = match (&ob.target, ob.text.trim().is_empty(), &self.page_index) {
+                    _ if command_empty.is_some() => command_empty.as_deref().unwrap_or_default(),
                     (Target::History, _, None) => "History is off. Turn it on in the settings.",
                     (Target::History, true, _) => "No pages in history yet",
                     (Target::Downloads, true, _) => "No downloads yet",

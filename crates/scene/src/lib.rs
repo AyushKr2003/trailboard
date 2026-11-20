@@ -3,6 +3,7 @@
 //! can be unit-tested and serialized.
 
 pub mod arrange;
+pub mod command;
 pub mod export;
 pub mod fold;
 pub mod geom;

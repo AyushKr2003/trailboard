@@ -61,6 +61,7 @@ pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("Drag board · Scroll", "Pan"),
             ("Ctrl + Scroll", "Zoom"),
             ("Ctrl+K", "Find a card, space or command"),
+            (":", "Command line (Tab completes: :open, :space, :tidy…)"),
             ("Ctrl+H", "History (Shift+Del forgets a page)"),
             ("Ctrl+J", "Downloads (Ctrl+Enter shows the folder)"),
             ("Ctrl+,", "Settings"),

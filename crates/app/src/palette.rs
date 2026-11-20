@@ -12,6 +12,7 @@
 use std::collections::{HashMap, HashSet};
 
 use compositor::{Layer, Quad, Renderer, Shape, Text};
+use scene::command;
 use scene::download::{self, Downloads, State};
 use scene::pagetext;
 use scene::palette::{self, Candidate};
@@ -157,6 +158,14 @@ pub enum Item {
     /// A row of the photo list: the space's background becomes this
     /// picture file (`None`: the desktop's wallpaper).
     Photo(Option<String>),
+    /// Command line (`:`): run this line (`scene::command`).
+    Run(String),
+    /// Command line: a line run before; Enter runs it again, Shift+Delete
+    /// forgets it.
+    Recent(String),
+    /// Command line: a completion. Enter runs it if it is a whole command,
+    /// else (like Tab) puts it in the field.
+    Complete(String),
 }
 
 /// A result row.
@@ -366,6 +375,9 @@ pub fn section(row: &Row, empty: bool) -> &'static str {
         Item::Open(_) if row.history.is_some() => "History",
         Item::Open(_) => "Web",
         Item::Command(_) => "Actions",
+        Item::Run(_) => "Run",
+        Item::Recent(_) => "Recent",
+        Item::Complete(_) => "Commands",
         Item::Download(_) | Item::AllowedSite(_) | Item::Photo(_) => "",
     }
 }
@@ -397,6 +409,49 @@ fn group(rows: Vec<Row>, empty: bool) -> Vec<Row> {
 pub fn sections(rows: &[Row], query: &str) -> Vec<Option<&'static str>> {
     let empty = query.trim().is_empty();
     rows.iter().map(|r| Some(section(r, empty)).filter(|s| !s.is_empty())).collect()
+}
+
+/// The palette is a command line: its text starts with `:`.
+pub fn is_command(text: &str) -> bool {
+    text.starts_with(':')
+}
+
+/// Recent lines the command line lists at most.
+pub const MAX_RECENT_ROWS: usize = 5;
+
+/// The command line's rows for `text` (it starts with `:`): the line
+/// itself, when it is a whole command; then lines run before that start
+/// with it; then what completes it (`scene::command::complete`, with
+/// `values` giving space names and card titles).
+pub fn command_rows(text: &str, recent: &command::Recent, values: &dyn Fn(command::Kind) -> Vec<String>) -> Vec<Row> {
+    let row = |item, label: String, detail: String, positions, history: Option<String>| Row { item, label, detail, positions, dot: None, history };
+    let mut out = Vec::new();
+    let typed = text.trim_start_matches(':').trim();
+    let run = command::parse(text).ok();
+    if let Some(p) = &run {
+        out.push(row(Item::Run(typed.to_string()), format!(":{typed}"), p.spec.about.to_string(), Vec::new(), None));
+    }
+    let same = |line: &str| run.as_ref().is_some_and(|p| command::parse(line).ok().as_ref() == Some(p) && line.eq_ignore_ascii_case(typed));
+    for line in recent.matching(text).filter(|l| !same(l)).take(MAX_RECENT_ROWS) {
+        let about = command::parse(line).map_or("", |p| p.spec.about);
+        out.push(row(Item::Recent(line.clone()), format!(":{line}"), about.to_string(), Vec::new(), None));
+    }
+    for c in command::complete(text, values) {
+        // The line typed in full is already the first row.
+        if run.is_some() && c.line.trim().eq_ignore_ascii_case(typed) {
+            continue;
+        }
+        out.push(row(Item::Complete(c.line), c.label, c.detail, c.positions, None));
+    }
+    out
+}
+
+/// What the command line says when it lists nothing: why the line isn't a command.
+pub fn command_empty(text: &str) -> String {
+    match command::parse(text) {
+        Ok(_) => "Enter runs it".to_string(),
+        Err(e) => e.to_string(),
+    }
 }
 
 /// Pages the history view lists at most.
@@ -587,6 +642,8 @@ fn row_icon(row: &Row) -> Icon {
         Item::Download(_) => Icon::Download,
         Item::AllowedSite(_) => Icon::Shield,
         Item::Photo(_) => Icon::Picture,
+        Item::Run(_) | Item::Complete(_) => Icon::Keyboard,
+        Item::Recent(_) => Icon::History,
     }
 }
 

@@ -31,6 +31,17 @@ All notable changes to Trailboard. The format follows
     you stay where you are, ;m keeps the labels up to open several that way
     (chosen ones dim; Esc ends), ;e types in a field. The corner says what
     the labels do.
+- **A command line.** `:` on the board or in a page turns the palette into
+  a command line: `:open rust docs`, `:beside example.com`, `:space Work`,
+  `:card Inbox`, `:zoom out`, `:back 2`, `:find words`, `:copy title`,
+  `:space-new Reading`, `:tidy` and 40-odd more, all of the palette's
+  actions among them. A unique start of a name is enough (`:tid`), and
+  `:q` closes the card, `:w` saves as Markdown, `:e` opens an address and
+  `:exit` (`:qa`) quits. The list offers the commands, then a command's
+  values (space names, card titles, choices); Tab fills the line, Enter
+  runs it, and a line that isn't a command says why. Lines you ran come
+  back under *Recent* (kept in `commands.json`, not in private spaces;
+  Shift+Delete forgets one).
 - **Scroll areas from the keyboard.** Pages with several scrolling parts (a
   sidebar, the main pane, a list inside it, a wide table, a carousel, a
   frame, an open dialog) now scroll the right one: j/k/h/l, d/u, gg/G and

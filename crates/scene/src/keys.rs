@@ -435,6 +435,8 @@ pub enum Action {
     PrevSection,
     /// The section around the scroll target (`S`).
     OuterSection,
+    /// The palette as a command line (`:`), on the board and in a page.
+    CommandLine,
 }
 
 impl Action {
@@ -519,6 +521,7 @@ pub fn board() -> Bindings<Action> {
         ("<C-S-z>", Redo),
         ("<C-y>", Redo),
         ("<C-S-y>", Redo),
+        (":", CommandLine),
     ];
     for (seq, a) in table {
         b.bind(seq, *a).expect("board keys parse");
@@ -579,6 +582,7 @@ pub fn page() -> Bindings<Action> {
         ("]s", NextSection),
         ("[s", PrevSection),
         ("S", OuterSection),
+        (":", CommandLine),
     ];
     for (seq, a) in table {
         b.bind(seq, *a).expect("page keys parse");

@@ -55,7 +55,8 @@ app (trailboard)  winit window · input · omnibox · chrome UI · main loop
 | ✅ | M9 Packaging | Bundle script, `--version`, crash reports, PKGBUILD, Chromium sandbox, first-run welcome |
 | ⬜ | M10 Optional extras | See below; most items on hold |
 | ✅ | M11 Premium look | Corners setting, cards as sheets, board backgrounds, sidebar, command bar, motion, empty board, review pass |
-| ⬜ | **M12 Keyboard first** | Vim-like modes, page keys, scroll sections, commands, user keys (below) |
+| 🟡 | **M12 Keyboard first** | Vim-like modes, page keys, scroll sections, command line, then (steps 7–17) cards from a page, search keywords, marks, user keys, settings, navigation, caret mode, dialogs (below) |
+| ⬜ | **M13 Full media support** | Our own CEF build with H.264/AAC (and HEVC, Widevine if they work), built off this machine, opt-in (below) |
 
 ### Owner decisions that still bind
 
@@ -86,7 +87,7 @@ app (trailboard)  winit window · input · omnibox · chrome UI · main loop
 
 ---
 
-### M12: Keyboard first ⬜
+### M12: Keyboard first 🟡
 
 Asked by the owner on 2026-11-17: make Trailboard fully keyboard-driven in a
 vim-like way. Key choices follow vim's common conventions; command names,
@@ -311,13 +312,156 @@ typing in one field and scrolling another pane both work.
     Not verified: a real keyboard, the clipboard read back for ;y (logged
     only), images in `srcset`/`picture` beyond `currentSrc`, CSS background
     images (not labelled), the light theme for dimmed labels.
-- ⬜ 6. Command line `:` in the palette, our own command names with
-  arguments, completion and history.
-- ⬜ 7. Jumps and marks: Ctrl+o/Ctrl+i through visited cards; `m{a-z}` /
-  `'{a-z}` for board spots (camera + current card) and scroll positions.
-- ⬜ 8. User keys: a versioned key file read by `storage` (tested parser);
-  the `?` sheet built from the live binding table.
-- ⬜ 9. Visual/caret mode (stretch): select text with v, copy with y.
+- ✅ 6. Command line `:` (2026-11-20; `scene::command`,
+  `storage::commands`, `palette::command_rows`, `App::run_line`). Decisions:
+  - It is the palette, not a new box: a palette text that starts with `:`
+    is a command line (`:` on the board or in Page mode opens it with the
+    `:` typed; typing `:` first in Ctrl+K does the same; deleting the `:`
+    goes back to searching). Insert mode types `:` into the page as before.
+  - Our own names, lower case with dashes (`space-new`, `clear-history`),
+    one table (`scene::command::COMMANDS`) that covers every palette action
+    plus arguments: `open`/`beside`/`new [address]` (resolved like the
+    address bar), `card <title>`, `space <name>`, `back`/`forward [times]`,
+    `reload [fresh]`, `find [words]`, `copy [address|title|markdown]`,
+    `zoom <in|out|reset>`, `name [trail name]`, `space-new`/`space-private
+    [name]`, `space-rename <name>`, `history [words]`.
+  - A name or alias exactly, else a unique start of a name (`tid`); `t` is
+    ambiguous and the list shows both. Choices take a unique start too
+    (`zoom o`). Space and card arguments pick the same name (case ignored),
+    else the best fuzzy match; a card title shared by several goes to the
+    one used last.
+  - Rows: the typed line when it parses (*Run*), then up to 5 earlier lines
+    that start with it (*Recent*), then completions (*Commands*: names that
+    start with it first, then fuzzy on the name or what it does; or a
+    command's values). Tab puts the highlighted row's line in the field;
+    Enter runs a whole command, else fills it in like Tab. With no rows the
+    list says why the line isn't a command (`No command “nope”`).
+  - History: the last 100 lines as typed, newest first, once each, in
+    `$DATA/commands.json` (`version` 1), shared by spaces; nothing is kept
+    while a private space is active. Shift+Delete forgets a Recent line.
+  - Vim extras (the open question): `:q` (close card), `:w` (save as
+    Markdown), `:e` (open) and `:qa` (exit) are aliases. Ctrl+w h/j/k/l is
+    left for step 7, where moving between cards from a page belongs with
+    jumps. zz/zt/zb are not adopted: the board's `z` (fill) stays, and
+    top/bottom have no meaning for a card on the board.
+  - Verified e2e (`~/.cache/trailboard-e2e-m12`, `script16`): `:` lists
+    44 commands (`cmd_all.png`), `:sp` the five space commands, `:ti` Tab →
+    `:tidy` and Enter runs it, `:open` b.html, `:beside` c.html (edge),
+    `:zoom o` → 90 %, `:nope` says so (`cmd_err.png`), `:q` closes c,
+    `:space-new Work` makes and names a space, `:space ` lists both spaces
+    and Tab+Enter goes back, the Recent rows (`cmd_recent.png`),
+    Shift+Delete forgets one, `:` from Page mode, `:exit` quits;
+    `commands.json` read back. Not verified: a real keyboard (`:` as
+    Shift+; on non-US layouts), `:card`, `:copy`, `:find`, `:history`
+    with words, a private space skipping history, the light theme.
+**Fully keyboard-driven (owner, 2026-11-20).** The owner asked for the
+whole browser to be usable from the keyboard alone, vim-style, with the
+depth of the keyboard-first browsers they used before (their old config:
+search keywords, a link sent to a video player, a dark-pages toggle, bar
+toggles, reload of the key file, saved pages, user scripts). Keys follow
+common vim conventions; command names, the key file's format, the docs
+and the code are our own (clean-room rule). A card plays the part a tab
+plays elsewhere. Steps 7–17 below, one per session, in order; questions
+marked **Ask** are the owner's call and get asked when their step starts
+(the suggested answer is used if the owner says "your call").
+
+- ⬜ 7. **Cards from a page** (cards as tabs). In Page mode, without going
+  back to the board:
+  - `J` / `K` next / previous card; `gt` and `T` pick a card by title (the
+    `:card` list); `g0` / `g$` first / last; `Alt+1…9` the nth card
+    (`Alt+9` the last); `Ctrl+^` the card used before this one.
+  - Close / reopen the card, `co` close the other cards in the space (asks
+    first), `gC` clone the card beside itself.
+  - `Ctrl+w h/j/k/l` to the nearest card that way, staying in Page mode
+    (the board's `nav` logic).
+  - Commands: `:card-next`, `:card-prev`, `:card-only`, `:clone`, `:card N`.
+  - **Owner (2026-11-20):** `J`/`K` walk the cards in reading order (as
+    Tidy lays them out). `d` closes the card and `u` reopens the last
+    closed one in Page mode (this replaces the 2026-11-17 answer 2); half
+    a section scrolls with `Ctrl+d`/`Ctrl+u` only. The board's `d`/`u`
+    follow the same rule.
+- ⬜ 8. **Search keywords.** `g rust` / `gh foo` / `w trail` typed in the
+  address bar, `o`, `O` and `:open` search that engine; the rest uses the
+  default engine. A keyword table in Settings (keyword → URL with `{}`),
+  versioned in `settings.json` with a migration; defaults for common
+  engines. The address bar's suggestion row says which engine
+  (*Search GitHub for “foo”*). Pure resolution in `scene` with tests
+  (a keyword must be followed by a space; an address still wins).
+- ⬜ 9. **Jumps, marks and saved pages.**
+  - `Ctrl+o` / `Ctrl+i` back / forward through the cards visited (a jump
+    list per space, kept across restarts).
+  - `m{a-z}` / `'{a-z}`: a lower-case mark is this card's scroll spot, an
+    upper-case one a board spot (camera + card) across spaces; `''` back
+    to before the last jump.
+  - Saved pages (named, like bookmarks): `:save-page [name]`, `b` / `B`
+    open one here / beside with completion, `:saved` lists them (Enter
+    opens, Shift+Delete removes). One versioned file in `storage`.
+  - **Owner (2026-11-20):** `b` / `B` open saved pages everywhere (board
+    and page); the trails sidebar moves to another key (**Ask** which).
+- ⬜ 10. **User key file and external commands.**
+  - `$CONFIG/trailboard/keys` in our own plain-text format, read by a
+    tested parser in `storage`: bind / unbind a key sequence to a command
+    line per mode (board, page, insert, hints, command), aliases (a short
+    name for a longer line), and chains of commands in one binding.
+    Errors are reported with their line, the rest still loads.
+  - `:bind`, `:unbind`, `:reload-keys`; `:keys-file` opens it in a card.
+  - `:run program args` starts an outside program with `{url}`, `{title}`,
+    `{hint-url}` filled in (never through a shell); a hint kind that runs
+    a bound command on the chosen link. This covers "play this link in a
+    video player" (here, beside, many).
+  - The `?` sheet is built from the live tables (user keys included);
+    after a prefix (`g`, `;`, `y`…) a small panel lists what can follow.
+  - **Owner (2026-11-20):** no outside video player as a feature; video
+    plays in the card, and M13 adds the missing formats. `:run` stays for
+    anyone who wants to bind a player in the key file themselves.
+- ⬜ 11. **Settings from the keyboard.**
+  - `:set name value` with completion of names and values; `:set name`
+    shows the value; `:reset name`.
+  - `:toggle name [values…]` cycles a setting; default keys under a `t`
+    prefix in Page mode: dark pages (page colours), the space header,
+    the sidebar.
+  - Per-site toggles for the current site: JavaScript, images, cookies,
+    ads (`sitesettings`, `privacy`), for this session or saved; the page
+    reloads.
+  - **Ask:** a `t` prefix in Page mode clashes with nothing today; on the
+    board `t` is Tidy — keep Tidy (suggested) and put toggles on `t` only
+    in Page mode.
+- ⬜ 12. **Page navigation extras.**
+  - `[[` / `]]` previous / next page (rel links, else "next"/"previous"
+    link text), `gu` / `gU` up the address path / to the site's root,
+    `Ctrl+a` / `Ctrl+x` change the last number in the address (with a
+    count).
+  - `go` / `gO` edit the current address here / beside; `xo` open in the
+    background beside; `Ctrl+s` stop loading; `gh` home (start page);
+    `gf` view source in a card beside; `gd` download the page; `F11`
+    full screen; `wi` page inspector (if CEF's devtools fit our window).
+  - Yanks: `yd` the site, `yp` the address without tracking parts; Shift
+    versions (`yY`, `yT`, `yD`…) to the primary selection; `pp` / `PP`
+    open the primary selection.
+  - More hint kinds: `;o` put the link's address in `:open` to edit,
+    `;h` hover, `;f` every clickable element, `;I` image here, `;Y` link
+    to the primary selection.
+- ⬜ 13. **Command line power.** Readline keys in the field (`Ctrl+w`,
+  `Ctrl+u`, `Ctrl+a`, `Ctrl+e`, `Ctrl+k`, `Alt+b`, `Alt+f`); Up / Down
+  walk earlier lines starting with what is typed while Tab / Shift+Tab
+  walk the list; `Ctrl+Enter` runs and keeps the line open; `.` repeats
+  the last command; a count before `:` or a command (`3:back`); `:later
+  ms cmd`, `:repeat n cmd`; Ctrl+Delete removes a list row.
+- ⬜ 14. **Visual and caret mode** (was step 9). `v` caret, `V` line
+  selection, `h j k l w b e 0 $ gg G { }` move, `o` swap ends, `y` / Enter
+  copy, `Y` to the primary selection; starts at a `/` match or the top of
+  the view; the mode pill says *Visual*.
+- ⬜ 15. **Dialogs and fields from the keyboard.** Our yes/no asks and
+  the page's alert / confirm / prompt answer to `y` / `n` / Enter / Esc;
+  permission asks (camera, location, notifications) likewise; the file
+  chooser takes a typed path; `Ctrl+e` in a field edits its text in
+  `$EDITOR` and puts it back; `Shift+Insert` pastes the primary selection.
+- ⬜ 16. **Search and messages.** `?` searches backward (**Ask:** the
+  shortcut sheet moves to `F1` and `:keys`, suggested); Esc clears the
+  find highlight; `:messages` lists the last toasts and errors.
+- ⬜ 17. **Stretch.** Macros (`q{a-z}` records, `@{a-z}` plays, `@@`
+  again); `:screenshot` of a card; `:print`; small user scripts run on
+  matching sites from a folder (our own format, opt-in).
 
 **Owner answers (2026-11-17):**
 1. In Page mode f follows a link in the same card and F opens it beside. On
@@ -335,9 +479,8 @@ the user sees (palette, `?` sheet, guide, README, logs); the code keeps
 `scene::read`, `App::read` and `Command::Read`. "Focus" stays out of
 interface text so it never clashes with a field's focus (Insert mode).
 
-**Not yet asked of the owner:** extra vim keys (Ctrl+w h/j/k/l between
-cards, `:q`/`:e`/`:w`, `zz`/`zt`/`zb` with board z moving to `zf`). Decide
-with step 6.
+**Extra vim keys** (decided with step 6, see there): `:q`/`:e`/`:w`/`:qa`
+yes; Ctrl+w h/j/k/l with step 7; zz/zt/zb no (board z stays).
 
 **Risks:** sites with their own single-letter keys (Passthrough and the
 per-site setting cover them); running the scroll script inside cross-origin
@@ -346,6 +489,72 @@ fake scrolling with JS aren't found as sections (the wheel at the view's
 middle still reaches them); a key typed right after a field gains focus,
 before the focus message arrives (a click in a page keeps giving the keys at
 once).
+
+### M13: Full media support ⬜
+
+Asked by the owner on 2026-11-20: play the videos and music other
+Chromium browsers play. Checked that day (`site/codecs.html` in
+`~/.cache/trailboard-e2e-m12`, `codecs.png`): the standard CEF download
+plays VP9, AV1, Opus and MP3, but **not H.264, AAC or HEVC, and has no
+Widevine** — so Twitch, X, Reddit, Vimeo, most news sites and plain `.mp4`
+links show a player stuck at 0:00, and Netflix-style sites don't play.
+CEF leaves these off by default for patent licensing; it builds them with
+`proprietary_codecs=true ffmpeg_branding=Chrome` (GN defines for CEF's
+`automate-git.py`). Swapping in the system's ffmpeg doesn't work (a
+release CEF links it in).
+
+**Constraints.** A Chromium build needs ~100 GB of disk and ideally ≥16 GB
+of RAM; this machine has 7.6 GB and ~11 GB free, so builds run on a rented
+cloud machine (about 32 cores / 64 GB: 2–4 h per build). Each CEF update
+(Chromium security fixes every few weeks) needs a rebuild, or the engine
+falls behind. H.264 / AAC are patent-licensed: fine for the owner's own
+use; public releases keep the standard CEF and the codec build stays
+opt-in. Only builds we make ourselves are used (no third-party engine
+binaries).
+
+**Steps:**
+
+- ⬜ 1. **Build script.** `scripts/build-cef.sh`: on a fresh Linux machine,
+  fetch CEF's build tooling for the branch matching `install-cef.sh`'s
+  version, build the minimal distribution with
+  `is_official_build=true proprietary_codecs=true ffmpeg_branding=Chrome`,
+  and pack it the way the CEF downloads are packed (same layout, a SHA-1
+  and the build flags written beside it). Documented in the README:
+  machine size, time, cost, and how to fetch the result.
+- ⬜ 2. **Install and check.** `install-cef.sh --from <tarball>` installs a
+  local build into `~/.local/share/cef` (the standard download stays the
+  default). Trailboard logs at start which build it runs (standard or
+  codecs) and the About / `--version` line says so. Verified with
+  `site/codecs.html` (H.264, AAC → yes) and real H.264 sites in a card.
+- ⬜ 3. **HEVC through the GPU.** Chromium plays HEVC only via the hardware
+  decoder (VA-API on Intel). Try the build flags and the VA-API switches
+  in CEF's command line; keep them if HEVC plays without breaking other
+  video, else record why not.
+- ⬜ 4. **Widevine (trial).** Build with `enable_widevine` and the library
+  CDM, let CEF fetch Google's CDM, and test a DRM page in a card. Open
+  question: whether DRM video draws in off-screen rendering (how cards
+  are drawn). If it works, a *Protected video* setting (off by default,
+  as it downloads Google's module); if not, record the reason and drop it.
+- ⬜ 5. **Media behaviour.** With the formats in place: a card's media
+  shows on its label (playing / muted), `:mute` / `:media` keys and
+  commands (play/pause, seek, speed, mute) that work on any site (not the
+  site's own keys), a Solo-friendly full window, and a clear message when
+  a video still can't play (format or DRM), instead of a blank player.
+- ⬜ 6. **Keeping current.** A short checklist in the README for each CEF
+  update: rebuild, re-run the codec page, smoke-test video; the start log
+  warns when the installed build is older than the version
+  `install-cef.sh` pins.
+
+**Owner decisions (2026-11-20):** no outside video player as a feature;
+video plays in the card. M13 replaces the "send to a video player"
+fallback idea; whether a fallback message offers an outside player stays
+open until M13 step 5.
+
+**Risks:** the build may fail on the cloud machine's distro (pin the
+image); Widevine may not draw under off-screen rendering; HEVC depends on
+the iGPU and driver; rebuild cost and effort every few weeks; a codec
+build must never be published by mistake (the bundle script refuses it
+unless asked).
 
 ---
 
@@ -374,14 +583,16 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-17 (twenty-third). Finished M12 step 5, hint
-kinds with `;` (;y ;d ;i ;b ;m ;e), on the board and in Page mode; the
-link script now takes a filter so each kind labels only what it uses.
-**Repo state:** on `master`; M12 steps 1–5 committed.
-**Next up:** M12 step 6, the `:` command line (decide the extra vim keys
-listed under "Not yet asked of the owner" with it). Still open from step 2: the
-per-site "start in Insert" setting. Also retake the README screenshots
-(`docs/images/`) in the new look.
+**Last session:** 2026-11-20 (twenty-fourth). Finished M12 step 6, the
+`:` command line in the palette: our own command table with arguments,
+completion (Tab), and saved recent lines; decided the extra vim keys.
+**Repo state:** on `master`; M12 steps 1–6 committed; M12 steps 7–17 and M13 planned.
+**Next up:** M12 step 7, cards from a page (J/K, gt/T, Alt+digits,
+close/reopen, Ctrl+w h/j/k/l); ask its two questions first. Steps 7–17
+(planned 2026-11-20 for a fully keyboard-driven browser) follow in order.
+M13 (full media support, our own CEF build) was planned the same day and
+runs beside M12; its builds need a cloud machine. Still open from step 2: the per-site "start in Insert" setting (fits step
+11). Also retake the README screenshots (`docs/images/`) in the new look.
 
 **Small follow-ups (backlog):** glide on undo/redo of moves; follow the
 desktop's animation switch live; verify the setuid sandbox path without

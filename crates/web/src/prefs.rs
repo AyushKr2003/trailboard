@@ -1,5 +1,6 @@
 //! Browsing settings Chromium keeps as profile preferences: languages,
-//! spelling, third-party cookies, proxy. [`apply`] sets them on the profile
+//! spelling, third-party cookies, proxy, and the sites whose cookies are
+//! blocked (a content setting per site). [`apply`] sets them on the profile
 //! and on every private cookie jar made afterwards ([`crate::Jar`]); changes
 //! take effect for new requests at once, without restarting pages.
 //!
@@ -15,6 +16,10 @@
 //! zoom stays 100% for the whole run: it reads that preference only at
 //! startup, and changing it later made pages snap back to the startup
 //! default when we asked for a zoom equal to the new one.
+//!
+//! Chromium saves the per-site cookie blocks too; the app's own file is
+//! what counts, so [`forget_saved_zooms`] drops Chromium's copy as well and
+//! [`apply`] sets them again each run.
 //!
 //! Two settings act on requests instead (checked on Chromium's IO thread,
 //! so behind atomics and a lock): `DNT`/`Sec-GPC` headers
@@ -46,6 +51,9 @@ pub struct Prefs {
     pub dictionary: String,
     pub block_third_party_cookies: bool,
     pub proxy: Proxy,
+    /// Sites (`example.com`, `localhost:8080`; subdomains too) whose
+    /// cookies are refused, read and write alike.
+    pub cookies_blocked: Vec<String>,
 }
 
 thread_local! {
@@ -53,6 +61,9 @@ thread_local! {
     /// Chromium has made the profile's context; until then preferences
     /// can't be set and wait in `CURRENT`.
     static READY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Every site whose cookies were blocked this run, so one let go is
+    /// set back to the default.
+    static COOKIE_SITES: RefCell<std::collections::BTreeSet<String>> = const { RefCell::new(std::collections::BTreeSet::new()) };
 }
 
 /// Called once Chromium's profile context exists: sets the preferences
@@ -67,31 +78,39 @@ pub(crate) fn context_ready() {
 /// Drops the zooms Chromium saved in the profile's `Preferences` (in
 /// `profile_dir`), per site and its default: they hold an old raster scale,
 /// which a page would lay out at before being corrected, and Chromium keys
-/// `data:` pages by their whole text. Call it before Chromium starts.
+/// `data:` pages by their whole text. Its per-site cookie blocks go too
+/// (ours are set again from the app's file). Call it before Chromium starts.
 pub(crate) fn forget_saved_zooms(profile_dir: &std::path::Path) {
     let path = profile_dir.join("Preferences");
     let Ok(text) = std::fs::read_to_string(&path) else { return };
     let Some(out) = without_saved_zooms(&text) else { return };
     let tmp = profile_dir.join("Preferences.trailboard-tmp");
     match std::fs::write(&tmp, out).and_then(|_| std::fs::rename(&tmp, &path)) {
-        Ok(()) => log::info!("prefs: forgot Chromium's saved page zooms"),
+        Ok(()) => log::info!("prefs: forgot Chromium's saved page zooms and cookie blocks"),
         Err(e) => log::warn!("prefs: rewriting {}: {e}", path.display()),
     }
 }
 
-/// `Preferences` text without `partition.per_host_zoom_levels` and
-/// `partition.default_zoom_level`; `None` if neither holds a zoom (or it
-/// isn't JSON), so the file is left alone.
+/// `Preferences` text without `partition.per_host_zoom_levels`,
+/// `partition.default_zoom_level` and
+/// `profile.content_settings.exceptions.cookies`; `None` if none of them
+/// holds anything (or it isn't JSON), so the file is left alone.
 fn without_saved_zooms(text: &str) -> Option<String> {
     let mut doc: serde_json::Value = serde_json::from_str(text).ok()?;
-    let partition = doc.get_mut("partition")?.as_object_mut()?;
-    // Both are keyed by storage partition: per site, or a level.
-    let saved = |v: Option<serde_json::Value>, empty: fn(&serde_json::Value) -> bool| {
-        v.and_then(|v| v.as_object().cloned()).is_some_and(|z| !z.values().all(empty))
-    };
-    let sites = saved(partition.remove("per_host_zoom_levels"), |p| p.as_object().is_some_and(|p| p.is_empty()));
-    let default = saved(partition.remove("default_zoom_level"), |l| l.as_f64() == Some(0.0));
-    if !sites && !default {
+    let mut changed = false;
+    if let Some(partition) = doc.get_mut("partition").and_then(|p| p.as_object_mut()) {
+        // Both are keyed by storage partition: per site, or a level.
+        let saved = |v: Option<serde_json::Value>, empty: fn(&serde_json::Value) -> bool| {
+            v.and_then(|v| v.as_object().cloned()).is_some_and(|z| !z.values().all(empty))
+        };
+        let sites = saved(partition.remove("per_host_zoom_levels"), |p| p.as_object().is_some_and(|p| p.is_empty()));
+        let default = saved(partition.remove("default_zoom_level"), |l| l.as_f64() == Some(0.0));
+        changed |= sites || default;
+    }
+    if let Some(exceptions) = doc.pointer_mut("/profile/content_settings/exceptions").and_then(|e| e.as_object_mut()) {
+        changed |= exceptions.remove("cookies").is_some_and(|c| c.as_object().is_some_and(|c| !c.is_empty()));
+    }
+    if !changed {
         return None;
     }
     serde_json::to_string(&doc).ok()
@@ -160,6 +179,37 @@ fn set_all(ctx: &RequestContext, p: &Prefs) {
     set(ctx, "profile.cookie_controls_mode", int(if p.block_third_party_cookies { 1 } else { 0 }));
     set(ctx, "profile.block_third_party_cookies", boolean(p.block_third_party_cookies));
     set(ctx, "proxy", proxy(&p.proxy));
+    set_cookie_blocks(ctx, &p.cookies_blocked);
+}
+
+/// Blocks cookies for `sites` on `ctx` and lets go of those blocked
+/// earlier this run that aren't among them.
+fn set_cookie_blocks(ctx: &RequestContext, sites: &[String]) {
+    let kind = ContentSettingTypes::COOKIES;
+    let before = COOKIE_SITES.with_borrow_mut(|all| {
+        let before = all.clone();
+        all.extend(sites.iter().cloned());
+        before
+    });
+    for site in before.iter().filter(|s| !sites.contains(s)) {
+        for url in cookie_urls(site) {
+            ctx.set_content_setting(Some(&CefString::from(url.as_str())), None, kind, ContentSettingValues::DEFAULT);
+        }
+    }
+    for site in sites {
+        for url in cookie_urls(site) {
+            ctx.set_content_setting(Some(&CefString::from(url.as_str())), None, kind, ContentSettingValues::BLOCK);
+        }
+    }
+    if !sites.is_empty() || !before.is_empty() {
+        log::info!("prefs: cookies blocked on {sites:?}");
+    }
+}
+
+/// The addresses a site's cookie block is set for: Chromium makes a
+/// pattern for the host and its subdomains from each.
+fn cookie_urls(site: &str) -> [String; 2] {
+    [format!("https://{site}/"), format!("http://{site}/")]
 }
 
 fn set(ctx: &RequestContext, name: &str, value: Option<Value>) {
@@ -246,6 +296,12 @@ mod tests {
         assert_eq!(without_saved_zooms(r#"{"partition":{"per_host_zoom_levels":{"x":{}},"default_zoom_level":{"x":0.0}}}"#), None);
         assert_eq!(without_saved_zooms(r#"{"intl":{}}"#), None);
         assert_eq!(without_saved_zooms("not json"), None);
+        // Cookie blocks Chromium saved go; other exceptions stay.
+        let text = r#"{"profile":{"content_settings":{"exceptions":{"cookies":{"[*.]a.com,*":{"setting":2}},"popups":{"x":{}}}}}}"#;
+        let out: serde_json::Value = serde_json::from_str(&without_saved_zooms(text).unwrap()).unwrap();
+        assert!(out["profile"]["content_settings"]["exceptions"].get("cookies").is_none());
+        assert!(out["profile"]["content_settings"]["exceptions"].get("popups").is_some());
+        assert_eq!(without_saved_zooms(r#"{"profile":{"content_settings":{"exceptions":{"cookies":{}}}}}"#), None);
     }
 
     #[test]

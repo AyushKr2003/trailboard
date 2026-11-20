@@ -61,6 +61,54 @@ impl Clipboard {
         self.get()?.get_text().ok()
     }
 
+    /// Puts `text` in the primary selection (what a middle click pastes).
+    /// Under Wayland `wl-copy` does it when it is installed (arboard's
+    /// data-control path can't reach the primary selection on every
+    /// compositor); otherwise arboard.
+    pub fn set_primary(&mut self, text: &str) {
+        use arboard::{LinuxClipboardKind, SetExtLinux};
+        if let Some(prog) = wayland_tool("wl-copy") {
+            match wl_copy_primary(&prog, text) {
+                Ok(()) => {
+                    log::info!("primary selection set with {}", prog.display());
+                    return;
+                }
+                Err(e) => log::warn!("wl-copy --primary failed: {e}"),
+            }
+        }
+        if let Some(c) = self.get()
+            && let Err(e) = c.set().clipboard(LinuxClipboardKind::Primary).text(text)
+        {
+            log::warn!("primary selection write failed: {e}");
+        }
+    }
+
+    /// The primary selection's text (`wl-paste` under Wayland when it is
+    /// installed, else arboard).
+    pub fn primary(&mut self) -> Option<String> {
+        use arboard::{GetExtLinux, LinuxClipboardKind};
+        if let Some(prog) = wayland_tool("wl-paste") {
+            match std::process::Command::new(prog)
+                .args(["--primary", "--no-newline", "--type", "text"])
+                .stdin(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .output()
+            {
+                Ok(out) if out.status.success() => return String::from_utf8(out.stdout).ok(),
+                // Nothing selected anywhere.
+                Ok(_) => return None,
+                Err(e) => log::warn!("wl-paste --primary failed: {e}"),
+            }
+        }
+        match self.get()?.get().clipboard(LinuxClipboardKind::Primary).text() {
+            Ok(t) => Some(t),
+            Err(e) => {
+                log::info!("primary selection: {e}");
+                None
+            }
+        }
+    }
+
     /// Text was copied from a page: Chromium has it, and so does the desktop now.
     pub fn copied_from_page(&mut self, text: String) {
         if text.is_empty() {
@@ -74,6 +122,27 @@ impl Clipboard {
         let desktop = self.text();
         paste_plan(desktop, self.last_from_page.as_deref())
     }
+}
+
+/// `name` on `PATH`, when running under Wayland.
+fn wayland_tool(name: &str) -> Option<std::path::PathBuf> {
+    std::env::var_os("WAYLAND_DISPLAY")?;
+    std::env::split_paths(&std::env::var_os("PATH")?).map(|d| d.join(name)).find(|p| p.is_file())
+}
+
+/// `wl-copy --primary` with `text` on its standard input; it forks to keep
+/// serving the selection, so this returns once it has read the text.
+fn wl_copy_primary(prog: &std::path::Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut child = std::process::Command::new(prog)
+        .args(["--primary", "--type", "text/plain;charset=utf-8"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+    child.stdin.take().expect("piped").write_all(text.as_bytes())?;
+    let status = child.wait()?;
+    if status.success() { Ok(()) } else { Err(std::io::Error::other(format!("exited with {status}"))) }
 }
 
 #[cfg(test)]

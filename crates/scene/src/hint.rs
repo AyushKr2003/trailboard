@@ -21,6 +21,18 @@ pub enum Kind {
     Field,
     /// `;m`: open links beside, staying where you are, until Esc.
     Many,
+    /// `;o`: put a link's address in `:open`, to edit before it loads.
+    Edit,
+    /// `;h`: move the pointer over something (menus that open on hover).
+    Hover,
+    /// `;f`: click anything that can be clicked, links included (they
+    /// load in the card, as a click would), and things only a pointer
+    /// cursor says can be clicked.
+    Click,
+    /// `;I`: open an image in this card.
+    ImageHere,
+    /// `;Y`: a link's address to the primary selection.
+    Primary,
     /// `:hint` / `:hint-many` (M12 step 10): run a command line on the
     /// link chosen (`{hint-url}`); `true` keeps the labels up until Esc.
     /// No `;` key: a binding in the key file reaches it.
@@ -29,7 +41,19 @@ pub enum Kind {
 
 impl Kind {
     /// Every kind, in the order the `;` keys are listed.
-    pub const ALL: [Kind; 6] = [Kind::Yank, Kind::Download, Kind::Image, Kind::Background, Kind::Field, Kind::Many];
+    pub const ALL: [Kind; 11] = [
+        Kind::Yank,
+        Kind::Download,
+        Kind::Image,
+        Kind::Background,
+        Kind::Field,
+        Kind::Many,
+        Kind::Edit,
+        Kind::Hover,
+        Kind::Click,
+        Kind::ImageHere,
+        Kind::Primary,
+    ];
 
     /// The key after `;`.
     pub fn key(self) -> char {
@@ -40,6 +64,11 @@ impl Kind {
             Kind::Background => 'b',
             Kind::Field => 'e',
             Kind::Many => 'm',
+            Kind::Edit => 'o',
+            Kind::Hover => 'h',
+            Kind::Click => 'f',
+            Kind::ImageHere => 'I',
+            Kind::Primary => 'Y',
             Kind::Run(_) => 'r',
         }
     }
@@ -53,6 +82,11 @@ impl Kind {
             Kind::Background => "Open a link beside, stay here",
             Kind::Field => "Type in a field",
             Kind::Many => "Open links beside, stay here",
+            Kind::Edit => "Edit a link's address, then open it",
+            Kind::Hover => "Hover over something",
+            Kind::Click => "Click anything",
+            Kind::ImageHere => "Open an image here",
+            Kind::Primary => "A link's address to the primary selection",
             Kind::Run(false) => "Run a command on a link",
             Kind::Run(true) => "Run a command on links",
         }

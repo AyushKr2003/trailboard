@@ -163,7 +163,49 @@ All notable changes to Trailboard. The format follows
   - Saved in `$DATA/start.json` (shared by every space); other open start
     pages update at once.
 
+- **Settings from the keyboard.** `:set page-colours dark` changes a
+  setting by name (the list offers the names with what each is now, then
+  a setting's values; a unique start is enough: `:set search duck`);
+  `:set scroll-speed` alone says what it is; `:reset history` puts one
+  back to its default; `:toggle history` flips a switch or goes to the
+  next choice, and `:toggle search google bing` goes round the values you
+  give. `proxy-server`, `corner-radius` and `:reset keywords` work too.
+  - `t` starts toggles, on the board and in a page: td dark or light
+    pages, th the space panel, ts the sidebar.
+  - **Per site:** tj, ti, tc and ta switch JavaScript, images, cookies and
+    ads for the current card's site, saved; with Shift (tJ, tI, tC, tA)
+    only until you quit. `:site cookies off` and `:site-session images on`
+    do the same by name. The site's open pages reload. Blocking a site's
+    cookies refuses them to its pages and requests alike.
+  - tp (or `:site passthrough`) makes a site start in Passthrough, for web
+    apps with their own keys; Shift+Esc still gives the keys back.
+
+- **Moving about by address, from a page.** `]]` / `[[` go to the page's
+  next / previous page (its `rel=next` link, else a link that says Next,
+  Older, », ›…); `gu` goes up the address's path (`3gu`), `gU` to the
+  site's root; `Ctrl+A` / `Ctrl+X` move the last number in the address
+  (`page/7` → `page/8`, zero padding kept; a count moves further).
+  - `go` / `gO` edit the current address, opening here / beside; `xo`
+    opens beside and keeps you where you are; `Ctrl+S` stops loading
+    (with nothing loading it still saves as Markdown); `gh` a start page
+    beside the card; `gf` the page's source beside; `gd` downloads the
+    page; `F11` full screen.
+  - Copying: `yd` the site, `yp` the address without tracking parts
+    (`utm_…`, `fbclid`, `gclid`…); with Shift (`yY`, `yT`, `yM`, `yD`,
+    `yP`) to the primary selection; `pp` / `PP` open the primary
+    selection here / beside.
+  - Hints: `;o` a link's address in `:open` to edit, `;h` hover, `;f`
+    click anything clickable (pointer-cursor elements too), `;I` an image
+    here, `;Y` a link's address to the primary selection.
+  - Commands `page-next`, `page-prev`, `up`, `root`, `increment`,
+    `decrement`, `stop`, `home`, `view-source`, `save-file`, `fullscreen`;
+    `:copy site` and `:copy clean`.
+
 ### Changed
+- **p and P wait a moment** in a page for a second p / P (the primary
+  selection) before opening the clipboard.
+- **t starts toggles; Tidy is T** on the board (as it already was in the
+  palette and the guide).
 - **Read Mode is now called Solo** (Tab: the card fills the window). The
   palette still finds it by "read".
 - **An empty board welcomes you.** A space with no cards shows its name,

@@ -430,6 +430,8 @@ pub struct App {
     sections: HashMap<NodeId, Vec<scrolltarget::Section>>,
     /// A section list asked of a card, and what for.
     section_ask: Option<(NodeId, SectionAsk)>,
+    /// `]]` / `[[` asked of a card's page: the card, and next (true) or previous.
+    pager_ask: Option<(NodeId, bool)>,
     /// What the last scroll key moved, for the mode pill (`section 2.1 · 40%`):
     /// the card, the section, and what to say after its name.
     scroll_note: Option<(NodeId, u32, String)>,
@@ -565,8 +567,11 @@ pub struct App {
     /// screen, unrendered) until their downloads end, since Chromium only
     /// reports a download to the page that started it.
     parked: Vec<Page>,
-    /// JavaScript and images per site (page menu), saved in `sites.json`.
+    /// JavaScript, images and cookies per site (page menu, `:site`, `tj`…),
+    /// saved in `sites.json`.
     sites: scene::sitesettings::SiteSettings,
+    /// The same, for this run only (`:site-session`, `tJ`…); wins over `sites`.
+    sites_session: scene::sitesettings::SiteSettings,
     /// The controls over the board, as laid out last frame (for the pointer).
     hud: crate::hud::Hud,
     /// The control under the pointer, and since when (for its tooltip).
@@ -773,6 +778,7 @@ impl App {
             scroll_targets: HashMap::new(),
             sections: HashMap::new(),
             section_ask: None,
+            pager_ask: None,
             scroll_note: None,
             scroll_flash: None,
             arrange: None,
@@ -846,6 +852,7 @@ impl App {
             download_ids: HashMap::new(),
             parked: Vec::new(),
             sites,
+            sites_session: Default::default(),
             hud: crate::hud::Hud::default(),
             hud_hover: None,
             hud_down: false,
@@ -1852,15 +1859,16 @@ impl App {
         }
     }
 
-    /// p / P: the clipboard's text as an address (or a search) here / beside.
-    fn open_clipboard(&mut self, beside: bool) {
-        let text = self.clipboard.text().unwrap_or_default();
+    /// p / P: the clipboard's text as an address (or a search) here /
+    /// beside; pp / PP the primary selection's (`primary`).
+    fn open_clipboard(&mut self, beside: bool, primary: bool) {
+        let text = if primary { self.clipboard.primary() } else { self.clipboard.text() }.unwrap_or_default();
         let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
         let Some(url) = self.settings.resolve_url(&line) else {
-            self.toast("The clipboard has no text to open");
+            self.toast(if primary { "The primary selection has no text to open" } else { "The clipboard has no text to open" });
             return;
         };
-        log::info!("opening the clipboard {}", if beside { "beside" } else { "here" });
+        log::info!("opening the {} {}", if primary { "primary selection" } else { "clipboard" }, if beside { "beside" } else { "here" });
         if beside { self.open_beside_current(&url) } else { self.load_here(&url) }
     }
 
@@ -2073,7 +2081,17 @@ impl App {
     /// The focused card takes the keys, in `mode`.
     fn give_keys(&mut self, mode: PageKeys) {
         self.keys_in_page = true;
+        let mode = if mode == PageKeys::Page { self.site_keys(self.focused) } else { mode };
         self.set_page_keys(mode);
+    }
+
+    /// Page, or Passthrough for a card whose site starts there (`:site passthrough`).
+    fn site_keys(&self, id: Option<NodeId>) -> PageKeys {
+        let url = id.and_then(|id| self.scene.node(id)).filter(|n| !n.is_note()).map(|n| n.url.as_str());
+        match url {
+            Some(u) if self.site_rules().allows(u, scene::sitesettings::Content::Passthrough, false) => PageKeys::Passthrough,
+            _ => PageKeys::Page,
+        }
     }
 
     fn set_page_keys(&mut self, mode: PageKeys) {
@@ -2090,7 +2108,7 @@ impl App {
         if self.scene.node(id).is_some_and(Node::is_note) || self.is_start(id) {
             PageKeys::Insert
         } else {
-            PageKeys::Page
+            self.site_keys(Some(id))
         }
     }
 
@@ -2224,7 +2242,11 @@ impl App {
             KeyAction::Undo => self.undo(false),
             KeyAction::Redo => self.undo(true),
             KeyAction::CommandLine => self.open_command_line(),
+            KeyAction::Fullscreen => self.toggle_fullscreen(),
             _ if idle && self.card_key(action, count) => {}
+            // A page key from a user line on the board: it acts on the
+            // current card's page.
+            a if idle && self.focused_page().is_some() && keys::page().has(a) => self.page_action(a, count),
             _ => {}
         }
     }
@@ -2290,6 +2312,17 @@ impl App {
             KeyAction::SetMark(c) => self.set_mark(c),
             KeyAction::GoMark(c) => self.go_mark(c),
             KeyAction::OpenSaved | KeyAction::OpenSavedBeside => self.ask_saved(action == KeyAction::OpenSavedBeside),
+            KeyAction::DarkPages => {
+                let change = scene::setcmd::dark_pages(&self.settings, self.theme.light());
+                self.apply_setting_change(scene::setcmd::Setting::Key(prefs::Key::PageColours), change);
+            }
+            KeyAction::SpacePanel => {
+                let x = scene::setcmd::Setting::Key(prefs::Key::SpacePanel);
+                if let Ok(change) = scene::setcmd::toggle(&self.settings, x, &[]) {
+                    self.apply_setting_change(x, change);
+                }
+            }
+            KeyAction::SiteToggle(what, session) => self.switch_site(self.focused, what, None, session),
             KeyAction::Sidebar => {
                 // From a page: back to the board, where the sidebar takes the keys.
                 if self.read.is_none() {
@@ -2556,7 +2589,7 @@ impl App {
         if self.read.is_none() {
             self.keys_in_page = true;
         }
-        self.set_page_keys(PageKeys::Page);
+        self.set_page_keys(self.site_keys(Some(id)));
         if let Some(c) = self.cards.get(&id) {
             c.page.set_focus(true);
         }
@@ -2675,28 +2708,53 @@ impl App {
                     p.focus_first_field();
                 }
             }
-            KeyAction::CopyUrl | KeyAction::CopyTitle => {
-                let Some(n) = self.scene.node(id) else { return };
-                let (text, what) = if action == KeyAction::CopyUrl { (n.url.clone(), "address") } else { (n.title.clone(), "title") };
-                if text.is_empty() {
-                    return;
-                }
-                self.clipboard.set_text(&text);
-                self.toast(format!("Copied the {what}"));
-            }
-            KeyAction::CopyMarkdown => {
-                let Some(n) = self.scene.node(id) else { return };
-                if n.url.is_empty() {
-                    return;
-                }
-                let text = scene::export::link(&n.title, &n.url);
-                self.clipboard.set_text(&text);
-                self.toast("Copied a Markdown link");
-            }
-            KeyAction::PasteHere => self.open_clipboard(false),
-            KeyAction::PasteBeside => self.open_clipboard(true),
+            KeyAction::Copy(what, primary) => self.copy_from_card(id, what, primary),
+            KeyAction::PasteHere => self.open_clipboard(false, false),
+            KeyAction::PasteBeside => self.open_clipboard(true, false),
+            KeyAction::PrimaryHere => self.open_clipboard(false, true),
+            KeyAction::PrimaryBeside => self.open_clipboard(true, true),
             KeyAction::AddressBar => self.open_address_bar(),
             KeyAction::AddressBarBeside => self.omnibox = Some(Omnibox::new("", Target::Beside)),
+            KeyAction::AddressBarBehind => self.omnibox = Some(Omnibox::new("", Target::Behind)),
+            KeyAction::EditAddress | KeyAction::EditAddressBeside => self.edit_address(action == KeyAction::EditAddressBeside),
+            KeyAction::NextPage | KeyAction::PrevPage => self.ask_pager(id, action == KeyAction::NextPage),
+            KeyAction::UrlUp => {
+                let n = count.unwrap_or(1).clamp(1, MAX_REPEAT);
+                self.go_address(id, |u| scene::address::up(u, n), "Already at the top of the site");
+            }
+            KeyAction::UrlRoot => self.go_address(id, scene::address::root, "Already at the site's root"),
+            KeyAction::Increment | KeyAction::Decrement => {
+                let by = count.unwrap_or(1).max(1) as i64;
+                let by = if action == KeyAction::Increment { by } else { -by };
+                self.go_address(id, |u| scene::address::step_number(u, by), "No number in the address to change");
+            }
+            KeyAction::Stop => match self.cards.get(&id) {
+                Some(c) if c.loading && c.page.kind() == web::PageKind::Web => {
+                    c.page.stop();
+                    log::info!("stopped loading card {}", id.0);
+                    self.toast("Stopped loading");
+                }
+                // Nothing loading: Ctrl+S saves as Markdown, as it always did.
+                _ => {
+                    let note = self.focused.filter(|&id| self.scene.node(id).is_some_and(Node::is_note));
+                    self.save_markdown(note);
+                }
+            },
+            KeyAction::Home => self.open_home(),
+            KeyAction::ViewSource => {
+                if let Some(url) = self.web_address(id) {
+                    self.open_beside_current(&scene::address::view_source(&url));
+                }
+            }
+            KeyAction::DownloadPage => {
+                if let Some(url) = self.web_address(id)
+                    && let Some(c) = self.cards.get(&id)
+                {
+                    log::info!("downloading the page of card {}: {url}", id.0);
+                    c.page.download(&url);
+                }
+            }
+            KeyAction::Fullscreen => self.toggle_fullscreen(),
             KeyAction::Find => self.open_find(),
             KeyAction::FindNext | KeyAction::FindPrev if !self.last_find.is_empty() => {
                 if let Some(p) = self.focused_page() {
@@ -2713,6 +2771,142 @@ impl App {
             // from the page table.
             _ => {
                 self.card_key(action, count);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ page navigation extras
+
+    /// Card `id`'s address if it shows a web page (not a note, start page
+    /// or one of our own pages); else says so and gives `None`.
+    fn web_address(&mut self, id: NodeId) -> Option<String> {
+        let web = self.cards.get(&id).is_some_and(|c| c.page.kind() == web::PageKind::Web);
+        match self.scene.node(id).filter(|n| web && !n.is_note() && !n.url.is_empty()) {
+            Some(n) => Some(n.url.clone()),
+            None => {
+                self.toast("Only a web page has an address for this");
+                None
+            }
+        }
+    }
+
+    /// gu / gU / Ctrl+a / Ctrl+x: load the address `change` makes of card
+    /// `id`'s, or toast `none` when it makes nothing.
+    fn go_address(&mut self, id: NodeId, change: impl Fn(&str) -> Option<String>, none: &str) {
+        let Some(url) = self.web_address(id) else { return };
+        match change(&url) {
+            Some(to) => {
+                log::info!("address of card {}: {url} → {to}", id.0);
+                if let Some(c) = self.cards.get(&id) {
+                    c.page.load(&to);
+                }
+            }
+            None => self.toast(none),
+        }
+    }
+
+    /// yy yt ym yd yp (and with Shift, to the primary selection).
+    fn copy_from_card(&mut self, id: NodeId, what: keys::Yank, primary: bool) {
+        use keys::Yank;
+        let Some(n) = self.scene.node(id) else { return };
+        let addressed = !n.is_note() && !n.url.is_empty() && n.url != scene::note::START_URL;
+        let (text, name) = match what {
+            Yank::Url if addressed => (n.url.clone(), "the address"),
+            Yank::Title => (n.title.clone(), "the title"),
+            Yank::Markdown if addressed => (scene::export::link(&n.title, &n.url), "a Markdown link"),
+            Yank::Site if addressed => match scene::address::site(&n.url) {
+                Some(site) => (site.to_string(), "the site"),
+                None => return self.toast("This address has no site"),
+            },
+            Yank::Clean if addressed => {
+                let clean = scene::address::clean(&n.url);
+                let name = if clean == n.url { "the address (it had no tracking parts)" } else { "the address without tracking parts" };
+                (clean, name)
+            }
+            _ => return self.toast("This card has no address"),
+        };
+        if text.is_empty() {
+            return;
+        }
+        if primary {
+            self.clipboard.set_primary(&text);
+            self.toast(format!("Put {name} in the primary selection"));
+        } else {
+            self.clipboard.set_text(&text);
+            self.toast(format!("Copied {name}"));
+        }
+        log::info!("copied {what:?} of card {}{}", id.0, if primary { " to the primary selection" } else { "" });
+    }
+
+    /// go / gO: the address bar holding the card's address, the caret at
+    /// its end, to edit; Enter loads it here / beside.
+    fn edit_address(&mut self, beside: bool) {
+        let page = self.focused.and_then(|id| self.scene.node(id)).filter(|n| !n.is_note() && n.url != scene::note::START_URL);
+        let url = page.map(|n| n.url.clone()).unwrap_or_default();
+        let target = match (beside, page.is_some()) {
+            (true, _) => Target::Beside,
+            (false, true) => Target::Focused,
+            (false, false) => Target::NewCard,
+        };
+        let mut ob = Omnibox::new(&url, target);
+        ob.select_all = false;
+        self.omnibox = Some(ob);
+    }
+
+    /// gh / `:home`: a start page beside the current card (its own page
+    /// stays), taking the keys so its search box can be typed in.
+    fn open_home(&mut self) {
+        let Some(src) = self.current().filter(|&id| self.scene.node(id).is_some()) else {
+            let id = self.add_start();
+            self.ensure_visible(id);
+            return;
+        };
+        let Some(id) = self.open_card(Rect::default(), scene::note::START_URL, Some(src)) else { return };
+        if let Some(n) = self.scene.node_mut(id) {
+            n.title = scene::note::START_TITLE.to_string();
+        }
+        log::info!("start page {} beside card {}", id.0, src.0);
+        self.focus(Some(id));
+        self.ensure_visible(id);
+        self.give_keys(PageKeys::Insert);
+    }
+
+    /// F11 / `:fullscreen`.
+    fn toggle_fullscreen(&mut self) {
+        let Some(w) = self.window() else { return };
+        let full = w.fullscreen().is_none();
+        w.set_fullscreen(full.then_some(winit::window::Fullscreen::Borderless(None)));
+        log::info!("full screen {}", if full { "on" } else { "off" });
+    }
+
+    /// ]] / [[: ask card `id`'s page for its next / previous links;
+    /// `got_pager` follows the best.
+    fn ask_pager(&mut self, id: NodeId, next: bool) {
+        if self.web_address(id).is_none() {
+            return;
+        }
+        let Some(c) = self.cards.get(&id) else { return };
+        c.page.request_pager();
+        self.pager_ask = Some((id, next));
+        log::debug!("pager asked of card {} ({})", id.0, if next { "next" } else { "previous" });
+    }
+
+    fn got_pager(&mut self, id: NodeId, links: Vec<web::pager::Link>) {
+        let Some((asked, next)) = self.pager_ask.filter(|(a, _)| *a == id) else { return };
+        self.pager_ask = None;
+        let Some(url) = self.scene.node(asked).map(|n| n.url.clone()) else { return };
+        let links: Vec<scene::address::PagerLink> =
+            links.into_iter().map(|l| scene::address::PagerLink { rel: l.rel, text: l.text, href: l.href }).collect();
+        match scene::address::pick_pager(&links, next, &url) {
+            Some(i) => {
+                let l = &links[i];
+                log::info!("pager on card {}: {} {:?} rel={:?} → {}", id.0, if next { "next" } else { "previous" }, l.text, l.rel, l.href);
+                let href = l.href.clone();
+                self.follow_here(id, &href);
+            }
+            None => {
+                log::info!("pager on card {}: no {} link among {}", id.0, if next { "next" } else { "previous" }, links.len());
+                self.toast(if next { "No next page link here" } else { "No previous page link here" });
             }
         }
     }
@@ -3436,10 +3630,13 @@ impl App {
 
     /// Values the command line offers for an argument: the spaces' names
     /// (this one last) or the cards' titles (most recently used first).
-    fn command_values(&self, kind: scene::command::Kind) -> Vec<(String, String)> {
+    fn command_values(&self, kind: scene::command::Kind, setting: &str) -> Vec<(String, String)> {
         use scene::command::Kind;
+        use scene::setcmd;
         let plain = |v: Vec<String>| v.into_iter().map(|v| (v, String::new())).collect();
         match kind {
+            Kind::Setting if setting.is_empty() => setcmd::name_rows(&self.settings_in_force()),
+            Kind::Setting => setcmd::find(setting).map_or_else(|_| Vec::new(), |x| setcmd::value_rows(&self.settings_in_force(), x)),
             Kind::Saved => self.saved_pages.pages().iter().map(|p| (p.name.clone(), palette::host(&p.url).to_string())).collect(),
             Kind::Space => {
                 let mut names: Vec<String> = self.spaces.spaces.iter().filter(|s| s.id != self.spaces.active).map(|s| s.name.clone()).collect();
@@ -3586,13 +3783,29 @@ impl App {
                 self.open_find();
             }
             Cmd::Copy => {
-                let action = match arg.as_str() {
-                    "title" => KeyAction::CopyTitle,
-                    "markdown" => KeyAction::CopyMarkdown,
-                    _ => KeyAction::CopyUrl,
+                let what = match arg.as_str() {
+                    "title" => keys::Yank::Title,
+                    "markdown" => keys::Yank::Markdown,
+                    "site" => keys::Yank::Site,
+                    "clean" => keys::Yank::Clean,
+                    _ => keys::Yank::Url,
                 };
-                page(self, action, None);
+                page(self, KeyAction::Copy(what, false), None);
             }
+            Cmd::PageNext => page(self, KeyAction::NextPage, None),
+            Cmd::PagePrev => page(self, KeyAction::PrevPage, None),
+            Cmd::Up => page(self, KeyAction::UrlUp, parsed.count()),
+            Cmd::Root => page(self, KeyAction::UrlRoot, None),
+            Cmd::Increment => page(self, KeyAction::Increment, parsed.count()),
+            Cmd::Decrement => page(self, KeyAction::Decrement, parsed.count()),
+            Cmd::Stop => match self.focused.and_then(|id| self.cards.get(&id)) {
+                Some(c) if c.loading => page(self, KeyAction::Stop, None),
+                _ => self.toast("Nothing is loading"),
+            },
+            Cmd::Home => self.open_home(),
+            Cmd::ViewSource => page(self, KeyAction::ViewSource, None),
+            Cmd::SaveFile => page(self, KeyAction::DownloadPage, None),
+            Cmd::Fullscreen => self.toggle_fullscreen(),
             Cmd::Zoom => self.run_command(match arg.as_str() {
                 "in" => Command::ZoomIn,
                 "out" => Command::ZoomOut,
@@ -3721,6 +3934,16 @@ impl App {
             }
             Cmd::Welcome => self.run_command(Command::Welcome),
             Cmd::Ads => self.run_command(Command::ToggleBlocking),
+            Cmd::Set => self.run_set(&arg),
+            Cmd::Reset => match scene::setcmd::find(&arg) {
+                Ok(x) => self.apply_setting_change(x, scene::setcmd::reset(x)),
+                Err(e) => self.toast(format!("reset: {e}")),
+            },
+            Cmd::Toggle => self.run_toggle(&arg),
+            Cmd::Site | Cmd::SiteSession => match scene::setcmd::parse_site(&arg) {
+                Ok((what, on)) => self.switch_site(self.focused, what, on, parsed.spec.cmd == Cmd::SiteSession),
+                Err(e) => self.toast(e),
+            },
             Cmd::AdsAllowed => self.run_command(Command::AllowedSites),
             Cmd::ClearHistory => self.run_command(Command::ClearHistory),
             Cmd::ClearCookies => self.run_command(Command::ClearCookies),
@@ -3785,34 +4008,19 @@ impl App {
         let site = scene::icon::site(&n.url)?;
         Some(web::menu::SiteContent {
             site,
-            javascript: self.sites.allows(&n.url, Content::JavaScript, self.settings.javascript),
-            images: self.sites.allows(&n.url, Content::Images, self.settings.images),
+            javascript: self.site_rules().allows(&n.url, Content::JavaScript, self.settings.javascript),
+            images: self.site_rules().allows(&n.url, Content::Images, self.settings.images),
         })
     }
 
     /// Turns ad blocking off on card `id`'s site, or back on, and reloads the
     /// site's live pages so the change shows.
     fn toggle_blocking(&mut self, id: Option<NodeId>) {
-        let Some(n) = id.and_then(|id| self.scene.node(id)).filter(|n| !n.is_note()) else {
+        let Some(url) = id.and_then(|id| self.scene.node(id)).filter(|n| !n.is_note()).map(|n| n.url.clone()) else {
             self.toast("No page here");
             return;
         };
-        if !self.settings.block_ads {
-            self.toast("Blocking ads is off in Settings (Ctrl+,)");
-            return;
-        }
-        let url = n.url.clone();
-        let private = self.is_private();
-        let Some((site, on)) = self.blocking.toggle(&url, private) else {
-            self.toast("Ads are only blocked on web pages");
-            return;
-        };
-        self.reload_site(&site, on);
-        self.toast(match (on, private) {
-            (true, _) => format!("Blocking ads on {site} again"),
-            (false, false) => format!("Ads allowed on {site}"),
-            (false, true) => format!("Ads allowed on {site} until you quit"),
-        });
+        self.switch_site_ads(&url, None, false);
     }
 
     /// Reloads the live pages of `site` after blocking changed there (`on`:
@@ -4076,6 +4284,78 @@ impl App {
         self.save_settings();
     }
 
+    /// The settings as in force (the number of live pages may come from
+    /// `TRAILBOARD_MAX_LIVE`).
+    fn settings_in_force(&self) -> Settings {
+        Settings { live_pages: self.max_live, ..self.settings.clone() }
+    }
+
+    /// `:set name [value]`: with a value, sets it; without, shows it.
+    fn run_set(&mut self, arg: &str) {
+        let (name, value) = arg.split_once(char::is_whitespace).map_or((arg, ""), |(n, v)| (n, v.trim()));
+        let setting = match scene::setcmd::find(name) {
+            Ok(x) => x,
+            Err(e) => return self.toast(format!("set: {e}")),
+        };
+        if value.is_empty() && setting != scene::setcmd::Setting::ProxyServer {
+            let shown = setting.shown(&self.settings_in_force());
+            log::info!("set: {shown}");
+            return self.toast(shown);
+        }
+        match scene::setcmd::set(&self.settings_in_force(), setting, value) {
+            Ok(change) => self.apply_setting_change(setting, change),
+            Err(e) => self.toast(e),
+        }
+    }
+
+    /// `:toggle name [values…]`.
+    fn run_toggle(&mut self, arg: &str) {
+        let mut words = arg.split_whitespace();
+        let setting = match scene::setcmd::find(words.next().unwrap_or("")) {
+            Ok(x) => x,
+            Err(e) => return self.toast(format!("toggle: {e}")),
+        };
+        let values: Vec<&str> = words.collect();
+        match scene::setcmd::toggle(&self.settings_in_force(), setting, &values) {
+            Ok(change) => self.apply_setting_change(setting, change),
+            Err(e) => self.toast(e),
+        }
+    }
+
+    /// Makes a change from the command line or a `t` key, as the settings
+    /// page would, and says what the setting is now.
+    fn apply_setting_change(&mut self, setting: scene::setcmd::Setting, change: scene::setcmd::Change) {
+        use scene::setcmd::Change;
+        log::info!("setting change: {change:?}");
+        match change {
+            Change::Choose(key, id) => {
+                self.choose_setting(key, &id);
+                if key == prefs::Key::Language {
+                    return; // `choose_setting` says it, with when sites see it
+                }
+            }
+            Change::ProxyServer(server) => {
+                self.set_proxy_server(&server);
+                if !server.is_empty() && self.settings.proxy != prefs::Proxy::Custom {
+                    self.choose_setting(prefs::Key::Proxy, prefs::Proxy::Custom.id());
+                }
+                return; // `set_proxy_server` says it
+            }
+            Change::CornerRadius(px) => {
+                self.set_corner_radius(&px.to_string());
+                if self.settings.corners != prefs::Corners::Custom {
+                    self.choose_setting(prefs::Key::Corners, prefs::Corners::Custom.id());
+                }
+            }
+            Change::DefaultKeywords => {
+                self.settings.keywords = scene::search::defaults();
+                log::info!("setting keywords = defaults");
+                self.save_settings();
+            }
+        }
+        self.toast(setting.shown(&self.settings_in_force()));
+    }
+
     fn save_settings(&mut self) {
         if let Err(e) = storage::settings::save_settings(&self.data_dir, &self.settings) {
             log::warn!("settings: saving: {e}");
@@ -4100,6 +4380,7 @@ impl App {
             dictionary: tag,
             block_third_party_cookies: s.block_third_party_cookies,
             proxy,
+            cookies_blocked: self.cookie_blocks(),
         };
         log::info!("browsing prefs: {p:?}, do not track {}", s.do_not_track);
         web::prefs::apply(&p);
@@ -4109,40 +4390,64 @@ impl App {
         web::prefs::set_do_not_track(s.do_not_track);
     }
 
+    /// Each site's own JavaScript, images and cookies: this session's rules
+    /// over the saved ones.
+    fn site_rules(&self) -> scene::sitesettings::SiteSettings {
+        self.sites_session.over(&self.sites)
+    }
+
+    /// The sites whose cookies are blocked, for Chromium: real hosts only
+    /// (`file:` pages have no cookies to block).
+    fn cookie_blocks(&self) -> Vec<String> {
+        use scene::sitesettings::Content;
+        let rules = self.site_rules();
+        rules
+            .sites_with(Content::Cookies, false)
+            .filter(|s| s.contains('.') || s.contains(':') || *s == "localhost")
+            .map(str::to_string)
+            .collect()
+    }
+
     /// Hands JavaScript and images (the defaults and each site's own) to the pages.
     fn apply_site_content(&self) {
         use scene::sitesettings::Content;
         let (js, images) = (self.settings.javascript, self.settings.images);
-        let sites = self.sites.clone();
+        let sites = self.site_rules();
         web::set_javascript(move |url| sites.allows(url, Content::JavaScript, js));
-        let sites = self.sites.clone();
+        let sites = self.site_rules();
         web::prefs::set_images(move |url| sites.allows(url, Content::Images, images));
     }
 
     /// After JavaScript or images changed (the setting, from `before`, or a
     /// site's own): applies it and reloads the live pages it changes.
     fn site_content_changed(&mut self, before: &Settings) {
-        let old_sites = self.sites.clone();
+        let old_sites = self.site_rules();
         self.site_content_changed_from(&old_sites, before);
     }
 
+    /// `old_sites`: the site rules in force before (`site_rules`).
     fn site_content_changed_from(&mut self, old_sites: &scene::sitesettings::SiteSettings, before: &Settings) {
         use scene::sitesettings::Content;
         self.apply_site_content();
+        let rules = self.site_rules();
+        let cookies_changed = old_sites.sites_with(Content::Cookies, false).ne(rules.sites_with(Content::Cookies, false));
+        if cookies_changed {
+            self.apply_browsing(); // before the reloads, so they see it
+        }
         let mut reloaded = 0;
         for (id, c) in &self.cards {
             if c.page.kind() != web::PageKind::Web {
                 continue;
             }
             let Some(url) = self.scene.node(*id).map(|n| n.url.clone()) else { continue };
-            let images_were = old_sites.allows(&url, Content::Images, before.images);
-            let js_was = old_sites.allows(&url, Content::JavaScript, before.javascript);
-            let images_now = self.sites.allows(&url, Content::Images, self.settings.images);
-            let js_now = self.sites.allows(&url, Content::JavaScript, self.settings.javascript);
-            if js_was != js_now {
+            let was = |w, d| old_sites.allows(&url, w, d);
+            let now = |w, d| rules.allows(&url, w, d);
+            if was(Content::JavaScript, before.javascript) != now(Content::JavaScript, self.settings.javascript) {
                 c.page.refresh_javascript(); // reloads
                 reloaded += 1;
-            } else if images_were != images_now {
+            } else if was(Content::Images, before.images) != now(Content::Images, self.settings.images)
+                || was(Content::Cookies, true) != now(Content::Cookies, true)
+            {
                 c.page.reload();
                 reloaded += 1;
             }
@@ -4174,26 +4479,87 @@ impl App {
 
     /// Page menu: JavaScript or images on or off for card `id`'s site.
     fn toggle_site_content(&mut self, id: NodeId, what: scene::sitesettings::Content) {
+        self.switch_site(Some(id), scene::setcmd::SiteSwitch::Content(what), None, false);
+    }
+
+    /// `:site`, `:site-session`, `tj`…: JavaScript, images, cookies or ads
+    /// on (`Some(true)`), off, or flipped (`None`) for card `id`'s site,
+    /// saved or for this session only; its live pages reload.
+    fn switch_site(&mut self, id: Option<NodeId>, what: scene::setcmd::SiteSwitch, on: Option<bool>, session: bool) {
+        use scene::setcmd::SiteSwitch;
         use scene::sitesettings::Content;
-        let Some(url) = self.scene.node(id).filter(|n| !n.is_note()).map(|n| n.url.clone()) else { return };
+        let Some(url) = id.and_then(|id| self.scene.node(id)).filter(|n| !n.is_note() && !n.url.is_empty()).map(|n| n.url.clone()) else {
+            return self.toast("No page here");
+        };
+        if id.and_then(|id| self.cards.get(&id)).is_some_and(|c| c.page.kind() != web::PageKind::Web) {
+            return self.toast("Only web pages have site settings");
+        }
+        let what = match what {
+            SiteSwitch::Ads => return self.switch_site_ads(&url, on, session),
+            SiteSwitch::Content(c) => c,
+        };
         let default = match what {
             Content::JavaScript => self.settings.javascript,
             Content::Images => self.settings.images,
+            Content::Cookies => true,
+            Content::Passthrough => false,
         };
-        let on = !self.sites.allows(&url, what, default);
-        let old = self.sites.clone();
-        if !self.sites.set(&url, what, on, default) {
-            return;
+        let old = self.site_rules();
+        let want = on.unwrap_or(!old.allows(&url, what, default));
+        let site = pagezoom::site_of(&url);
+        let changed = if session {
+            self.sites_session.put(&url, what, Some(want))
+        } else {
+            // A saved choice replaces this session's for the site.
+            let a = self.sites_session.put(&url, what, None);
+            let b = self.sites.set(&url, what, want, default);
+            if b && self.persist
+                && let Err(e) = storage::sitesettings::save_sites(&self.data_dir, &self.sites)
+            {
+                log::error!("saving site settings: {e}");
+            }
+            a || b
+        };
+        let state = if want { "on" } else { "off" };
+        if !changed || self.site_rules() == old {
+            return self.toast(format!("{} already {state} for {site}", what.name()));
+        }
+        log::info!("site {site}: {} {state}{}", what.id(), if session { " (session)" } else { "" });
+        let until = if session { " until you quit" } else { "" };
+        if what == Content::Passthrough {
+            // The card in use switches now; nothing reloads.
+            if self.entered() && self.focused == id {
+                self.set_page_keys(if want { PageKeys::Passthrough } else { PageKeys::Page });
+            }
+            let starts = if want { "starts" } else { "no longer starts" };
+            return self.toast(format!("{site} {starts} in Passthrough{until}"));
         }
         let before = self.settings.clone();
         self.site_content_changed_from(&old, &before);
-        if self.persist
-            && let Err(e) = storage::sitesettings::save_sites(&self.data_dir, &self.sites)
-        {
-            log::error!("saving site settings: {e}");
+        self.toast(format!("{} {state} for {site}{until}", what.name()));
+    }
+
+    /// Ads shown (`Some(true)`: blocking off), blocked, or flipped on
+    /// `url`'s site; for this session only if `session` (or in a private space).
+    fn switch_site_ads(&mut self, url: &str, on: Option<bool>, session: bool) {
+        if !self.settings.block_ads {
+            return self.toast("Blocking ads is off in Settings (Ctrl+,)");
         }
-        let site = pagezoom::site_of(&url);
-        self.toast(format!("{} {} on {site}", what.name(), if on { "on" } else { "off" }));
+        let shown = self.blocking.allows(url);
+        if on.is_some_and(|want| want == shown) {
+            let site = scene::icon::site(url).unwrap_or_default();
+            return self.toast(format!("Ads already {} on {site}", if shown { "allowed" } else { "blocked" }));
+        }
+        let private = self.is_private() || session;
+        let Some((site, on)) = self.blocking.toggle(url, private) else {
+            return self.toast("Ads are only blocked on web pages");
+        };
+        self.reload_site(&site, on);
+        self.toast(match (on, private) {
+            (true, _) => format!("Blocking ads on {site} again"),
+            (false, false) => format!("Ads allowed on {site}"),
+            (false, true) => format!("Ads allowed on {site} until you quit"),
+        });
     }
 
     /// The slider under *Corners: Custom* let go at `text` px.
@@ -4330,7 +4696,7 @@ impl App {
             return palette::history_rows(&ob.text, &self.scene, &visits, local_ms(now_ms()), local_ms);
         }
         if palette::is_command(&ob.text) {
-            return palette::command_rows(&ob.text, &self.recent_commands, &self.keys.aliases, &|k| self.command_values(k));
+            return palette::command_rows(&ob.text, &self.recent_commands, &self.keys.aliases, &|k, x| self.command_values(k, x));
         }
         let visits = visits_for(&self.page_index, &self.visits_cache, &ob.text, false);
         let closed: Vec<&Node> = self.closed.iter().map(|(n, _)| n).collect();
@@ -5035,10 +5401,14 @@ impl App {
         use web::links::Filter;
         let filter = match kind {
             None => Filter::All,
-            Some(hint::Kind::Yank | hint::Kind::Background | hint::Kind::Many | hint::Kind::Run(_)) => Filter::Links,
+            Some(
+                hint::Kind::Yank | hint::Kind::Background | hint::Kind::Many | hint::Kind::Run(_) | hint::Kind::Edit | hint::Kind::Primary,
+            ) => Filter::Links,
             Some(hint::Kind::Download) => Filter::Downloads,
-            Some(hint::Kind::Image) => Filter::Images,
+            Some(hint::Kind::Image | hint::Kind::ImageHere) => Filter::Images,
             Some(hint::Kind::Field) => Filter::Fields,
+            Some(hint::Kind::Hover) => Filter::All,
+            Some(hint::Kind::Click) => Filter::Clickable,
         };
         card.page.request_links(filter);
         self.link_hints = Some(LinkHints { id, here, kind, chosen: Vec::new(), line: None, links: Vec::new(), sections: Vec::new(), hints: None });
@@ -5065,10 +5435,12 @@ impl App {
             let loading = self.cards.get(&id).is_some_and(|c| c.loading);
             log::info!("link hints on card {}: no links in view", id.0);
             let what = match kind {
-                None => "Nothing to click",
-                Some(hint::Kind::Yank | hint::Kind::Background | hint::Kind::Many | hint::Kind::Run(_)) => "No links",
+                None | Some(hint::Kind::Click | hint::Kind::Hover) => "Nothing to click",
+                Some(
+                    hint::Kind::Yank | hint::Kind::Background | hint::Kind::Many | hint::Kind::Run(_) | hint::Kind::Edit | hint::Kind::Primary,
+                ) => "No links",
                 Some(hint::Kind::Download) => "No links or images",
-                Some(hint::Kind::Image) => "No images",
+                Some(hint::Kind::Image | hint::Kind::ImageHere) => "No images",
                 Some(hint::Kind::Field) => "No text fields",
             };
             self.toast(if loading { format!("{what} yet · the page is still loading") } else { format!("{what} in view") });
@@ -5180,6 +5552,19 @@ impl App {
                 self.toast("Opened beside · still here");
             }
             (hint::Kind::Field, _) => self.click_target(id, rect, true),
+            (hint::Kind::Primary, Some(url)) => {
+                self.clipboard.set_primary(&url);
+                log::info!("hint: {url} to the primary selection");
+                self.toast("Put the link's address in the primary selection");
+            }
+            (hint::Kind::Edit, Some(url)) => {
+                log::info!("hint: editing {url} in :open");
+                self.open_palette();
+                self.fill_command_line(&format!("open {url}"));
+            }
+            (hint::Kind::ImageHere, Some(url)) => self.follow_here(id, &url),
+            (hint::Kind::Hover, _) => self.hover_target(id, rect),
+            (hint::Kind::Click, _) => self.click_target(id, rect, matches!(action, A::Type)),
             (hint::Kind::Run(_), _) => log::debug!("hint: a :hint line runs from link_hint_key"),
             (_, None) => log::debug!("hint kind {kind:?} on a target without an address"),
         }
@@ -5214,6 +5599,17 @@ impl App {
         log::info!("clicked a hint on card {} at {x},{y}{}", id.0, if typing { ", keys to the page" } else { "" });
         // What was clicked is where the reader is: scroll there next.
         self.pick_section_at(id, x, y);
+    }
+
+    /// `;h`: the pointer over a target's middle, as the mouse would (menus
+    /// that open on hover); nothing is clicked. It stays until the real
+    /// pointer moves over the page.
+    fn hover_target(&mut self, id: NodeId, rect: Rect) {
+        let Some(card) = self.cards.get(&id) else { return };
+        let c = rect.center();
+        let (x, y) = (c.x.round() as i32, c.y.round() as i32);
+        card.page.mouse_move(x, y, 0, false);
+        log::info!("hovered a hint on card {} at {x},{y}", id.0);
     }
 
     /// v: add the current card to the selection, or take it out. Going to
@@ -5830,7 +6226,7 @@ impl App {
                         self.forget_sections(id);
                     }
                     if let Some(n) = self.node_of(page).and_then(|id| self.scene.node_mut(id)) {
-                        n.url = url;
+                        n.url = scene::address::reported(&n.url, &url);
                         self.dirty = true;
                     }
                 }
@@ -5871,6 +6267,11 @@ impl App {
                 WebEvent::Links { page, width, links } => {
                     if let Some(id) = self.node_of(page) {
                         self.got_links(id, width, links);
+                    }
+                }
+                WebEvent::Pager { page, links } => {
+                    if let Some(id) = self.node_of(page) {
+                        self.got_pager(id, links);
                     }
                 }
                 WebEvent::ContextMenu { page, x, y, context } => {
@@ -6950,6 +7351,15 @@ impl App {
                             // Shift+Enter: beside the current card instead.
                             _ if shift => self.open_beside_current(&url),
                             Target::Beside => self.open_beside_current(&url),
+                            Target::Behind => match self.current().filter(|&id| self.scene.node(id).is_some()) {
+                                Some(src) => {
+                                    self.open_behind(src, &url);
+                                    self.toast("Opened beside · still here");
+                                }
+                                None => {
+                                    self.new_card_at_center(&url);
+                                }
+                            },
                             Target::Focused if self.focused_page().is_some() => self.load_here(&url),
                             _ => {
                                 // Typed an address: the new page is what you use next.
@@ -7067,6 +7477,11 @@ impl App {
         if pressed {
             // App shortcuts first.
             let handled = match code {
+                // Board and Page mode have F11 in their tables; this is Insert's.
+                Some(KeyCode::F11) if !ctrl && !shift && !alt && self.page_keys != PageKeys::Passthrough => {
+                    self.toggle_fullscreen();
+                    true
+                }
                 Some(KeyCode::KeyQ) if ctrl && !shift && !alt => {
                     log::info!("quit (Ctrl+Q)");
                     self.quit = true;
@@ -8033,6 +8448,7 @@ impl App {
                 Target::Photo => (Icon::Picture, "Find a picture or type its path", &[("Enter", "Use as background"), ("Esc", "Close")]),
                 Target::SaveAs(_) => (Icon::Download, "Save download as", &[("Enter", "Save"), ("Esc", "Cancel")]),
                 Target::Beside => (Icon::Globe, "Search or enter address", &[("Enter", "Open beside")]),
+                Target::Behind => (Icon::Globe, "Search or enter address", &[("Enter", "Open beside, stay here")]),
                 _ => (Icon::Globe, "Search or enter address", &[("Enter", "Open"), ("Shift+Enter", "Open beside")]),
             };
             // The list (if this field has one) hangs from the field: one sheet.
@@ -8052,7 +8468,7 @@ impl App {
                     (n, a) => format!("{a} of {n}"),
                 }),
                 // An address bar: a keyword names the site it searches (`gh foo`).
-                (Target::Focused | Target::NewCard | Target::Beside, _) => match self.settings.resolve(&ob.text) {
+                (Target::Focused | Target::NewCard | Target::Beside | Target::Behind, _) => match self.settings.resolve(&ob.text) {
                     // Short: the query is in the field already.
                     Some(scene::search::Resolved::Search { keyword: Some(_), site, .. }) => Some(format!("Search {site}")),
                     _ => None,

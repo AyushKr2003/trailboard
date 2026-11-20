@@ -2,6 +2,7 @@
 //! and the camera that views them. Pure data — no GPU or browser types — so it
 //! can be unit-tested and serialized.
 
+pub mod address;
 pub mod arrange;
 pub mod command;
 pub mod export;
@@ -29,6 +30,7 @@ pub mod scroll;
 pub mod scrolltarget;
 pub mod search;
 pub mod selection;
+pub mod setcmd;
 pub mod settings;
 pub mod sidebar;
 pub mod sitesettings;

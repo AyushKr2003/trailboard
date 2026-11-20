@@ -1,7 +1,9 @@
-//! Per-site JavaScript and images (`scene::sitesettings`), shared by every
-//! space: `$DATA/sites.json` =
-//! `{ "version": 1, "sites": { "example.com": { "javascript": false, "images": true } } }`.
-//! A field left out follows the default setting.
+//! Per-site JavaScript, images and cookies (`scene::sitesettings`), shared
+//! by every space: `$DATA/sites.json` =
+//! `{ "version": 1, "sites": { "example.com": { "javascript": false, "images": true, "cookies": false, "passthrough": true } } }`.
+//! A field left out follows the default setting. `cookies` and
+//! `passthrough` came later (M12 step 11) as optional fields, so the
+//! version stayed 1: an older build reads such a file and ignores them.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -20,6 +22,10 @@ struct RuleFile {
     javascript: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     images: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cookies: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    passthrough: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -43,8 +49,8 @@ pub fn load_sites(data_dir: &Path) -> SiteSettings {
             sites: f
                 .sites
                 .into_iter()
-                .map(|(site, r)| (site, SiteRule { javascript: r.javascript, images: r.images }))
-                .filter(|(_, r)| r.javascript.is_some() || r.images.is_some())
+                .map(|(site, r)| (site, SiteRule { javascript: r.javascript, images: r.images, cookies: r.cookies, passthrough: r.passthrough }))
+                .filter(|(_, r)| !r.is_empty())
                 .collect(),
         },
         Ok(f) => {
@@ -61,7 +67,7 @@ pub fn load_sites(data_dir: &Path) -> SiteSettings {
 pub fn save_sites(data_dir: &Path, sites: &SiteSettings) -> std::io::Result<()> {
     let file = SitesFile {
         version: SITES_VERSION,
-        sites: sites.sites.iter().map(|(s, r)| (s.clone(), RuleFile { javascript: r.javascript, images: r.images })).collect(),
+        sites: sites.sites.iter().map(|(s, r)| (s.clone(), RuleFile { javascript: r.javascript, images: r.images, cookies: r.cookies, passthrough: r.passthrough })).collect(),
     };
     let json = serde_json::to_vec_pretty(&file).map_err(std::io::Error::other)?;
     write_atomic(&sites_path(data_dir), &json)
@@ -79,6 +85,8 @@ mod tests {
         let mut s = SiteSettings::default();
         s.set("https://a.com/", Content::JavaScript, false, true);
         s.set("https://b.com/", Content::Images, false, true);
+        s.set("https://c.com/", Content::Cookies, false, true);
+        s.set("https://c.com/", Content::Passthrough, true, false);
         save_sites(dir.path(), &s).unwrap();
         assert_eq!(load_sites(dir.path()), s);
         let text = fs::read_to_string(sites_path(dir.path())).unwrap();
@@ -90,5 +98,8 @@ mod tests {
         assert!(load_sites(dir.path()).sites.is_empty());
         fs::write(sites_path(dir.path()), br#"{"version":1,"sites":{"a.com":{},"b.com":{"images":false}}}"#).unwrap();
         assert_eq!(load_sites(dir.path()).sites.len(), 1, "empty rules are dropped");
+        // A file from before cookies were kept still reads.
+        fs::write(sites_path(dir.path()), br#"{"version":1,"sites":{"a.com":{"javascript":false}}}"#).unwrap();
+        assert_eq!(load_sites(dir.path()).rule("https://a.com/", Content::Cookies), None);
     }
 }

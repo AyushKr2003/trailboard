@@ -11,6 +11,8 @@ pub enum Target {
     NewCard,
     /// Open beside the current card (Page mode's `O`).
     Beside,
+    /// Open beside the current card, staying where you are (`xo`).
+    Behind,
     /// Rename the current space (the text is a name, not an address).
     RenameSpace,
     /// Name the trail through this card (a name too).

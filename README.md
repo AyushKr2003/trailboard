@@ -146,6 +146,8 @@ setuid `chrome-sandbox` helper. The Arch package installs it; for the archive, s
 | `Tab` | Solo: the page fills the window |
 | `Ctrl+B` · `T` · `S` | Trails sidebar · Tidy · Fold a trail |
 | `b` · `:save-page` | Open a saved page · save this one |
+| `td` · `tj` · `:set` | Dark pages · JavaScript for this site · any setting by name |
+| `]]` · `gu` · `Ctrl+A` | Next page · up the address · the address's last number up |
 | `N` | New note |
 | `?` | Every shortcut |
 

@@ -466,13 +466,15 @@ pub enum Action {
     Insert,
     /// Focus the first text field and type in it.
     FocusField,
-    CopyUrl,
-    CopyTitle,
-    /// Copy `[title](url)`.
-    CopyMarkdown,
+    /// Copy part of the card's address or title (`yy`, `yt`, `ym`, `yd`,
+    /// `yp`); to the primary selection when the flag is set (`yY`, `yT`…).
+    Copy(Yank, bool),
     /// Open the clipboard's address (or search for its text) in this card / beside.
     PasteHere,
     PasteBeside,
+    /// The same with the primary selection (`pp` / `PP`).
+    PrimaryHere,
+    PrimaryBeside,
     AddressBar,
     /// An empty address bar whose Enter opens beside the card.
     AddressBarBeside,
@@ -528,9 +530,62 @@ pub enum Action {
     /// A command line from the user's key file (M12 step 10): the app
     /// keeps the lines, this is the index of one.
     Line(u16),
+    // Toggles under `t` (M12 step 11), on the board and in a page.
+    /// Pages dark if they are light, else light (`td`).
+    DarkPages,
+    /// Show or hide the space panel at the top left (`th`).
+    SpacePanel,
+    /// Switch JavaScript, images, cookies or ads for the current card's
+    /// site: saved (`tj`, `ti`, `tc`, `ta`), or until quitting when the
+    /// flag is set (`tJ`, `tI`, `tC`, `tA`).
+    SiteToggle(setcmd::SiteSwitch, bool),
+    // Page navigation extras (M12 step 12).
+    /// The page's next / previous page (`]]` / `[[`): its `rel` link, else
+    /// a link that says so.
+    NextPage,
+    PrevPage,
+    /// Up the address's path (`gu`, a count goes further) / to the site's
+    /// root (`gU`).
+    UrlUp,
+    UrlRoot,
+    /// The last number in the address up / down (`Ctrl+a` / `Ctrl+x`; a
+    /// count is how far).
+    Increment,
+    Decrement,
+    /// The address bar holding the card's address, to edit, opening here /
+    /// beside (`go` / `gO`).
+    EditAddress,
+    EditAddressBeside,
+    /// An empty address bar whose Enter opens beside and stays (`xo`).
+    AddressBarBehind,
+    /// Stop loading (`Ctrl+s`; when nothing loads, Ctrl+S saves as before).
+    Stop,
+    /// A start page beside the card (`gh`).
+    Home,
+    /// The page's source in a card beside (`gf`).
+    ViewSource,
+    /// Download the page itself (`gd`).
+    DownloadPage,
+    /// The window full screen or not (`F11`).
+    Fullscreen,
+}
+
+/// What a copy key copies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Yank {
+    Url,
+    Title,
+    /// `[title](url)`.
+    Markdown,
+    /// The site's host (`news.example.com`).
+    Site,
+    /// The address without tracking parts (`scene::address::clean`).
+    Clean,
 }
 
 use Action as Ac;
+use crate::setcmd::{self, SiteSwitch as SW};
+use crate::sitesettings::Content;
 
 /// The actions a key file can name, in the order the `?` sheet lists them,
 /// with what each does. Marks and Alt+digits are reached by command lines
@@ -563,6 +618,11 @@ pub const NAMED: &[(&str, Action, &str)] = &[
     ("hint-beside", Ac::Hint(hint::Kind::Background), "Hints: open beside, stay here"),
     ("hint-field", Ac::Hint(hint::Kind::Field), "Hints: type in a field"),
     ("hint-many", Ac::Hint(hint::Kind::Many), "Hints: open many beside, until Esc"),
+    ("hint-edit", Ac::Hint(hint::Kind::Edit), "Hints: a link's address to edit in :open"),
+    ("hint-hover", Ac::Hint(hint::Kind::Hover), "Hints: hover over something"),
+    ("hint-click", Ac::Hint(hint::Kind::Click), "Hints: click anything clickable"),
+    ("hint-image-here", Ac::Hint(hint::Kind::ImageHere), "Hints: open an image here"),
+    ("hint-primary", Ac::Hint(hint::Kind::Primary), "Hints: a link's address to the primary selection"),
     ("back", Ac::Back, "Back"),
     ("forward", Ac::Forward, "Forward"),
     ("reload", Ac::Reload, "Reload"),
@@ -570,13 +630,36 @@ pub const NAMED: &[(&str, Action, &str)] = &[
     ("insert", Ac::Insert, "Type in the page (Esc ends)"),
     ("focus-field", Ac::FocusField, "Type in the page's first field"),
     ("passthrough", Ac::Passthrough, "All keys to the page (Shift+Esc ends)"),
-    ("copy-url", Ac::CopyUrl, "Copy the address"),
-    ("copy-title", Ac::CopyTitle, "Copy the title"),
-    ("copy-markdown", Ac::CopyMarkdown, "Copy a Markdown link"),
+    ("copy-url", Ac::Copy(Yank::Url, false), "Copy the address"),
+    ("copy-title", Ac::Copy(Yank::Title, false), "Copy the title"),
+    ("copy-markdown", Ac::Copy(Yank::Markdown, false), "Copy a Markdown link"),
+    ("copy-site", Ac::Copy(Yank::Site, false), "Copy the site"),
+    ("copy-clean", Ac::Copy(Yank::Clean, false), "Copy the address without tracking parts"),
+    ("primary-url", Ac::Copy(Yank::Url, true), "The address to the primary selection"),
+    ("primary-title", Ac::Copy(Yank::Title, true), "The title to the primary selection"),
+    ("primary-markdown", Ac::Copy(Yank::Markdown, true), "A Markdown link to the primary selection"),
+    ("primary-site", Ac::Copy(Yank::Site, true), "The site to the primary selection"),
+    ("primary-clean", Ac::Copy(Yank::Clean, true), "The clean address to the primary selection"),
     ("paste-here", Ac::PasteHere, "Open the copied address here"),
     ("paste-beside", Ac::PasteBeside, "Open the copied address beside"),
+    ("primary-here", Ac::PrimaryHere, "Open the primary selection here"),
+    ("primary-beside", Ac::PrimaryBeside, "Open the primary selection beside"),
     ("address-bar", Ac::AddressBar, "Address bar"),
     ("address-bar-beside", Ac::AddressBarBeside, "Address bar, opening beside"),
+    ("address-bar-behind", Ac::AddressBarBehind, "Address bar, opening beside and staying here"),
+    ("edit-address", Ac::EditAddress, "Edit the address"),
+    ("edit-address-beside", Ac::EditAddressBeside, "Edit the address, opening beside"),
+    ("next-page", Ac::NextPage, "The page's next page"),
+    ("prev-page", Ac::PrevPage, "The page's previous page"),
+    ("url-up", Ac::UrlUp, "Up the address's path"),
+    ("url-root", Ac::UrlRoot, "To the site's root"),
+    ("increment", Ac::Increment, "The address's last number up"),
+    ("decrement", Ac::Decrement, "The address's last number down"),
+    ("stop", Ac::Stop, "Stop loading"),
+    ("home", Ac::Home, "A start page beside the card"),
+    ("view-source", Ac::ViewSource, "The page's source, beside"),
+    ("download-page", Ac::DownloadPage, "Download the page"),
+    ("fullscreen", Ac::Fullscreen, "Full screen on or off"),
     ("find", Ac::Find, "Find in the page"),
     ("find-next", Ac::FindNext, "Next match"),
     ("find-prev", Ac::FindPrev, "Previous match"),
@@ -616,6 +699,17 @@ pub const NAMED: &[(&str, Action, &str)] = &[
     ("name-trail", Ac::NameTrail, "Name the trail"),
     ("trail-colour", Ac::TrailColour, "Next trail colour"),
     ("sidebar", Ac::Sidebar, "Trails sidebar"),
+    ("dark-pages", Ac::DarkPages, "Pages dark or light"),
+    ("space-panel", Ac::SpacePanel, "Show or hide the space panel"),
+    ("site-javascript", Ac::SiteToggle(SW::Content(Content::JavaScript), false), "JavaScript on or off for this site"),
+    ("site-images", Ac::SiteToggle(SW::Content(Content::Images), false), "Images on or off for this site"),
+    ("site-cookies", Ac::SiteToggle(SW::Content(Content::Cookies), false), "Cookies on or off for this site"),
+    ("site-ads", Ac::SiteToggle(SW::Ads, false), "Ads allowed or blocked on this site"),
+    ("session-javascript", Ac::SiteToggle(SW::Content(Content::JavaScript), true), "JavaScript for this site, until you quit"),
+    ("session-images", Ac::SiteToggle(SW::Content(Content::Images), true), "Images for this site, until you quit"),
+    ("session-cookies", Ac::SiteToggle(SW::Content(Content::Cookies), true), "Cookies for this site, until you quit"),
+    ("session-ads", Ac::SiteToggle(SW::Ads, true), "Ads on this site, until you quit"),
+    ("site-passthrough", Ac::SiteToggle(SW::Content(Content::Passthrough), false), "This site starts in Passthrough"),
     ("undo", Ac::Undo, "Undo"),
     ("redo", Ac::Redo, "Redo"),
     ("quit", Ac::Quit, "Quit Trailboard"),
@@ -724,7 +818,7 @@ pub fn board() -> Bindings<Action> {
         ("q", Quit),
         ("F", Fit),
         ("f", LinkHints),
-        ("t", Tidy),
+        // Owner (2026-11-20): t starts toggles (`bind_toggles`); Tidy is T.
         ("T", Tidy),
         ("m", Arrange),
         ("n", NewNote),
@@ -758,6 +852,7 @@ pub fn board() -> Bindings<Action> {
         ("<C-y>", Redo),
         ("<C-S-y>", Redo),
         (":", CommandLine),
+        ("<F11>", Fullscreen),
     ];
     for (seq, a) in table {
         b.bind(seq, *a).expect("board keys parse");
@@ -767,7 +862,24 @@ pub fn board() -> Bindings<Action> {
     // m moves the card on the board (then h/j/k/l), so marks are set with M.
     bind_marks(&mut b, "M");
     bind_jumps(&mut b);
+    bind_toggles(&mut b);
     b
+}
+
+/// `t` then a letter, on the board and in a page: d dark pages, h the
+/// space panel (its header), s the sidebar; j / i / c / a JavaScript,
+/// images, cookies and ads for the current card's site, saved; the same
+/// letters with Shift for this session only; p the site starts in
+/// Passthrough (saved).
+fn bind_toggles(b: &mut Bindings<Action>) {
+    b.bind("td", Action::DarkPages).expect("toggle keys parse");
+    b.bind("th", Action::SpacePanel).expect("toggle keys parse");
+    b.bind("ts", Action::Sidebar).expect("toggle keys parse");
+    b.bind("tp", Action::SiteToggle(SW::Content(Content::Passthrough), false)).expect("toggle keys parse");
+    for (c, sw) in [('j', SW::Content(Content::JavaScript)), ('i', SW::Content(Content::Images)), ('c', SW::Content(Content::Cookies)), ('a', SW::Ads)] {
+        b.bind(&format!("t{c}"), Action::SiteToggle(sw, false)).expect("toggle keys parse");
+        b.bind(&format!("t{}", c.to_ascii_uppercase()), Action::SiteToggle(sw, true)).expect("toggle keys parse");
+    }
 }
 
 /// The mark letters: `a`–`z` (a card's scroll spot) and `A`–`Z` (a board spot).
@@ -847,13 +959,39 @@ pub fn page() -> Bindings<Action> {
         ("R", ReloadFresh),
         ("i", Insert),
         ("gi", FocusField),
-        ("yy", CopyUrl),
-        ("yt", CopyTitle),
-        ("ym", CopyMarkdown),
+        ("yy", Copy(Yank::Url, false)),
+        ("yt", Copy(Yank::Title, false)),
+        ("ym", Copy(Yank::Markdown, false)),
+        ("yd", Copy(Yank::Site, false)),
+        ("yp", Copy(Yank::Clean, false)),
+        // Shift: to the primary selection.
+        ("yY", Copy(Yank::Url, true)),
+        ("yT", Copy(Yank::Title, true)),
+        ("yM", Copy(Yank::Markdown, true)),
+        ("yD", Copy(Yank::Site, true)),
+        ("yP", Copy(Yank::Clean, true)),
+        // p alone waits a moment for a second p (the primary selection).
         ("p", PasteHere),
         ("P", PasteBeside),
+        ("pp", PrimaryHere),
+        ("PP", PrimaryBeside),
         ("o", AddressBar),
         ("O", AddressBarBeside),
+        ("go", EditAddress),
+        ("gO", EditAddressBeside),
+        ("xo", AddressBarBehind),
+        // Moving about by address and by the page's own links.
+        ("]]", NextPage),
+        ("[[", PrevPage),
+        ("gu", UrlUp),
+        ("gU", UrlRoot),
+        ("<C-a>", Increment),
+        ("<C-x>", Decrement),
+        ("<C-s>", Stop),
+        ("gh", Home),
+        ("gf", ViewSource),
+        ("gd", DownloadPage),
+        ("<F11>", Fullscreen),
         ("/", Find),
         ("n", FindNext),
         ("N", FindPrev),
@@ -899,6 +1037,7 @@ pub fn page() -> Bindings<Action> {
     bind_card_numbers(&mut b);
     bind_marks(&mut b, "m");
     bind_jumps(&mut b);
+    bind_toggles(&mut b);
     b
 }
 
@@ -1061,8 +1200,18 @@ mod tests {
         assert_eq!(get("<C-u>"), Some(Action::ScrollUp));
         assert_eq!(get("<A-3>"), Some(Action::NthCard(3)));
         assert_eq!(get("<C-S-6>"), Some(Action::OtherCard));
-        // Only the hint kinds and marks wait for another key; m stays Arrange.
-        assert!(b.iter().all(|(seq, a)| seq.len() == 1 || matches!(a, Action::Hint(_) | Action::SetMark(_) | Action::GoMark(_))));
+        // Only the hint kinds, marks and toggles wait for another key; m stays Arrange.
+        assert!(b.iter().all(|(seq, a)| seq.len() == 1
+            || matches!(a, Action::Hint(_) | Action::SetMark(_) | Action::GoMark(_))
+            || seq[0] == ch('t')));
+        // Owner (2026-11-20): t starts toggles everywhere, Tidy is T.
+        assert_eq!(b.lookup(&parse("t").unwrap()), Lookup::Prefix);
+        assert_eq!(get("T"), Some(Action::Tidy));
+        assert_eq!(get("td"), Some(Action::DarkPages));
+        assert_eq!(get("tj"), Some(Action::SiteToggle(SW::Content(Content::JavaScript), false)));
+        assert_eq!(get("tA"), Some(Action::SiteToggle(SW::Ads, true)));
+        assert_eq!(page().lookup(&parse("tc").unwrap()), Lookup::Exact(Action::SiteToggle(SW::Content(Content::Cookies), false)));
+        assert_eq!(page().lookup(&parse("ts").unwrap()), Lookup::Exact(Action::Sidebar));
         assert_eq!(get("m"), Some(Action::Arrange));
         assert_eq!(get("Ma"), Some(Action::SetMark('a')));
         assert_eq!(get("'B"), Some(Action::GoMark('B')));
@@ -1074,6 +1223,17 @@ mod tests {
         assert_eq!(get("<C-i>"), Some(Action::JumpForward));
         assert_eq!(get(";y"), Some(Action::Hint(hint::Kind::Yank)));
         assert_eq!(get(";m"), Some(Action::Hint(hint::Kind::Many)));
+    }
+
+    #[test]
+    fn p_waits_for_a_second_p() {
+        let b = page();
+        let t = Instant::now();
+        let mut p = Pending::default();
+        for (key, alone) in [('p', Action::PasteHere), ('P', Action::PasteBeside)] {
+            assert_eq!(p.feed(&b, ch(key), t, true), Outcome::Wait);
+            assert_eq!(p.expire(&b, t + TIMEOUT), Some(Outcome::Run { action: alone, count: None }));
+        }
     }
 
     #[test]
@@ -1091,13 +1251,11 @@ mod tests {
         assert_eq!(feed("5j"), Outcome::Run { action: Action::Scroll(Dir::Down), count: Some(5) });
         assert_eq!(feed("gg"), Outcome::Run { action: Action::Top, count: None });
         assert_eq!(feed("gi"), Outcome::Run { action: Action::FocusField, count: None });
-        assert_eq!(feed("yy"), Outcome::Run { action: Action::CopyUrl, count: None });
-        assert_eq!(feed("ym"), Outcome::Run { action: Action::CopyMarkdown, count: None });
-        assert_eq!(feed("p"), Outcome::Run { action: Action::PasteHere, count: None });
-        assert_eq!(feed("P"), Outcome::Run { action: Action::PasteBeside, count: None });
+        assert_eq!(feed("yy"), Outcome::Run { action: Action::Copy(Yank::Url, false), count: None });
+        assert_eq!(feed("ym"), Outcome::Run { action: Action::Copy(Yank::Markdown, false), count: None });
         assert_eq!(feed("O"), Outcome::Run { action: Action::AddressBarBeside, count: None });
         // A count doesn't repeat opening or copying.
-        assert!(!Action::PasteHere.repeats() && !Action::CopyMarkdown.repeats());
+        assert!(!Action::PasteHere.repeats() && !Action::Copy(Yank::Markdown, false).repeats());
         assert_eq!(feed("0"), Outcome::Run { action: Action::LeftEdge, count: None });
         assert_eq!(feed("$"), Outcome::Run { action: Action::RightEdge, count: None });
         assert_eq!(feed("f"), Outcome::Run { action: Action::LinkHintsHere, count: None });
@@ -1143,6 +1301,33 @@ mod tests {
         assert_eq!(feed("b"), Outcome::Run { action: Action::OpenSaved, count: None });
         assert_eq!(feed("B"), Outcome::Run { action: Action::OpenSavedBeside, count: None });
         assert_eq!(feed("<C-b>"), Outcome::Run { action: Action::Sidebar, count: None });
+        // Navigation extras (step 12).
+        assert_eq!(feed("]]"), Outcome::Run { action: Action::NextPage, count: None });
+        assert_eq!(feed("[["), Outcome::Run { action: Action::PrevPage, count: None });
+        assert_eq!(feed("3gu"), Outcome::Run { action: Action::UrlUp, count: Some(3) });
+        assert_eq!(feed("gU"), Outcome::Run { action: Action::UrlRoot, count: None });
+        assert_eq!(feed("5<C-a>"), Outcome::Run { action: Action::Increment, count: Some(5) });
+        assert_eq!(feed("<C-x>"), Outcome::Run { action: Action::Decrement, count: None });
+        assert_eq!(feed("go"), Outcome::Run { action: Action::EditAddress, count: None });
+        assert_eq!(feed("gO"), Outcome::Run { action: Action::EditAddressBeside, count: None });
+        assert_eq!(feed("xo"), Outcome::Run { action: Action::AddressBarBehind, count: None });
+        assert_eq!(feed("<C-s>"), Outcome::Run { action: Action::Stop, count: None });
+        assert_eq!(feed("gh"), Outcome::Run { action: Action::Home, count: None });
+        assert_eq!(feed("gf"), Outcome::Run { action: Action::ViewSource, count: None });
+        assert_eq!(feed("gd"), Outcome::Run { action: Action::DownloadPage, count: None });
+        assert_eq!(feed("<F11>"), Outcome::Run { action: Action::Fullscreen, count: None });
+        assert_eq!(feed("yd"), Outcome::Run { action: Action::Copy(Yank::Site, false), count: None });
+        assert_eq!(feed("yp"), Outcome::Run { action: Action::Copy(Yank::Clean, false), count: None });
+        assert_eq!(feed("yY"), Outcome::Run { action: Action::Copy(Yank::Url, true), count: None });
+        assert_eq!(feed("yD"), Outcome::Run { action: Action::Copy(Yank::Site, true), count: None });
+        assert_eq!(feed("pp"), Outcome::Run { action: Action::PrimaryHere, count: None });
+        assert_eq!(feed("PP"), Outcome::Run { action: Action::PrimaryBeside, count: None });
+        assert_eq!(feed(";Y"), Outcome::Run { action: Action::Hint(hint::Kind::Primary), count: None });
+        assert_eq!(feed(";I"), Outcome::Run { action: Action::Hint(hint::Kind::ImageHere), count: None });
+        // Every action a key reaches has a name for the key file.
+        for (seq, a) in b.iter() {
+            assert!(a.name().is_some() || matches!(a, Action::SetMark(_) | Action::GoMark(_) | Action::NthCard(_)), "{}", display(seq));
+        }
         // Ctrl+w alone waits, then closes.
         assert_eq!(feed("<C-w>"), Outcome::Wait);
         assert_eq!(p.expire(&b, t + TIMEOUT), Some(Outcome::Run { action: Action::Close, count: None }));

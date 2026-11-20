@@ -430,7 +430,7 @@ pub fn command_rows(
     text: &str,
     recent: &command::Recent,
     aliases: &userkeys::Aliases,
-    values: &dyn Fn(command::Kind) -> Vec<(String, String)>,
+    values: &command::Values,
 ) -> Vec<Row> {
     let row = |item, label: String, detail: String, positions, history: Option<String>| Row { item, label, detail, positions, dot: None, history };
     let mut out = Vec::new();

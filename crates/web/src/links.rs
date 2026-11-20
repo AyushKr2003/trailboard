@@ -24,6 +24,9 @@ pub enum Filter {
     Fields,
     /// Links and images.
     Downloads,
+    /// Everything [`Filter::All`] labels, and whatever shows a pointer
+    /// cursor (things made clickable by a page's scripts).
+    Clickable,
 }
 
 impl Filter {
@@ -35,6 +38,7 @@ impl Filter {
             Filter::Images => ("images", "i"),
             Filter::Fields => ("all", "t"),
             Filter::Downloads => ("downloads", "oi"),
+            Filter::Clickable => ("clickable", "oct"),
         }
     }
 }
@@ -55,16 +59,28 @@ const SCRIPT: &str = r#"(() => {
   const W = innerWidth, H = innerHeight, out = [];
   const GROUP = '%GROUP%', KEEP = '%KEEP%';
   const links = 'a[href], area[href]';
-  const sel = GROUP === 'links' ? links : GROUP === 'images' ? 'img' : GROUP === 'downloads' ? links + ', img' :
-    links + ', button, input:not([type=hidden]), select, textarea, summary, ' +
+  const controls = links + ', button, input:not([type=hidden]), select, textarea, summary, label, ' +
     '[contenteditable=""], [contenteditable=true], [onclick], [tabindex]:not([tabindex="-1"]), ' +
     '[role=button], [role=link], [role=checkbox], [role=radio], [role=switch], [role=tab], ' +
     '[role=menuitem], [role=option], [role=combobox], [role=textbox], [role=treeitem]';
+  const sel = GROUP === 'links' ? links : GROUP === 'images' ? 'img' : GROUP === 'downloads' ? links + ', img' :
+    GROUP === 'clickable' ? '*' : controls.replace(', label,', ',');
+  // Clickable: the controls, and elements on screen whose own cursor is a
+  // pointer where their parent's isn't (the outermost of a clickable block).
+  const pointer = e => {
+    if (e.matches(controls)) return true;
+    const r = e.getBoundingClientRect();
+    if (r.bottom < 0 || r.top > H || r.right < 0 || r.left > W || r.width < 4 || r.height < 4) return false;
+    if (getComputedStyle(e).cursor !== 'pointer') return false;
+    const p = e.parentElement;
+    return !p || getComputedStyle(p).cursor !== 'pointer';
+  };
   const url = /^(https?|file):/i;
   const typed = /^(text|search|email|url|tel|password|number|date|datetime-local|month|week|time)$/i;
   const seen = new Set();
   for (const e of document.querySelectorAll(sel)) {
     if (out.length >= 500) break;
+    if (GROUP === 'clickable' && !pointer(e)) continue;
     if (e.disabled || e.closest('[aria-hidden=true], [inert]')) continue;
     // A control inside a link is the link's.
     let p = e.parentElement, inside = false;
@@ -193,7 +209,7 @@ mod tests {
 
     #[test]
     fn script_fills_in_the_filter() {
-        for f in [Filter::All, Filter::Links, Filter::Images, Filter::Fields, Filter::Downloads] {
+        for f in [Filter::All, Filter::Links, Filter::Images, Filter::Fields, Filter::Downloads, Filter::Clickable] {
             let s = script(f);
             assert!(!s.contains('%'), "{f:?}");
             let (group, keep) = f.js();

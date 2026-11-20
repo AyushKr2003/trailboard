@@ -55,7 +55,7 @@ app (trailboard)  winit window · input · omnibox · chrome UI · main loop
 | ✅ | M9 Packaging | Bundle script, `--version`, crash reports, PKGBUILD, Chromium sandbox, first-run welcome |
 | ⬜ | M10 Optional extras | See below; most items on hold |
 | ✅ | M11 Premium look | Corners setting, cards as sheets, board backgrounds, sidebar, command bar, motion, empty board, review pass |
-| 🟡 | **M12 Keyboard first** | Vim-like modes, page keys, scroll sections, command line, cards from a page, search keywords, jumps and marks, user keys, then (steps 11–17) settings, navigation, caret mode, dialogs (below) |
+| 🟡 | **M12 Keyboard first** | Vim-like modes, page keys, scroll sections, command line, cards from a page, search keywords, jumps and marks, user keys, settings, navigation extras, then (steps 13–17) command line, caret mode, dialogs (below) |
 | ⬜ | **M13 Full media support** | Our own CEF build with H.264/AAC (and HEVC, Widevine if they work), built off this machine, opt-in (below) |
 
 ### Owner decisions that still bind
@@ -216,7 +216,8 @@ typing in one field and scrolling another pane both work.
     yy toast, f in Solo draws labels (`hints_crop.png`), f s loads in the
     same card, H back, F d opens beside (edge, Solo follows), Esc → Board,
     an autofocusing page stays in Page. Board scripts 1 and 3 unchanged.
-  - Not done: the per-site "start in Insert" setting. Not verified: a real
+  - Not done: the per-site "start in Insert" setting (done in step 11 as
+    per-site Passthrough, `tp`). Not verified: a real
     keyboard, fields in iframes and shadow DOM, IME in Insert, the light
     theme for the mode pill, the sidebar open under the pill.
 - ✅ 3. Scroll sections (2026-11-17; `web::scroll`, `scene::scrolltarget`,
@@ -640,33 +641,147 @@ marked **Ask** are the owner's call and get asked when their step starts
   - **Owner (2026-11-20):** no outside video player as a feature; video
     plays in the card, and M13 adds the missing formats. `:run` stays for
     anyone who wants to bind a player in the key file themselves.
-- ⬜ 11. **Settings from the keyboard.**
-  - `:set name value` with completion of names and values; `:set name`
-    shows the value; `:reset name`.
-  - `:toggle name [values…]` cycles a setting; default keys under a `t`
-    prefix in Page mode: dark pages (page colours), the space header,
-    the sidebar.
-  - Per-site toggles for the current site: JavaScript, images, cookies,
-    ads (`sitesettings`, `privacy`), for this session or saved; the page
-    reloads.
+- ✅ 11. **Settings from the keyboard** (2026-11-20; `scene::setcmd`,
+  `Content::Cookies`/`Passthrough` in `scene::sitesettings`,
+  `web::prefs` cookie blocks, `App::apply_setting_change`,
+  `App::switch_site`). Decisions:
+  - Names are the settings file's ids with dashes (`page-colours`,
+    `board-background`, `third-party-cookies`), plus `proxy-server`,
+    `corner-radius` and `keywords`; an exact name wins, else a unique
+    start. Values: a choice's id or its name (case ignored), or a unique
+    start of either; switches also take yes/no/true/false/1/0; zoom and
+    live pages take any number in range (`125%`). Errors say why
+    (`Page colours: “pink” isn't one of theme, light, dark`).
+  - `:set name` alone toasts what it is; `:set name value` and `:reset
+    name` go through the settings page's own path (`choose_setting`), so
+    they apply, save and update an open settings page the same way, then
+    toast the new value. `corner-radius` also turns *Corners* to Custom,
+    a `proxy-server` *Proxy* to Custom. Keywords can only be shown and
+    reset (the settings page edits them). No `:reset all`.
+  - `:toggle name`: a switch flips, a list goes to its next choice (as the
+    settings page's arrows); with one value it goes between that and the
+    default, with several round them (the first if the current isn't one).
+  - Completion is two-level: setting names with their current value on the
+    right, then the setting's values with the current one marked *now*
+    (`command::Kind::Setting`; the values callback now takes the setting
+    name). `:site` completes its switches, then on/off.
+  - `t` keys (board and page; Tidy is `T` only): `td` flips what pages
+    show (dark → Light, light → Dark, whatever *Page colours* was, so it
+    always changes something), `th` the space panel (the "header"), `ts`
+    the sidebar; `tj`/`ti`/`tc`/`ta` JavaScript, images, cookies, ads for
+    the current card's site, saved; Shift (`tJ`…) for this session only;
+    `tp` the site starts in Passthrough (the open question from step 2: a
+    per-site *Passthrough* rather than *Insert*, as the mode table says;
+    applied wherever a card is given the keys in Page mode, and the card
+    in use switches at once). Key-file names `dark-pages`, `space-panel`,
+    `site-javascript`… `session-ads`, `site-passthrough`.
+  - Commands `set`, `reset`, `toggle`, `site <what> [on|off]`,
+    `site-session <what> [on|off]` (without on/off it flips; `js` is
+    short for javascript). `:t` is now ambiguous with `toggle` too.
+  - Session rules are a second `SiteSettings` over the saved one (a
+    session choice equal to the default still overrides a saved rule); a
+    saved change clears the session rule for that switch. Ads keep their
+    own allowed list; "session" uses its unsaved entries (as a private
+    space already did).
+  - Cookies per site: Chromium's content setting (`set_content_setting`,
+    COOKIES, BLOCK) for `https://site/` and `http://site/` on the profile
+    and every private jar, which Chromium turns into `[*.]site` (pages and
+    requests alike). Chromium saves these in its `Preferences`; ours in
+    `sites.json` are the truth, so the start-up rewrite that drops saved
+    zooms drops `profile.content_settings.exceptions.cookies` too, and
+    they are set again each run. `sites.json` gained optional `cookies`
+    and `passthrough` fields and stays version 1 (older builds ignore
+    them). The page menu still offers only JavaScript and images.
+  - Verified e2e (`~/.cache/trailboard-e2e-m12`, `run11.sh`, `script28`–
+    `script31`, page `site11/t11.html` served by `python3 -m http.server
+    8765`, whose title reports JS, a cookie and the image): tc → `c=n`,
+    ti → `i=n`, tJ → `nojs` (not saved), `:site-session javascript on`,
+    `:site images on`, `:site cookies` back to `c=y i=y`; `:set pa`
+    names (`s_names.png`), `:set page-colours ` values (`s_values.png`),
+    `:set page-colours dark`, `:set scroll-speed` toast, a bad zoom
+    toasted, `:set default-zoom 125`, `:toggle history`, `:toggle search
+    google bing`, `:reset page-colours`, td, th (`s_nopanel.png`), tp
+    and Shift+Esc (`s_pass.png`), ta, `:set corner-radius 4`, the sheet
+    filtered by "site" (`s_sheet.png`); after a restart cookies stay
+    blocked from `sites.json`, session JS is gone and Enter starts the site
+    in Passthrough; with the rule taken out of `sites.json`, Chromium's
+    own saved block was dropped and cookies worked again. Not verified: a
+    real keyboard, a private space's jar, a site with subdomains
+    (`[*.]` pattern assumed from the log of Chromium's `Preferences`),
+    `:set language`/`proxy-server` typed, the light theme.
   - **Owner (2026-11-20):** `t` starts toggles everywhere (board and
     page); Tidy stays on `T` (bound today) and `:tidy`; Ctrl+T stays New
     card. The `?` sheet, guide and palette keys change from `t` to `T`.
-- ⬜ 12. **Page navigation extras.**
-  - `[[` / `]]` previous / next page (rel links, else "next"/"previous"
-    link text), `gu` / `gU` up the address path / to the site's root,
-    `Ctrl+a` / `Ctrl+x` change the last number in the address (with a
-    count).
-  - `go` / `gO` edit the current address here / beside; `xo` open in the
-    background beside; `Ctrl+s` stop loading; `gh` home (start page);
-    `gf` view source in a card beside; `gd` download the page; `F11`
-    full screen; `wi` page inspector (if CEF's devtools fit our window).
-  - Yanks: `yd` the site, `yp` the address without tracking parts; Shift
-    versions (`yY`, `yT`, `yD`…) to the primary selection; `pp` / `PP`
-    open the primary selection.
-  - More hint kinds: `;o` put the link's address in `:open` to edit,
-    `;h` hover, `;f` every clickable element, `;I` image here, `;Y` link
-    to the primary selection.
+- ✅ 12. **Page navigation extras** (2026-11-21; `scene::address`,
+  `web::pager`, `links::Filter::Clickable`, `keys::Yank`,
+  `Target::Behind`, `App::go_address`/`copy_from_card`/`got_pager`).
+  Decisions:
+  - `]]` / `[[`: a page script (`web::pager`) sends `<link rel>` and the
+    links whose rel or short text might say next/previous; the app picks
+    (`address::pick_pager`, tested): rel first, then the whole text being
+    a word (next, older, older posts, more / previous, prev, newer…),
+    then a text starting with one (`Next chapter`), then a lone arrow (»
+    › → >). The first of equals; links back to the page don't count. It
+    loads in the card.
+  - `gu`: the query and fragment go first (one step), then a path
+    segment; a count goes further. `gU` the root. `Ctrl+a` / `Ctrl+x`:
+    the last digit run after the host (never the host's own digits), a
+    count is the step, zero padding keeps its width, it stops at 0.
+    These take Ctrl+a / Ctrl+x from the page in Page mode only (Insert
+    still selects all / cuts).
+  - `go` / `gO`: the address bar with the address, caret at its end (not
+    selected, unlike `o`). `xo`: a new `Target::Behind`, Enter opens
+    beside and stays. `gh`: a start page *beside* the card (its page is
+    kept), with the keys in its search box. `gf`: `view-source:` in a card
+    beside; the card keeps its `view-source:` prefix when Chromium reports
+    the plain address (`address::reported`). `gd`: Chromium downloads the
+    page's address, as the menu's *Download link*.
+  - `Ctrl+s` stops a loading page; when nothing loads it saves as
+    Markdown, as Ctrl+S always did (the `?` sheet's Ctrl+S row stands).
+  - `F11` in the board and page tables (and as an app shortcut in
+    Insert): borderless full screen.
+  - **`wi` dropped for now:** CEF's `show_dev_tools` with a native window
+    opens nothing in our windowless setup (tried, silent). Showing the
+    inspector in a card needs the devtools browser hosted as an off-screen
+    page (a client of its own, its browser taken in `on_after_created`);
+    left in the backlog.
+  - Copy actions became `Copy(Yank, primary)`; key-file names `copy-url`,
+    `copy-title`, `copy-markdown` stay, new `copy-site`, `copy-clean`,
+    `primary-url`… `primary-clean`, `primary-here`, `primary-beside`.
+    Tracking parts: `utm_`/`pk_`/`mtm_` keys and a list of click ids
+    (`fbclid`, `gclid`, `msclkid`, `igshid`, `si`…).
+  - `pp` / `PP` make `p` / `P` wait 1 s (the prefix rule) before opening
+    the clipboard; accepted, as `pp` was asked for.
+  - The primary selection: `wl-copy`/`wl-paste --primary` under Wayland
+    when installed (arboard's data-control path read nothing here), else
+    arboard. **Known:** on Hyprland 0.57 a primary selection set while
+    our window has focus doesn't stick (the same happens to `wl-copy -p`
+    typed in a shell while Trailboard is focused), so `yY`… and `;Y` don't
+    reach other apps here; reading (`pp`/`PP`) works.
+  - Hint kinds `;o` (`Kind::Edit`, fills `:open <url>`), `;h` (`Hover`:
+    the pointer moves to the target's middle), `;f` (`Click`: the `f`
+    targets plus labels and elements whose own cursor is a pointer where
+    their parent's isn't; every target is clicked, links load in the
+    card), `;I` (`ImageHere`), `;Y` (`Primary`).
+  - Commands `page-next`, `page-prev`, `up [n]`, `root`, `increment
+    [n]`, `decrement [n]`, `stop`, `home`, `view-source`, `save-file`
+    (not `download`: `:down` would stop reaching *downloads*),
+    `fullscreen`; `copy site|clean`. Names picked so `:so` (solo), `:ne`
+    (new) still work.
+  - Verified e2e (`~/.cache/trailboard-e2e-m12`, `site12/` served on
+    :8765, `run11.sh`/`run12.sh` with `config37` sending downloads to
+    `dl37`; `script32`–`script38`): `]]` p/2 → p/3 by "Next »", `[[`
+    back by `rel=prev` "‹", Ctrl+a → 3, `2` Ctrl+x → 1, gu → /p/, gU → /,
+    gU again toasts; `yp` then P opened `?id=3` (utm and fbclid gone);
+    `go` with the caret at the end (`n_go.png`), `#top` added; `xo`
+    opened p/4 beside and stayed; `gf` source card (`n_source.png`); gh
+    start page beside; `;f` labelled the pointer span and clicked it
+    (`h_click.png`), `;h d` hovered the button, `;o` (`h_edit.png`), `;I`
+    loaded the image here; Ctrl+s stopped a hanging load; gd saved
+    `2.html`; F11 on and off; `PP` opened an address put in the primary
+    selection from a shell; the g / y panels (`g_panel.png`,
+    `y_panel.png`). Not verified: a real keyboard, `yY`/`;Y` reaching
+    another app (see above), X11 sessions, the light theme.
 - ⬜ 13. **Command line power.** Readline keys in the field (`Ctrl+w`,
   `Ctrl+u`, `Ctrl+a`, `Ctrl+e`, `Ctrl+k`, `Alt+b`, `Alt+f`); Up / Down
   walk earlier lines starting with what is typed while Tab / Shift+Tab
@@ -809,22 +924,26 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-20 (twenty-eighth). Finished M12 step 10,
-the user key file and outside programs: `~/.config/trailboard/keys`
-(`bind`, `unbind`, `alias`, chains with `|`), `:bind`, `:unbind`,
-`:alias`, `:reload-keys`, `:keys-file`, `:run`, `:hint`, `:hint-many`,
-the `?` sheet built from the live tables, and a panel of what can follow
-a prefix key. New modules `scene::userkeys` and `storage::keyfile`.
-**Repo state:** on `master`; M12 steps 1–10 done (step 10 not yet
-committed); M12 steps 11–17 and M13 planned.
-**Next up:** M12 step 11, settings from the keyboard (`:set`, `:reset`,
-`:toggle`, the `t` prefix in board and page, per-site toggles; Tidy
-stays on `T`). Steps 12–17 follow in order. M13 (full media support, our
-own CEF build) runs beside M12; its builds need a cloud machine. Still
-open from step 2: the per-site "start in Insert" setting (fits step 11).
-Also retake the README screenshots (`docs/images/`) in the new look.
+**Last session:** 2026-11-21 (thirtieth). Finished M12 step 12, page
+navigation extras: `]]`/`[[` next/previous page, `gu`/`gU`, Ctrl+a/Ctrl+x
+on the address's last number, `go`/`gO`/`xo`, Ctrl+s stop, `gh`, `gf`,
+`gd`, F11, yanks of the site and the clean address, the primary selection
+(Shift yanks, `pp`/`PP`), and the hint kinds `;o ;h ;f ;I ;Y`. `wi` (the
+inspector) was dropped for now; see step 12.
+**Repo state:** on `master`; M12 steps 1–12 done (steps 11 and 12 not
+yet committed); M12 steps 13–17 and M13 planned.
+**Next up:** M12 step 13, command line power (readline keys, history
+walk, Ctrl+Enter, `.` repeat, counts before `:`, `:later`, `:repeat`).
+Steps 14–17 follow in order. M13 (full media support, our own CEF build)
+runs beside M12; its builds need a cloud machine. Also retake the README
+screenshots (`docs/images/`) in the new look.
 
-**Small follow-ups (backlog):** glide on undo/redo of moves; follow the
+**Small follow-ups (backlog):** the page inspector in a card (`wi`, step
+12); the primary selection set from our window on Hyprland (step 12);
+cookies on / off in the page menu (it
+offers JavaScript and images); an entered card that navigates to a
+Passthrough site stays in Page mode until it is given the keys again;
+glide on undo/redo of moves; follow the
 desktop's animation switch live; verify the setuid sandbox path without
 unprivileged user namespaces; more consent platforms (TCF frames, Ketch,
 Termly, Borlabs, Axeptio); scriptlets/`$redirect` resources (check uBO's
@@ -856,3 +975,9 @@ click into it works).
 - Known rough edges: a note's last keystroke can be lost if its card closes
   or sleeps in the same frame; a stale full-window frame can flash after
   leaving Solo; zooming can churn the live cap.
+- Cookie tests need a real host: `site11/` served on `localhost:8765`
+  (`python3 -m http.server`); `file://` pages have no cookies. Type
+  `http://` in script addresses: a bare `localhost:8765/…` goes to https.
+- Ctrl+S (or Ctrl+s with nothing loading) saves to the real
+  `~/Documents/Trailboard/`; keep it out of e2e scripts. Downloads follow
+  `user-dirs.dirs` in `XDG_CONFIG_HOME` (`config37` points them at `dl37`).

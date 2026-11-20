@@ -79,6 +79,22 @@ pub enum Cmd {
     AdsAllowed,
     ClearHistory,
     ClearCookies,
+    Set,
+    Reset,
+    Toggle,
+    Site,
+    SiteSession,
+    Up,
+    Root,
+    PageNext,
+    PagePrev,
+    Increment,
+    Decrement,
+    Stop,
+    Home,
+    ViewSource,
+    SaveFile,
+    Fullscreen,
 }
 
 /// What a command's argument is: it decides what [`complete`] offers.
@@ -98,6 +114,14 @@ pub enum Kind {
     Count,
     /// One of these words (a unique start of one is enough).
     Choice(&'static [&'static str]),
+    /// A setting's name, then values for it (`page-colours dark`); the
+    /// app gives both (`values(Kind::Setting, "")` the names,
+    /// `values(Kind::Setting, name)` its values).
+    Setting,
+    /// A setting's name only.
+    SettingName,
+    /// A site switch, then on / off (`javascript off`).
+    Site,
 }
 
 /// Whether a command takes an argument.
@@ -132,7 +156,7 @@ pub struct Spec {
 }
 
 const ZOOM: &[&str] = &["in", "out", "reset"];
-const COPY: &[&str] = &["address", "title", "markdown"];
+const COPY: &[&str] = &["address", "title", "markdown", "site", "clean"];
 const RELOAD: &[&str] = &["fresh"];
 
 const fn s(cmd: Cmd, name: &'static str, aliases: &'static [&'static str], arg: Arg, arg_hint: &'static str, about: &'static str) -> Spec {
@@ -168,7 +192,18 @@ pub const COMMANDS: &[Spec] = &[
     s(Cmd::Forward, "forward", &[], Opt(Kind::Count), "[times]", "Go forward in the card's page"),
     s(Cmd::Reload, "reload", &[], Opt(Kind::Choice(RELOAD)), "[fresh]", "Reload the page (fresh: skip the cache)"),
     s(Cmd::Find, "find", &[], Opt(Kind::Text), "[words]", "Find in the page"),
-    s(Cmd::Copy, "copy", &[], Opt(Kind::Choice(COPY)), "[address|title|markdown]", "Copy the page's address, title or a Markdown link"),
+    s(Cmd::Copy, "copy", &[], Opt(Kind::Choice(COPY)), "[address|title|markdown|site|clean]", "Copy the page's address, title, a Markdown link, its site, or the address without tracking"),
+    s(Cmd::PageNext, "page-next", &[], No, "", "The page's next page (its next link)"),
+    s(Cmd::PagePrev, "page-prev", &[], No, "", "The page's previous page"),
+    s(Cmd::Up, "up", &[], Opt(Kind::Count), "[times]", "Up the address's path"),
+    s(Cmd::Root, "root", &[], No, "", "To the site's root"),
+    s(Cmd::Increment, "increment", &[], Opt(Kind::Count), "[by]", "The address's last number up"),
+    s(Cmd::Decrement, "decrement", &[], Opt(Kind::Count), "[by]", "The address's last number down"),
+    s(Cmd::Stop, "stop", &[], No, "", "Stop loading the page"),
+    s(Cmd::Home, "home", &[], No, "", "A start page beside the card"),
+    s(Cmd::ViewSource, "view-source", &[], No, "", "The page's source in a card beside"),
+    s(Cmd::SaveFile, "save-file", &[], No, "", "Download the page as a file"),
+    s(Cmd::Fullscreen, "fullscreen", &[], No, "", "Full screen on or off"),
     s(Cmd::Zoom, "zoom", &[], Req(Kind::Choice(ZOOM)), "<in|out|reset>", "Zoom the page"),
     s(Cmd::Save, "save", &["w"], No, "", "Save as Markdown"),
     s(Cmd::Solo, "solo", &[], No, "", "Solo on or off"),
@@ -191,6 +226,11 @@ pub const COMMANDS: &[Spec] = &[
     s(Cmd::History, "history", &[], Opt(Kind::Text), "[words]", "History"),
     s(Cmd::Downloads, "downloads", &[], No, "", "Downloads"),
     s(Cmd::Settings, "settings", &[], No, "", "Settings"),
+    s(Cmd::Set, "set", &[], Req(Kind::Setting), "<setting> [value]", "Change a setting (no value: show it)"),
+    s(Cmd::Reset, "reset", &[], Req(Kind::SettingName), "<setting>", "A setting back to its default"),
+    s(Cmd::Toggle, "toggle", &[], Req(Kind::Setting), "<setting> [values…]", "Flip a setting, or go round the values given"),
+    s(Cmd::Site, "site", &[], Req(Kind::Site), "<javascript|images|cookies|ads|passthrough> [on|off]", "Switch something for this site (saved)"),
+    s(Cmd::SiteSession, "site-session", &[], Req(Kind::Site), "<javascript|images|cookies|ads|passthrough> [on|off]", "Switch something for this site until you quit"),
     s(Cmd::Keys, "keys", &["help"], No, "", "Keyboard shortcuts"),
     s(Cmd::Bind, "bind", &[], Req(Kind::Text), "<modes> <keys> <command>", "Bind keys until restart (modes: board,page,insert,hints,command)"),
     s(Cmd::Unbind, "unbind", &[], Req(Kind::Text), "<modes> <keys>", "Unbind keys until restart"),
@@ -348,6 +388,10 @@ impl Completion {
     }
 }
 
+/// What gives an argument's values: for a kind (and, for a setting's
+/// values, the setting's name), (value, what the row says on its right).
+pub type Values<'a> = dyn Fn(Kind, &str) -> Vec<(String, String)> + 'a;
+
 /// Values the list offers for a command's argument, at most.
 pub const MAX_VALUES: usize = 30;
 
@@ -357,7 +401,7 @@ pub const MAX_VALUES: usize = 30;
 /// (`values` gives a space's or card's names, or saved pages', each with
 /// what the row says on its right, empty for what the command does;
 /// choices come from the table).
-pub fn complete(line: &str, values: &dyn Fn(Kind) -> Vec<(String, String)>) -> Vec<Completion> {
+pub fn complete(line: &str, values: &Values) -> Vec<Completion> {
     let bare = line.trim_start().strip_prefix(':').unwrap_or(line).trim_start();
     let typing_name = !bare.contains(char::is_whitespace);
     if typing_name {
@@ -366,11 +410,27 @@ pub fn complete(line: &str, values: &dyn Fn(Kind) -> Vec<(String, String)>) -> V
     let (name, rest) = split(bare);
     let Ok(spec) = lookup(name) else { return Vec::new() };
     let Some(kind) = spec.arg.kind() else { return Vec::new() };
+    // Two-word arguments: the words before the last one are fixed, the
+    // last is completed.
+    let (fixed, rest) = match kind {
+        Kind::Setting | Kind::SettingName | Kind::Site if line.ends_with(char::is_whitespace) && !rest.is_empty() => (rest, ""),
+        Kind::Setting | Kind::SettingName | Kind::Site => match rest.rsplit_once(char::is_whitespace) {
+            Some((before, last)) => (before.trim(), last),
+            None => ("", rest),
+        },
+        _ => ("", rest),
+    };
+    let words = |w: &[&str]| w.iter().map(|s| (s.to_string(), String::new())).collect::<Vec<_>>();
     let offered: Vec<(String, String)> = match kind {
-        Kind::Choice(c) => c.iter().map(|s| (s.to_string(), String::new())).collect(),
-        Kind::Space | Kind::Card | Kind::Saved => values(kind),
+        Kind::Choice(c) => words(c),
+        Kind::Space | Kind::Card | Kind::Saved => values(kind, ""),
+        Kind::SettingName if fixed.is_empty() => values(Kind::Setting, ""),
+        Kind::Setting => values(Kind::Setting, fixed.split_whitespace().next().unwrap_or("")),
+        Kind::Site if fixed.is_empty() => words(&crate::setcmd::SITE_WORDS),
+        Kind::Site if !fixed.contains(char::is_whitespace) => words(&["on", "off"]),
         _ => return Vec::new(),
     };
+    let lead = if fixed.is_empty() { spec.name.to_string() } else { format!("{} {fixed}", spec.name) };
     let cands: Vec<Candidate> = offered.iter().map(|(v, _)| Candidate { text: v, alt: "" }).collect();
     palette::rank(rest, &cands)
         .into_iter()
@@ -378,7 +438,7 @@ pub fn complete(line: &str, values: &dyn Fn(Kind) -> Vec<(String, String)>) -> V
         .map(|r| {
             let (v, detail) = &offered[r.index];
             let detail = if detail.is_empty() { spec.about.to_string() } else { detail.clone() };
-            Completion { line: format!("{} {v}", spec.name), label: v.clone(), detail, positions: r.positions }
+            Completion { line: format!("{lead} {v}"), label: v.clone(), detail, positions: r.positions }
         })
         .collect()
 }
@@ -472,7 +532,7 @@ impl Recent {
 mod tests {
     use super::*;
 
-    fn none(_: Kind) -> Vec<(String, String)> {
+    fn none(_: Kind, _: &str) -> Vec<(String, String)> {
         Vec::new()
     }
 
@@ -501,7 +561,13 @@ mod tests {
         // An exact name wins over longer names it starts.
         assert_eq!(parse("space Work").unwrap().spec.cmd, Cmd::Space);
         assert_eq!(parse("ads").unwrap().spec.cmd, Cmd::Ads);
-        assert_eq!(parse("t"), Err(Error::Ambiguous(vec!["to-mark", "tidy", "tint"])));
+        assert_eq!(parse("t"), Err(Error::Ambiguous(vec!["to-mark", "tidy", "tint", "toggle"])));
+        // Settings (step 11): `set` is exact, `sett` the settings page.
+        assert_eq!(parse("set page-colours dark").unwrap().arg.as_deref(), Some("page-colours dark"));
+        assert_eq!(parse("sett").unwrap().spec.cmd, Cmd::Settings);
+        assert_eq!(parse("site js off").unwrap().spec.cmd, Cmd::Site);
+        assert_eq!(parse("site-s cookies").unwrap().spec.cmd, Cmd::SiteSession);
+        assert!(matches!(parse("reset"), Err(Error::Missing(..))));
         // Saved pages, marks and jumps (step 9); `save` stays Save as Markdown.
         assert_eq!(parse("save").unwrap().spec.cmd, Cmd::Save);
         assert!(matches!(parse("saved"), Err(Error::Missing(..))), "Enter on it lists the names");
@@ -509,7 +575,15 @@ mod tests {
         assert_eq!(parse("saved-b x").unwrap().spec.cmd, Cmd::SavedBeside);
         assert!(matches!(parse("saved-beside"), Err(Error::Missing(..))));
         assert_eq!(parse("save-page").unwrap().spec.cmd, Cmd::SavePage);
-        assert_eq!(parse("sav"), Err(Error::Ambiguous(vec!["saved", "saved-beside", "save-page", "save"])));
+        assert_eq!(parse("sav"), Err(Error::Ambiguous(vec!["saved", "saved-beside", "save-page", "save-file", "save"])));
+        // Navigation (step 12): names that keep the old short starts working.
+        assert_eq!(parse("so").unwrap().spec.cmd, Cmd::Solo);
+        assert_eq!(parse("ne").unwrap().spec.cmd, Cmd::New);
+        assert_eq!(parse("up 2").unwrap().count(), Some(2));
+        assert_eq!(parse("pa").map_err(|e| e.to_string()), Err("Could be page-next, page-prev".into()));
+        assert_eq!(parse("v").unwrap().spec.cmd, Cmd::ViewSource);
+        assert_eq!(parse("copy cl").unwrap().arg.as_deref(), Some("clean"));
+        assert_eq!(parse("copy si").unwrap().arg.as_deref(), Some("site"));
         assert_eq!(parse("mark A").unwrap().arg.as_deref(), Some("A"));
         assert_eq!(parse("jump-b 3").unwrap().count(), Some(3));
         // `card` is exact; its longer names need more.
@@ -565,7 +639,7 @@ mod tests {
 
     #[test]
     fn completes_values() {
-        let values = |k: Kind| match k {
+        let values = |k: Kind, _: &str| match k {
             Kind::Space => ["Home", "Work", "Reading list"].iter().map(|s| (s.to_string(), String::new())).collect(),
             Kind::Saved => vec![("Rust docs".to_string(), "doc.rust-lang.org".to_string())],
             _ => Vec::new(),
@@ -584,6 +658,28 @@ mod tests {
         assert!(complete("open ex", &values).is_empty());
         assert!(complete("nope x", &values).is_empty());
         assert!(complete("tidy ", &values).is_empty());
+    }
+
+    #[test]
+    fn completes_settings_and_sites() {
+        let values = |k: Kind, name: &str| match (k, name) {
+            (Kind::Setting, "") => vec![("page-colours".to_string(), "Page colours: Dark".to_string()), ("history".to_string(), String::new())],
+            (Kind::Setting, "page-colours") => vec![("theme".to_string(), String::new()), ("dark".to_string(), "Dark · now".to_string())],
+            _ => Vec::new(),
+        };
+        let c = complete("set pa", &values);
+        assert_eq!((c[0].line.as_str(), c[0].detail.as_str()), ("set page-colours", "Page colours: Dark"));
+        let c = complete("set page-colours ", &values);
+        assert_eq!(c.iter().map(|c| c.line.as_str()).collect::<Vec<_>>(), vec!["set page-colours theme", "set page-colours dark"]);
+        assert_eq!(complete("toggle page-colours dark t", &values)[0].line, "toggle page-colours dark theme");
+        assert_eq!(complete("reset hi", &values)[0].line, "reset history");
+        assert!(complete("reset history ", &values).is_empty(), "reset takes the name only");
+        let c = complete("site ", &values);
+        assert_eq!(c.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(), vec!["javascript", "images", "cookies", "ads", "passthrough"]);
+        assert_eq!(complete("site-session co", &values)[0].line, "site-session cookies");
+        let c = complete("site cookies ", &values);
+        assert_eq!(c.iter().map(|c| c.line.as_str()).collect::<Vec<_>>(), vec!["site cookies on", "site cookies off"]);
+        assert!(complete("site cookies off ", &values).is_empty());
     }
 
     #[test]

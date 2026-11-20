@@ -11,6 +11,7 @@ pub mod focus;
 pub mod keys;
 pub mod links;
 pub mod menu;
+pub mod pager;
 pub mod permission;
 pub mod popup;
 pub mod prefs;
@@ -87,6 +88,9 @@ pub enum WebEvent {
     /// An answer about page `page`'s scroll sections (see [`scroll`]),
     /// to one of [`Page::scroll_command`]. Any page can send this.
     Scroll { page: u64, report: scroll::Report },
+    /// Page `page`'s next / previous page candidates, answering
+    /// [`Page::request_pager`]. Any page can send this; only expect it after asking.
+    Pager { page: u64, links: Vec<pager::Link> },
 }
 
 /// Largest favicon side asked of Chromium, px (title bars draw 16 px icons, sharp at 2×).
@@ -1022,6 +1026,10 @@ wrap_display_handler! {
                 }
                 return 1;
             }
+            if let Some(body) = message.strip_prefix(pager::PREFIX) {
+                emit(WebEvent::Pager { page: self.shared.key, links: pager::parse(body) });
+                return 1;
+            }
             if let Some(body) = message.strip_prefix(links::PREFIX) {
                 if let Some((width, links)) = links::parse(body) {
                     emit(WebEvent::Links { page: self.shared.key, width, links });
@@ -1593,6 +1601,12 @@ impl Page {
         self.browser.go_back();
     }
 
+    /// Stops loading (`Ctrl+s`).
+    pub fn stop(&self) {
+        self.browser.stop_load();
+    }
+
+
     pub fn forward(&self) {
         self.browser.go_forward();
     }
@@ -1739,6 +1753,11 @@ impl Page {
     /// [`WebEvent::Links`].
     pub fn request_links(&self, filter: links::Filter) {
         self.run_script(&links::script(filter));
+    }
+
+    /// Ask for the page's next / previous links; they arrive as [`WebEvent::Pager`].
+    pub fn request_pager(&self) {
+        self.run_script(pager::SCRIPT);
     }
 
     /// Run a scroll section command ([`scroll::list`], [`scroll::by`]…); the

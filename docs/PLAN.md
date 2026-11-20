@@ -397,7 +397,9 @@ marked **Ask** are the owner's call and get asked when their step starts
     open one here / beside with completion, `:saved` lists them (Enter
     opens, Shift+Delete removes). One versioned file in `storage`.
   - **Owner (2026-11-20):** `b` / `B` open saved pages everywhere (board
-    and page); the trails sidebar moves to another key (**Ask** which).
+    and page); the trails sidebar moves to `Ctrl+B` (free today; in a text
+    field the page keeps it for bold) and `:sidebar`. Both named saved
+    pages and lettered marks (`m{a-z}` / `'{a-z}`) are kept.
 - ⬜ 10. **User key file and external commands.**
   - `$CONFIG/trailboard/keys` in our own plain-text format, read by a
     tested parser in `storage`: bind / unbind a key sequence to a command
@@ -423,9 +425,9 @@ marked **Ask** are the owner's call and get asked when their step starts
   - Per-site toggles for the current site: JavaScript, images, cookies,
     ads (`sitesettings`, `privacy`), for this session or saved; the page
     reloads.
-  - **Ask:** a `t` prefix in Page mode clashes with nothing today; on the
-    board `t` is Tidy — keep Tidy (suggested) and put toggles on `t` only
-    in Page mode.
+  - **Owner (2026-11-20):** `t` starts toggles everywhere (board and
+    page); Tidy stays on `T` (bound today) and `:tidy`; Ctrl+T stays New
+    card. The `?` sheet, guide and palette keys change from `t` to `T`.
 - ⬜ 12. **Page navigation extras.**
   - `[[` / `]]` previous / next page (rel links, else "next"/"previous"
     link text), `gu` / `gU` up the address path / to the site's root,
@@ -456,8 +458,8 @@ marked **Ask** are the owner's call and get asked when their step starts
   permission asks (camera, location, notifications) likewise; the file
   chooser takes a typed path; `Ctrl+e` in a field edits its text in
   `$EDITOR` and puts it back; `Shift+Insert` pastes the primary selection.
-- ⬜ 16. **Search and messages.** `?` searches backward (**Ask:** the
-  shortcut sheet moves to `F1` and `:keys`, suggested); Esc clears the
+- ⬜ 16. **Search and messages.** `?` searches backward (**Owner,
+  2026-11-20:** yes; the shortcut sheet moves to `F1` and `:keys`); Esc clears the
   find highlight; `:messages` lists the last toasts and errors.
 - ⬜ 17. **Stretch.** Macros (`q{a-z}` records, `@{a-z}` plays, `@@`
   again); `:screenshot` of a card; `:print`; small user scripts run on

@@ -1,4 +1,4 @@
-//! The trails sidebar's panel (B, or the pointer resting on the window's left
+//! The trails sidebar's panel (Ctrl+B, or the pointer resting on the window's left
 //! edge): layout, hit testing and drawing of the rows from `scene::sidebar`.
 //!
 //! Our own design (M11 step 4, 2026-11-15; redone as a browser's side panel
@@ -392,7 +392,7 @@ pub struct View<'a> {
     pub spot: Option<Spot>,
     pub current: Option<NodeId>,
     pub head: Current,
-    /// Opened with B (or kept), rather than peeking.
+    /// Opened with Ctrl+B (or kept), rather than peeking.
     pub kept: bool,
     /// While a trail's header is dragged: y of the line where it would go.
     pub drop_line: Option<f32>,
@@ -731,7 +731,7 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], v: &View, scene: &Sc
         _ => None,
     };
     // The keep button names itself and its key, below it.
-    let tip = tip.map(|t| (t, true)).or_else(|| (v.spot == Some(Spot::Keep)).then(|| ((Spot::Keep.name().to_string(), "B", panel.nav(Spot::Keep)), false)));
+    let tip = tip.map(|t| (t, true)).or_else(|| (v.spot == Some(Spot::Keep)).then(|| ((Spot::Keep.name().to_string(), "Ctrl+B", panel.nav(Spot::Keep)), false)));
     if let Some(((name, keys, at), above)) = tip {
         let t = chrome::tooltip(r, &name, keys, at, above, v.viewport, th, ui);
         l.quads.extend(t.quads);
@@ -979,7 +979,7 @@ mod tests {
         assert_eq!(p.update(ms(700), true, false, false, true, true), None);
         assert_eq!(p.update(ms(1099), true, false, false, true, true), None);
         assert_eq!(p.update(ms(1100), true, false, false, true, true), Some(PeekAct::Close));
-        // Opened with B, it never goes by itself.
+        // Opened with Ctrl+B, it never goes by itself.
         assert_eq!(p.update(ms(2000), true, false, false, true, false), None);
         assert_eq!(p.update(ms(9000), true, false, false, true, false), None);
     }

@@ -79,6 +79,16 @@ pub enum Report {
     /// The innermost section under a click ([`pick`]); [`PAGE`] when the
     /// click was on no section of its own.
     Picked { id: u32 },
+    /// Where the target is scrolled ([`spot`]): the section that scrolls
+    /// (a [`Report::Spot`] path, `""` for the page) and how far, CSS px.
+    Spot { path: String, x: f32, y: f32 },
+}
+
+/// A section's path as [`Report::Spot`] gives it: child numbers from the
+/// document's root, joined by dots. Anything else is refused, since it goes
+/// back into a script.
+pub fn is_path(path: &str) -> bool {
+    path.is_empty() || (path.len() <= 400 && path.split('.').all(|n| !n.is_empty() && n.len() <= 5 && n.bytes().all(|b| b.is_ascii_digit())))
 }
 
 fn nums<const N: usize>(s: &str) -> Option<[f32; N]> {
@@ -154,6 +164,12 @@ pub fn parse(body: &str) -> Option<Report> {
             Some(Report::Wheel { width, at: (at[0], at[1]), delta: (d[0] as i32, d[1] as i32), jump: head[4].trim() == "1" })
         }
         "P" => Some(Report::Picked { id: head.get(2)?.trim().parse().ok()? }),
+        "S" if head.len() >= 5 => {
+            let path = head[2].trim().to_string();
+            let x: f32 = head[3].trim().parse().ok().filter(|v: &f32| v.is_finite())?;
+            let y: f32 = head[4].trim().parse().ok().filter(|v: &f32| v.is_finite())?;
+            is_path(&path).then_some(Report::Spot { path, x: x.max(0.0), y: y.max(0.0) })
+        }
         _ => None,
     }
 }
@@ -352,6 +368,21 @@ if (!window.__tbScroll) {
     const o = getComputedStyle(e)[ax === 'x' ? 'overscrollBehaviorX' : 'overscrollBehaviorY'];
     return o === 'contain' || o === 'none';
   };
+  // A section's child numbers from the root (null inside a shadow root).
+  const pathOf = e => {
+    const p = [];
+    for (let c = e; c && c !== document.documentElement; c = c.parentElement) {
+      const q = c.parentElement;
+      if (!q) return null;
+      p.unshift(Array.prototype.indexOf.call(q.children, c));
+    }
+    return p.join('.');
+  };
+  const byPath = s => {
+    let e = document.documentElement;
+    for (const i of s.split('.')) e = e && e.children[+i];
+    return e || null;
+  };
   const go = (e, l, t, smooth) => {
     const w = win(e);
     (w || e).scrollTo({ left: l, top: t, behavior: smooth ? 'smooth' : 'instant' });
@@ -426,6 +457,21 @@ if (!window.__tbScroll) {
       did(s, ax, 'm', reset);
     },
     pick(x, y) { say('P\t' + innerWidth + '\t' + idOf(at(x, y))); },
+    // Where the target is scrolled, for a mark: its path and position.
+    spot(id) {
+      const [t] = target(id);
+      let s = along(t, 'y') || along(t, 'x') || page(), path = pathOf(s);
+      if (path === null || !pos(s)) { s = page(); path = ''; }
+      const p = pos(s) || [0, 0];
+      say('S\t' + innerWidth + '\t' + path + '\t' + Math.round(p[0]) + '\t' + Math.round(p[1]));
+    },
+    // Back to a spot: the section at the path if it still scrolls, else the page.
+    restore(path, l, t) {
+      let e = path ? byPath(path) : page();
+      if (!e || (e !== page() && !axes(e))) e = page();
+      go(e, l, t, false);
+      did(e, 'y', 'm', false);
+    },
   };
 }
 "#;
@@ -461,6 +507,20 @@ pub fn to(target_id: Option<u32>, edge: Edge) -> String {
     run(&format!("to({}, '{ax}', {end})", target(target_id)))
 }
 
+/// Report where `target` (`None`: the automatic pick) is scrolled, as a
+/// [`Report::Spot`].
+pub fn spot(target_id: Option<u32>) -> String {
+    run(&format!("spot({})", target(target_id)))
+}
+
+/// Scroll the section at `path` (else the page) to (`x`, `y`) CSS px, at
+/// once; answers as [`by`] does. A bad path means the page.
+pub fn restore(path: &str, x: f32, y: f32) -> String {
+    let path = if is_path(path) { path } else { "" };
+    let (x, y) = (if x.is_finite() { x.max(0.0) } else { 0.0 }, if y.is_finite() { y.max(0.0) } else { 0.0 });
+    run(&format!("restore('{path}', {x}, {y})"))
+}
+
 /// Report the innermost section at (`x`, `y`), given in a view `width` CSS
 /// px wide (the page's own width may differ when it is zoomed).
 pub fn pick(x: f32, y: f32, width: f32) -> String {
@@ -471,6 +531,17 @@ pub fn pick(x: f32, y: f32, width: f32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spots() {
+        assert_eq!(parse("S\t1280\t1.0.3\t0\t420"), Some(Report::Spot { path: "1.0.3".into(), x: 0.0, y: 420.0 }));
+        assert_eq!(parse("S\t1280\t\t5\t-2"), Some(Report::Spot { path: String::new(), x: 5.0, y: 0.0 }));
+        assert_eq!(parse("S\t1280\t1');alert(1);('\t0\t0"), None, "a path is only numbers");
+        assert!(is_path("") && is_path("1.22.3") && !is_path("1..2") && !is_path("a") && !is_path("1."));
+        assert!(restore("x'); evil('", 0.0, f32::NAN).contains("restore('', 0, 0)"));
+        assert!(restore("1.2", 3.0, 40.5).contains("restore('1.2', 3, 40.5)"));
+        assert!(spot(None).contains("spot(-1)") && spot(Some(4)).contains("spot(4)"));
+    }
 
     #[test]
     fn parses_a_list() {

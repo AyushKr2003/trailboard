@@ -11,7 +11,7 @@
 //!   the keys, Esc takes them back (the card stays current) and a second Esc lets go
 //!   of the card, Delete or d closes it (u reopens), Q quits. Board keys (f, N, T, S, O, R, C, [, ])
 //!   act on the current card, else the one in the middle of the view.
-//! - B opens the trails sidebar (`scene::sidebar`, `sidebar`) with the keys:
+//! - Ctrl+B opens the trails sidebar (`scene::sidebar`, `sidebar`) with the keys:
 //!   j/k move its highlight and go to that card, h/l collapse / expand a trail,
 //!   Enter gives a card's page the keys (or toggles a trail), r names the
 //!   row's trail, Esc or B closes it. Clicks on a row do the same (a
@@ -94,6 +94,7 @@ use std::time::{Duration, Instant};
 use compositor::{Background, Layer, Quad, Renderer, Shape, Text};
 use scene::arrange::Arrange;
 use scene::hint;
+use scene::jump::{self, Before, BoardSpot, ScrollSpot};
 use scene::keys::{self, Action as KeyAction, Outcome};
 use scene::nav::{self, Dir};
 use scene::pagezoom::{self, SiteZooms};
@@ -295,6 +296,15 @@ enum SectionAsk {
     Name,
 }
 
+/// Why a card's scroll spot was asked for (M12 step 9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpotAsk {
+    /// `m` then a lower-case letter: keep it as that mark.
+    Mark(char),
+    /// A jump to a mark starts: keep it for `''`.
+    Before,
+}
+
 /// A brief outline around the section a key just chose or scrolled.
 struct ScrollFlash {
     id: NodeId,
@@ -380,6 +390,19 @@ pub struct App {
     omnibox: Option<Omnibox>,
     /// Lines run on the `:` command line, newest first (`storage::commands`).
     recent_commands: scene::command::Recent,
+    /// Every space's jump list and marks (`scene::jump`, `storage::jumps`).
+    places: jump::Places,
+    places_dirty: bool,
+    /// Ctrl+o / Ctrl+i are moving: the card gone to isn't a new visit.
+    jumping: bool,
+    /// Where the last jump left from (`''`).
+    before: Option<Before>,
+    /// A scroll spot asked of a card's page, and what for.
+    spot_ask: Option<(NodeId, SpotAsk)>,
+    /// A mark's scroll spot to go to once the card's page has loaded.
+    restore_due: HashMap<NodeId, ScrollSpot>,
+    /// Saved pages (`scene::saved`, `storage::saved`).
+    saved_pages: scene::saved::Saved,
     menu: Option<ContextMenu>,
     /// Where the title-bar shields were drawn last frame (screen px, with a
     /// little room around them), for clicks.
@@ -413,7 +436,7 @@ pub struct App {
     /// The CSS size each live card's last uploaded frame was laid out at, so
     /// a frame from before a resize is drawn at its own size, not stretched.
     page_css: HashMap<NodeId, (f32, f32)>,
-    /// The trails sidebar (B): collapsed groups, highlight and scroll.
+    /// The trails sidebar (Ctrl+B): collapsed groups, highlight and scroll.
     sidebar: scene::sidebar::Sidebar,
     sidebar_open: bool,
     /// The sidebar has the keys (j/k move its highlight).
@@ -682,6 +705,8 @@ impl App {
         let sites = storage::sitesettings::load_sites(&data_dir);
         let start_page = storage::start::load_start(&data_dir);
         let recent_commands = storage::commands::load_recent(&data_dir);
+        let places = storage::jumps::load(&data_dir);
+        let saved_pages = storage::saved::load(&data_dir);
         let lookup = zooms.clone();
         web::set_page_zoom(move |url| lookup.borrow().get(url));
         let icons = storage::icons::load_icons(&data_dir)
@@ -725,6 +750,13 @@ impl App {
             forwarded: HashSet::new(),
             omnibox: None,
             recent_commands,
+            places,
+            places_dirty: false,
+            jumping: false,
+            before: None,
+            spot_ask: None,
+            restore_due: HashMap::new(),
+            saved_pages,
             menu: None,
             shields: Vec::new(),
             tags: Vec::new(),
@@ -859,7 +891,19 @@ impl App {
             Ok(()) => self.dirty = false,
             Err(e) => log::error!("saving board to {}: {e}", path.display()),
         }
+        self.save_places();
         self.last_save = Instant::now();
+    }
+
+    /// Jump lists and marks, if they changed.
+    fn save_places(&mut self) {
+        if !self.places_dirty || !self.persist {
+            return;
+        }
+        match storage::jumps::save(&self.data_dir, &self.places) {
+            Ok(()) => self.places_dirty = false,
+            Err(e) => log::error!("saving jumps and marks: {e}"),
+        }
     }
 
     fn save_index(&self) {
@@ -871,7 +915,7 @@ impl App {
     }
 
     fn autosave(&mut self) {
-        if self.dirty && self.last_save.elapsed() > Duration::from_secs(3) && matches!(self.drag, Drag::None) {
+        if (self.dirty || self.places_dirty) && self.last_save.elapsed() > Duration::from_secs(3) && matches!(self.drag, Drag::None) {
             self.save();
         }
     }
@@ -1034,6 +1078,8 @@ impl App {
         self.use_clock = 0;
         self.focused = None;
         self.alt_card = None;
+        self.spot_ask = None;
+        self.restore_due.clear();
         self.note_target = None;
         self.keys_in_page = false;
         self.selection.clear();
@@ -1066,6 +1112,14 @@ impl App {
         self.load_board();
         self.camera_moved();
         self.dirty = false;
+        // Cards closed in an earlier run are gone for good; this run's closed
+        // cards (reopened with u) keep theirs.
+        let closed: HashSet<NodeId> = self.closed.iter().map(|(n, _)| n.id).collect();
+        let before = self.places.spaces.get(&self.spaces.active.0).cloned();
+        self.places.prune(self.spaces.active.0, |id| self.scene.node(id).is_some() || closed.contains(&id));
+        if self.places.spaces.get(&self.spaces.active.0) != before.as_ref() {
+            self.places_dirty = true;
+        }
         log::info!("space {} {:?}: {} cards", self.spaces.active.0, self.spaces.active_entry().name, self.scene.nodes().count());
         self.toast(self.space_label());
     }
@@ -1247,6 +1301,11 @@ impl App {
         self.unload_space();
         self.sessions.remove(&gone);
         let Some(next) = self.spaces.remove(gone) else { return };
+        self.places.forget_space(gone.0);
+        self.places_dirty = true;
+        if matches!(&self.before, Some(Before::Board(b)) if b.space == gone.0) {
+            self.before = None;
+        }
         if self.persist
             && let Err(e) = spaces::discard_space(&self.data_dir, gone)
         {
@@ -1957,9 +2016,15 @@ impl App {
         }
         if let (Some(old), Some(_)) = (self.focused, id) {
             self.alt_card = Some(old);
+            // Going to another card is a jump: '' comes back here.
+            self.before = Some(Before::Board(self.board_spot()));
         }
         self.focused = id;
         if let Some(id) = id {
+            if !self.jumping {
+                self.places.space(self.spaces.active.0).jumps.visit(id);
+                self.places_dirty = true;
+            }
             if self.scene.node(id).is_some_and(Node::is_note) {
                 self.note_target = Some(id);
             }
@@ -2212,9 +2277,252 @@ impl App {
             }
             KeyAction::CloseOthers => self.ask_close_others(),
             KeyAction::Clone => self.clone_card(),
+            KeyAction::JumpBack | KeyAction::JumpForward => self.walk_jumps(action == KeyAction::JumpBack, times as usize),
+            KeyAction::SetMark(c) => self.set_mark(c),
+            KeyAction::GoMark(c) => self.go_mark(c),
+            KeyAction::OpenSaved | KeyAction::OpenSavedBeside => self.ask_saved(action == KeyAction::OpenSavedBeside),
+            KeyAction::Sidebar => {
+                // From a page: back to the board, where the sidebar takes the keys.
+                if self.read.is_none() {
+                    self.leave_page();
+                    self.toggle_sidebar();
+                }
+            }
             _ => return false,
         }
         true
+    }
+
+    // ------------------------------------------------------------ jumps, marks, saved pages
+
+    /// Where we are on the board now, for a board mark or `''`.
+    fn board_spot(&self) -> BoardSpot {
+        BoardSpot { space: self.spaces.active.0, card: self.focused, camera: self.camera_goal.unwrap_or(self.camera) }
+    }
+
+    /// Ctrl+o / Ctrl+i: `n` cards back / forward through the cards visited
+    /// in this space (closed ones skipped). The keys stay in a page.
+    fn walk_jumps(&mut self, back: bool, n: usize) {
+        let scene = &self.scene;
+        let alive = |id: NodeId| scene.node(id).is_some();
+        let jumps = &mut self.places.spaces.entry(self.spaces.active.0).or_default().jumps;
+        let to = if back { jumps.back(n, self.focused, alive) } else { jumps.forward(n, self.focused, alive) };
+        let Some(to) = to else {
+            self.toast(if back { "No card visited before this one" } else { "No card visited after this one" });
+            return;
+        };
+        self.places_dirty = true;
+        log::info!("jumps: {} to card {}", if back { "back" } else { "forward" }, to.0);
+        self.jumping = true;
+        self.switch_card(to);
+        self.jumping = false;
+    }
+
+    /// `m` / `M` then a letter: a lower-case mark keeps the current card's
+    /// scroll spot (asked of its page), an upper-case one the board spot.
+    fn set_mark(&mut self, c: char) {
+        if jump::is_board_mark(c) {
+            let spot = self.board_spot();
+            log::info!("mark {c}: space {} card {:?}", spot.space, spot.card.map(|n| n.0));
+            self.places.board.insert(c, spot);
+            self.places_dirty = true;
+            self.toast(format!("Mark {c} set: this spot on the board ('{c} comes back)"));
+            return;
+        }
+        if !jump::is_card_mark(c) {
+            self.toast(format!("“{c}” isn't a mark: a–z or A–Z"));
+            return;
+        }
+        let Some(id) = self.focused.filter(|id| self.cards.contains_key(id)) else {
+            self.toast("Pick a page to mark first");
+            return;
+        };
+        let target = self.scroll_targets.get(&id).copied();
+        self.cards[&id].page.scroll_command(&web::scroll::spot(target));
+        self.spot_ask = Some((id, SpotAsk::Mark(c)));
+    }
+
+    /// `'` then a letter: a lower-case mark scrolls the current card's page
+    /// back to its spot (loading its address again if the page moved on);
+    /// an upper-case one goes to its board spot, in its space. `''` goes
+    /// back to where the last jump left from.
+    fn go_mark(&mut self, c: char) {
+        if c == '\'' {
+            match self.before.clone() {
+                Some(Before::Board(spot)) => self.go_board_spot(spot, None),
+                Some(Before::Scroll(id, spot)) if self.scene.node(id).is_some() => {
+                    if self.focused != Some(id) {
+                        self.switch_card(id);
+                    }
+                    self.go_scroll_spot(id, spot);
+                }
+                _ => self.toast("No jump to go back from"),
+            }
+            return;
+        }
+        if jump::is_board_mark(c) {
+            match self.places.board.get(&c).copied() {
+                Some(spot) => self.go_board_spot(spot, Some(c)),
+                None => self.toast(format!("No mark {c} · M{c} on the board or m{c} in a page sets it")),
+            }
+            return;
+        }
+        let Some(id) = self.focused.filter(|id| self.scene.node(*id).is_some()) else {
+            self.toast("Pick a card first");
+            return;
+        };
+        match self.places.card_mark(self.spaces.active.0, id, c).cloned() {
+            Some(spot) => self.go_scroll_spot(id, spot),
+            None => {
+                let have = self.places.letters(self.spaces.active.0, id);
+                let have = if have.is_empty() { String::new() } else { format!(" · marks here: {have}") };
+                self.toast(format!("No mark {c} on this card{have}"));
+            }
+        }
+    }
+
+    /// A board spot: its space (if it is another), its card (if still
+    /// there) and its camera. The spot left becomes `''`'s.
+    fn go_board_spot(&mut self, spot: BoardSpot, mark: Option<char>) {
+        let from = self.board_spot();
+        let other_space = spot.space != self.spaces.active.0;
+        if other_space {
+            let Some(space) = self.spaces.spaces.iter().find(|s| s.id.0 == spot.space).map(|s| s.id) else {
+                self.toast("That spot's space is gone");
+                return;
+            };
+            if self.read.is_some() {
+                self.leave_read();
+            }
+            self.switch_space(space);
+        }
+        match spot.card.filter(|&id| self.scene.node(id).is_some()) {
+            Some(id) => self.switch_card(id),
+            None if spot.card.is_some() => self.toast(match mark {
+                Some(c) => format!("Mark {c}'s card is closed; here is where it was"),
+                None => "That card is closed; here is where it was".to_string(),
+            }),
+            None => {}
+        }
+        if self.read.is_none() {
+            if other_space || self.still {
+                self.camera = spot.camera;
+                self.camera_goal = None;
+                self.camera_moved();
+            } else {
+                self.camera_goal = Some(spot.camera);
+            }
+        }
+        self.before = Some(Before::Board(from));
+        log::info!("to board spot {:?} in space {} (mark {mark:?})", spot.card.map(|n| n.0), spot.space);
+    }
+
+    /// Card `id`'s page back to a scroll spot; where it is now is kept for
+    /// `''` first. A page that has moved on loads the spot's address and
+    /// scrolls once it has loaded.
+    fn go_scroll_spot(&mut self, id: NodeId, spot: ScrollSpot) {
+        let Some(url) = self.scene.node(id).map(|n| n.url.clone()) else { return };
+        self.create_page(id);
+        let Some(card) = self.cards.get(&id) else { return };
+        let target = self.scroll_targets.get(&id).copied();
+        card.page.scroll_command(&web::scroll::spot(target));
+        self.spot_ask = Some((id, SpotAsk::Before));
+        if jump::same_page(&spot.url, &url) && !card.loading {
+            card.page.scroll_command(&web::scroll::restore(&spot.path, spot.x, spot.y));
+            log::info!("card {}: to scroll spot {:?} {},{}", id.0, spot.path, spot.x, spot.y);
+        } else if jump::same_page(&spot.url, &url) {
+            self.restore_due.insert(id, spot);
+        } else if card.page.kind() == web::PageKind::Web {
+            log::info!("card {}: loading {} for its mark", id.0, spot.url);
+            card.page.load(&spot.url);
+            self.restore_due.insert(id, spot);
+        } else {
+            self.toast("That mark is on another page");
+        }
+    }
+
+    /// A card's page has loaded: a mark waiting for it scrolls there.
+    fn restore_after_load(&mut self, id: NodeId) {
+        let Some(spot) = self.restore_due.remove(&id) else { return };
+        if let Some(c) = self.cards.get(&id) {
+            log::info!("card {}: loaded; to scroll spot {:?} {},{}", id.0, spot.path, spot.x, spot.y);
+            c.page.scroll_command(&web::scroll::restore(&spot.path, spot.x, spot.y));
+        }
+    }
+
+    /// A page answered where it is scrolled ([`SpotAsk`]).
+    fn got_spot(&mut self, id: NodeId, path: String, x: f32, y: f32) {
+        let Some((_, why)) = self.spot_ask.filter(|(n, _)| *n == id) else {
+            log::debug!("scroll spot from card {} not asked for", id.0);
+            return;
+        };
+        self.spot_ask = None;
+        let Some(url) = self.scene.node(id).map(|n| n.url.clone()) else { return };
+        let spot = ScrollSpot { url, path, x, y };
+        match why {
+            SpotAsk::Mark(c) => {
+                log::info!("mark {c} on card {}: {:?} {x},{y}", id.0, spot.path);
+                self.places.set_card_mark(self.spaces.active.0, id, c, spot);
+                self.places_dirty = true;
+                self.toast(format!("Mark {c} set: this spot in the page ('{c} comes back)"));
+            }
+            SpotAsk::Before => self.before = Some(Before::Scroll(id, spot)),
+        }
+    }
+
+    /// b / B: the command line with the saved pages listed, to open one
+    /// here / beside.
+    fn ask_saved(&mut self, beside: bool) {
+        if self.saved_pages.pages().is_empty() {
+            self.toast("No saved pages yet · :save-page saves the current one");
+            return;
+        }
+        self.open_command_line();
+        if let Some(ob) = self.omnibox.as_mut() {
+            ob.insert(if beside { "saved-beside " } else { "saved " });
+        }
+    }
+
+    fn save_saved(&self) {
+        if self.persist
+            && let Err(e) = storage::saved::save(&self.data_dir, &self.saved_pages)
+        {
+            log::error!("saving saved pages: {e}");
+        }
+    }
+
+    /// `:save-page [name]`: the current card's page, under a name.
+    fn save_page(&mut self, name: Option<&str>) {
+        let Some(id) = self.focused.filter(|id| self.cards.get(id).is_some_and(|c| c.page.kind() == web::PageKind::Web)) else {
+            self.toast("Pick a web page to save first");
+            return;
+        };
+        let Some(n) = self.scene.node(id) else { return };
+        let (url, title) = (n.url.clone(), n.title.clone());
+        use scene::saved::Outcome;
+        match self.saved_pages.save(name, &url, &title, now_ms()) {
+            Ok(out) => {
+                log::info!("saved pages: {out:?} {url}");
+                self.save_saved();
+                self.toast(match out {
+                    Outcome::Added(n) => format!("Saved as “{n}” · b opens it"),
+                    Outcome::Replaced(n) => format!("“{n}” now opens this page"),
+                    Outcome::Already(n) => format!("Saved already, as “{n}”"),
+                });
+            }
+            Err(e) => self.toast(e),
+        }
+    }
+
+    /// The saved page `typed` names, or a toast.
+    fn saved_url(&mut self, typed: &str) -> Option<String> {
+        match self.saved_pages.find(typed) {
+            Some(p) => Some(p.url.clone()),
+            None => {
+                self.toast(format!("No saved page called “{typed}”"));
+                None
+            }
+        }
     }
 
     /// Makes card `to` current from a key: shown if folded away, brought on
@@ -2484,6 +2792,10 @@ impl App {
     /// An answer from card `id`'s page about its scroll sections.
     fn got_scroll(&mut self, id: NodeId, report: web::scroll::Report) {
         use web::scroll::{Note, Report};
+        if let Report::Spot { path, x, y } = report {
+            self.got_spot(id, path, x, y);
+            return;
+        }
         let Some((_, css)) = self.page_view(id) else { return };
         let scaled = |width: f32, r: [f32; 4]| {
             let k = css.x / width.max(1.0);
@@ -2531,6 +2843,7 @@ impl App {
                     SectionAsk::Name => {}
                 }
             }
+            Report::Spot { .. } => {}
             Report::Did { width, scrolled, rect, pct, note, reset } => {
                 if self.focused != Some(id) {
                     return;
@@ -2790,7 +3103,7 @@ impl App {
             }
             Some(KeyCode::KeyP) => self.sidebar_pin(&rows),
             Some(KeyCode::KeyR) => self.sidebar_name(&rows),
-            Some(KeyCode::Escape | KeyCode::KeyB) => self.close_sidebar(),
+            Some(KeyCode::Escape) => self.close_sidebar(),
             _ => return false,
         }
         self.sidebar_scroll_to_sel();
@@ -2985,19 +3298,21 @@ impl App {
 
     /// Values the command line offers for an argument: the spaces' names
     /// (this one last) or the cards' titles (most recently used first).
-    fn command_values(&self, kind: scene::command::Kind) -> Vec<String> {
+    fn command_values(&self, kind: scene::command::Kind) -> Vec<(String, String)> {
         use scene::command::Kind;
+        let plain = |v: Vec<String>| v.into_iter().map(|v| (v, String::new())).collect();
         match kind {
+            Kind::Saved => self.saved_pages.pages().iter().map(|p| (p.name.clone(), palette::host(&p.url).to_string())).collect(),
             Kind::Space => {
                 let mut names: Vec<String> = self.spaces.spaces.iter().filter(|s| s.id != self.spaces.active).map(|s| s.name.clone()).collect();
                 names.push(self.spaces.active_entry().name.clone());
-                names
+                plain(names)
             }
             Kind::Card => {
                 let mut cards: Vec<&Node> = self.scene.all_nodes().filter(|n| !n.title.trim().is_empty()).collect();
                 cards.sort_by_key(|n| std::cmp::Reverse((self.used.get(&n.id).copied().unwrap_or(0), n.z)));
                 let mut seen = HashSet::new();
-                cards.into_iter().map(|n| n.title.trim().to_string()).filter(|t| seen.insert(t.clone())).collect()
+                plain(cards.into_iter().map(|n| n.title.trim().to_string()).filter(|t| seen.insert(t.clone())).collect())
             }
             _ => Vec::new(),
         }
@@ -3109,6 +3424,27 @@ impl App {
             }
             Cmd::CardOnly => self.ask_close_others(),
             Cmd::Clone => self.clone_card(),
+            Cmd::Saved => match self.saved_url(&arg) {
+                Some(u) if self.focused_page().is_some() => self.load_here(&u),
+                Some(u) if self.new_card_at_center(&u).is_some() => self.give_keys(PageKeys::Page),
+                _ => {}
+            },
+            Cmd::SavedBeside => {
+                if let Some(u) = self.saved_url(&arg) {
+                    self.open_beside_current(&u);
+                }
+            }
+            Cmd::SavePage => self.save_page(parsed.arg.as_deref()),
+            Cmd::Mark | Cmd::ToMark => {
+                let mut cs = arg.chars();
+                match (cs.next(), cs.next()) {
+                    (Some(c), None) if parsed.spec.cmd == Cmd::Mark => self.set_mark(c),
+                    (Some(c), None) if jump::is_card_mark(c) || jump::is_board_mark(c) || c == '\'' => self.go_mark(c),
+                    _ => self.toast("A mark is one letter: a–z or A–Z"),
+                }
+            }
+            Cmd::JumpBack => self.walk_jumps(true, parsed.count().unwrap_or(1).min(100) as usize),
+            Cmd::JumpForward => self.walk_jumps(false, parsed.count().unwrap_or(1).min(100) as usize),
             Cmd::Card if arg.parse::<usize>().is_ok() => {
                 // A number counts in reading order (`:card 3`).
                 let n: usize = arg.parse().unwrap_or(0);
@@ -4051,8 +4387,26 @@ impl App {
     fn forget_selected(&mut self) {
         let Some(ob) = self.omnibox.as_ref() else { return };
         let row = self.list_rows(ob).into_iter().nth(ob.sel);
-        if let Some(palette::Item::Recent(line)) = row.as_ref().map(|r| &r.item) {
-            if self.recent_commands.forget(line) {
+        // A saved page in the `saved` list: forget it.
+        let saved = match row.as_ref().map(|r| &r.item) {
+            Some(palette::Item::Complete(line)) => scene::command::parse(line)
+                .ok()
+                .filter(|p| matches!(p.spec.cmd, scene::command::Cmd::Saved | scene::command::Cmd::SavedBeside))
+                .and_then(|p| p.arg),
+            _ => None,
+        };
+        let forgot_saved = saved.is_some_and(|name| {
+            let gone = self.saved_pages.remove(&name);
+            if let Some(p) = &gone {
+                log::info!("saved pages: forgot {:?} ({})", p.name, p.url);
+                self.save_saved();
+            }
+            gone.is_some()
+        });
+        if forgot_saved || matches!(row.as_ref().map(|r| &r.item), Some(palette::Item::Recent(_))) {
+            if let Some(palette::Item::Recent(line)) = row.as_ref().map(|r| &r.item)
+                && self.recent_commands.forget(line)
+            {
                 log::info!("command line: forgot {line:?}");
                 self.save_recent_commands();
             }
@@ -5337,6 +5691,7 @@ impl App {
                         self.text_due.remove(&id);
                     } else {
                         self.text_due.insert(id, Instant::now() + TEXT_SETTLE);
+                        self.restore_after_load(id);
                     }
                 }
                 WebEvent::PageText { page, url, title, text } => {
@@ -8382,6 +8737,14 @@ impl App {
                         self.focused.map(|f| f.0), self.entered(), self.page_keys, self.read.map(|r| r.0),
                         scene::tidy::order(&self.scene).iter().map(|i| i.0).collect::<Vec<_>>()
                     );
+                    if let Some(sp) = self.places.spaces.get(&self.spaces.active.0) {
+                        log::info!(
+                            "script jumps: {:?} at={} marks={:?} board_marks={:?} before={:?}",
+                            sp.jumps.cards().iter().map(|i| i.0).collect::<Vec<_>>(), sp.jumps.at(),
+                            sp.marks.iter().map(|(id, m)| (id.0, m.keys().collect::<String>())).collect::<Vec<_>>(),
+                            self.places.board.keys().collect::<String>(), self.before
+                        );
+                    }
                     let l = self.read_layout();
                     log::info!(
                         "script read: {:?} css={:?} page_scale={} focused={:?} keys_in_page={} mode={} camera=({:.0},{:.0} z{:.3})",

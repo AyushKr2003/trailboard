@@ -55,7 +55,7 @@ app (trailboard)  winit window · input · omnibox · chrome UI · main loop
 | ✅ | M9 Packaging | Bundle script, `--version`, crash reports, PKGBUILD, Chromium sandbox, first-run welcome |
 | ⬜ | M10 Optional extras | See below; most items on hold |
 | ✅ | M11 Premium look | Corners setting, cards as sheets, board backgrounds, sidebar, command bar, motion, empty board, review pass |
-| 🟡 | **M12 Keyboard first** | Vim-like modes, page keys, scroll sections, command line, cards from a page, search keywords, then (steps 9–17) marks, user keys, settings, navigation, caret mode, dialogs (below) |
+| 🟡 | **M12 Keyboard first** | Vim-like modes, page keys, scroll sections, command line, cards from a page, search keywords, jumps and marks, then (steps 10–17) user keys, settings, navigation, caret mode, dialogs (below) |
 | ⬜ | **M13 Full media support** | Our own CEF build with H.264/AAC (and HEVC, Widevine if they work), built off this machine, opt-in (below) |
 
 ### Owner decisions that still bind
@@ -80,7 +80,8 @@ app (trailboard)  winit window · input · omnibox · chrome UI · main loop
   Shift+h/j/k/l pan, +/- zoom, f link hints (open beside), Shift+F fit, Ctrl+d/u
   scroll the current page half a height (since M12 step 7; d/u close and reopen), v select,
   z fill, M arrange, N note, Shift+N sticky, T tidy, S fold, `[`/`]` stack,
-  O outline, R/C trail name/colour, B sidebar, Tab Solo, Delete close,
+  O outline, R/C trail name/colour, Ctrl+B sidebar (b/B saved pages since
+  step 9), Tab Solo, Delete close,
   Q quit, `?` sheet. Ctrl+K palette, Ctrl+L address, Ctrl+F find, Ctrl+H
   history, Ctrl+J downloads, Ctrl+T/W new/close, Alt+arrows back/forward.
 - Bare keys are never taken from a text field.
@@ -472,7 +473,67 @@ marked **Ask** are the owner's call and get asked when their step starts
     Rust docs search. Not verified: removing with × and editing by a
     click (only the reset button, pressed by mistake in one run), the
     narrow-card layout of the table, the light theme, a real keyboard.
-- ⬜ 9. **Jumps, marks and saved pages.**
+- ✅ 9. **Jumps, marks and saved pages** (2026-11-20; `scene::jump`,
+  `scene::saved`, `storage::jumps`, `storage::saved`, `web::scroll`
+  `spot`/`restore`, `App::walk_jumps`, `App::set_mark`, `App::go_mark`).
+  Decisions:
+  - Jump list: every card made current counts as a visit (keys, clicks,
+    the palette, a new card), except the Ctrl+o / Ctrl+i moves themselves.
+    One list per space, oldest first, each card once (a card visited
+    again moves to the end, as vim's jump list does; going back and then
+    visiting doesn't cut the newer entries off). At most 100. Closed cards
+    are skipped while walking and dropped when a space loads (this run's
+    closed cards stay, for u). With nothing current (after a restart),
+    Ctrl+o goes to the newest card first. A count walks that many.
+  - Card marks (`a`–`z`) are per card and per space: the page's address,
+    the scroll section (a path of child numbers from the document root,
+    `""` for the page; a section inside a shadow root falls back to the
+    page) and its position. `'a` on the same page (fragment aside)
+    scrolls at once; a page that moved on (or is still loading) loads the
+    mark's address and scrolls when loading ends. Only web pages load.
+  - Board marks (`A`–`Z`) are one per letter across spaces: space, current
+    card and camera. Going to one switches space if needed, goes to the
+    card (toast if it was closed) and glides the camera there (jumps at
+    once across spaces or with motion off).
+  - `''` (and ``` `` ```): every card change and every mark jump keeps where
+    it left from (board spot, or the page's scroll spot for a card mark);
+    `''` goes there, so twice comes back. Not kept across restarts.
+  - On the board `m` stays *move the card* (m then h/j/k/l), so marks are
+    set with `M` + letter there; in a page `m` + letter. `'` and `` ` ``
+    go to marks on both. Ctrl+b in a page leaves the page and opens the
+    sidebar with the keys (not in Solo). In the sidebar, bare b no longer
+    closes it (Esc or Ctrl+b).
+  - Saved pages: one list for all spaces, newest first, names unique
+    ignoring case (saving under a taken name replaces it); no name → the
+    page's title, else its host; saving a page saved already without a
+    name says under which name. Only web pages (not notes, start or app
+    pages). `:saved` needs a name, so `b` → Enter opens the highlighted
+    (newest) page and `:saved` alone lists the names; `here` follows
+    `:open` (this card's page, else a new card in Page mode). Shift+Delete
+    on a row of the `saved` / `saved-beside` list forgets it. b with
+    nothing saved toasts how to save one.
+  - Files: `jumps.json` (`version` 1: jump lists, card marks, board
+    marks) and `saved.json` (`version` 1), atomic writes; jumps are saved
+    with the board (autosave), saved pages at once. Deleting a space drops
+    its jumps and marks.
+  - Commands: `saved <name>`, `saved-beside <name>`, `save-page [name]`,
+    `mark <letter>`, `to-mark <letter>` (`'` too), `jump-back [n]`,
+    `jump-forward [n]`. Value rows can carry their own detail (a saved
+    page's host). `:t` is now ambiguous between `to-mark`, `tidy`, `tint`.
+  - Verified e2e (`~/.cache/trailboard-e2e-m12`, `script23`–`script25`,
+    page `site/long.html` whose title is its scroll position): `20j` `ma`
+    `gg` `'a` → y=1200, `''` → 0, `''` → 1200; `mA` (`mark_toast.png`);
+    Ctrl+o / `2` Ctrl+o / Ctrl+i over four cards; `'A` back to the long
+    card; `:save-page Long one` (`saved_toast.png`); in a new space `b`
+    lists it (`saved_list.png`) and Enter opens it; `'A` from that space
+    switches back; Ctrl+b opens and closes the sidebar; B + Shift+Delete
+    forgets the page and b then toasts; after a restart (`run_keep.sh 24`)
+    Ctrl+o and `'a` work from `jumps.json`; a mark in `sec.html`'s inner
+    pane (path `1.1.1.1`) comes back to 39 %. Not verified: a real
+    keyboard (`'` and `` ` `` on non-US layouts, Ctrl+i vs Tab), a mark
+    whose page moved on (load then scroll), Solo with board marks, the
+    light theme.
+  - Planned:
   - `Ctrl+o` / `Ctrl+i` back / forward through the cards visited (a jump
     list per space, kept across restarts).
   - `m{a-z}` / `'{a-z}`: a lower-case mark is this card's scroll spot, an
@@ -670,14 +731,16 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-20 (twenty-sixth). Finished M12 step 8, search
-keywords: `scene::search` resolves typed text (address, `gh foo`, default
-engine) for every address entry point; a keyword table in Settings;
-`settings.json` version 2 with a migration from 1.
-**Repo state:** on `master`; M12 steps 1–8 done and committed; M12 steps 9–17 and M13 planned.
-**Next up:** M12 step 9, jumps, marks and saved pages (`Ctrl+o`/`Ctrl+i`,
-`m{a-z}`/`'{a-z}`, saved pages on `b`/`B`, the sidebar moving to
-`Ctrl+B`; owner's answers recorded under step 9). Steps 10–17 follow in
+**Last session:** 2026-11-20 (twenty-seventh). Finished M12 step 9,
+jumps, marks and saved pages: Ctrl+o / Ctrl+i over a per-space jump list,
+`m`/`M` + letter and `'` + letter marks (page scroll spots, board spots
+across spaces), `''`, saved pages (`:save-page`, b / B, `:saved`), the
+sidebar on Ctrl+b; new files `jumps.json` and `saved.json`.
+**Repo state:** on `master`; M12 steps 1–9 done (step 9 not yet
+committed); M12 steps 10–17 and M13 planned.
+**Next up:** M12 step 10, the user key file and external commands
+(`$CONFIG/trailboard/keys`, `:bind`, `:unbind`, `:reload-keys`, `:run`,
+the `?` sheet built from the live tables). Steps 11–17 follow in
 order. M13 (full media support, our own CEF build) runs beside M12; its
 builds need a cloud machine. Still open from step 2: the per-site "start
 in Insert" setting (fits step 11). Also retake the README screenshots

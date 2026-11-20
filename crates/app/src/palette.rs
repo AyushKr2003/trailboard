@@ -101,7 +101,7 @@ pub const COMMANDS: &[CommandInfo] = &[
     c(Command::Outline, "List a stack's pages", "O", "outline stack"),
     c(Command::NameTrail, "Name trail", "R", "rename label"),
     c(Command::ColourTrail, "Next trail colour", "C", "color sticky"),
-    c(Command::Sidebar, "Trails sidebar", "B", "list tree panel"),
+    c(Command::Sidebar, "Trails sidebar", "Ctrl+B", "list tree panel"),
     c(Command::Read, "Solo", "Tab", "read mode fullscreen focus fill window alone"),
     c(Command::LinkHints, "Follow a link", "f", "link hints keyboard"),
     c(Command::Arrange, "Move or resize card", "M", "arrange keyboard"),
@@ -425,7 +425,7 @@ pub const MAX_RECENT_ROWS: usize = 5;
 /// itself, when it is a whole command; then lines run before that start
 /// with it; then what completes it (`scene::command::complete`, with
 /// `values` giving space names and card titles).
-pub fn command_rows(text: &str, recent: &command::Recent, values: &dyn Fn(command::Kind) -> Vec<String>) -> Vec<Row> {
+pub fn command_rows(text: &str, recent: &command::Recent, values: &dyn Fn(command::Kind) -> Vec<(String, String)>) -> Vec<Row> {
     let row = |item, label: String, detail: String, positions, history: Option<String>| Row { item, label, detail, positions, dot: None, history };
     let mut out = Vec::new();
     let typed = text.trim_start_matches(':').trim();

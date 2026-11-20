@@ -31,6 +31,21 @@ All notable changes to Trailboard. The format follows
     you stay where you are, ;m keeps the labels up to open several that way
     (chosen ones dim; Esc ends), ;e types in a field. The corner says what
     the labels do.
+- **Jumps, marks and saved pages.** Ctrl+O / Ctrl+I go back and forward
+  through the cards you visited in a space (a number goes that many;
+  kept across restarts). In a page, m then a letter marks where it is
+  scrolled (its scroll area too) and ' then the letter brings it back,
+  loading the page again if the card has moved on; an upper-case letter
+  marks the board spot (space, card and view) and ' then it goes back
+  there from any space. On the board, M sets a mark (m still moves the
+  card). '' goes back to where the last jump left from. `:save-page
+  [name]` keeps the page under a name; b opens a saved page here and B
+  beside the card (a list you can type to narrow; Shift+Delete forgets
+  one), also `:saved` and `:saved-beside`. New files `jumps.json` and
+  `saved.json`. New commands: `:mark`, `:to-mark`, `:jump-back`,
+  `:jump-forward`.
+  - **Changed:** the trails sidebar is now Ctrl+B (on the board and from
+    a page); b / B open saved pages.
 - **Search keywords.** Type a keyword, a space and your search in the
   address bar, o, O, `:open`, a start page or the palette to search one
   site: `gh trailboard` searches GitHub, `w rust` Wikipedia, `g`, `b`,

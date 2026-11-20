@@ -457,6 +457,21 @@ pub enum Action {
     CloseOthers,
     /// Open the card's page again beside it (`gC`).
     Clone,
+    // Jumps, marks and saved pages (M12 step 9).
+    /// Back / forward through the cards visited (`Ctrl+o` / `Ctrl+i`).
+    JumpBack,
+    JumpForward,
+    /// Set mark `c` (`m` then a letter in a page, `M` then a letter on
+    /// the board): a lower-case letter the card's scroll spot, an
+    /// upper-case one the board spot.
+    SetMark(char),
+    /// Go to mark `c` (`'` then a letter); `'` itself is the spot before
+    /// the last jump (`''`).
+    GoMark(char),
+    /// Open a saved page here / beside (`b` / `B`): the command line's
+    /// `saved` list.
+    OpenSaved,
+    OpenSavedBeside,
 }
 
 impl Action {
@@ -478,6 +493,8 @@ impl Action {
                 | Action::NextCard
                 | Action::PrevCard
                 | Action::Reopen
+                | Action::JumpBack
+                | Action::JumpForward
         )
     }
 }
@@ -524,7 +541,8 @@ pub fn board() -> Bindings<Action> {
         ("m", Arrange),
         ("n", NewNote),
         ("N", NewSticky),
-        ("b", Sidebar),
+        // Owner (2026-11-20): b / B open saved pages and the sidebar is
+        // Ctrl+b (`bind_jumps`).
         ("v", Select),
         ("<C-a>", SelectAll),
         ("z", Fill),
@@ -558,7 +576,41 @@ pub fn board() -> Bindings<Action> {
     }
     bind_hint_kinds(&mut b);
     bind_card_numbers(&mut b);
+    // m moves the card on the board (then h/j/k/l), so marks are set with M.
+    bind_marks(&mut b, "M");
+    bind_jumps(&mut b);
     b
+}
+
+/// The mark letters: `a`–`z` (a card's scroll spot) and `A`–`Z` (a board spot).
+pub fn mark_letters() -> impl Iterator<Item = char> {
+    ('a'..='z').chain('A'..='Z')
+}
+
+/// `{set}` then a letter sets a mark; `'` or `` ` `` then a letter goes to
+/// one, and `''` (or ``` `` ```) to the spot before the last jump.
+fn bind_marks(b: &mut Bindings<Action>, set: &str) {
+    for c in mark_letters() {
+        b.bind(&format!("{set}{c}"), Action::SetMark(c)).expect("mark keys parse");
+        b.bind(&format!("'{c}"), Action::GoMark(c)).expect("mark keys parse");
+        b.bind(&format!("`{c}"), Action::GoMark(c)).expect("mark keys parse");
+    }
+    b.bind("''", Action::GoMark('\'')).expect("mark keys parse");
+    b.bind("``", Action::GoMark('\'')).expect("mark keys parse");
+}
+
+/// Ctrl+o / Ctrl+i: back and forward through the cards visited; b / B
+/// saved pages here / beside; Ctrl+b the trails sidebar.
+fn bind_jumps(b: &mut Bindings<Action>) {
+    for (seq, a) in [
+        ("<C-o>", Action::JumpBack),
+        ("<C-i>", Action::JumpForward),
+        ("b", Action::OpenSaved),
+        ("B", Action::OpenSavedBeside),
+        ("<C-b>", Action::Sidebar),
+    ] {
+        b.bind(seq, a).expect("jump keys parse");
+    }
 }
 
 /// `Alt+1`…`Alt+9`: the nth card in reading order (9: the last).
@@ -657,6 +709,8 @@ pub fn page() -> Bindings<Action> {
     }
     bind_hint_kinds(&mut b);
     bind_card_numbers(&mut b);
+    bind_marks(&mut b, "m");
+    bind_jumps(&mut b);
     b
 }
 
@@ -818,8 +872,17 @@ mod tests {
         assert_eq!(get("<C-u>"), Some(Action::ScrollUp));
         assert_eq!(get("<A-3>"), Some(Action::NthCard(3)));
         assert_eq!(get("<C-S-6>"), Some(Action::OtherCard));
-        // Only the hint kinds wait for another key.
-        assert!(b.iter().all(|(seq, a)| seq.len() == 1 || matches!(a, Action::Hint(_))));
+        // Only the hint kinds and marks wait for another key; m stays Arrange.
+        assert!(b.iter().all(|(seq, a)| seq.len() == 1 || matches!(a, Action::Hint(_) | Action::SetMark(_) | Action::GoMark(_))));
+        assert_eq!(get("m"), Some(Action::Arrange));
+        assert_eq!(get("Ma"), Some(Action::SetMark('a')));
+        assert_eq!(get("'B"), Some(Action::GoMark('B')));
+        assert_eq!(get("''"), Some(Action::GoMark('\'')));
+        assert_eq!(get("b"), Some(Action::OpenSaved));
+        assert_eq!(get("B"), Some(Action::OpenSavedBeside));
+        assert_eq!(get("<C-b>"), Some(Action::Sidebar));
+        assert_eq!(get("<C-o>"), Some(Action::JumpBack));
+        assert_eq!(get("<C-i>"), Some(Action::JumpForward));
         assert_eq!(get(";y"), Some(Action::Hint(hint::Kind::Yank)));
         assert_eq!(get(";m"), Some(Action::Hint(hint::Kind::Many)));
     }
@@ -878,6 +941,19 @@ mod tests {
         assert_eq!(feed("gC"), Outcome::Run { action: Action::Clone, count: None });
         assert_eq!(feed("<C-w>l"), Outcome::Run { action: Action::Move(Dir::Right), count: None });
         assert_eq!(feed("<C-w>p"), Outcome::Run { action: Action::OtherCard, count: None });
+        // Jumps, marks and saved pages.
+        assert_eq!(feed("2<C-o>"), Outcome::Run { action: Action::JumpBack, count: Some(2) });
+        assert_eq!(feed("<C-i>"), Outcome::Run { action: Action::JumpForward, count: None });
+        assert_eq!(feed("ma"), Outcome::Run { action: Action::SetMark('a'), count: None });
+        assert_eq!(feed("mZ"), Outcome::Run { action: Action::SetMark('Z'), count: None });
+        assert_eq!(feed("'a"), Outcome::Run { action: Action::GoMark('a'), count: None });
+        assert_eq!(feed("`Z"), Outcome::Run { action: Action::GoMark('Z'), count: None });
+        assert_eq!(feed("''"), Outcome::Run { action: Action::GoMark('\''), count: None });
+        assert_eq!(feed("m"), Outcome::Wait);
+        assert_eq!(feed("1"), Outcome::Unbound { swallow: true }, "not a mark letter");
+        assert_eq!(feed("b"), Outcome::Run { action: Action::OpenSaved, count: None });
+        assert_eq!(feed("B"), Outcome::Run { action: Action::OpenSavedBeside, count: None });
+        assert_eq!(feed("<C-b>"), Outcome::Run { action: Action::Sidebar, count: None });
         // Ctrl+w alone waits, then closes.
         assert_eq!(feed("<C-w>"), Outcome::Wait);
         assert_eq!(p.expire(&b, t + TIMEOUT), Some(Outcome::Run { action: Action::Close, count: None }));

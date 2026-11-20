@@ -30,7 +30,7 @@ impl Control {
     /// What it is called, the keys that do the same, and its icon.
     pub fn info(self) -> (&'static str, &'static str, Icon) {
         match self {
-            Control::Sidebar => ("Trails sidebar", "B", Icon::Sidebar),
+            Control::Sidebar => ("Trails sidebar", "Ctrl+B", Icon::Sidebar),
             Control::Space => ("Spaces", "", Icon::ChevronDown),
         }
     }

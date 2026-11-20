@@ -44,6 +44,13 @@ pub enum Cmd {
     CardPrev,
     CardOnly,
     Clone,
+    Saved,
+    SavedBeside,
+    SavePage,
+    Mark,
+    ToMark,
+    JumpBack,
+    JumpForward,
     Name,
     Colour,
     SelectAll,
@@ -77,6 +84,8 @@ pub enum Kind {
     Space,
     /// A card's title (the app gives the titles).
     Card,
+    /// A saved page's name (the app gives the names).
+    Saved,
     /// A number of times.
     Count,
     /// One of these words (a unique start of one is enough).
@@ -137,6 +146,13 @@ pub const COMMANDS: &[Spec] = &[
     s(Cmd::CardPrev, "card-prev", &[], Opt(Kind::Count), "[times]", "Previous card in reading order"),
     s(Cmd::CardOnly, "card-only", &["only"], No, "", "Close the other cards in this space"),
     s(Cmd::Clone, "clone", &[], No, "", "Open the card's page again beside it"),
+    s(Cmd::Saved, "saved", &[], Req(Kind::Saved), "<name>", "Open a saved page here (Shift+Delete forgets one)"),
+    s(Cmd::SavedBeside, "saved-beside", &[], Req(Kind::Saved), "<name>", "Open a saved page beside the current card"),
+    s(Cmd::SavePage, "save-page", &[], Opt(Kind::Text), "[name]", "Save this page under a name"),
+    s(Cmd::Mark, "mark", &[], Req(Kind::Text), "<letter>", "Mark this spot (a–z: the page's scroll, A–Z: the board)"),
+    s(Cmd::ToMark, "to-mark", &[], Req(Kind::Text), "<letter>", "Go to a mark (' : where the last jump left)"),
+    s(Cmd::JumpBack, "jump-back", &[], Opt(Kind::Count), "[times]", "Back through the cards visited"),
+    s(Cmd::JumpForward, "jump-forward", &[], Opt(Kind::Count), "[times]", "Forward through the cards visited"),
     s(Cmd::Space, "space", &[], Req(Kind::Space), "<name>", "Go to a space"),
     s(Cmd::Close, "close", &["q"], No, "", "Close the card (or the selection)"),
     s(Cmd::Reopen, "reopen", &[], No, "", "Reopen the last closed card"),
@@ -322,8 +338,10 @@ pub const MAX_VALUES: usize = 30;
 /// What fits `line`: while the name is typed, the commands it finds (names
 /// it starts first, then fuzzy matches, then those found by what they do);
 /// after the name and a space, the values of its argument that fit
-/// (`values` gives a space's or card's names; choices come from the table).
-pub fn complete(line: &str, values: &dyn Fn(Kind) -> Vec<String>) -> Vec<Completion> {
+/// (`values` gives a space's or card's names, or saved pages', each with
+/// what the row says on its right, empty for what the command does;
+/// choices come from the table).
+pub fn complete(line: &str, values: &dyn Fn(Kind) -> Vec<(String, String)>) -> Vec<Completion> {
     let bare = line.trim_start().strip_prefix(':').unwrap_or(line).trim_start();
     let typing_name = !bare.contains(char::is_whitespace);
     if typing_name {
@@ -332,18 +350,19 @@ pub fn complete(line: &str, values: &dyn Fn(Kind) -> Vec<String>) -> Vec<Complet
     let (name, rest) = split(bare);
     let Ok(spec) = lookup(name) else { return Vec::new() };
     let Some(kind) = spec.arg.kind() else { return Vec::new() };
-    let offered: Vec<String> = match kind {
-        Kind::Choice(c) => c.iter().map(|s| s.to_string()).collect(),
-        Kind::Space | Kind::Card => values(kind),
+    let offered: Vec<(String, String)> = match kind {
+        Kind::Choice(c) => c.iter().map(|s| (s.to_string(), String::new())).collect(),
+        Kind::Space | Kind::Card | Kind::Saved => values(kind),
         _ => return Vec::new(),
     };
-    let cands: Vec<Candidate> = offered.iter().map(|v| Candidate { text: v, alt: "" }).collect();
+    let cands: Vec<Candidate> = offered.iter().map(|(v, _)| Candidate { text: v, alt: "" }).collect();
     palette::rank(rest, &cands)
         .into_iter()
         .take(MAX_VALUES)
         .map(|r| {
-            let v = &offered[r.index];
-            Completion { line: format!("{} {v}", spec.name), label: v.clone(), detail: spec.about.to_string(), positions: r.positions }
+            let (v, detail) = &offered[r.index];
+            let detail = if detail.is_empty() { spec.about.to_string() } else { detail.clone() };
+            Completion { line: format!("{} {v}", spec.name), label: v.clone(), detail, positions: r.positions }
         })
         .collect()
 }
@@ -437,7 +456,7 @@ impl Recent {
 mod tests {
     use super::*;
 
-    fn none(_: Kind) -> Vec<String> {
+    fn none(_: Kind) -> Vec<(String, String)> {
         Vec::new()
     }
 
@@ -466,7 +485,17 @@ mod tests {
         // An exact name wins over longer names it starts.
         assert_eq!(parse("space Work").unwrap().spec.cmd, Cmd::Space);
         assert_eq!(parse("ads").unwrap().spec.cmd, Cmd::Ads);
-        assert_eq!(parse("t"), Err(Error::Ambiguous(vec!["tidy", "tint"])));
+        assert_eq!(parse("t"), Err(Error::Ambiguous(vec!["to-mark", "tidy", "tint"])));
+        // Saved pages, marks and jumps (step 9); `save` stays Save as Markdown.
+        assert_eq!(parse("save").unwrap().spec.cmd, Cmd::Save);
+        assert!(matches!(parse("saved"), Err(Error::Missing(..))), "Enter on it lists the names");
+        assert_eq!(parse("saved Rust docs").unwrap().arg.as_deref(), Some("Rust docs"));
+        assert_eq!(parse("saved-b x").unwrap().spec.cmd, Cmd::SavedBeside);
+        assert!(matches!(parse("saved-beside"), Err(Error::Missing(..))));
+        assert_eq!(parse("save-page").unwrap().spec.cmd, Cmd::SavePage);
+        assert_eq!(parse("sav"), Err(Error::Ambiguous(vec!["saved", "saved-beside", "save-page", "save"])));
+        assert_eq!(parse("mark A").unwrap().arg.as_deref(), Some("A"));
+        assert_eq!(parse("jump-b 3").unwrap().count(), Some(3));
         // `card` is exact; its longer names need more.
         assert_eq!(parse("card 3").unwrap().spec.cmd, Cmd::Card);
         assert_eq!(parse("card-n").unwrap().spec.cmd, Cmd::CardNext);
@@ -521,9 +550,13 @@ mod tests {
     #[test]
     fn completes_values() {
         let values = |k: Kind| match k {
-            Kind::Space => vec!["Home".to_string(), "Work".to_string(), "Reading list".to_string()],
+            Kind::Space => ["Home", "Work", "Reading list"].iter().map(|s| (s.to_string(), String::new())).collect(),
+            Kind::Saved => vec![("Rust docs".to_string(), "doc.rust-lang.org".to_string())],
             _ => Vec::new(),
         };
+        let c = complete("saved ", &values);
+        assert_eq!((c[0].line.as_str(), c[0].detail.as_str()), ("saved Rust docs", "doc.rust-lang.org"));
+        assert_eq!(complete("saved-beside ru", &values)[0].line, "saved-beside Rust docs");
         let c = complete(":space ", &values);
         assert_eq!(c.iter().map(|c| c.line.as_str()).collect::<Vec<_>>(), vec!["space Home", "space Work", "space Reading list"]);
         let c = complete(":space rl", &values);

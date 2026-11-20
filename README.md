@@ -79,7 +79,7 @@ Cards, closed cards, history (by any word on the page), commands, other spaces.
 </td>
 <td width="50%" valign="top">
 
-**See every trail** · `B`
+**See every trail** · `Ctrl+B`
 
 <img src="docs/images/sidebar.png" alt="The trails sidebar listing a trail as a tree">
 
@@ -144,7 +144,8 @@ setuid `chrome-sandbox` helper. The Arch package installs it; for the archive, s
 | `Enter` · `Esc` | Type in the page · back to the board |
 | `f` | Follow a link by keyboard |
 | `Tab` | Solo: the page fills the window |
-| `B` · `T` · `S` | Trails sidebar · Tidy · Fold a trail |
+| `Ctrl+B` · `T` · `S` | Trails sidebar · Tidy · Fold a trail |
+| `b` · `:save-page` | Open a saved page · save this one |
 | `N` | New note |
 | `?` | Every shortcut |
 

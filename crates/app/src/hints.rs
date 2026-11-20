@@ -10,91 +10,67 @@
 use compositor::{Layer, Quad, Renderer, Shape, Text};
 use scene::Rect;
 
+use scene::userkeys;
+
 use crate::theme::{rgb, Theme};
 
-/// Section title, then (keys, what they do) rows. In keys, " · " separates
-/// alternatives and "+" keys held together; see [`chips`].
-pub const SECTIONS: &[(&str, &[(&str, &str)])] = &[
-    (
-        "Keyboard",
-        &[
-            ("h j k l · Arrows", "Go to the next card that way"),
-            ("Enter · Space", "Type in the card's page"),
-            ("f", "Label links and controls; type one to use it"),
-            ("v", "Select / deselect the card"),
-            ("z", "Fill the view with the card"),
-            ("Ctrl+D · Ctrl+U", "Scroll the card's page (its scroll area) down / up"),
-            ("d · u", "Close the card / reopen the last closed"),
-            ("Alt+1…9 · Ctrl+^", "The nth card in reading order / the card before"),
-            ("Ctrl+O · Ctrl+I", "Back / forward through the cards visited"),
-            ("M then A…Z · ' then A…Z", "Mark this board spot / go to a mark ('' back)"),
-            ("b · B", "Open a saved page here / beside"),
-            ("Menu · Shift+F10", "Page menu (j k, Enter)"),
-            ("M, then h j k l", "Move the card (Shift resizes)"),
-            ("Esc", "Back to the board, then let go"),
-            ("Shift + h j k l", "Pan"),
-            ("+ · -", "Zoom in / out"),
-            ("Number, then a key", "Do it that many times (3j, 2+)"),
-            ("Delete", "Close the card"),
-            ("Q · Ctrl+Q", "Quit"),
-        ],
-    ),
-    (
-        "In a page (Enter or Solo)",
-        &[
-            ("j k · h l", "Scroll down / up · left / right"),
-            ("Ctrl+D · Ctrl+U", "Scroll half a section"),
-            ("J · K", "Next / previous card (reading order)"),
-            ("gt · T", "Go to a card by title"),
-            ("g0 · g$ · Alt+1…9", "First / last / nth card"),
-            ("Ctrl+^", "The card used before this one"),
-            ("Ctrl+O · Ctrl+I", "Back / forward through the cards visited"),
-            ("m then a…z · ' then a…z", "Mark the page's scroll spot / go back to it"),
-            ("m then A…Z · ''", "Mark the board spot · back to before the last jump"),
-            ("b · B", "Open a saved page here / beside (:save-page saves one)"),
-            ("Ctrl+W, then h j k l", "The nearest card that way"),
-            ("d · u", "Close the card / reopen the last closed"),
-            ("co · gC", "Close the other cards / clone this one beside"),
-            ("gg · G · 0 · $", "Top / bottom / left edge / right edge"),
-            ("s", "Label the scroll areas; type one to scroll it"),
-            ("]s · [s · S", "Next / previous scroll area · the one around it"),
-            ("f · F", "Follow a link here / beside"),
-            (";y · ;d · ;i", "Hints: copy a link / download / open an image"),
-            (";b · ;m · ;e", "Hints: beside, stay here / many / a field"),
-            ("H · L · r", "Back / forward / reload"),
-            ("i · gi", "Type in the page / in its first field"),
-            ("yy · yt · ym", "Copy the address / title / Markdown link"),
-            ("p · P", "Open the copied address here / beside"),
-            ("/ · n · N", "Find / next / previous"),
-            ("o · O", "Address bar / open beside"),
-            ("Ctrl+V", "All keys to the page (Shift+Esc ends)"),
-            ("Esc", "Out of a field, then back to the board"),
-        ],
-    ),
+/// A section: its title, then (keys, what they do) rows. In keys, " · "
+/// separates alternatives, " then " keys one after another, and "+" keys
+/// held together; see [`chips`].
+pub type Section = (String, Vec<(String, String)>);
+
+/// The sheet's sections: the board's and Page mode's keys as the live
+/// tables have them (the key file and `:bind` included, M12 step 10),
+/// the user's own keys for the other modes and aliases, then the app's
+/// fixed shortcuts and the mouse.
+pub fn sections(keys: &userkeys::Keys) -> Vec<Section> {
+    let about = |a| keys.about(a);
+    let owned = |rows: &[(&str, &str)]| rows.iter().map(|(k, d)| (k.to_string(), d.to_string())).collect::<Vec<_>>();
+    let mut board = userkeys::sheet_rows(&keys.board, &about);
+    board.extend(owned(&[
+        ("Number, then a key", "Do it that many times (3j, 2+)"),
+        ("Menu · Shift+F10", "Page menu (j k, Enter)"),
+        ("Esc", "Back to the board, then let go"),
+    ]));
+    let mut page = userkeys::sheet_rows(&keys.page, &about);
+    page.push(("Esc".into(), "Out of a field, then back to the board".into()));
+    let mut out: Vec<Section> = vec![("Keyboard".into(), board), ("In a page (Enter or Solo)".into(), page)];
+    for (title, table) in [
+        ("Typing in a page (your keys)", &keys.insert),
+        ("While hints show (your keys)", &keys.hints),
+        ("In the command line (your keys)", &keys.command),
+    ] {
+        let rows = userkeys::sheet_rows(table, &about);
+        if !rows.is_empty() {
+            out.push((title.into(), rows));
+        }
+    }
+    let aliases: Vec<(String, String)> = keys.aliases.iter().map(|(n, t)| (format!(":{n}"), t.to_string())).collect();
+    if !aliases.is_empty() {
+        out.push(("Your aliases".into(), aliases));
+    }
+    out.extend(FIXED.iter().map(|(name, rows)| (name.to_string(), owned(rows))));
+    out
+}
+
+/// Shortcuts outside the key tables, and the mouse.
+const FIXED: &[(&str, &[(&str, &str)])] = &[
     (
         "Board",
         &[
             ("Drag board · Scroll", "Pan"),
             ("Ctrl + Scroll", "Zoom"),
             ("Ctrl+K", "Find a card, space or command"),
-            (":", "Command line (Tab completes: :open, :space, :tidy…)"),
             ("Ctrl+H", "History (Shift+Del forgets a page)"),
             ("Ctrl+J", "Downloads (Ctrl+Enter shows the folder)"),
             ("Ctrl+,", "Settings"),
-            ("Shift+F", "Fit everything"),
             ("Ctrl+T", "New card"),
-            ("N · Shift+N", "New note / sticky note"),
-            ("Ctrl+B", "Trails sidebar (p pins, r names, Shift+j k moves; or the left edge)"),
-            ("T", "Tidy trails"),
-            ("S", "Fold / unfold a trail"),
-            ("[ · ]", "Peek through a stack"),
-            ("O · click the count", "List a stack's pages"),
             ("Alt+PgDn · Alt+PgUp", "Next / previous on the trail"),
-            ("R · C", "Name / colour a trail"),
             ("Ctrl+S", "Save board or note as Markdown"),
-            ("Ctrl+Z · Ctrl+Shift+Z", "Undo / redo board edits"),
             ("Ctrl+Shift+T", "Reopen closed card"),
+            ("Ctrl+Q", "Quit"),
             ("? · F1", "Show / hide these shortcuts"),
+            (":keys-file", "Your own keys (then :reload-keys)"),
         ],
     ),
     (
@@ -253,6 +229,19 @@ pub fn chips(keys: &str) -> Vec<Chip<'_>> {
         if i > 0 {
             out.push(Chip::Word("or"));
         }
+        for (j, piece) in alt.split(" then ").enumerate() {
+            if j > 0 {
+                out.push(Chip::Word("then"));
+            }
+            piece_chips(piece, &mut out);
+        }
+    }
+    out
+}
+
+/// One key (or chord, or run of letters) of an alternative.
+fn piece_chips<'a>(alt: &'a str, out: &mut Vec<Chip<'a>>) {
+    {
         let parts: Vec<&str> = if alt.trim() == "+" {
             vec!["+"]
         } else {
@@ -270,7 +259,6 @@ pub fn chips(keys: &str) -> Vec<Chip<'_>> {
             }
         }
     }
-    out
 }
 
 /// "Ctrl+Shift+T" → ["Ctrl", "Shift", "T"], keeping a "+" key ("Ctrl++").
@@ -287,10 +275,9 @@ fn split_plus(p: &str) -> Vec<&str> {
 
 /// The sections and rows `filter` keeps: every word of it must be in the
 /// row's keys, what it does, or its section's name (case aside).
-pub fn filtered(filter: &str) -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
+pub fn filtered(all: &[Section], filter: &str) -> Vec<Section> {
     let words: Vec<String> = filter.split_whitespace().map(str::to_lowercase).collect();
-    SECTIONS
-        .iter()
+    all.iter()
         .filter_map(|(name, rows)| {
             let kept: Vec<_> = rows
                 .iter()
@@ -298,9 +285,9 @@ pub fn filtered(filter: &str) -> Vec<(&'static str, Vec<(&'static str, &'static 
                     let hay = format!("{name} {k} {d}").to_lowercase();
                     words.iter().all(|w| hay.contains(w.as_str()))
                 })
-                .copied()
+                .cloned()
                 .collect();
-            (!kept.is_empty()).then_some((*name, kept))
+            (!kept.is_empty()).then(|| (name.clone(), kept))
         })
         .collect()
 }
@@ -326,7 +313,7 @@ pub fn flow(heights: &[f32], cols: usize, gap: f32) -> (Vec<usize>, Vec<f32>) {
 /// The sheet over `screen`, as layers: the panel, the scrolling sections,
 /// then the header and edges on top (so a keycap scrolled under them is hidden).
 /// `scale` is the window scale times the desktop text size; colours and corners follow `th`.
-pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mut Sheet) -> Vec<Layer> {
+pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mut Sheet, all: &[Section]) -> Vec<Layer> {
     let ui = scale;
     let radius = th.radius(ui / th.text_scale);
     let size = crate::chrome::type_::BODY * ui;
@@ -339,7 +326,7 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
     let fg = th.text();
     let dim = th.text2();
 
-    let sections = filtered(&sheet.filter);
+    let sections = filtered(all, &sheet.filter);
 
     // Each row's keys, measured once.
     let chip_w = |r: &mut Renderer, c: &Chip| match c {
@@ -366,7 +353,7 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
     let max_w = (screen.w * 0.75).max((screen.w - 32.0 * ui).min(360.0 * ui));
     let max_h = (screen.h * 0.75).max((screen.h - 32.0 * ui).min(320.0 * ui));
     let row_gap = 24.0 * ui;
-    let natural = SECTIONS
+    let natural = all
         .iter()
         .flat_map(|(_, rows)| rows.iter())
         .map(|(k, d)| {
@@ -392,8 +379,8 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
     let h = max_h.min(header_h + content_h + 8.0 * ui + foot);
     // The top stays where the whole sheet's is, so filtering shortens the
     // panel from below instead of moving it about.
-    let all: Vec<f32> = SECTIONS.iter().map(|(_, rows)| line * (rows.len() + 1) as f32).collect();
-    let all_h = max_h.min(header_h + flow(&all, cols, section_gap).1.iter().copied().fold(0.0, f32::max) + 8.0 * ui + foot);
+    let all_heights: Vec<f32> = all.iter().map(|(_, rows)| line * (rows.len() + 1) as f32).collect();
+    let all_h = max_h.min(header_h + flow(&all_heights, cols, section_gap).1.iter().copied().fold(0.0, f32::max) + 8.0 * ui + foot);
     let panel = Rect::new(screen.x + (screen.w - w) / 2.0, screen.y + (screen.h - all_h) / 2.0, w, h);
     let body = Rect::new(panel.x, panel.y + header_h, w, (h - header_h - foot).max(1.0));
 
@@ -560,22 +547,50 @@ mod tests {
         assert_eq!(chips("Drag its label"), vec![Word("Drag its label")]);
         assert_eq!(chips("+ · -"), vec![Cap("+"), Word("or"), Cap("-")]);
         assert_eq!(chips("Ctrl+,"), vec![Cap("Ctrl"), Cap(",")]);
-        assert_eq!(chips("M, then h j k l"), vec![Word("M, then h j k l")]);
+        assert_eq!(chips("Ctrl+W then h"), vec![Cap("Ctrl"), Cap("W"), Word("then"), Cap("h")]);
+        assert_eq!(chips("m then a…z · ' then A…Z"), vec![Cap("m"), Word("then"), Cap("a…z"), Word("or"), Cap("'"), Word("then"), Cap("A…Z")]);
         assert_eq!(chips("[ · ]"), vec![Cap("["), Word("or"), Cap("]")]);
         assert_eq!(chips("Ctrl++ · Ctrl+−"), vec![Cap("Ctrl"), Cap("+"), Word("or"), Cap("Ctrl"), Cap("−")]);
     }
 
     #[test]
     fn filter_keeps_matching_rows() {
-        assert_eq!(filtered("").len(), SECTIONS.len());
-        let undo = filtered("undo");
-        assert_eq!(undo.len(), 1);
-        assert_eq!(undo[0].1, vec![("Ctrl+Z · Ctrl+Shift+Z", "Undo / redo board edits")]);
+        let all = sections(&userkeys::Keys::default());
+        assert_eq!(filtered(&all, "").len(), all.len());
+        let redo = filtered(&all, "redo");
+        assert_eq!(redo.len(), 1, "{redo:?}");
+        assert_eq!(redo[0].1, vec![("Ctrl+Y · Ctrl+Shift+Z".to_string(), "Redo".to_string())]);
         // Every word must match, in any of keys, text or section.
-        assert!(filtered("ctrl space").iter().all(|(n, rows)| rows.iter().all(|(k, d)| format!("{n} {k} {d}").to_lowercase().contains("space"))));
-        assert!(filtered("nothing like this").is_empty());
+        assert!(filtered(&all, "ctrl space").iter().all(|(n, rows)| rows.iter().all(|(k, d)| format!("{n} {k} {d}").to_lowercase().contains("space"))));
+        assert!(filtered(&all, "nothing like this").is_empty());
         // A section's name keeps all its rows.
-        assert_eq!(filtered("spaces")[0].1.len(), SECTIONS[4].1.len());
+        let spaces = all.iter().find(|(n, _)| n == "Spaces").unwrap();
+        assert_eq!(filtered(&all, "spaces").iter().find(|(n, _)| n == "Spaces").unwrap().1.len(), spaces.1.len());
+    }
+
+    #[test]
+    fn sections_follow_the_live_tables() {
+        let mut keys = userkeys::Keys::default();
+        let all = sections(&keys);
+        let page = &all[1].1;
+        assert!(page.contains(&("gg".to_string(), "To the top".to_string())));
+        assert!(!all.iter().any(|(n, _)| n.contains("your")), "no own keys yet");
+        let bind = |modes: &str, k: &str, t: &str| userkeys::Entry::Bind {
+            modes: userkeys::modes(modes).unwrap(),
+            keys: scene::keys::parse(k).unwrap(),
+            target: t.into(),
+        };
+        keys.apply(&bind("page", "gs", "open https://e.com/{url}")).unwrap();
+        keys.apply(&bind("insert", "<C-e>", "scroll-down")).unwrap();
+        keys.apply(&userkeys::Entry::Unbind { modes: userkeys::modes("page").unwrap(), keys: scene::keys::parse("gg").unwrap() }).unwrap();
+        keys.apply(&userkeys::Entry::Alias { name: "wb".into(), target: "open https://e.com/{url}".into() }).unwrap();
+        let all = sections(&keys);
+        let page = &all[1].1;
+        assert!(page.contains(&("gs".to_string(), ":open https://e.com/{url}".to_string())));
+        assert!(!page.iter().any(|(_, d)| d == "To the top"));
+        let insert = all.iter().find(|(n, _)| n.starts_with("Typing")).unwrap();
+        assert_eq!(insert.1, vec![("Ctrl+E".to_string(), "Scroll down".to_string())]);
+        assert!(all.iter().any(|(n, rows)| n == "Your aliases" && rows[0].0 == ":wb"));
     }
 
     #[test]

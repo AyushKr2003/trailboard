@@ -35,6 +35,7 @@ pub mod sitesettings;
 pub mod startpage;
 pub mod tidy;
 pub mod trail;
+pub mod userkeys;
 pub mod when;
 
 use std::collections::BTreeMap;

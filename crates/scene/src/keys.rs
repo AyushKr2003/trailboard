@@ -259,9 +259,49 @@ impl<A: Copy> Bindings<A> {
         }
     }
 
+    /// Binds a sequence already read; a later binding of it replaces the earlier one.
+    pub fn bind_chords(&mut self, chords: Vec<Chord>, action: A) {
+        for n in 1..chords.len() {
+            self.prefixes.insert(chords[..n].to_vec());
+        }
+        self.map.insert(chords, action);
+    }
+
+    /// Drops the binding of `seq`; when there is none, every binding that
+    /// starts with it (`;` drops all the hint kinds). How many went.
+    pub fn unbind(&mut self, seq: &[Chord]) -> usize {
+        let before = self.map.len();
+        if self.map.remove(seq).is_none() {
+            self.map.retain(|k, _| !k.starts_with(seq));
+        }
+        let gone = before - self.map.len();
+        if gone > 0 {
+            self.prefixes = self.map.keys().flat_map(|k| (1..k.len()).map(|n| k[..n].to_vec())).collect();
+        }
+        gone
+    }
+
     /// Every binding, in no particular order.
     pub fn iter(&self) -> impl Iterator<Item = (&[Chord], A)> {
         self.map.iter().map(|(k, a)| (k.as_slice(), *a))
+    }
+
+    /// The bindings longer than `prefix` that start with it, with `prefix`
+    /// taken off (what can follow a half-typed sequence).
+    pub fn after(&self, prefix: &[Chord]) -> Bindings<A> {
+        let mut out = Bindings::new();
+        for (k, a) in self.iter().filter(|(k, _)| k.len() > prefix.len() && k.starts_with(prefix)) {
+            out.bind_chords(k[prefix.len()..].to_vec(), a);
+        }
+        out
+    }
+
+    /// Whether some sequence is bound to `action`.
+    pub fn has(&self, action: A) -> bool
+    where
+        A: PartialEq,
+    {
+        self.map.values().any(|a| *a == action)
     }
 }
 
@@ -296,6 +336,16 @@ impl Pending {
 
     pub fn clear(&mut self) {
         *self = Pending::default();
+    }
+
+    /// When the last key of a half-typed sequence came.
+    pub fn since(&self) -> Option<Instant> {
+        self.at.filter(|_| !self.keys.is_empty())
+    }
+
+    /// The keys of a half-typed sequence (not its count).
+    pub fn keys(&self) -> &[Chord] {
+        &self.keys
     }
 
     /// What has been typed, for showing (`5g`).
@@ -339,8 +389,10 @@ impl Pending {
         }
     }
 
-    /// Ends a sequence that has waited [`TIMEOUT`]: one that is a binding by
-    /// itself runs; a mere start is dropped. A lone count keeps waiting.
+    /// Ends a sequence that has waited [`TIMEOUT`] and is a binding by
+    /// itself: it runs. A mere start keeps waiting for its next key (the
+    /// panel of what can follow shows meanwhile; Esc drops it), as does a
+    /// lone count. A start whose bindings went (keys reloaded) is dropped.
     pub fn expire<A: Copy>(&mut self, table: &Bindings<A>, now: Instant) -> Option<Outcome<A>> {
         let at = self.at?;
         if now.duration_since(at) < TIMEOUT {
@@ -348,7 +400,8 @@ impl Pending {
         }
         let out = match table.lookup(&self.keys) {
             Lookup::ExactAndPrefix(action) | Lookup::Exact(action) => Outcome::Run { action, count: self.count },
-            _ => Outcome::Cancelled,
+            Lookup::Prefix => return None,
+            Lookup::None => Outcome::Cancelled,
         };
         self.clear();
         Some(out)
@@ -472,6 +525,141 @@ pub enum Action {
     /// `saved` list.
     OpenSaved,
     OpenSavedBeside,
+    /// A command line from the user's key file (M12 step 10): the app
+    /// keeps the lines, this is the index of one.
+    Line(u16),
+}
+
+use Action as Ac;
+
+/// The actions a key file can name, in the order the `?` sheet lists them,
+/// with what each does. Marks and Alt+digits are reached by command lines
+/// (`mark a`, `to-mark a`, `card 3`).
+pub const NAMED: &[(&str, Action, &str)] = &[
+    ("move-left", Ac::Move(Dir::Left), "Go to the card on the left"),
+    ("move-down", Ac::Move(Dir::Down), "Go to the card below"),
+    ("move-up", Ac::Move(Dir::Up), "Go to the card above"),
+    ("move-right", Ac::Move(Dir::Right), "Go to the card on the right"),
+    ("enter", Ac::Enter, "Type in the card's page"),
+    ("scroll-down", Ac::Scroll(Dir::Down), "Scroll down"),
+    ("scroll-up", Ac::Scroll(Dir::Up), "Scroll up"),
+    ("scroll-left", Ac::Scroll(Dir::Left), "Scroll left"),
+    ("scroll-right", Ac::Scroll(Dir::Right), "Scroll right"),
+    ("half-down", Ac::ScrollDown, "Scroll half a section down"),
+    ("half-up", Ac::ScrollUp, "Scroll half a section up"),
+    ("top", Ac::Top, "To the top"),
+    ("bottom", Ac::Bottom, "To the bottom"),
+    ("left-edge", Ac::LeftEdge, "To the left edge"),
+    ("right-edge", Ac::RightEdge, "To the right edge"),
+    ("sections", Ac::Sections, "Label the scroll areas; type one to scroll it"),
+    ("next-section", Ac::NextSection, "Next scroll area"),
+    ("prev-section", Ac::PrevSection, "Previous scroll area"),
+    ("outer-section", Ac::OuterSection, "The scroll area around this one"),
+    ("hints-here", Ac::LinkHintsHere, "Follow a link here"),
+    ("hints", Ac::LinkHints, "Label links and controls; type one to use it (beside)"),
+    ("hint-yank", Ac::Hint(hint::Kind::Yank), "Hints: copy a link's address"),
+    ("hint-download", Ac::Hint(hint::Kind::Download), "Hints: download a link or image"),
+    ("hint-image", Ac::Hint(hint::Kind::Image), "Hints: open an image beside"),
+    ("hint-beside", Ac::Hint(hint::Kind::Background), "Hints: open beside, stay here"),
+    ("hint-field", Ac::Hint(hint::Kind::Field), "Hints: type in a field"),
+    ("hint-many", Ac::Hint(hint::Kind::Many), "Hints: open many beside, until Esc"),
+    ("back", Ac::Back, "Back"),
+    ("forward", Ac::Forward, "Forward"),
+    ("reload", Ac::Reload, "Reload"),
+    ("reload-fresh", Ac::ReloadFresh, "Reload, skipping the cache"),
+    ("insert", Ac::Insert, "Type in the page (Esc ends)"),
+    ("focus-field", Ac::FocusField, "Type in the page's first field"),
+    ("passthrough", Ac::Passthrough, "All keys to the page (Shift+Esc ends)"),
+    ("copy-url", Ac::CopyUrl, "Copy the address"),
+    ("copy-title", Ac::CopyTitle, "Copy the title"),
+    ("copy-markdown", Ac::CopyMarkdown, "Copy a Markdown link"),
+    ("paste-here", Ac::PasteHere, "Open the copied address here"),
+    ("paste-beside", Ac::PasteBeside, "Open the copied address beside"),
+    ("address-bar", Ac::AddressBar, "Address bar"),
+    ("address-bar-beside", Ac::AddressBarBeside, "Address bar, opening beside"),
+    ("find", Ac::Find, "Find in the page"),
+    ("find-next", Ac::FindNext, "Next match"),
+    ("find-prev", Ac::FindPrev, "Previous match"),
+    ("next-card", Ac::NextCard, "Next card (reading order)"),
+    ("prev-card", Ac::PrevCard, "Previous card (reading order)"),
+    ("pick-card", Ac::PickCard, "Go to a card by title"),
+    ("first-card", Ac::FirstCard, "First card"),
+    ("last-card", Ac::LastCard, "Last card"),
+    ("other-card", Ac::OtherCard, "The card used before this one"),
+    ("jump-back", Ac::JumpBack, "Back through the cards visited"),
+    ("jump-forward", Ac::JumpForward, "Forward through the cards visited"),
+    ("open-saved", Ac::OpenSaved, "Open a saved page here"),
+    ("open-saved-beside", Ac::OpenSavedBeside, "Open a saved page beside"),
+    ("close", Ac::Close, "Close the card (or the selection)"),
+    ("reopen", Ac::Reopen, "Reopen the last closed card"),
+    ("close-others", Ac::CloseOthers, "Close the other cards (asks first)"),
+    ("clone", Ac::Clone, "Open this page again beside it"),
+    ("command-line", Ac::CommandLine, "Command line"),
+    ("pan-left", Ac::Pan(Dir::Left), "Pan left"),
+    ("pan-down", Ac::Pan(Dir::Down), "Pan down"),
+    ("pan-up", Ac::Pan(Dir::Up), "Pan up"),
+    ("pan-right", Ac::Pan(Dir::Right), "Pan right"),
+    ("zoom-in", Ac::ZoomIn, "Zoom in"),
+    ("zoom-out", Ac::ZoomOut, "Zoom out"),
+    ("fit", Ac::Fit, "Fit everything in view"),
+    ("fill", Ac::Fill, "Fill the view with the card"),
+    ("select", Ac::Select, "Select / deselect the card"),
+    ("select-all", Ac::SelectAll, "Select every card"),
+    ("arrange", Ac::Arrange, "Move the card (then h j k l; Shift resizes)"),
+    ("note", Ac::NewNote, "New note"),
+    ("sticky", Ac::NewSticky, "New sticky note"),
+    ("tidy", Ac::Tidy, "Tidy trails"),
+    ("fold", Ac::Fold, "Fold / unfold the trail"),
+    ("outline", Ac::Outline, "List a stack's pages"),
+    ("stack-prev", Ac::StackPrev, "Peek back through a stack"),
+    ("stack-next", Ac::StackNext, "Peek on through a stack"),
+    ("name-trail", Ac::NameTrail, "Name the trail"),
+    ("trail-colour", Ac::TrailColour, "Next trail colour"),
+    ("sidebar", Ac::Sidebar, "Trails sidebar"),
+    ("undo", Ac::Undo, "Undo"),
+    ("redo", Ac::Redo, "Redo"),
+    ("quit", Ac::Quit, "Quit Trailboard"),
+];
+
+impl Action {
+    /// The action called `name` in a key file (exactly, case ignored).
+    pub fn named(name: &str) -> Option<Action> {
+        NAMED.iter().find(|(n, ..)| n.eq_ignore_ascii_case(name)).map(|(_, a, _)| *a)
+    }
+
+    /// Its name in a key file; marks, card numbers and lines have none.
+    pub fn name(self) -> Option<&'static str> {
+        NAMED.iter().find(|(_, a, _)| *a == self).map(|(n, ..)| *n)
+    }
+
+    /// What it does, as the `?` sheet says it (a line says itself elsewhere).
+    pub fn about(self) -> String {
+        match self {
+            Ac::SetMark(c) if c.is_ascii_lowercase() => "Mark the page's scroll spot".into(),
+            Ac::SetMark(_) => "Mark the board spot".into(),
+            Ac::GoMark('\'') => "Back to before the last jump".into(),
+            Ac::GoMark(c) if c.is_ascii_lowercase() => "Go to a page mark".into(),
+            Ac::GoMark(_) => "Go to a board mark".into(),
+            Ac::NthCard(9) => "The last card".into(),
+            Ac::NthCard(_) => "The nth card in reading order".into(),
+            Ac::Line(n) => format!("Line {n}"),
+            a => NAMED.iter().find(|(_, x, _)| *x == a).map_or_else(String::new, |(.., about)| about.to_string()),
+        }
+    }
+
+    /// Where the `?` sheet lists it: its place in [`NAMED`]; marks and card
+    /// numbers after the jumps, lines last.
+    pub fn rank(self) -> usize {
+        let after_jumps = NAMED.iter().position(|(n, ..)| *n == "jump-forward").unwrap_or(0) * 4 + 1;
+        match self {
+            Ac::NthCard(_) => NAMED.iter().position(|(n, ..)| *n == "other-card").unwrap_or(0) * 4 + 1,
+            Ac::SetMark(c) if c.is_ascii_lowercase() => after_jumps,
+            Ac::GoMark(c) if c.is_ascii_lowercase() => after_jumps + 1,
+            Ac::SetMark(_) | Ac::GoMark(_) => after_jumps + 2,
+            Ac::Line(n) => NAMED.len() * 4 + n as usize,
+            a => NAMED.iter().position(|(_, x, _)| *x == a).map_or(usize::MAX, |i| i * 4),
+        }
+    }
 }
 
 impl Action {
@@ -838,9 +1026,10 @@ mod tests {
         // Typed in time, the longer one wins.
         p.feed(&b, ch('g'), t, true);
         assert_eq!(p.feed(&b, ch('g'), t + TIMEOUT / 2, true), Outcome::Run { action: 2, count: None });
-        // A mere start is dropped; a lone count never expires.
+        // A mere start keeps waiting, as does a lone count.
         p.feed(&b, ch('y'), t, true);
-        assert_eq!(p.expire(&b, t + TIMEOUT), Some(Outcome::Cancelled));
+        assert_eq!(p.expire(&b, t + TIMEOUT * 10), None);
+        assert_eq!(p.feed(&b, ch('y'), t + TIMEOUT * 10, true), Outcome::Run { action: 4, count: None });
         p.feed(&b, ch('7'), t, true);
         assert_eq!(p.expire(&b, t + TIMEOUT * 10), None);
         assert_eq!(p.display(), "7");

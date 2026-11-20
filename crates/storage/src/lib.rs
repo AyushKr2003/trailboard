@@ -8,6 +8,7 @@ pub mod downloads;
 pub mod export;
 pub mod icons;
 pub mod jumps;
+pub mod keyfile;
 pub mod marks;
 pub mod pagetext;
 pub mod photo;

@@ -99,6 +99,7 @@ use scene::keys::{self, Action as KeyAction, Outcome};
 use scene::nav::{self, Dir};
 use scene::pagezoom::{self, SiteZooms};
 use scene::scrolltarget;
+use scene::userkeys::{self, Mode as KeyMode, Step};
 use scene::settings::{self as prefs, Settings};
 use scene::{liveness, motion, placement, read, selection, tidy, Camera, Change, Edge, History, Node, NodeId, Rect, Scene, Selection, TrailStep, Vec2};
 use storage::spaces::{self, SpaceId, SpaceIndex};
@@ -125,6 +126,9 @@ use crate::script::{Cmd, Script};
 use crate::sidebar::Panel;
 
 const MIN_CARD: f32 = 240.0;
+/// How long a half-typed sequence waits before the panel of what can
+/// follow it shows (typed quickly, `gg` never shows it).
+const PREFIX_PANEL_AFTER: Duration = Duration::from_millis(400);
 /// How long after a page loads (or retitles itself) its text is read for history.
 const TEXT_SETTLE: Duration = Duration::from_millis(1200);
 /// How long the outline around a newly chosen scroll section shows.
@@ -276,6 +280,8 @@ struct LinkHints {
     kind: Option<hint::Kind>,
     /// Labels already chosen while `kind` keeps the labels up (`;m`).
     chosen: Vec<usize>,
+    /// `:hint`: the command line a chosen link runs (`{hint-url}`).
+    line: Option<String>,
     links: Vec<(Rect, web::links::Action)>,
     /// `s`: labels on the page's scroll sections instead of its links
     /// (section number, where it is in the view's CSS px), in label order.
@@ -377,10 +383,11 @@ pub struct App {
     group: Vec<(NodeId, Rect)>,
     /// The last click landed inside the focused page, so its keys (incl. Ctrl+Z) go there.
     keys_in_page: bool,
-    /// The board's key bindings (`scene::keys`, M12).
-    board_keys: keys::Bindings<KeyAction>,
-    /// Page mode's key bindings.
-    page_keys_table: keys::Bindings<KeyAction>,
+    /// Every mode's key bindings (`scene::keys`, M12), with the key
+    /// file's and `:bind`'s (`scene::userkeys`, step 10).
+    keys: userkeys::Keys,
+    /// The `?` sheet's sections, built from `keys` when it opens.
+    sheet_sections: Vec<crate::hints::Section>,
     /// A count or sequence typed toward a binding (`5j`).
     pending: keys::Pending,
     /// Where an entered card's keys go.
@@ -722,7 +729,7 @@ impl App {
                 None
             }
         };
-        let app = Self {
+        let mut app = Self {
             renderer: None,
             scene: Scene::new(),
             camera: Camera::default(),
@@ -743,8 +750,8 @@ impl App {
             selection: Selection::new(),
             group: Vec::new(),
             keys_in_page: false,
-            board_keys: keys::board(),
-            page_keys_table: keys::page(),
+            keys: userkeys::Keys::default(),
+            sheet_sections: Vec::new(),
             pending: keys::Pending::default(),
             page_keys: PageKeys::Page,
             forwarded: HashSet::new(),
@@ -865,6 +872,7 @@ impl App {
         app.apply_browsing();
         app.apply_site_content();
         app.apply_permissions();
+        app.load_keys(false);
         app
     }
 
@@ -2168,6 +2176,7 @@ impl App {
         let idle = self.drag_is_idle();
         log::debug!("board key: {action:?} ×{times}");
         match action {
+            KeyAction::Line(n) => self.run_user_line(n, count),
             KeyAction::Move(dir) if idle => (0..times).for_each(|_| self.move_current(dir)),
             KeyAction::Pan(dir) if idle => (0..times).for_each(|_| self.pan_by_key(dir)),
             KeyAction::ZoomIn | KeyAction::ZoomOut if self.read.is_none() => {
@@ -2699,10 +2708,139 @@ impl App {
             KeyAction::FindNext | KeyAction::FindPrev => self.open_find(),
             KeyAction::CommandLine => self.open_command_line(),
             KeyAction::Close => self.close_from_page(id),
+            KeyAction::Line(n) => self.run_user_line(n, count),
             // Cards from the page (`card_key`); board actions don't come
             // from the page table.
             _ => {
                 self.card_key(action, count);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ user keys
+
+    /// The user's binding of this key in `m` (Insert, hints, the command
+    /// line), if it has one: a single chord there.
+    fn user_key(&self, m: KeyMode, ev: &KeyIn) -> Option<KeyAction> {
+        let chord = ev.chord(self.mods)?;
+        match self.keys.table(m).lookup(&[chord]) {
+            keys::Lookup::Exact(a) | keys::Lookup::ExactAndPrefix(a) => Some(a),
+            _ => None,
+        }
+    }
+
+    /// Runs a key action from a line or a binding outside the board and
+    /// page tables: in a page if a page has the keys and it is a page key,
+    /// else on the board.
+    fn run_key_action(&mut self, a: KeyAction, count: Option<u32>) {
+        if self.entered() && keys::page().has(a) {
+            self.page_action(a, count);
+        } else {
+            self.board_action(a, count);
+        }
+    }
+
+    /// A user binding's chain; a count runs it that many times.
+    fn run_user_line(&mut self, n: u16, count: Option<u32>) {
+        const MAX_REPEAT: u32 = 100;
+        let Some((steps, text)) = self.keys.lines.get(n as usize).cloned() else { return };
+        log::info!("keys: line {n}: {text}");
+        for _ in 0..count.unwrap_or(1).clamp(1, MAX_REPEAT) {
+            self.run_steps(&steps, None);
+        }
+    }
+
+    /// A `:hint` line on the link chosen.
+    fn run_hint_line(&mut self, line: &str, url: &str) {
+        match userkeys::steps(line, &self.keys.aliases) {
+            Ok(steps) => self.run_steps(&steps, Some(url)),
+            Err(e) => self.toast(format!("hint: {e}")),
+        }
+    }
+
+    /// Reads the key file (`storage::keyfile`) over the default keys;
+    /// `:bind`s of this run go. Wrong lines are logged, and said when
+    /// `announce` (`:reload-keys`) or when there are any.
+    fn load_keys(&mut self, announce: bool) {
+        let path = storage::keyfile::path();
+        let read = match storage::keyfile::load(&path) {
+            Ok(r) => r,
+            Err(e) => {
+                log::warn!("keys: reading {}: {e}", path.display());
+                self.toast(format!("Can't read the keys file: {e}"));
+                return;
+            }
+        };
+        let (keys, mut errors) = userkeys::Keys::build(&read.entries);
+        errors.extend(read.errors);
+        errors.sort_by_key(|(n, _)| *n);
+        self.keys = keys;
+        self.pending.clear();
+        for (n, e) in &errors {
+            log::warn!("keys: {}:{n}: {e}", path.display());
+        }
+        let entries = read.entries.len();
+        log::info!("keys: {} entries from {}, {} wrong", entries, path.display(), errors.len());
+        match errors.as_slice() {
+            [] if announce => self.toast(format!("Keys file read · {entries} {}", if entries == 1 { "entry" } else { "entries" })),
+            [] => {}
+            [(n, e)] => self.toast(format!("Keys file, line {n}: {e}")),
+            [(n, e), rest @ ..] => self.toast(format!(
+                "Keys file, line {n}: {e} · {} more wrong {} in the log",
+                rest.len(),
+                if rest.len() == 1 { "line" } else { "lines" }
+            )),
+        }
+    }
+
+    /// `:keys-file`: the key file in a card (made with an example first if
+    /// there is none).
+    fn open_keys_file(&mut self) {
+        let path = storage::keyfile::path();
+        match storage::keyfile::ensure(&path) {
+            Ok(made) => {
+                if made {
+                    log::info!("keys: made {}", path.display());
+                }
+                let url = format!("file://{}", path.display());
+                if self.new_card_at_center(&url).is_some() {
+                    self.give_keys(PageKeys::Page);
+                }
+                self.toast(format!("{} · edit it, then :reload-keys", path.display()));
+            }
+            Err(e) => {
+                log::warn!("keys: making {}: {e}", path.display());
+                self.toast(format!("Can't make the keys file: {e}"));
+            }
+        }
+    }
+
+    /// `:run`: starts `words[0]` with the rest as its arguments, never
+    /// through a shell, in its own process group, with nothing to read and
+    /// its output dropped. A thread waits for it so it leaves no zombie.
+    fn run_program(&mut self, words: &[String]) {
+        use std::os::unix::process::CommandExt;
+        let Some((program, args)) = words.split_first() else {
+            return self.toast("run needs a program");
+        };
+        let started = std::process::Command::new(program)
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .process_group(0)
+            .spawn();
+        match started {
+            Ok(mut child) => {
+                log::info!("run: started {program:?} {args:?} (pid {})", child.id());
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+                self.toast(format!("Started {program}"));
+            }
+            Err(e) => {
+                log::warn!("run: {program:?}: {e}");
+                self.toast(format!("Can't start {program}: {e}"));
             }
         }
     }
@@ -2928,7 +3066,7 @@ impl App {
             id.0,
             hints.labels.iter().zip(&sections).map(|(l, (s, _))| format!("{l}=#{s}")).collect::<Vec<_>>().join(" ")
         );
-        self.link_hints = Some(LinkHints { id, here: true, kind: None, chosen: Vec::new(), links: Vec::new(), sections, hints: Some(hints) });
+        self.link_hints = Some(LinkHints { id, here: true, kind: None, chosen: Vec::new(), line: None, links: Vec::new(), sections, hints: Some(hints) });
     }
 
     /// Where the entered page's focus went: a field the user put the caret
@@ -3334,23 +3472,75 @@ impl App {
         }
     }
 
-    /// Runs a command line (`scene::command`); a line that isn't a command
-    /// says why. Lines are remembered, except in a private space.
+    /// Runs a typed command line: a chain of commands (`|`), aliases and
+    /// key names (`scene::userkeys`); a line that isn't one says why.
+    /// Lines are remembered, except in a private space.
     fn run_line(&mut self, line: &str) {
-        use scene::command::Cmd;
-        let parsed = match scene::command::parse(line) {
-            Ok(p) => p,
+        let steps = match userkeys::steps(line, &self.keys.aliases) {
+            Ok(s) => s,
             Err(e) => {
                 log::info!("command line: {line:?}: {e}");
-                self.toast(e.to_string());
+                self.toast(e);
                 return;
             }
         };
-        log::info!("command line: {:?} → {:?} {:?}", line, parsed.spec.cmd, parsed.arg);
         if !self.is_private() {
             self.recent_commands.push(line.trim().trim_start_matches(':').trim());
             self.save_recent_commands();
         }
+        self.run_steps(&steps, None);
+    }
+
+    /// Runs the steps of a chain in turn; `hint_url` fills `{hint-url}`.
+    fn run_steps(&mut self, steps: &[Step], hint_url: Option<&str>) {
+        for s in steps {
+            match s {
+                Step::Action(a) => self.run_key_action(*a, None),
+                Step::Line(l) => self.exec_line(l, hint_url),
+            }
+        }
+    }
+
+    /// `{url}`, `{title}` (the current card's page) and `{hint-url}` for
+    /// `userkeys::fill`.
+    fn placeholder(&self, name: &str, hint_url: Option<&str>) -> Option<String> {
+        let page = self.focused.and_then(|id| self.scene.node(id)).filter(|n| !n.is_note() && !n.url.is_empty());
+        match name {
+            "url" => page.map(|n| n.url.clone()),
+            "title" => page.map(|n| if n.title.trim().is_empty() { n.url.clone() } else { n.title.clone() }),
+            "hint-url" => hint_url.map(str::to_string),
+            _ => None,
+        }
+    }
+
+    /// Runs one command line (`scene::command`), placeholders filled.
+    fn exec_line(&mut self, line: &str, hint_url: Option<&str>) {
+        use scene::command::Cmd;
+        // Lines that keep their placeholders for later (a binding, a hint's
+        // line) or fill them word by word (`run`).
+        let raw = |l: &str| {
+            let name = l.trim().trim_start_matches(':').split_whitespace().next().unwrap_or("");
+            scene::command::lookup(name).is_ok_and(|s| {
+                matches!(s.cmd, Cmd::Bind | Cmd::Unbind | Cmd::Alias | Cmd::Hint | Cmd::HintMany | Cmd::Run)
+            })
+        };
+        let filled = if raw(line) {
+            line.to_string()
+        } else {
+            match userkeys::fill(line, &|n| self.placeholder(n, hint_url)) {
+                Ok(l) => l,
+                Err(e) => return self.toast(e),
+            }
+        };
+        let parsed = match scene::command::parse(&filled) {
+            Ok(p) => p,
+            Err(e) => {
+                log::info!("command line: {filled:?}: {e}");
+                self.toast(e.to_string());
+                return;
+            }
+        };
+        log::info!("command line: {:?} → {:?} {:?}", filled, parsed.spec.cmd, parsed.arg);
         let arg = parsed.arg.clone().unwrap_or_default();
         let url = || self.settings.resolve_url(&arg);
         let page = |app: &mut Self, action: KeyAction, count: Option<u32>| {
@@ -3502,6 +3692,33 @@ impl App {
             Cmd::Downloads => self.run_command(Command::Downloads),
             Cmd::Settings => self.run_command(Command::Settings),
             Cmd::Keys => self.run_command(Command::Shortcuts),
+            Cmd::Bind | Cmd::Unbind | Cmd::Alias => {
+                let entry = storage::keyfile::parse_line(&format!("{} {arg}", parsed.spec.name));
+                match entry.and_then(|e| e.ok_or_else(|| "nothing to do".to_string())).and_then(|e| self.keys.apply(&e)) {
+                    Ok(done) => {
+                        log::info!("keys: {done} (this run)");
+                        self.toast(format!("{done} · until restart (the keys file keeps it)"));
+                    }
+                    Err(e) => self.toast(format!("{}: {e}", parsed.spec.name)),
+                }
+            }
+            Cmd::ReloadKeys => self.load_keys(true),
+            Cmd::KeysFile => self.open_keys_file(),
+            Cmd::Run => {
+                let words = userkeys::words(&arg).and_then(|ws| {
+                    ws.iter().map(|w| userkeys::fill(w, &|n| self.placeholder(n, hint_url))).collect::<Result<Vec<_>, _>>()
+                });
+                match words {
+                    Ok(ws) => self.run_program(&ws),
+                    Err(e) => self.toast(format!("run: {e}")),
+                }
+            }
+            Cmd::Hint | Cmd::HintMany => {
+                self.ask_link_hints(false, Some(hint::Kind::Run(parsed.spec.cmd == Cmd::HintMany)));
+                if let Some(lh) = self.link_hints.as_mut() {
+                    lh.line = Some(arg.clone());
+                }
+            }
             Cmd::Welcome => self.run_command(Command::Welcome),
             Cmd::Ads => self.run_command(Command::ToggleBlocking),
             Cmd::AdsAllowed => self.run_command(Command::AllowedSites),
@@ -3540,7 +3757,7 @@ impl App {
             Item::AllowedSite(site) => self.block_site_again(&site),
             Item::Photo(path) => self.set_space_photo(path),
             Item::Run(line) | Item::Recent(line) => self.run_line(&line),
-            Item::Complete(line) if scene::command::parse(&line).is_ok() => self.run_line(&line),
+            Item::Complete(line) if userkeys::steps(&line, &self.keys.aliases).is_ok() => self.run_line(&line),
             Item::Complete(line) => self.fill_command_line(&line),
         }
     }
@@ -4113,7 +4330,7 @@ impl App {
             return palette::history_rows(&ob.text, &self.scene, &visits, local_ms(now_ms()), local_ms);
         }
         if palette::is_command(&ob.text) {
-            return palette::command_rows(&ob.text, &self.recent_commands, &|k| self.command_values(k));
+            return palette::command_rows(&ob.text, &self.recent_commands, &self.keys.aliases, &|k| self.command_values(k));
         }
         let visits = visits_for(&self.page_index, &self.visits_cache, &ob.text, false);
         let closed: Vec<&Node> = self.closed.iter().map(|(n, _)| n).collect();
@@ -4818,13 +5035,13 @@ impl App {
         use web::links::Filter;
         let filter = match kind {
             None => Filter::All,
-            Some(hint::Kind::Yank | hint::Kind::Background | hint::Kind::Many) => Filter::Links,
+            Some(hint::Kind::Yank | hint::Kind::Background | hint::Kind::Many | hint::Kind::Run(_)) => Filter::Links,
             Some(hint::Kind::Download) => Filter::Downloads,
             Some(hint::Kind::Image) => Filter::Images,
             Some(hint::Kind::Field) => Filter::Fields,
         };
         card.page.request_links(filter);
-        self.link_hints = Some(LinkHints { id, here, kind, chosen: Vec::new(), links: Vec::new(), sections: Vec::new(), hints: None });
+        self.link_hints = Some(LinkHints { id, here, kind, chosen: Vec::new(), line: None, links: Vec::new(), sections: Vec::new(), hints: None });
         log::info!("link hints asked of card {}{}", id.0, kind.map(|k| format!(" (;{})", k.key())).unwrap_or_default());
     }
 
@@ -4849,7 +5066,7 @@ impl App {
             log::info!("link hints on card {}: no links in view", id.0);
             let what = match kind {
                 None => "Nothing to click",
-                Some(hint::Kind::Yank | hint::Kind::Background | hint::Kind::Many) => "No links",
+                Some(hint::Kind::Yank | hint::Kind::Background | hint::Kind::Many | hint::Kind::Run(_)) => "No links",
                 Some(hint::Kind::Download) => "No links or images",
                 Some(hint::Kind::Image) => "No images",
                 Some(hint::Kind::Field) => "No text fields",
@@ -4900,15 +5117,23 @@ impl App {
                     if !lh.chosen.contains(&i) {
                         lh.chosen.push(i);
                     }
-                    let (id, action) = (lh.id, lh.links[i].1.clone());
+                    let (id, action, line) = (lh.id, lh.links[i].1.clone(), lh.line.clone());
                     if let web::links::Action::Open(url) | web::links::Action::Image(url) = action {
-                        self.open_behind(id, &url);
+                        match line {
+                            Some(line) => self.run_hint_line(&line, &url),
+                            None => self.open_behind(id, &url),
+                        }
                     }
                 }
                 hint::Typed::Follow(i) => {
-                    let (id, here, kind, (rect, action)) = (lh.id, lh.here, lh.kind, lh.links[i].clone());
+                    let (id, here, kind, (rect, action), line) = (lh.id, lh.here, lh.kind, lh.links[i].clone(), lh.line.clone());
                     self.link_hints = None;
                     match kind {
+                        Some(hint::Kind::Run(_)) => {
+                            if let (Some(line), web::links::Action::Open(url) | web::links::Action::Image(url)) = (line, action) {
+                                self.run_hint_line(&line, &url);
+                            }
+                        }
                         Some(k) => self.use_hint(id, k, rect, action),
                         None => match action {
                             web::links::Action::Open(url) if here => self.follow_here(id, &url),
@@ -4955,6 +5180,7 @@ impl App {
                 self.toast("Opened beside · still here");
             }
             (hint::Kind::Field, _) => self.click_target(id, rect, true),
+            (hint::Kind::Run(_), _) => log::debug!("hint: a :hint line runs from link_hint_key"),
             (_, None) => log::debug!("hint kind {kind:?} on a target without an address"),
         }
     }
@@ -6488,6 +6714,7 @@ impl App {
     fn show_hints(&mut self) {
         self.hints = true;
         self.sheet = Default::default();
+        self.sheet_sections = crate::hints::sections(&self.keys);
         log::info!("hints shown");
     }
 
@@ -6565,6 +6792,11 @@ impl App {
             return;
         }
         if self.link_hints.is_some() {
+            // The user's hints keys (one chord with Ctrl or Alt, or an F key).
+            if pressed && let Some(a) = self.user_key(KeyMode::Hints, &ev) {
+                self.link_hints = None;
+                return self.run_key_action(a, None);
+            }
             // Letters type a label; Backspace takes one back; Esc or any other
             // key (but a modifier) ends the hints and is dropped.
             if pressed && !matches!(ev.named, Some(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super)) {
@@ -6616,6 +6848,14 @@ impl App {
             .filter(|ob| ob.target.is_list())
             .map(|ob| self.list_panel(ob, &self.list_rows(ob)));
         // The allowed-sites list's highlighted site.
+        // The user's command-line keys.
+        if pressed
+            && self.omnibox.as_ref().is_some_and(|ob| ob.target == Target::Palette && palette::is_command(&ob.text))
+            && let Some(a) = self.user_key(KeyMode::Command, &ev)
+        {
+            self.omnibox = None;
+            return self.run_key_action(a, None);
+        }
         let setting_sel = self
             .omnibox
             .as_ref()
@@ -6786,7 +7026,7 @@ impl App {
             && !self.entered()
             && let Some(chord) = ev.chord(self.mods)
         {
-            match self.pending.feed(&self.board_keys, chord, Instant::now(), true) {
+            match self.pending.feed(&self.keys.board, chord, Instant::now(), true) {
                 Outcome::Run { action, count } => return self.board_action(action, count),
                 Outcome::Wait | Outcome::Cancelled | Outcome::Unbound { swallow: true } => return,
                 Outcome::Unbound { swallow: false } => {}
@@ -6800,7 +7040,7 @@ impl App {
             if pressed {
                 let chord = ev.chord(self.mods);
                 if let Some(chord) = chord {
-                    match self.pending.feed(&self.page_keys_table, chord, Instant::now(), true) {
+                    match self.pending.feed(&self.keys.page, chord, Instant::now(), true) {
                         Outcome::Run { action, count } => return self.page_action(action, count),
                         Outcome::Wait | Outcome::Cancelled | Outcome::Unbound { swallow: true } => return,
                         Outcome::Unbound { swallow: false } => {}
@@ -6814,6 +7054,14 @@ impl App {
             } else {
                 to_page = self.forwarded.remove(&ev.native);
             }
+        }
+        // Insert mode: the user's insert keys come before the page.
+        if pressed
+            && self.entered()
+            && self.page_keys == PageKeys::Insert
+            && let Some(a) = self.user_key(KeyMode::Insert, &ev)
+        {
+            return self.run_key_action(a, None);
         }
 
         if pressed {
@@ -7843,7 +8091,7 @@ impl App {
                 fading.push(palette::field_layer(rd, r, &field, &th, ui));
             }
             if let Some((rows, panel, scroll)) = list {
-                let command_empty = palette::is_command(&ob.text).then(|| palette::command_empty(&ob.text));
+                let command_empty = palette::is_command(&ob.text).then(|| palette::command_empty(&ob.text, &self.keys.aliases));
                 let empty = match (&ob.target, ob.text.trim().is_empty(), &self.page_index) {
                     _ if command_empty.is_some() => command_empty.as_deref().unwrap_or_default(),
                     (Target::History, _, None) => "History is off. Turn it on in the settings.",
@@ -7903,12 +8151,19 @@ impl App {
             bottom -= 48.0 * ui;
             layers.push(l);
         }
-        // A half-typed count or key sequence on the board (`5`).
+        // A half-typed count or key sequence on the board (`5`), and what
+        // can follow it.
         if !self.pending.is_empty() && self.omnibox.is_none() && !self.entered() {
             let typed = self.pending.display();
             let l = self.message(&typed, mid_x, bottom, false);
             bottom -= 48.0 * ui;
             layers.push(l);
+            let rows = self.prefix_rows();
+            if !rows.is_empty() {
+                let (l, h) = self.prefix_panel(&rows, None, mid_x, bottom);
+                bottom -= h + 8.0 * ui;
+                layers.push(l);
+            }
         }
         // An entered card's mode, and what is half-typed in it, in the corner.
         if self.entered() && self.omnibox.is_none() && self.link_hints.is_none() {
@@ -7927,6 +8182,11 @@ impl App {
             }
             let l = self.message(&text, 0.0, vp.y - 16.0 * ui, false);
             layers.push(l);
+            let rows = self.prefix_rows();
+            if !rows.is_empty() {
+                let (l, _) = self.prefix_panel(&rows, Some(16.0 * ui), 0.0, vp.y - 64.0 * ui);
+                layers.push(l);
+            }
         }
         // `;` hints say what a label does, in the same corner.
         if let Some(lh) = self.link_hints.as_ref().filter(|h| h.hints.is_some())
@@ -7961,7 +8221,7 @@ impl App {
         if self.hints
             && let Some(r) = self.renderer.as_mut()
         {
-            for mut l in crate::hints::layers(r, ui, screen, &th, &mut self.sheet) {
+            for mut l in crate::hints::layers(r, ui, screen, &th, &mut self.sheet, &self.sheet_sections) {
                 crate::chrome::fade(&mut l, came, Vec2::new(0.0, 0.0));
                 layers.push(l);
             }
@@ -8056,6 +8316,57 @@ impl App {
     /// A message centred on `mid_x` with its bottom at `bottom` (screen px):
     /// a toast, or a question. `warn` gives it a red edge: answering it
     /// loses something.
+    /// What can follow a half-typed sequence (`g`, `;`, `m`), once it has
+    /// waited [`PREFIX_PANEL_AFTER`]: the next keys and what they do.
+    fn prefix_rows(&self) -> Vec<(String, String)> {
+        let Some(at) = self.pending.since() else { return Vec::new() };
+        if at.elapsed() < PREFIX_PANEL_AFTER {
+            return Vec::new();
+        }
+        let table = if self.page_mode() { &self.keys.page } else { &self.keys.board };
+        userkeys::sheet_rows(&table.after(self.pending.keys()), &|a| self.keys.about(a))
+    }
+
+    /// A panel of `rows` (keys, what they do) with its bottom at `bottom`:
+    /// its left edge at `left`, else centred on `mid_x`.
+    fn prefix_panel(&mut self, rows: &[(String, String)], left: Option<f32>, mid_x: f32, bottom: f32) -> (Layer, f32) {
+        const MAX_ROWS: usize = 14;
+        let th = &self.theme;
+        let ui = self.scale() * th.text_scale;
+        let size = crate::chrome::type_::BODY * ui;
+        let (pad, line, gap) = (14.0 * ui, size * 1.9, 18.0 * ui);
+        let vp = self.viewport();
+        let more = rows.len().saturating_sub(MAX_ROWS);
+        let shown = &rows[..rows.len().min(MAX_ROWS)];
+        let measure = |r: &mut Option<Renderer>, t: &str, bold: bool| r.as_mut().map_or(t.chars().count() as f32 * size * 0.6, |r| r.measure(t, size, bold));
+        let kw = shown.iter().map(|(k, _)| measure(&mut self.renderer, k, true)).fold(0.0, f32::max);
+        let more_text = (more > 0).then(|| format!("and {more} more · ? lists every key"));
+        let mut dw = shown.iter().map(|(_, d)| measure(&mut self.renderer, d, false)).fold(0.0, f32::max);
+        if let Some(t) = more_text.as_deref() {
+            dw = dw.max(measure(&mut self.renderer, t, false));
+        }
+        let n = shown.len() + usize::from(more > 0);
+        let w = (2.0 * pad + kw + gap + dw).min(vp.x - 32.0 * ui).max(80.0);
+        let h = 2.0 * pad * 0.6 + line * n as f32;
+        let x = left.unwrap_or(mid_x - w / 2.0).clamp(16.0 * ui, (vp.x - w - 16.0 * ui).max(16.0 * ui));
+        let r = Rect::new(x.round(), (bottom - h).round(), w.round(), h.round());
+        let th = &self.theme;
+        let mut l = Layer::default();
+        crate::chrome::panel_edged(&mut l, r, th.radius(self.scale()), th, ui, crate::chrome::Lift::High, th.panel(), crate::chrome::edge(th), crate::chrome::hair(ui));
+        let top = r.y + pad * 0.6;
+        let dx = r.x + pad + kw + gap;
+        let dclip = Rect::new(dx, r.y, (r.right() - pad - dx).max(1.0), r.h);
+        for (i, (k, d)) in shown.iter().enumerate() {
+            let mid = top + line * (i as f32 + 0.5);
+            crate::chrome::text(&mut l, k.clone(), r.x + pad, mid, size, rgb(th.text(), 1.0), Rect::new(r.x + pad, r.y, kw + 1.0, r.h), true);
+            crate::chrome::text(&mut l, d.clone(), dx, mid, size, rgb(th.text2(), 1.0), dclip, false);
+        }
+        if let Some(t) = more_text {
+            crate::chrome::text(&mut l, t, r.x + pad, top + line * (shown.len() as f32 + 0.5), size, rgb(th.text3(), 1.0), r, false);
+        }
+        (l, r.h)
+    }
+
     fn message(&mut self, text: &str, mid_x: f32, bottom: f32, warn: bool) -> Layer {
         let th = &self.theme;
         let ui = self.scale() * th.text_scale;
@@ -8117,7 +8428,7 @@ impl App {
         }
         // A key sequence left half-typed runs (or is dropped) after a pause.
         let page = self.page_mode();
-        let table = if page { &self.page_keys_table } else { &self.board_keys };
+        let table = if page { &self.keys.page } else { &self.keys.board };
         if let Some(Outcome::Run { action, count }) = self.pending.expire(table, Instant::now()) {
             if page { self.page_action(action, count) } else { self.board_action(action, count) }
         }

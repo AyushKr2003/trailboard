@@ -18,6 +18,7 @@ use scene::pagetext;
 use scene::palette::{self, Candidate};
 use scene::search::Resolved;
 use scene::settings::Settings;
+use scene::userkeys;
 use scene::{Node, NodeId, Rect, Scene, Vec2};
 use storage::pagetext::Visit;
 use storage::spaces::{SpaceId, SpaceIndex};
@@ -425,13 +426,29 @@ pub const MAX_RECENT_ROWS: usize = 5;
 /// itself, when it is a whole command; then lines run before that start
 /// with it; then what completes it (`scene::command::complete`, with
 /// `values` giving space names and card titles).
-pub fn command_rows(text: &str, recent: &command::Recent, values: &dyn Fn(command::Kind) -> Vec<(String, String)>) -> Vec<Row> {
+pub fn command_rows(
+    text: &str,
+    recent: &command::Recent,
+    aliases: &userkeys::Aliases,
+    values: &dyn Fn(command::Kind) -> Vec<(String, String)>,
+) -> Vec<Row> {
     let row = |item, label: String, detail: String, positions, history: Option<String>| Row { item, label, detail, positions, dot: None, history };
     let mut out = Vec::new();
     let typed = text.trim_start_matches(':').trim();
     let run = command::parse(text).ok();
     if let Some(p) = &run {
         out.push(row(Item::Run(typed.to_string()), format!(":{typed}"), p.spec.about.to_string(), Vec::new(), None));
+    } else if let Some(about) = chain_about(typed, aliases) {
+        // An alias, or commands chained with |.
+        out.push(row(Item::Run(typed.to_string()), format!(":{typed}"), about, Vec::new(), None));
+    }
+    // Aliases whose name starts what is typed, while the name is typed.
+    if !typed.contains(char::is_whitespace) {
+        let lower = typed.to_lowercase();
+        for (name, target) in aliases.iter().filter(|(n, _)| n.starts_with(&lower) && *n != lower) {
+            let positions = (0..lower.chars().count()).collect();
+            out.push(row(Item::Complete(name.to_string()), name.to_string(), format!("Alias · {target}"), positions, None));
+        }
     }
     let same = |line: &str| run.as_ref().is_some_and(|p| command::parse(line).ok().as_ref() == Some(p) && line.eq_ignore_ascii_case(typed));
     for line in recent.matching(text).filter(|l| !same(l)).take(MAX_RECENT_ROWS) {
@@ -449,11 +466,22 @@ pub fn command_rows(text: &str, recent: &command::Recent, values: &dyn Fn(comman
 }
 
 /// What the command line says when it lists nothing: why the line isn't a command.
-pub fn command_empty(text: &str) -> String {
-    match command::parse(text) {
+pub fn command_empty(text: &str, aliases: &userkeys::Aliases) -> String {
+    match userkeys::steps(text, aliases) {
         Ok(_) => "Enter runs it".to_string(),
-        Err(e) => e.to_string(),
+        Err(e) => e,
     }
+}
+
+/// What a line that isn't one command says it does: an alias's chain, or
+/// how many commands a chain runs. `None` if it isn't either, or is wrong.
+fn chain_about(typed: &str, aliases: &userkeys::Aliases) -> Option<String> {
+    let steps = userkeys::steps(typed, aliases).ok()?;
+    let name = typed.split_whitespace().next()?;
+    if let Some(target) = aliases.get(name) {
+        return Some(format!("Alias · {target}"));
+    }
+    (steps.len() > 1).then(|| format!("Runs {} commands in turn", steps.len()))
 }
 
 /// Pages the history view lists at most.

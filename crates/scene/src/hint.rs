@@ -21,6 +21,10 @@ pub enum Kind {
     Field,
     /// `;m`: open links beside, staying where you are, until Esc.
     Many,
+    /// `:hint` / `:hint-many` (M12 step 10): run a command line on the
+    /// link chosen (`{hint-url}`); `true` keeps the labels up until Esc.
+    /// No `;` key: a binding in the key file reaches it.
+    Run(bool),
 }
 
 impl Kind {
@@ -36,6 +40,7 @@ impl Kind {
             Kind::Background => 'b',
             Kind::Field => 'e',
             Kind::Many => 'm',
+            Kind::Run(_) => 'r',
         }
     }
 
@@ -48,12 +53,14 @@ impl Kind {
             Kind::Background => "Open a link beside, stay here",
             Kind::Field => "Type in a field",
             Kind::Many => "Open links beside, stay here",
+            Kind::Run(false) => "Run a command on a link",
+            Kind::Run(true) => "Run a command on links",
         }
     }
 
     /// The labels stay up after one is chosen.
     pub fn keeps(self) -> bool {
-        self == Kind::Many
+        matches!(self, Kind::Many | Kind::Run(true))
     }
 }
 

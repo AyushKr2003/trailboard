@@ -55,7 +55,7 @@ app (trailboard)  winit window · input · omnibox · chrome UI · main loop
 | ✅ | M9 Packaging | Bundle script, `--version`, crash reports, PKGBUILD, Chromium sandbox, first-run welcome |
 | ⬜ | M10 Optional extras | See below; most items on hold |
 | ✅ | M11 Premium look | Corners setting, cards as sheets, board backgrounds, sidebar, command bar, motion, empty board, review pass |
-| 🟡 | **M12 Keyboard first** | Vim-like modes, page keys, scroll sections, command line, cards from a page, search keywords, jumps and marks, then (steps 10–17) user keys, settings, navigation, caret mode, dialogs (below) |
+| 🟡 | **M12 Keyboard first** | Vim-like modes, page keys, scroll sections, command line, cards from a page, search keywords, jumps and marks, user keys, then (steps 11–17) settings, navigation, caret mode, dialogs (below) |
 | ⬜ | **M13 Full media support** | Our own CEF build with H.264/AAC (and HEVC, Widevine if they work), built off this machine, opt-in (below) |
 
 ### Owner decisions that still bind
@@ -546,7 +546,85 @@ marked **Ask** are the owner's call and get asked when their step starts
     and page); the trails sidebar moves to `Ctrl+B` (free today; in a text
     field the page keeps it for bold) and `:sidebar`. Both named saved
     pages and lettered marks (`m{a-z}` / `'{a-z}`) are kept.
-- ⬜ 10. **User key file and external commands.**
+- ✅ 10. **User key file and external commands** (2026-11-20;
+  `scene::userkeys`, `storage::keyfile`, `keys::NAMED`, `hints::sections`,
+  `App::load_keys`, `App::exec_line`, `App::run_program`). Decisions:
+  - File `$XDG_CONFIG_HOME/trailboard/keys` (else `~/.config/…`), one
+    entry a line, `#` lines are notes: `bind <modes> <keys> <chain>`,
+    `unbind <modes> <keys>`, `alias <name> <chain>`. Modes `board`, `page`,
+    `insert`, `hints`, `command`, comma-separated. Keys in the notation
+    `scene::keys::parse` already reads (`gs`, `<C-p>`, `<A-x>`, `<F5>`).
+    The file has no `version`: it is the user's text, never rewritten;
+    we only make it, with a commented template, when `:keys-file` finds
+    none. Unknown first words are errors, so a later format can add
+    words without breaking old files.
+  - A chain is commands split at `|` (`\|` for a bar). Each is an action
+    name (`keys::NAMED`, 85 names such as `scroll-down`, `next-card`,
+    `hint-yank`), an alias (words after it go after its chain's last
+    command), or a `:` command line, checked when bound. An action name
+    that does nothing in a mode but is also a command (`tidy` in a page)
+    runs as the command. Marks and Alt+digits have no names (`mark a`,
+    `to-mark a`, `card 3` reach them). A binding to one action keeps
+    counts as before; a binding to a chain runs the whole chain `count`
+    times (at most 100).
+  - Aliases are read before bindings, so order in the file doesn't
+    matter; an alias may not take a command's name or short name; loops
+    are found (depth 8). `:alias` typed in the command line works too.
+  - In insert, hints and command a binding is one chord with Ctrl or
+    Alt, or an F key (letters type there); hints and command bind lines
+    only, insert takes page actions too. Esc can't start a binding.
+    `unbind` of a start drops every binding under it (`unbind page ;`).
+  - Errors: each wrong line is logged with its number; a toast names the
+    first and counts the rest; the other lines still apply.
+  - `:bind`, `:unbind`, `:alias` change keys for this run only (the toast
+    says so); `:reload-keys` starts again from the file, dropping them.
+  - Placeholders `{url}`, `{title}` (the current card's page; not notes)
+    and `{hint-url}` are filled when a line runs, in the whole line, except
+    in `bind`/`unbind`/`alias`/`hint` lines (kept for later) and `run`
+    (filled per word, so a title with spaces stays one word). A missing
+    value toasts why. Typed lines fill them too (`:open …/{url}`).
+  - `:run` splits words like a shell would quote them (`'…'`, `"…"` with
+    `\"`, backslash) but never runs one: `Command::new` with stdin/out/err
+    null, its own process group, a thread waiting so no zombie stays.
+    Toasts *Started prog* or why it couldn't.
+  - `:hint <line>` / `:hint-many <line>` label links (`hint::Kind::Run`,
+    links only) and run the line with `{hint-url}` on the chosen one;
+    many keeps the labels until Esc. The line after `hint` is one command;
+    to chain after a hint, name the chain with an alias.
+  - The `?` sheet is built when it opens (`hints::sections`): the board's
+    and Page mode's tables grouped by action in `NAMED` order, keys as
+    alternatives (Shift twins of listed keys hidden, at most 4), the 52
+    mark letters and Alt+digits as ranges (`m then a…z`); then sections
+    for the user's insert / hints / command keys and aliases when there
+    are any; then the fixed app shortcuts and mouse rows. Keycaps read
+    " then " as a word between keys.
+  - Prefix panel: 400 ms after a key that starts longer bindings, a panel
+    above the mode pill (board: above the count) lists the next keys and
+    what they do (14 rows, then "and N more"). A key that only starts
+    bindings no longer expires after 1 s (it waits for the next key; Esc
+    drops it); a key that is a binding *and* a start still runs after 1 s.
+  - Command line: an alias or a chain is a runnable first row (*Alias ·
+    …*, *Runs 2 commands in turn*), aliases complete while the name is
+    typed. New commands `bind`, `unbind`, `alias`, `reload-keys`,
+    `keys-file`, `run`, `hint`, `hint-many`; `:u` is now `undo` (it would
+    have been ambiguous with `unbind`); `:k`, `:h`, `:r` are ambiguous.
+  - Verified e2e (`~/.cache/trailboard-e2e-m12`, `run10.sh`, `script26`,
+    `script27`, `config26/trailboard/keys`, `rec.sh` writing its words to
+    `rec.txt`): two bad lines named (13, 14) and the rest loaded; `,r`
+    ran `rec.sh` with `title: Form page` as one word and the address;
+    `,b` an alias opening b here; `d` unbound did nothing; `g` showed the
+    prefix panel (`k_prefix.png`); `;v` → `hint rec hint {hint-url}`
+    labelled two links (`k_hintrun.png`) and `a` ran it with a.html;
+    Alt+q in hints, Alt+z in the command line, Alt+x in Insert each ran
+    their line; `:tob` showed the alias row (`k_alias_row.png`); `:bind
+    page ,t tidy` toasted (`k_bound.png`); the sheet from the live tables
+    (`k_sheet.png`) and filtered to "your" (`k_sheet_filter.png`);
+    `:keys-file` showed the file as text in a card (`k_file.png`);
+    `:reload-keys`; `,c` chained card-next and top; `x` bound to close
+    closed. Not verified: a real keyboard (Alt chords under the
+    desktop's own bindings), `:hint-many`, `:unbind`/`:alias` typed,
+    a program that isn't found, the light theme.
+  - Planned:
   - `$CONFIG/trailboard/keys` in our own plain-text format, read by a
     tested parser in `storage`: bind / unbind a key sequence to a command
     line per mode (board, page, insert, hints, command), aliases (a short
@@ -731,20 +809,20 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-20 (twenty-seventh). Finished M12 step 9,
-jumps, marks and saved pages: Ctrl+o / Ctrl+i over a per-space jump list,
-`m`/`M` + letter and `'` + letter marks (page scroll spots, board spots
-across spaces), `''`, saved pages (`:save-page`, b / B, `:saved`), the
-sidebar on Ctrl+b; new files `jumps.json` and `saved.json`.
-**Repo state:** on `master`; M12 steps 1–9 done (step 9 not yet
-committed); M12 steps 10–17 and M13 planned.
-**Next up:** M12 step 10, the user key file and external commands
-(`$CONFIG/trailboard/keys`, `:bind`, `:unbind`, `:reload-keys`, `:run`,
-the `?` sheet built from the live tables). Steps 11–17 follow in
-order. M13 (full media support, our own CEF build) runs beside M12; its
-builds need a cloud machine. Still open from step 2: the per-site "start
-in Insert" setting (fits step 11). Also retake the README screenshots
-(`docs/images/`) in the new look.
+**Last session:** 2026-11-20 (twenty-eighth). Finished M12 step 10,
+the user key file and outside programs: `~/.config/trailboard/keys`
+(`bind`, `unbind`, `alias`, chains with `|`), `:bind`, `:unbind`,
+`:alias`, `:reload-keys`, `:keys-file`, `:run`, `:hint`, `:hint-many`,
+the `?` sheet built from the live tables, and a panel of what can follow
+a prefix key. New modules `scene::userkeys` and `storage::keyfile`.
+**Repo state:** on `master`; M12 steps 1–10 done (step 10 not yet
+committed); M12 steps 11–17 and M13 planned.
+**Next up:** M12 step 11, settings from the keyboard (`:set`, `:reset`,
+`:toggle`, the `t` prefix in board and page, per-site toggles; Tidy
+stays on `T`). Steps 12–17 follow in order. M13 (full media support, our
+own CEF build) runs beside M12; its builds need a cloud machine. Still
+open from step 2: the per-site "start in Insert" setting (fits step 11).
+Also retake the README screenshots (`docs/images/`) in the new look.
 
 **Small follow-ups (backlog):** glide on undo/redo of moves; follow the
 desktop's animation switch live; verify the setuid sandbox path without
@@ -772,8 +850,9 @@ click into it works).
 - Put a `wait` after each `log shot …` script line; the first shot needs ~5 s.
 - Script `open` with a data: URL needs percent-encoding; a `file://` page is
   easier. While a script runs, the window's IME stays off.
-- Keep `hints::SECTIONS` (the `?` sheet) in step with new shortcuts until
-  M12 step 8 generates it.
+- The `?` sheet's board and page sections come from the key tables;
+  give a new key action a name and text in `keys::NAMED`. App-level
+  shortcuts outside the tables go in `hints::FIXED`.
 - Known rough edges: a note's last keystroke can be lost if its card closes
   or sleeps in the same frame; a stale full-window frame can flash after
   leaving Solo; zooming can churn the live cap.

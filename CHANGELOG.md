@@ -31,6 +31,26 @@ All notable changes to Trailboard. The format follows
     you stay where you are, ;m keeps the labels up to open several that way
     (chosen ones dim; Esc ends), ;e types in a field. The corner says what
     the labels do.
+- **Your own keys.** A plain-text keys file, `~/.config/trailboard/keys`
+  (`:keys-file` opens it, with examples, in a card), binds keys for the
+  board, pages, typing in a page, link hints and the command line:
+  `bind page gs open https://web.archive.org/web/{url}`, `unbind page d`,
+  `alias play run mpv {hint-url}`. A binding runs a key's name
+  (`scroll-down`, `next-card`…), an alias or any `:` command, several
+  chained with `|`. A wrong line is reported with its number and the rest
+  still load; `:reload-keys` reads the file again. `:bind`, `:unbind` and
+  `:alias` change keys until restart.
+  - `:run program words…` starts a program (never through a shell) with
+    `{url}`, `{title}` and `{hint-url}` filled in; `:hint command` labels
+    the links and runs the command on the one chosen, `:hint-many` on as
+    many as you pick until Esc. With these you can bind playing a link in
+    a video player yourself.
+  - The `?` sheet now lists the keys as they are bound, your own
+    included, and after a key that starts others (`g`, `;`, `m`…) a small
+    panel lists what can follow. A key that only starts others now waits
+    for the next key (Esc drops it) instead of giving up after a second.
+  - Aliases complete in the command line, and a line may chain commands
+    with `|` there too. `:u` is now short for `:undo`.
 - **Jumps, marks and saved pages.** Ctrl+O / Ctrl+I go back and forward
   through the cards you visited in a space (a number goes that many;
   kept across restarts). In a page, m then a letter marks where it is

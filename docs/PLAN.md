@@ -930,8 +930,8 @@ on the address's last number, `go`/`gO`/`xo`, Ctrl+s stop, `gh`, `gf`,
 `gd`, F11, yanks of the site and the clean address, the primary selection
 (Shift yanks, `pp`/`PP`), and the hint kinds `;o ;h ;f ;I ;Y`. `wi` (the
 inspector) was dropped for now; see step 12.
-**Repo state:** on `master`; M12 steps 1–12 done (steps 11 and 12 not
-yet committed); M12 steps 13–17 and M13 planned.
+**Repo state:** on `master`; M12 steps 1–12 done and committed; M12
+steps 13–17 and M13 planned.
 **Next up:** M12 step 13, command line power (readline keys, history
 walk, Ctrl+Enter, `.` repeat, counts before `:`, `:later`, `:repeat`).
 Steps 14–17 follow in order. M13 (full media support, our own CEF build)

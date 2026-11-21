@@ -1028,9 +1028,6 @@ marked **Ask** are the owner's call and get asked when their step starts
     from 127.0.0.1:8766 and one inside it: f labels the checkbox, link,
     field and nested button, choosing them ticks, clicks and types;
     screenshot of the labels.
-- ⬜ 17. **Stretch.** Macros (`q{a-z}` records, `@{a-z}` plays, `@@`
-  again); `:screenshot` of a card; `:print`; small user scripts run on
-  matching sites from a folder (our own format, opt-in).
 
 **Owner answers (2026-11-17):**
 1. In Page mode f follows a link in the same card and F opens it beside. On

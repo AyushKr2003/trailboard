@@ -160,7 +160,7 @@ No account, no sync, no telemetry.
 
 ## More
 
-[Guide](docs/GUIDE.md) · [Roadmap](docs/PLAN.md) · [Ideas](docs/FUTURE.md) · [Design rules](docs/DESIGN.md) · [Changelog](CHANGELOG.md)
+[Guide](docs/GUIDE.md) · [Roadmap](docs/PLAN.md) · [Ideas](docs/PLAN.md#8-future-ideas) · [Design rules](docs/DESIGN.md) · [Changelog](CHANGELOG.md)
 
 <br>
 

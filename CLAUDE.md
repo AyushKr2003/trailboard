@@ -3,7 +3,7 @@
 A Linux canvas browser (Rust + winit + wgpu + CEF). Pages are live cards on an
 infinite board; links open beside their source. Read [README.md](README.md) and [docs/GUIDE.md](docs/GUIDE.md) for
 use, [docs/PLAN.md](docs/PLAN.md) for milestones and status, and
-[docs/FUTURE.md](docs/FUTURE.md) for later ideas.
+its §7 (known bugs) and §8 (later ideas).
 Interface rules (colour levels, text strengths, type scale, icons) are in
 [docs/DESIGN.md](docs/DESIGN.md): use `theme.rs` tokens and `chrome.rs`
 helpers, never ad-hoc colours or sizes.

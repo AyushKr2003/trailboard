@@ -1116,8 +1116,8 @@ search and messages: `?` finds up the page (n / N follow the search's
 way), Esc clears the marks a find left, the shortcut sheet is F1 /
 `:keys` (still `?` on the board), and `:messages` lists this session's
 toasts and the waiting `:later` lines (copy, run now, forget, cancel).
-**Repo state:** on `master`; M12 steps 1–16 done, step 16 not committed
-yet; step 17 and M13 planned.
+**Repo state:** on `master`; M12 steps 1–16 done and committed;
+step 17 and M13 planned.
 **Next up:** M12 step 17, stretch (macros `q` / `@`, `:screenshot`,
 `:print`, opt-in user scripts). M13 (full media support, our own CEF
 build) runs beside M12; its builds need a cloud machine. Also retake the

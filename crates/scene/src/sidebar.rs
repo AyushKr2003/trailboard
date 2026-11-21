@@ -11,7 +11,9 @@
 //!   saved with the board, kept by every card of the trail (a split trail
 //!   keeps them in both halves) and undone like a rename. Cards folded away in a stack are listed in their place, marked
 //!   `folded`, so the list doubles as a way into a stack.
-//! - Cards on no trail come last, under one "Other cards" group.
+//! - Cards on no trail come last, under one "Other cards" group. With no
+//!   trail on the board that group is all there is, so its header is left
+//!   out and the cards are listed bare (and can't be collapsed).
 //! - A group can be collapsed to its header row. Collapsing is keyed by the
 //!   trail's first card, lives in this state only (not the board file), and
 //!   is forgotten when that card stops being first.
@@ -64,6 +66,11 @@ impl Row {
 
 /// Header label of the cards on no trail.
 pub const OTHERS: &str = "Other cards";
+
+/// Whether `groups` is just the cards on no trail, listed without a header.
+fn only_others(groups: &[(Group, Vec<(NodeId, usize)>)]) -> bool {
+    matches!(groups, [(Group::Others, _)])
+}
 
 /// The board's groups, each as `(group, cards in reading order with depth)`,
 /// in the sidebar's order.
@@ -191,9 +198,15 @@ pub struct Sidebar {
 
 impl Sidebar {
     /// The rows to show, collapsed groups as their header only. Forgets
-    /// collapsed trails that no longer exist.
+    /// collapsed trails that no longer exist. With no trail, just the cards.
     pub fn rows(&mut self, scene: &Scene) -> Vec<Row> {
         let groups = groups(scene);
+        if only_others(&groups) {
+            // No header to expand it from, so it can't stay collapsed.
+            self.collapsed.clear();
+            let (group, cards) = groups.into_iter().next().unwrap();
+            return cards.into_iter().map(|(id, depth)| Row::Card { id, group, depth, folded: scene.is_hidden(id) }).collect();
+        }
         self.collapsed.retain(|g| groups.iter().any(|(h, _)| h == g));
         let mut rows = Vec::new();
         for (group, cards) in groups {
@@ -224,10 +237,12 @@ impl Sidebar {
     /// Highlights the row of card `id`, or its group's header when the group
     /// is collapsed. False if the card isn't listed.
     pub fn select_card(&mut self, scene: &Scene, id: NodeId) -> bool {
-        let Some((group, _)) = groups(scene).into_iter().find(|(_, cards)| cards.iter().any(|&(c, _)| c == id)) else {
+        let groups = groups(scene);
+        let bare = only_others(&groups);
+        let Some((group, _)) = groups.into_iter().find(|(_, cards)| cards.iter().any(|&(c, _)| c == id)) else {
             return false;
         };
-        self.sel = Some(if self.collapsed.contains(&group) { RowKey::Header(group) } else { RowKey::Card(id) });
+        self.sel = Some(if !bare && self.collapsed.contains(&group) { RowKey::Header(group) } else { RowKey::Card(id) });
         true
     }
 
@@ -254,6 +269,9 @@ impl Sidebar {
     pub fn collapse(&mut self, rows: &[Row]) -> bool {
         let Some(row) = self.index(rows).map(|i| &rows[i]) else { return false };
         let group = row.group();
+        if !rows.iter().any(|r| r.key() == RowKey::Header(group)) {
+            return false; // listed bare, with no header to fold into
+        }
         self.sel = Some(RowKey::Header(group));
         self.collapsed.insert(group)
     }
@@ -391,6 +409,29 @@ mod tests {
         sb.toggle(Group::Others);
         assert_eq!(sb.rows(&s).len(), 8);
         assert!(!sb.select_card(&s, NodeId(99)));
+    }
+
+    #[test]
+    fn with_no_trail_the_cards_are_listed_without_a_header() {
+        let mut s = Scene::new();
+        let a = s.add_page(Rect::new(0.0, 0.0, 400.0, 300.0), "a");
+        let b = s.add_page(Rect::new(0.0, 2000.0, 400.0, 300.0), "b");
+        let mut sb = Sidebar::default();
+        sb.toggle(Group::Others);
+        let rows = sb.rows(&s);
+        assert_eq!(keys(&rows), [RowKey::Card(a), RowKey::Card(b)], "no header, and not collapsed");
+        assert!(sb.collapsed.is_empty());
+        assert!(sb.select_card(&s, b));
+        assert_eq!(sb.sel, Some(RowKey::Card(b)));
+        assert!(!sb.collapse(&rows), "no header to collapse into");
+        assert_eq!(sb.sel, Some(RowKey::Card(b)));
+        // A trail brings the groups, and the header, back.
+        let c = s.spawn_beside(a, "c").unwrap();
+        assert_eq!(
+            keys(&sb.rows(&s)),
+            [RowKey::Header(Group::Trail(a)), RowKey::Card(a), RowKey::Card(c), RowKey::Header(Group::Others), RowKey::Card(b)]
+        );
+        assert!(Sidebar::default().rows(&Scene::new()).is_empty());
     }
 
     #[test]

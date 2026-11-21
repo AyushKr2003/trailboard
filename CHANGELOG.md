@@ -65,6 +65,9 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
 
 ### Changed
 
+- **Sidebar.** With no trail on the board, the cards are listed straight
+  under the space, without an "Other cards" header; the header comes back
+  once a trail exists.
 - The app icon no longer shows as a white tile in launchers that draw SVG
   without filters (Qt, e.g. the Omarchy shell): the grain layer's strength
   is its `fill-opacity` now, not the filter.

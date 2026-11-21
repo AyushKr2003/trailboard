@@ -26,6 +26,15 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
   moves rows to their new places. Nothing loops, and pages are still when
   the desktop asks for less motion (passed to pages as `still`).
 
+### Fixed
+
+- **Smooth j / k scrolling.** Holding j or k scrolled in lurches: each
+  key repeat restarted an eased scroll from a standstill. Scrolls now
+  glide by our own frame loop, which chases a target each press moves on,
+  so a held key flows at a steady speed and settles when released (the
+  biggest one-frame jump went from 125 px to 35 px). A wheel or the page
+  scrolling mid-glide takes over at once.
+
 ### Added
 
 - **Page inspector.** F12, Ctrl+Shift+I or `:inspect` opens Chromium's

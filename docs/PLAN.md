@@ -443,7 +443,13 @@ on scroll. Headless Chromium previews covered every chapter, the light
 theme and `still`. Not verified: the start page's recent cards and pins in
 the real app (a fresh profile has none), the lean and digit roll by eye
 over time, and the settings view transition while typing.
-**Repo state:** on `master`, clean; the redesign is commit `feat(pages): redesign welcome, start and settings`.
+Also this session: j / k scrolling glides by our own chasing frame loop
+(`web::scroll`, `TAU` 55 ms) instead of restarted smooth scrolls; measured
+on a held j (20 presses, 33 ms apart) with a page logging its scroll
+every frame: the biggest one-frame step went from 125 to 35 px and the
+largest change of step from 38 to 12 px.
+**Repo state:** on `master`, clean; the redesign and the j / k glide
+are committed.
 **Next up:** M14 step 1, the `config.toml` reader (asked by the owner on
 2026-11-21; format and decisions in M14). M13 step 1, the chained
 GitHub Actions build, is written on the orphan branch `cef-build`

@@ -19,7 +19,12 @@
 //!   that something else covers (a modal over it) gives way to the
 //!   automatic pick while it is covered;
 //! - smooth scrolls that follow each other quickly add up (each starts from
-//!   where the last one is heading, not from where the page is mid-glide).
+//!   where the last one is heading, not from where the page is mid-glide);
+//! - the glide is our own: one animation frame loop chases the target, so
+//!   a held key (j, k) moves the target on and the page keeps flowing at a
+//!   steady speed, instead of each press restarting an eased scroll from a
+//!   standstill. Anything else that scrolls the section mid-glide (a wheel,
+//!   the page's own script) ends it.
 //!
 //! Frames from another site can't be scrolled by script: the answer asks the
 //! app for a real wheel event at a point inside the frame. So does a page
@@ -204,7 +209,8 @@ const SETUP: &str = r#"
 if (!window.__tbScroll) {
   const P = '\u0001trailboard-scroll\u0001';
   // SLACK: an overflow this small (a border, a rounding) isn't scrolling.
-  const LINE = 60, PAD = 1, SLACK = 8, GLIDE = 300;
+  // TAU: how quickly a glide closes on its target (ms; a line takes ~200).
+  const LINE = 60, PAD = 1, SLACK = 8, TAU = 55;
   const ids = new WeakMap(), els = new Map(), pend = new WeakMap();
   let next = 1;
   const page = () => document.scrollingElement || document.documentElement;
@@ -383,10 +389,38 @@ if (!window.__tbScroll) {
     for (const i of s.split('.')) e = e && e.children[+i];
     return e || null;
   };
+  // Glides: per section, where it is drawn (x, y, fractional) and where it
+  // is heading (pend). Each frame closes part of the gap, by the time passed.
+  const glides = new Map();
+  const frame = now => {
+    for (const [e, g] of glides) {
+      const p = pos(e), d = pend.get(e);
+      // Moved by something else (a wheel, the page): that wins.
+      if (!p || !d || Math.abs(p[0] - g.sx) > 2 || Math.abs(p[1] - g.sy) > 2) { glides.delete(e); pend.delete(e); continue; }
+      const k = 1 - Math.exp(-Math.min(64, now - g.last) / TAU);
+      g.last = now;
+      g.x += (d.l - g.x) * k; g.y += (d.t - g.y) * k;
+      const done = Math.abs(d.l - g.x) < 0.5 && Math.abs(d.t - g.y) < 0.5;
+      if (done) { g.x = d.l; g.y = d.t; }
+      (win(e) || e).scrollTo({ left: g.x, top: g.y, behavior: 'instant' });
+      const q = pos(e);
+      g.sx = q ? q[0] : g.x; g.sy = q ? q[1] : g.y;
+      if (done) { glides.delete(e); pend.delete(e); }
+    }
+    if (glides.size) requestAnimationFrame(frame);
+  };
   const go = (e, l, t, smooth) => {
-    const w = win(e);
-    (w || e).scrollTo({ left: l, top: t, behavior: smooth ? 'smooth' : 'instant' });
-    if (smooth) pend.set(e, { l, t, until: performance.now() + GLIDE }); else pend.delete(e);
+    if (!smooth) {
+      glides.delete(e); pend.delete(e);
+      (win(e) || e).scrollTo({ left: l, top: t, behavior: 'instant' });
+      return;
+    }
+    pend.set(e, { l, t });
+    if (glides.has(e)) return;
+    const p = pos(e);
+    if (!p) return;
+    glides.set(e, { x: p[0], y: p[1], sx: p[0], sy: p[1], last: performance.now() });
+    if (glides.size === 1) requestAnimationFrame(frame);
   };
   window.__tbScroll = {
     list() {
@@ -424,7 +458,7 @@ if (!window.__tbScroll) {
           wheel(c, ax === 'x' ? -d : 0, ax === 'y' ? -d : 0, false);
           return;
         }
-        const pd = pend.get(c), live = pd && performance.now() < pd.until;
+        const pd = pend.get(c), live = !!pd && glides.has(c);
         const l = live ? pd.l : p[0], t0 = live ? pd.t : p[1];
         const step = n * (half ? (ax === 'x' ? p[4] : p[5]) / 2 : LINE);
         const cur = ax === 'x' ? l : t0, max = ax === 'x' ? p[2] : p[3];

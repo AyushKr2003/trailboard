@@ -228,15 +228,25 @@ publishes it as a release tagged with the CEF version. This needs no cloud
 account and nothing big on this machine, and it still counts as a build we
 make ourselves (we own the workflow and can read every log).
 
-- **Where:** a separate build repo (say `trailboard-cef`), not this one, so
-  the browser repo stays small and its CI stays fast. Public, because
-  hosted runners' minutes are free for public repos (a private repo uses
-  a monthly allowance a CEF build would exhaust).
+- **Where:** the orphan branch **`cef-build`** of this repo (owner's
+  choice, 2026-11-21; it shares no history with `master`, so the browser's
+  checkout stays small). Worktree on the owner's machine:
+  `../trailboard-cef-build`. The repo is public, so hosted runners' minutes
+  are free. A push to `cef-build` that changes `cef.conf`, `scripts/` or
+  the workflows starts a build; the release is tagged `cef-<version>-media`.
 - **Clean room:** we write our own workflow and scripts from the method;
   nothing is copied from atlas-engineer's repo.
-- **Pinned:** the workflow takes the CEF version as an input and defaults
-  to the one `install-cef.sh` pins (156.0.26 now), so the result matches
-  the `cef` crate.
+- **Pinned:** `cef.conf` on the branch holds the CEF branch (8078) and
+  commit (8ea0c73, as `install-cef.sh` pins), the GN arguments and the
+  targets. GN: `is_official_build proprietary_codecs ffmpeg_branding=Chrome
+  enable_platform_hevc use_vaapi enable_widevine` (CEF requires the last
+  anyway), with `chrome_pgo_phase=0 symbol_level=0 use_thin_lto=false
+  is_cfi=false` so the link fits a 16 GB runner.
+- **How a stage resumes:** each stage syncs the same pinned sources, runs
+  `gclient_hook.py` itself (automate-git.py only generates build files in
+  its own build step), sets every source file's mtime to 2000-01-01, and
+  unpacks the previous stage's output directory on top; only unfinished
+  steps are dirty. Checkpoints travel as workflow artifacts (zstd).
 - **To check in step 1:** the runner's free disk (a CEF checkout is large;
   remove the preinstalled toolchains first), the per-repo cache and
   artifact size limits for the checkpoints, total wall time per build, and
@@ -246,7 +256,9 @@ make ourselves (we own the workflow and can read every log).
 
 **Steps:**
 
-- ⬜ 1. **Build script and workflow.** The chained GitHub Actions workflow
+- 🟡 1. **Build script and workflow.** Written on `cef-build`
+  (2026-11-21), not yet run: the first run will show disk, time and
+  whether the GN arguments are accepted. The chained GitHub Actions workflow
   above, around `scripts/build-cef.sh`: on a fresh Linux machine,
   fetch CEF's build tooling for the branch matching `install-cef.sh`'s
   version, build the minimal distribution with
@@ -410,9 +422,10 @@ summary per area), and folded `docs/BUGS.md` and `docs/FUTURE.md` into §7
 and §8 here. M12 marked ✅ (the owner removed step 17).
 **Repo state:** on `master`; M12 done and committed; M13 and M14 planned.
 **Next up:** M14 step 1, the `config.toml` reader (asked by the owner on
-2026-11-21; format and decisions in M14). M13 step 1 is now a chained
-GitHub Actions build in a separate public repo (no cloud account needed;
-see M13 "Approach"); the owner creates that repo. Until then the
+2026-11-21; format and decisions in M14). M13 step 1, the chained
+GitHub Actions build, is written on the orphan branch `cef-build`
+(worktree `../trailboard-cef-build`) and waits for its first push and
+run; fix what that run shows. Until our release exists the
 karere codecs CEF is installed at `~/.local/share/cef` (M13 "Interim
 CEF"); bundle with `CEF_PATH=~/.local/share/cef-standard`. Also
 retake the README screenshots (`docs/images/`) in the new look.

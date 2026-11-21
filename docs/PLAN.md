@@ -970,8 +970,8 @@ command line power: readline keys in every field, Up / Down through
 earlier lines, Tab / Shift+Tab walking the list, Ctrl+Enter, `.`, counts
 before `:` and in the line, `:repeat`, `:later`, Ctrl+Delete; a *Command
 line* section on the `?` sheet.
-**Repo state:** on `master`; M12 steps 1–12 committed, step 13 done but
-not yet committed; M12 steps 14–17 and M13 planned.
+**Repo state:** on `master`; M12 steps 1–13 done and committed; M12
+steps 14–17 and M13 planned.
 **Next up:** M12 step 14, visual and caret mode. Steps 15–17 follow in
 order. M13 (full media support, our own CEF build) runs beside M12; its
 builds need a cloud machine. Also retake the README screenshots

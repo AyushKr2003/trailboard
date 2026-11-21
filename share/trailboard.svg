@@ -15,7 +15,7 @@
     </pattern>
     <filter id="grain" x="0" y="0" width="1" height="1">
       <feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" seed="7"/>
-      <feColorMatrix values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .07 0"/>
+      <feColorMatrix values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 1 0"/>
       <feComposite in2="SourceGraphic" operator="in"/>
     </filter>
     <filter id="float" x="-30%" y="-30%" width="160%" height="170%">
@@ -29,7 +29,9 @@
   <!-- The board: the space's colour mood, grain against banding, faint dots. -->
   <g clip-path="url(#tile)">
     <rect x="32" y="32" width="448" height="448" fill="url(#mood)"/>
-    <rect x="32" y="32" width="448" height="448" fill="#fff" filter="url(#grain)"/>
+    <!-- Its strength is the fill-opacity, not the filter: a renderer without
+         filters (Qt's) then draws a faint veil, not a white tile. -->
+    <rect x="32" y="32" width="448" height="448" fill="#fff" fill-opacity=".07" filter="url(#grain)"/>
     <rect x="32" y="32" width="448" height="448" fill="url(#dots)"/>
     <rect x="32" y="32" width="448" height="448" fill="url(#sheen)"/>
   </g>

@@ -56,6 +56,9 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
 
 ### Changed
 
+- The app icon no longer shows as a white tile in launchers that draw SVG
+  without filters (Qt, e.g. the Omarchy shell): the grain layer's strength
+  is its `fill-opacity` now, not the filter.
 - **H.264 and AAC video.** `scripts/install-cef.sh --codecs` installs a CEF
   build with the patent-licensed codecs (same CEF version, third-party,
   pinned by SHA-256), and the Arch package uses it by default

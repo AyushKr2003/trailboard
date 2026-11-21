@@ -505,6 +505,8 @@ pub struct App {
     hints: bool,
     /// Its filter and scroll.
     sheet: crate::hints::Sheet,
+    /// The sidebar's rows arriving and its tab gliding (`sidebar::Motion`).
+    sidebar_motion: crate::sidebar::Motion,
     /// Link hints (`f`) on a card's page: asked for, or showing labels.
     link_hints: Option<LinkHints>,
     /// Each card's chosen scroll section (`web::scroll`); a card not here
@@ -931,6 +933,7 @@ impl App {
             tags: Vec::new(),
             hints: false,
             sheet: Default::default(),
+            sidebar_motion: Default::default(),
             link_hints: None,
             scroll_targets: HashMap::new(),
             sections: HashMap::new(),
@@ -7572,6 +7575,12 @@ impl App {
                 self.hints = false;
                 log::info!("hints hidden");
                 self.menu_pressed = true; // swallow the release too
+            } else if state == ElementState::Pressed
+                && let Some(i) = self.sheet.stop_at(p)
+            {
+                // A section's stop: glide to it.
+                self.sheet.go_to_stop(i);
+                log::info!("hints: to section {i}");
             }
             return;
         }
@@ -8174,7 +8183,7 @@ impl App {
     /// Shows the shortcut sheet, from the top with no filter.
     fn show_hints(&mut self) {
         self.hints = true;
-        self.sheet = Default::default();
+        self.sheet = crate::hints::Sheet::open(self.still);
         self.sheet_sections = crate::hints::sections(&self.keys);
         log::info!("hints shown");
     }
@@ -9572,7 +9581,8 @@ impl App {
             };
             let came = self.anim.sidebar.update(Some(0), Instant::now());
             if let Some(r) = self.renderer.as_mut() {
-                let mut l = crate::sidebar::layer(r, &panel, &rows, &marks, &self.scene, &th, ui);
+                self.sidebar_motion.still = self.still;
+                let mut l = crate::sidebar::layer(r, &panel, &rows, &marks, &self.scene, &th, ui, &mut self.sidebar_motion);
                 if !self.still {
                     self.sidebar_last = Some((l.clone(), panel.rect.right()));
                 }
@@ -9923,7 +9933,7 @@ impl App {
         if self.hints
             && let Some(r) = self.renderer.as_mut()
         {
-            for mut l in crate::hints::layers(r, ui, screen, &th, &mut self.sheet, &self.sheet_sections) {
+            for mut l in crate::hints::layers(r, ui, screen, &th, &mut self.sheet, &self.sheet_sections, self.cursor) {
                 crate::chrome::fade(&mut l, came, Vec2::new(0.0, 0.0));
                 layers.push(l);
             }

@@ -111,6 +111,8 @@ see a card halfway.
 | A card closes | shrinks to 92% and fades | 160 ms |
 | Space switch | the tint cross-fades; the board slides 32 px in from the side the space is on and fades in | 240 ms |
 | Sidebar | slides in 150 ms; slides out the same way | 150 ms |
+| Sidebar rows | come in from the sheet's left edge, one after another, as it opens | 14 ms apart, 200 ms each |
+| Sidebar tab | glides from the old current card's row to the new one (a scroll it follows at once) | 200 ms |
 
 All of it is off when the desktop asks for less motion
 (`desktop::reduced_motion`: Hyprland's `animations:enabled`, else GNOME's
@@ -217,5 +219,22 @@ and embedding it would put a megabyte in every note), so they ask for
   Actions; Go to, History, Web when typing). Sections follow their best
   match, so the first row is always the best one. The first row shown
   repeats its section's label.
+- The trails sidebar draws each trail as the board does: the site icons
+  are its stops, and a line runs down from each page and curves into the
+  pages it opened. The way from the trail's first page to the current
+  card is in the accent (the board's rule: the accent marks the current
+  card and its trail); other trails are neutral, or their own colour once
+  marked. The current card is a raised tab with its icon ringed in the
+  accent.
+- The shortcut sheet (F1, `?`) lists its sections as stops on a trail
+  down the left, as the settings page does: a bead rides it as the list
+  scrolls, passed stops fill, the section in view is lit and leans toward
+  the list, and a click glides there (a clicked stop stays lit even when
+  its section can't reach the top). The list is then one column, and the
+  heading of the section in view docks under the header, pushed away by
+  the next. Rows rise into place one after another when it opens
+  (16 ms apart, 220 ms each), quicker when the filter changes; the words
+  a filter matched are in `accent_text`. A narrow window drops the trail
+  and flows the sections into columns, as before.
 - Menus have an icon column (16 px icons, the tick of a current row
   where there is no icon) and keys right-aligned as keycaps.

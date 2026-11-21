@@ -2,13 +2,25 @@
 //!
 //! A panel at most three quarters of the window each way (smaller when the
 //! shortcuts need less), with a header that stays put: the title, how to
-//! close it, and a filter that typing fills. Under it the sections flow into
-//! one to three columns, as many as the width takes, each section going to
-//! the shortest column; what doesn't fit scrolls (wheel, arrows, Page keys,
-//! Home/End). A row is what it does, then its keys as keycaps.
+//! close it, and a filter that typing fills. Where there is room, the
+//! sections are stops on a trail down the left (as on the settings page):
+//! a bead rides it as the list scrolls, the section in view is lit, and a
+//! click on a stop glides there; the list is one column, and the heading of
+//! the section in view docks under the header. In a narrow window the
+//! sections flow into one to three columns instead, each to the shortest.
+//! What doesn't fit scrolls (wheel, arrows, Page keys, Home/End). A row is
+//! what it does, then its keys as keycaps; the words a filter matched are
+//! marked in the accent.
+//!
+//! Motion (docs/DESIGN.md, "Motion on app pages", in the chrome's terms):
+//! rows rise into place one after another when the sheet opens, and again,
+//! quicker, when the filter changes what is listed. None of it when the
+//! desktop asks for less motion.
+
+use std::time::Instant;
 
 use compositor::{Layer, Quad, Renderer, Shape, Text};
-use scene::Rect;
+use scene::{Rect, Vec2};
 
 use scene::userkeys;
 
@@ -162,9 +174,39 @@ pub struct Sheet {
     pub page: f32,
     /// The panel, as last drawn: a click outside it closes the sheet.
     pub panel: Rect,
+    /// The section stops in the side column, as last drawn: where each is,
+    /// and the scroll that brings its section to the top.
+    pub stops: Vec<(Rect, f32)>,
+    /// When the sheet opened, and when the filter last changed what is
+    /// listed: rows arrive from then.
+    opened: Option<Instant>,
+    changed: Option<Instant>,
+    /// The desktop asks for less motion: rows are simply there.
+    still: bool,
+    /// The stop last clicked, until the list is scrolled some other way:
+    /// it stays lit even when its section can't reach the top.
+    aim: Option<usize>,
 }
 
 impl Sheet {
+    /// A sheet opening now, from the top with no filter; `still`: without motion.
+    pub fn open(still: bool) -> Sheet {
+        Sheet { opened: Some(Instant::now()), still, ..Default::default() }
+    }
+
+    /// The stop under `p`, if any.
+    pub fn stop_at(&self, p: Vec2) -> Option<usize> {
+        self.stops.iter().position(|(r, _)| r.contains(p))
+    }
+
+    /// Glides to stop `i`'s section, and keeps that stop lit.
+    pub fn go_to_stop(&mut self, i: usize) {
+        if let Some(&(_, to)) = self.stops.get(i) {
+            self.scroll_to(to);
+            self.aim = Some(i);
+        }
+    }
+
     /// Glides `px` further (down when positive), within the list; steps
     /// that come quickly add up.
     pub fn scroll_by(&mut self, px: f32) {
@@ -173,6 +215,7 @@ impl Sheet {
 
     /// Glides to `px` from the top, within the list.
     pub fn scroll_to(&mut self, px: f32) {
+        self.aim = None;
         self.touch.stop();
         self.goal = px.clamp(0.0, self.max.max(0.0));
     }
@@ -180,6 +223,7 @@ impl Sheet {
     /// Touchpad movement `dy` (winit's sign): followed at once; `ended` is
     /// the fingers lifting, which may fling. `speed` is *Scroll speed*.
     pub fn touch(&mut self, dy: f32, speed: f32, ended: bool) {
+        self.aim = None;
         let d = self.touch.touch(scene::Vec2::new(0.0, dy), speed, ended);
         self.move_now(-d.y);
     }
@@ -195,6 +239,8 @@ impl Sheet {
         self.touch.stop();
         self.scroll = 0.0;
         self.goal = 0.0;
+        self.aim = None;
+        self.changed = Some(Instant::now());
     }
 
     /// Advances a glide or a fling by `dt` seconds. Call it every frame the
@@ -332,10 +378,56 @@ pub fn flow(heights: &[f32], cols: usize, gap: f32) -> (Vec<usize>, Vec<f32>) {
     (at, tops)
 }
 
+/// Where the bead stands on the trail of stops (0 = the first section,
+/// fractions between): sections start at `tops` (content px, increasing),
+/// the list is scrolled `scroll` of at most `max`. A section that can't
+/// reach the top counts as reached once the list can scroll no further.
+pub fn bead(tops: &[f32], scroll: f32, max: f32) -> f32 {
+    let at = |i: usize| tops[i].min(max.max(0.0));
+    let Some(i) = (0..tops.len()).rev().find(|&i| at(i) <= scroll + 0.5) else { return 0.0 };
+    if i + 1 >= tops.len() {
+        return i as f32;
+    }
+    let span = at(i + 1) - at(i);
+    if span <= 0.5 { (i + 1) as f32 } else { i as f32 + ((scroll - at(i)) / span).clamp(0.0, 1.0) }
+}
+
+/// `text` cut into runs (byte ranges), each marked whether a word of
+/// `filter` matched it there (case aside). Nothing is marked when lower
+/// case would change the text's length (offsets would not line up).
+pub fn runs(text: &str, filter: &str) -> Vec<(std::ops::Range<usize>, bool)> {
+    let lower = text.to_lowercase();
+    let mut hit = vec![false; text.len()];
+    if lower.len() == text.len() {
+        for w in filter.split_whitespace().map(str::to_lowercase) {
+            for (at, _) in lower.match_indices(w.as_str()) {
+                hit[at..at + w.len()].iter_mut().for_each(|h| *h = true);
+            }
+        }
+    }
+    let mut out: Vec<(std::ops::Range<usize>, bool)> = Vec::new();
+    for (i, _) in text.char_indices() {
+        let end = text[i..].chars().next().map_or(i, |c| i + c.len_utf8());
+        match out.last_mut() {
+            Some((r, m)) if *m == hit[i] => r.end = end,
+            _ => out.push((i..end, hit[i])),
+        }
+    }
+    out
+}
+
+/// How far row `k` (in the order drawn) has risen into place, 0 → 1, `t`
+/// seconds after the list arrived; `quick` after a filter change.
+fn rise(k: usize, t: f32, quick: bool) -> f32 {
+    let (step, dur) = if quick { (0.008, 0.14) } else { (0.016, 0.22) };
+    crate::chrome::ease_out((t - k.min(16) as f32 * step) / dur)
+}
+
 /// The sheet over `screen`, as layers: the panel, the scrolling sections,
 /// then the header and edges on top (so a keycap scrolled under them is hidden).
 /// `scale` is the window scale times the desktop text size; colours and corners follow `th`.
-pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mut Sheet, all: &[Section]) -> Vec<Layer> {
+/// `pointer`: where the pointer is, for the row and stop under it.
+pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mut Sheet, all: &[Section], pointer: Vec2) -> Vec<Layer> {
     let ui = scale;
     let radius = th.radius(ui / th.text_scale);
     let size = crate::chrome::type_::BODY * ui;
@@ -370,8 +462,10 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
         })
         .collect();
 
-    // Width: three quarters of the window at most, as many columns as fit
-    // their rows' natural width; in a very small window, nearly all of it.
+    // Width: three quarters of the window at most. Where a side column of
+    // stops leaves room for a column of rows, it has one and the rows are
+    // one column; else as many columns as fit their rows' natural width. In
+    // a very small window, nearly all of it.
     let max_w = (screen.w * 0.75).max((screen.w - 32.0 * ui).min(360.0 * ui));
     let max_h = (screen.h * 0.75).max((screen.h - 32.0 * ui).min(320.0 * ui));
     let row_gap = 24.0 * ui;
@@ -385,11 +479,14 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
         })
         .fold(0.0, f32::max)
         .clamp(280.0 * ui, 440.0 * ui);
-    let cols = columns(max_w - 2.0 * pad, natural, gap);
+    let rail_w = 160.0 * ui;
+    let rail = all.len() >= 3 && max_w - 2.0 * pad - rail_w - gap >= natural;
+    let side = if rail { rail_w + gap } else { 0.0 };
+    let cols = if rail { 1 } else { columns(max_w - 2.0 * pad, natural, gap) };
     // The columns stretch to the three quarters, but not past half again
     // their natural width (a very wide window gets a narrower sheet).
-    let w = max_w.min(2.0 * pad + cols as f32 * natural * 1.5 + (cols - 1) as f32 * gap);
-    let col_w = ((w - 2.0 * pad - (cols - 1) as f32 * gap) / cols as f32).max(1.0);
+    let w = max_w.min(2.0 * pad + side + cols as f32 * natural * 1.5 + (cols - 1) as f32 * gap);
+    let col_w = ((w - 2.0 * pad - side - (cols - 1) as f32 * gap) / cols as f32).max(1.0);
 
     // Header: title row, then the filter field, then a hairline.
     let field_h = size * 2.4;
@@ -405,6 +502,7 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
     let all_h = max_h.min(header_h + flow(&all_heights, cols, section_gap).1.iter().copied().fold(0.0, f32::max) + 8.0 * ui + foot);
     let panel = Rect::new(screen.x + (screen.w - w) / 2.0, screen.y + (screen.h - all_h) / 2.0, w, h);
     let body = Rect::new(panel.x, panel.y + header_h, w, (h - header_h - foot).max(1.0));
+    let x0 = panel.x + pad + side;
 
     sheet.max = (content_h + 8.0 * ui - body.h).max(0.0);
     sheet.scroll = sheet.scroll.clamp(0.0, sheet.max);
@@ -413,69 +511,107 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
     sheet.page = (body.h - line).max(line);
     sheet.panel = panel;
 
+    // How far the rows have come in: since the sheet opened, or (quicker)
+    // since the filter changed what is listed.
+    let since = sheet.changed.or(sheet.opened).map_or(f32::MAX, |t| t.elapsed().as_secs_f32());
+    let quick = sheet.changed.is_some();
+    let came = |k: usize| if sheet.still { 1.0 } else { rise(k, since, quick) };
+    let hover = th.hover();
+
     // The panel.
     let mut base = Layer::default();
     base.quads.extend(crate::chrome::scrim(screen, th, 1.0).quads);
     crate::chrome::panel(&mut base, panel, radius, th, ui, crate::chrome::Lift::High, th.panel());
 
-    // The sections, scrolled.
+    // The sections, scrolled; each heading and row rises into place in turn.
     let mut rows_l = Layer::default();
     let text = |s: &str, x: f32, y: f32, size: f32, color, bold, clip| Text { text: s.into(), pos: [x, y], size, color, clip, bold };
     let top = body.y + 4.0 * ui - sheet.scroll;
     let mut col_y = vec![0.0f32; cols];
+    let mut starts = Vec::with_capacity(sections.len()); // where each section starts, content px
     let hair = crate::chrome::hair(ui);
+    let mut k = 0usize; // items drawn, for the stagger
+    let push = |rows_l: &mut Layer, mut item: Layer, a: f32| {
+        crate::chrome::fade(&mut item, a, Vec2::new(0.0, 8.0 * ui * (1.0 - a)));
+        rows_l.quads.extend(item.quads);
+        rows_l.texts.extend(item.texts);
+    };
     for (i, (name, rows)) in sections.iter().enumerate() {
         let c = at[i];
-        let x = panel.x + pad + c as f32 * (col_w + gap);
+        let x = x0 + c as f32 * (col_w + gap);
         if col_y[c] > 0.0 {
             col_y[c] += section_gap;
         }
+        starts.push(col_y[c]);
         let y0 = top + col_y[c];
         col_y[c] += heights[i];
         if y0 > body.bottom() || y0 + heights[i] < body.y {
             continue;
         }
-        let clip = Rect::new(x, body.y, col_w, body.h);
-        // A section's name: small and quiet, it only groups.
-        rows_l.texts.push(text(name, x, y0 + (line - ks * 1.3) / 2.0 + 3.0 * ui, ks, rgb(th.text2(), 1.0), true, clip));
+        let clip = Rect::new(x - 8.0 * ui, body.y, col_w + 8.0 * ui, body.h);
+        // A section's name: small spaced capitals, quiet; it only groups.
+        let mut item = Layer::default();
+        crate::chrome::spaced(&mut item, r, &name.to_uppercase(), x, y0 + line / 2.0 + 3.0 * ui, ks, rgb(th.text2(), 1.0), clip);
+        push(&mut rows_l, item, came(k));
+        k += 1;
         for (j, (_, desc)) in rows.iter().enumerate() {
             let ry = y0 + (j + 1) as f32 * line;
             if ry > body.bottom() || ry + line < body.y {
                 continue;
             }
+            let mut item = Layer::default();
             let (cs, kw, _) = &measured[i][j];
             let mid = ry + line / 2.0;
+            let row = Rect::new(x - 8.0 * ui, ry, col_w + 16.0 * ui, line);
+            if row.contains(pointer) && body.contains(pointer) {
+                crate::chrome::fill(&mut item, row, th.small_radius(ui / th.text_scale), rgb(hover, 1.0));
+            }
             // A hairline between rows, from the section's title down.
-            rows_l.quads.push(Quad {
+            item.quads.push(Quad {
                 shape: Shape::Rect { rect: Rect::new(x, ry, col_w, hair), radius: 0.0 },
                 color: rgb(th.line(), 0.8),
                 texture: None,
             });
-            // Keys right-aligned; what it does gets the rest (cut with "…").
-            let keys_x = x + col_w - kw.min(col_w * 0.6);
+            // Keys right-aligned; what it does gets the rest (cut with "…"),
+            // the words a filter matched in the accent.
+            // Long lists of keys may take most of the row; they never cross its edge.
+            let keys_x = x + col_w - kw.min(col_w * 0.72);
+            let clip = Rect::new(x, body.y, col_w, body.h);
             let desc_clip = Rect::new(x, body.y, (keys_x - row_gap * 0.5 - x).max(1.0), body.h);
-            rows_l.texts.push(text(desc, x, mid - size * 1.3 / 2.0, size, rgb(fg, 1.0), false, desc_clip));
+            let dy = mid - size * 1.3 / 2.0;
+            if sheet.filter.trim().is_empty() {
+                item.texts.push(text(desc, x, dy, size, rgb(fg, 1.0), false, desc_clip));
+            } else {
+                for (run, hit) in runs(desc, &sheet.filter) {
+                    let dx = r.measure(&desc[..run.start], size, false);
+                    let colour = if hit { th.accent_text() } else { fg };
+                    item.texts.push(text(&desc[run], x + dx, dy, size, rgb(colour, 1.0), false, desc_clip));
+                }
+            }
             let mut cx = keys_x;
             for chip in cs {
                 match chip {
-                    Chip::Cap(k) => {
-                        let kw = r.measure(k, ks, false);
+                    Chip::Cap(key) => {
+                        let kw = r.measure(key, ks, false);
                         let right = cx + crate::chrome::keycaps_width(&[kw], ks);
-                        crate::chrome::draw_keycaps(&mut rows_l, &[k], &[kw], right, mid, ks, th, ui, clip);
+                        crate::chrome::draw_keycaps(&mut item, &[key], &[kw], right, mid, ks, th, ui, clip);
                         cx = right + chip_gap;
                     }
                     Chip::Word(wd) => {
-                        rows_l.texts.push(text(wd, cx, mid - ks * 1.3 / 2.0, ks, rgb(dim, 1.0), false, clip));
+                        item.texts.push(text(wd, cx, mid - ks * 1.3 / 2.0, ks, rgb(dim, 1.0), false, clip));
                         cx += r.measure(wd, ks, false) + chip_gap;
                     }
                 }
             }
+            push(&mut rows_l, item, came(k));
+            k += 1;
         }
     }
     if sections.is_empty() {
         let msg = format!("No shortcuts match \u{201c}{}\u{201d}", sheet.filter.trim());
         let mw = r.measure(&msg, size, false);
-        rows_l.texts.push(text(&msg, body.x + (body.w - mw) / 2.0, body.y + line, size, rgb(dim, 1.0), false, body));
+        let area = w - 2.0 * pad - side;
+        rows_l.texts.push(text(&msg, x0 + (area - mw).max(0.0) / 2.0, body.y + line, size, rgb(dim, 1.0), false, body));
     }
 
     // On top: the header and the bottom edge in the panel's colour, so
@@ -551,6 +687,97 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
             color: rgb(th.line_strong(), 0.9),
             texture: None,
         });
+    }
+    // The side column: the sections as stops on a trail. The trail fills
+    // in the accent down to the bead, which stands where the list is
+    // scrolled to; stops passed are filled; the section in view is lit and
+    // leans toward the list as the bead reaches it.
+    sheet.stops.clear();
+    if rail && !sections.is_empty() {
+        let rx = panel.x + pad;
+        let stop_h = 30.0 * ui;
+        let y0 = body.y + 4.0 * ui;
+        let n = sections.len();
+        // A clicked stop holds the bead, so a section near the end that
+        // can't reach the top still shows as the one chosen.
+        let f = bead(&starts, sheet.scroll, sheet.max);
+        let f = sheet.aim.filter(|&i| i < n).map_or(f, |i| f.min(i as f32));
+        let mid = |i: usize| y0 + i as f32 * stop_h + stop_h / 2.0;
+        let tx = rx + 5.0 * ui;
+        let lw = (1.5 * ui).max(1.0);
+        let last = mid(n - 1).min(body.bottom() - stop_h / 2.0);
+        let bead_y = (mid(0) + f * stop_h).min(last);
+        let mut rail_l = Layer::default();
+        crate::chrome::fill(&mut rail_l, Rect::new(tx - lw / 2.0, mid(0), lw, (last - mid(0)).max(0.0)), 0.0, rgb(th.line(), 1.0));
+        crate::chrome::fill(&mut rail_l, Rect::new(tx - lw / 2.0, mid(0), lw, (bead_y - mid(0)).max(0.0)), 0.0, rgb(th.accent(), 1.0));
+        let clip = Rect::new(rx, body.y, rail_w, body.h);
+        for (i, (name, rows)) in sections.iter().enumerate() {
+            let m = mid(i);
+            if m > body.bottom() - stop_h / 2.0 + 0.5 {
+                break;
+            }
+            let stop = Rect::new(rx - 6.0 * ui, m - stop_h / 2.0, rail_w + 6.0 * ui, stop_h);
+            sheet.stops.push((stop, starts[i].min(sheet.max)));
+            let mut item = Layer::default();
+            let near = (1.0 - (f - i as f32).abs()).clamp(0.0, 1.0);
+            let current = i == (f + 0.001).floor() as usize;
+            let hovered = stop.contains(pointer);
+            if hovered {
+                crate::chrome::fill(&mut item, Rect::new(rx + 14.0 * ui, stop.y + 2.0 * ui, rail_w - 14.0 * ui, stop_h - 4.0 * ui), th.small_radius(ui / th.text_scale), rgb(hover, 1.0));
+            }
+            // The stop: a small dot, filled once passed.
+            let d = 6.0 * ui;
+            let dot = Rect::new(tx - d / 2.0, m - d / 2.0, d, d);
+            let passed = (i as f32) < f - 0.001;
+            crate::chrome::fill(&mut item, dot, d / 2.0, rgb(if passed { th.accent() } else { th.panel() }, 1.0));
+            crate::chrome::outline(&mut item, dot, d / 2.0, lw, rgb(if passed { th.accent() } else { th.line_strong() }, 1.0));
+            let nx = rx + 22.0 * ui + 3.0 * ui * crate::chrome::ease_out(near);
+            let colour = if current || hovered { fg } else { th.text2() };
+            let count = if sheet.filter.trim().is_empty() { String::new() } else { rows.len().to_string() };
+            let cw = if count.is_empty() { 0.0 } else { r.measure(&count, ks, false) + 8.0 * ui };
+            let nclip = Rect::new(nx, body.y, (rx + rail_w - nx - cw).max(1.0), body.h);
+            item.texts.push(text(name, nx, m - size * 1.3 / 2.0, size, rgb(colour, 1.0), current, nclip));
+            if !count.is_empty() {
+                item.texts.push(text(&count, rx + rail_w - cw + 8.0 * ui, m - ks * 1.3 / 2.0, ks, rgb(th.text3(), 1.0), false, clip));
+            }
+            let a = if sheet.still { 1.0 } else { rise(i, since, quick) };
+            crate::chrome::fade(&mut item, a, Vec2::new(-6.0 * ui * (1.0 - a), 0.0));
+            rail_l.quads.extend(item.quads);
+            rail_l.texts.extend(item.texts);
+        }
+        // The bead, ringed in the panel's colour so it sits on the trail.
+        let bd = 10.0 * ui;
+        let ring = Rect::new(tx - bd / 2.0 - 2.5 * ui, bead_y - bd / 2.0 - 2.5 * ui, bd + 5.0 * ui, bd + 5.0 * ui);
+        crate::chrome::fill(&mut rail_l, ring, ring.w / 2.0, rgb(th.panel(), 1.0));
+        crate::chrome::fill(&mut rail_l, Rect::new(tx - bd / 2.0, bead_y - bd / 2.0, bd, bd), bd / 2.0, rgb(th.accent(), 1.0));
+        top_l.quads.extend(rail_l.quads);
+        top_l.texts.extend(rail_l.texts);
+
+        // The heading of the section in view docks under the header once its
+        // own has scrolled away, while rows of it are still in view.
+        if let Some(i) = (0..sections.len()).rev().find(|&i| starts[i] < sheet.scroll - 0.5) {
+            let end = starts[i] + heights[i];
+            if end - sheet.scroll > line * 1.5 {
+                let band = Rect::new(x0 - 8.0 * ui, body.y, col_w + 16.0 * ui, line);
+                // Pushed up by the next section's heading as it arrives.
+                let push_up = (end + section_gap - sheet.scroll - line).min(0.0);
+                let band = band.translate(Vec2::new(0.0, push_up));
+                let bclip = Rect::new(band.x, body.y, band.w, line);
+                let mut dock = Layer::default();
+                crate::chrome::fill(&mut dock, band, 0.0, rgb(th.panel(), 1.0));
+                crate::chrome::spaced(&mut dock, r, &sections[i].0.to_uppercase(), x0, band.y + line / 2.0 + 3.0 * ui, ks, rgb(th.text2(), 1.0), bclip);
+                dock.quads.push(Quad { shape: Shape::Rect { rect: Rect::new(band.x, band.bottom() - hair, band.w, hair), radius: 0.0 }, color: rgb(th.divider(), 1.0), texture: None });
+                for q in &mut dock.quads {
+                    if let Shape::Rect { rect, .. } = &mut q.shape {
+                        let top = rect.y.max(body.y);
+                        rect.h = (rect.bottom() - top).max(0.0);
+                        rect.y = top;
+                    }
+                }
+                top_l.quads.extend(dock.quads);
+                top_l.texts.extend(dock.texts);
+            }
+        }
     }
     vec![base, rows_l, top_l]
 }
@@ -640,6 +867,33 @@ mod tests {
         assert!(s.scroll > 0.0 && s.goal == s.scroll);
         s.type_text("u");
         assert_eq!((s.scroll, s.goal), (0.0, 0.0));
+    }
+
+    #[test]
+    fn the_bead_rides_between_sections() {
+        let tops = [0.0, 100.0, 300.0, 340.0];
+        assert_eq!(bead(&tops, 0.0, 1000.0), 0.0);
+        assert!((bead(&tops, 50.0, 1000.0) - 0.5).abs() < 1e-4, "halfway through the first");
+        assert!((bead(&tops, 200.0, 1000.0) - 1.5).abs() < 1e-4);
+        assert_eq!(bead(&tops, 340.0, 1000.0), 3.0);
+        // The last sections can't reach the top: at the end of the list
+        // the bead is at the last stop.
+        assert_eq!(bead(&tops, 250.0, 250.0), 3.0);
+        assert!(bead(&tops, 125.0, 250.0) > 1.0 && bead(&tops, 125.0, 250.0) < 2.0);
+        assert_eq!(bead(&[], 10.0, 10.0), 0.0);
+    }
+
+    #[test]
+    fn filter_words_are_marked_in_runs() {
+        let rs = runs("Go to the card above", "card ab");
+        let marked: Vec<&str> = rs.iter().filter(|(_, m)| *m).map(|(r, _)| &"Go to the card above"[r.clone()]).collect();
+        assert_eq!(marked, ["card", "ab"]);
+        // The runs cover the text, in order.
+        let joined: String = rs.iter().map(|(r, _)| &"Go to the card above"[r.clone()]).collect();
+        assert_eq!(joined, "Go to the card above");
+        assert_eq!(runs("Zoom", "").len(), 1);
+        assert!(runs("Zoom page / actual size", "ZOOM")[0].1, "case aside");
+        assert_eq!(runs("Ünïcödé", "ï").iter().map(|(r, _)| r.end).last(), Some("Ünïcödé".len()));
     }
 
     #[test]

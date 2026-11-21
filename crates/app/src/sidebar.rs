@@ -9,9 +9,16 @@
 //! site (a press edits its address); the space's name and counts; a "New
 //! card" row; then the list. Groups are set apart by space, not lines; the
 //! pinned trails and the rest get small section labels when both are there.
-//! Cards show their site's icon (a letter tile without one), hang from their
-//! trail with faint guide lines, and show a close button under the pointer.
-//! The current card is a raised tab. The foot holds the settings, a dot per
+//! Cards show their site's icon (a letter tile without one) and a close
+//! button under the pointer. The icons are stops on the trail itself: a
+//! line runs down from each page and curves into the pages it opened, as
+//! the board's trails do (2026-11-21). The way from the trail's first page
+//! to the current card is in the accent, so the sheet shows how you got
+//! here; other trails are neutral, or their own colour once marked. The
+//! current card is a raised tab with its icon ringed, and the tab glides
+//! to the new current card instead of jumping. When the sheet opens its
+//! rows come in one after another from the left edge (none of it when the
+//! desktop asks for less motion). The foot holds the settings, a dot per
 //! space and "+". Corners follow the theme's rounding, like every surface.
 
 use std::time::{Duration, Instant};
@@ -437,6 +444,111 @@ pub fn fit(r: &mut Renderer, text: &str, size: f32, bold: bool, max_w: f32) -> S
     r.ellipsize(text, size, bold, max_w)
 }
 
+/// The row each card row hangs from in its trail: the nearest row above it
+/// in its group one level up (`None` for headers and a trail's first page).
+pub fn parents(rows: &[Row]) -> Vec<Option<usize>> {
+    rows.iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let Row::Card { depth, group, .. } = *row else { return None };
+            if depth == 0 {
+                return None;
+            }
+            (0..i).rev().take_while(|&j| rows[j].group() == group).find(|&j| matches!(rows[j], Row::Card { depth: d, .. } if d + 1 == depth))
+        })
+        .collect()
+}
+
+/// Which rows are on the way from their trail's first page to the card
+/// `current` (it included).
+pub fn on_path(rows: &[Row], parents: &[Option<usize>], current: Option<NodeId>) -> Vec<bool> {
+    let mut on = vec![false; rows.len()];
+    let mut at = rows.iter().position(|r| matches!(r, Row::Card { id, .. } if Some(*id) == current));
+    while let Some(i) = at {
+        on[i] = true;
+        at = parents[i];
+    }
+    on
+}
+
+/// How long the raised tab takes to glide to a new current card.
+pub const TAB_GLIDE: Duration = Duration::from_millis(200);
+
+/// What the sheet's motion keeps between frames: when it opened (its rows
+/// arrive from then) and where the raised tab is gliding.
+#[derive(Debug, Default, Clone)]
+pub struct Motion {
+    /// The desktop asks for less motion: everything is simply in place.
+    pub still: bool,
+    last_draw: Option<Instant>,
+    opened: Option<Instant>,
+    tab_card: Option<NodeId>,
+    /// Where the tab was last drawn (screen y), if it was.
+    tab_y: Option<f32>,
+    /// A glide: from where, since when.
+    tab_glide: Option<(f32, Instant)>,
+}
+
+impl Motion {
+    /// Notes a frame drawn at `now`; after a gap the sheet is opening again.
+    fn frame(&mut self, now: Instant) {
+        if self.last_draw.is_none_or(|t| now.saturating_duration_since(t) > Duration::from_millis(200)) {
+            self.opened = Some(now);
+            self.tab_y = None;
+            self.tab_glide = None;
+        }
+        self.last_draw = Some(now);
+    }
+
+    /// How far row `k` (in the order drawn) has come in, 0 → 1.
+    fn rise(&self, k: usize, now: Instant) -> f32 {
+        let Some(at) = self.opened.filter(|_| !self.still) else { return 1.0 };
+        let t = now.saturating_duration_since(at).as_secs_f32();
+        chrome::ease_out((t - k.min(14) as f32 * 0.014) / 0.2)
+    }
+
+    /// Where to draw the tab for `card`, whose row is at `target` (screen
+    /// y; `None` when it is not in view): it glides there when the current
+    /// card changes, and follows at once when the list scrolls.
+    pub fn tab(&mut self, card: Option<NodeId>, target: Option<f32>, now: Instant) -> Option<f32> {
+        let Some(to) = target else {
+            self.tab_card = card;
+            self.tab_y = None;
+            self.tab_glide = None;
+            return None;
+        };
+        if card != self.tab_card {
+            self.tab_glide = self.tab_y.filter(|_| !self.still && self.tab_card.is_some()).map(|from| (from, now));
+            self.tab_card = card;
+        }
+        let y = match self.tab_glide {
+            Some((from, since)) => {
+                let t = now.saturating_duration_since(since).as_secs_f32() / TAB_GLIDE.as_secs_f32();
+                if t >= 1.0 {
+                    self.tab_glide = None;
+                    to
+                } else {
+                    from + (to - from) * chrome::ease_out(t)
+                }
+            }
+            None => to,
+        };
+        self.tab_y = Some(y);
+        Some(y)
+    }
+}
+
+/// Fades what was added to `l` since `q0` quads and `t0` texts, and moves it.
+fn fade_tail(l: &mut Layer, q0: usize, t0: usize, alpha: f32, shift: Vec2) {
+    if alpha >= 1.0 {
+        return;
+    }
+    let mut tail = Layer { quads: l.quads.split_off(q0), texts: l.texts.split_off(t0) };
+    chrome::fade(&mut tail, alpha, shift);
+    l.quads.extend(tail.quads);
+    l.texts.extend(tail.texts);
+}
+
 /// The sheet's colour: the panel, faintly tinted with the space's colour.
 pub fn surface(th: &Theme, tint: Option<Rgb>) -> Rgb {
     match tint {
@@ -452,7 +564,10 @@ fn tab(th: &Theme, surface: Rgb) -> Rgb {
 }
 
 /// The panel with `rows`, as `v` says.
-pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], v: &View, scene: &Scene, th: &Theme, ui: f32) -> Layer {
+#[allow(clippy::too_many_arguments)]
+pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], v: &View, scene: &Scene, th: &Theme, ui: f32, motion: &mut Motion) -> Layer {
+    let now = Instant::now();
+    motion.frame(now);
     let scroll = v.scroll;
     let mut l = Layer::default();
     let p = panel.rect;
@@ -557,8 +672,86 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], v: &View, scene: &Sc
     }
 
     let tab_fill = tab(th, surface);
+
+    // The trails, under the rows: from each page down and into the pages it
+    // opened, ending at their icons. The way to the current card goes on top,
+    // in the accent; the rest is neutral, or the trail's colour once marked.
+    let ups = parents(rows);
+    let path = on_path(rows, &ups, v.current);
+    let indent = INDENT * ui;
+    let lw = (1.5 * ui).max(1.0);
+    let list = panel.list;
+    let shown = scroll..scroll + panel.fits(scroll);
+    let marked = |g: Group| {
+        rows.iter().find_map(|row| match row {
+            Row::Header { group, mark, .. } if *group == g => mark.colour.as_deref().map(|c| th.color(c)),
+            _ => None,
+        })
+    };
+    let lines_in = if v.drop_line.is_none() { motion.rise(0, now) } else { 1.0 };
+    let mut lines = Layer::default();
+    for hot in [false, true] {
+        for (i, up) in ups.iter().enumerate() {
+            let (Some(pi), Row::Card { depth, group, .. }) = (*up, &rows[i]) else { continue };
+            if path[i] != hot || (pi < shown.start && i < shown.start) || (pi >= shown.end && i >= shown.end) {
+                continue;
+            }
+            let px = (base_x + indent * (*depth - 1) as f32 + icon / 2.0).round();
+            let top = panel.row_rect(pi, scroll).map_or(list.y, |pr| pr.center().y + icon / 2.0 + 3.0 * ui);
+            let colour = rgb(if hot { th.accent() } else { marked(*group).unwrap_or(th.line_strong()) }, if hot { 1.0 } else { 0.85 });
+            let seg = |l: &mut Layer, a: [f32; 2], b: [f32; 2]| {
+                // Kept to the list, so nothing is drawn over the head or foot.
+                let (y0, y1) = (a[1].max(list.y), b[1].min(list.bottom()));
+                if a[1] <= b[1] && y0 <= y1 {
+                    let lerp = |y: f32| if (b[1] - a[1]).abs() < 0.01 { a[0] } else { a[0] + (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) };
+                    l.quads.push(Quad { shape: Shape::Segment { from: [lerp(y0), y0], to: [lerp(y1), y1], width: lw }, color: colour, texture: None });
+                }
+            };
+            match panel.row_rect(i, scroll) {
+                Some(cr) => {
+                    // Down, then a short curve into the icon's left side.
+                    let cy = cr.center().y;
+                    let end = base_x + indent * *depth as f32 - 3.0 * ui;
+                    let rr = (end - px).clamp(2.0 * ui, 6.0 * ui);
+                    seg(&mut lines, [px, top], [px, cy - rr]);
+                    let mut prev = [px, cy - rr];
+                    for k in 1..=5 {
+                        let a = k as f32 / 5.0 * std::f32::consts::FRAC_PI_2;
+                        let pt = [px + rr * (1.0 - a.cos()), cy - rr * (1.0 - a.sin())];
+                        seg(&mut lines, prev, pt);
+                        prev = pt;
+                    }
+                    seg(&mut lines, prev, [end, cy]);
+                }
+                None => seg(&mut lines, [px, top], [px, list.bottom()]),
+            }
+        }
+    }
+    fade_tail(&mut lines, 0, 0, lines_in, Vec2::new(0.0, 0.0));
+    l.quads.extend(lines.quads);
+
+    // The current card's raised tab, gliding when the current card changes.
+    let cur_row = rows.iter().position(|row| matches!(row, Row::Card { id, .. } if v.current == Some(*id)));
+    let cur_rect = cur_row.and_then(|i| panel.row_rect(i, scroll));
+    if let (Some(y), Some(cr)) = (motion.tab(v.current, cur_rect.map(|cr| cr.y), now), cur_rect) {
+        let tab_r = panel.inner(Rect::new(cr.x, y, cr.w, cr.h));
+        let clip_top = tab_r.y.max(list.y);
+        let tab_r = Rect::new(tab_r.x, clip_top, tab_r.w, (tab_r.bottom().min(list.bottom()) - clip_top).max(0.0));
+        if tab_r.h > 1.0 {
+            chrome::lift(&mut l, tab_r, small, th, ui, Lift::Low);
+            chrome::fill(&mut l, tab_r, small, rgb(tab_fill, 1.0));
+            chrome::outline(&mut l, tab_r, small, line, rgb(th.line(), 0.8));
+        }
+    } else {
+        motion.tab(v.current, None, now);
+    }
+
+    let mut k = 0usize; // rows drawn, for the stagger
     for (i, row) in rows.iter().enumerate() {
         let Some(rect) = panel.row_rect(i, scroll) else { continue };
+        let (q0, t0) = (l.quads.len(), l.texts.len());
+        let came = motion.rise(k, now);
+        k += 1;
         if let Some((lr, label)) = panel.label_rect(i, scroll) {
             let ls = type_::CAPTION * ui;
             l.texts.push(Text {
@@ -574,14 +767,6 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], v: &View, scene: &Sc
         let hovered = v.hover == Some(i);
         let selected = v.sel == Some(i);
         let current = matches!(row, Row::Card { id, .. } if v.current == Some(*id));
-        if current {
-            // The current card: a raised tab, and the accent on the sheet's edge.
-            chrome::lift(&mut l, inner, small, th, ui, Lift::Low);
-            chrome::fill(&mut l, inner, small, rgb(tab_fill, 1.0));
-            chrome::outline(&mut l, inner, small, line, rgb(th.line(), 0.8));
-            let bar = Rect::new(p.x + 2.0 * ui, rect.y + rect.h * 0.25, (2.0 * ui).max(1.0), rect.h * 0.5);
-            chrome::fill(&mut l, bar, 0.0, rgb(th.accent(), 1.0));
-        }
         if selected && current {
             // The highlight on the current card keeps the tab and rings it.
             chrome::outline(&mut l, inner, small, (1.5 * ui).max(1.0), rgb(th.accent(), 0.7));
@@ -622,19 +807,16 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], v: &View, scene: &Sc
                 let ls = type_::SMALL * ui;
                 chrome::text(&mut l, fit(r, label, ls, true, room), x, cy, ls, rgb(soft, 1.0), Rect::new(x, rect.y, room, rect.h), true);
             }
-            Row::Card { id, depth, folded, group } => {
+            Row::Card { id, depth, folded, .. } => {
                 let Some(n) = scene.node(*id) else { continue };
-                let indent = INDENT * ui;
                 let x = base_x + indent * *depth as f32;
-                // Faint guides from each level of the trail down past this card.
-                if matches!(group, Group::Trail(_)) {
-                    for level in 0..*depth {
-                        let gx = (base_x + indent * level as f32 + icon / 2.0).round();
-                        chrome::fill(&mut l, Rect::new(gx, rect.y, line, rect.h), 0.0, rgb(th.line(), 1.0));
-                    }
-                }
                 let iy = rect.y + (rect.h - icon) / 2.0;
                 let tile = Rect::new(x, iy, icon, icon);
+                if current {
+                    // The current card's stop: ringed in the accent, as the card is on the board.
+                    let ring = tile.inflate(3.0 * ui);
+                    chrome::outline(&mut l, ring, small.min(ring.w / 2.0).max(3.0 * ui), lw, rgb(th.accent(), 0.9));
+                }
                 let fade = if *folded { 0.55 } else { 1.0 };
                 if let Some(key) = (v.icon)(n) {
                     l.quads.push(Quad { shape: Shape::Rect { rect: tile, radius: 0.0 }, color: [1.0, 1.0, 1.0, fade], texture: Some(key) });
@@ -675,6 +857,8 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], v: &View, scene: &Sc
                 chrome::text(&mut l, title, tx, rect.center().y, size, colour, Rect::new(tx, rect.y, (end - tx).max(1.0), rect.h), current);
             }
         }
+        // It comes in from the sheet's left edge.
+        fade_tail(&mut l, q0, t0, came, Vec2::new(-10.0 * ui * (1.0 - came), 0.0));
     }
 
     if let Some(y) = v.drop_line {
@@ -805,6 +989,44 @@ impl Peek {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn cards_hang_from_the_row_one_level_up() {
+        let g = Group::Trail(NodeId(1));
+        let card = |id, depth| Row::Card { id: NodeId(id), group: g, depth, folded: false };
+        let rows = vec![
+            Row::Header { group: g, label: "t".into(), mark: TrailMark::default(), count: 5, collapsed: false },
+            card(1, 0),
+            card(2, 1),
+            card(3, 2),
+            card(4, 1),
+            card(5, 2),
+            Row::Card { id: NodeId(6), group: Group::Others, depth: 0, folded: false },
+        ];
+        let ups = parents(&rows);
+        assert_eq!(ups, [None, None, Some(1), Some(2), Some(1), Some(4), None]);
+        // The way to card 5: 1 → 4 → 5, not its cousins.
+        let on = on_path(&rows, &ups, Some(NodeId(5)));
+        assert_eq!(on, [false, true, false, false, true, true, false]);
+        assert!(on_path(&rows, &ups, None).iter().all(|b| !b));
+    }
+
+    #[test]
+    fn the_tab_glides_to_a_new_card_and_follows_a_scroll() {
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        let mut m = Motion::default();
+        assert_eq!(m.tab(Some(NodeId(1)), Some(100.0), t0), Some(100.0), "first shown: in place");
+        assert_eq!(m.tab(Some(NodeId(1)), Some(132.0), ms(10)), Some(132.0), "a scroll: follows at once");
+        assert_eq!(m.tab(Some(NodeId(2)), Some(232.0), ms(20)), Some(132.0), "a new card: starts from the old place");
+        let mid = m.tab(Some(NodeId(2)), Some(232.0), ms(120)).unwrap();
+        assert!(mid > 132.0 && mid < 232.0, "{mid}");
+        assert_eq!(m.tab(Some(NodeId(2)), Some(232.0), ms(400)), Some(232.0));
+        let mut still = Motion { still: true, ..Motion::default() };
+        still.tab(Some(NodeId(1)), Some(10.0), t0);
+        assert_eq!(still.tab(Some(NodeId(2)), Some(90.0), ms(1)), Some(90.0), "less motion: jumps");
+    }
+
     use super::*;
     use scene::TrailMark;
 

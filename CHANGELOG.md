@@ -26,6 +26,24 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
   moves rows to their new places. Nothing loops, and pages are still when
   the desktop asks for less motion (passed to pages as `still`).
 
+- **Shortcut sheet redesigned** (F1, `?`). The sections are stops on a
+  trail down the left: a bead rides it as you scroll, the section in view
+  is lit, and a click glides to a section. The heading of the section in
+  view docks under the header, rows rise into place when the sheet opens
+  or the filter changes, the words a filter matched are marked in the
+  accent, and each stop shows how many of its rows matched. The row
+  under the pointer is lifted, and long lists of keys stay inside the
+  panel.
+
+- **Trails sidebar redesigned** (Ctrl+B). Each trail is drawn as it is on
+  the board: the site icons are its stops, with lines running down from
+  each page and curving into the pages it opened. The way from the
+  trail's first page to the current card is lit in the accent, so the
+  sidebar shows how you got here, and the current card's icon is ringed.
+  The raised tab glides to the new current card, and rows come in one
+  after another as the sidebar opens (all of it still when the desktop
+  asks for less motion). The old faint guide lines are gone.
+
 ### Fixed
 
 - **Smooth j / k scrolling.** Holding j or k scrolled in lurches: each

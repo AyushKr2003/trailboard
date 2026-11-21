@@ -448,8 +448,31 @@ Also this session: j / k scrolling glides by our own chasing frame loop
 on a held j (20 presses, 33 ms apart) with a page logging its scroll
 every frame: the biggest one-frame step went from 125 to 35 px and the
 largest change of step from 38 to 12 px.
-**Repo state:** on `master`, clean; the redesign and the j / k glide
-are committed.
+Then the shortcut sheet (`hints.rs`) was redesigned in the same
+language: a trail of section stops with a riding bead (`bead`, unit-tested;
+`Sheet::go_to_stop`, a clicked stop held lit with `aim`), a docked section
+heading, rows rising in on open and on filter changes (`rise`; none when
+`still`), filter matches in the accent (`runs`, unit-tested), the row under
+the pointer lifted, and keys clipped to the row. `layers` now takes the
+pointer. Verified with scripted e2e and screenshots: open mid-arrival,
+settled, wheel-scrolled (docked heading, bead between stops), filtered
+"card" (marks, counts), and a click on *Spaces* (glides there, stays lit).
+Not verified: the narrow-window column layout since the change (its code
+path is the old one).
+Then the trails sidebar (`sidebar.rs`): the icons became stops on drawn
+trails (`parents`, `on_path`, unit-tested; lines kept to the list, the
+way to the current card on top in the accent, marked trails in their
+colour), the current card's icon ringed, the raised tab gliding to a new
+current card (`Motion::tab`, unit-tested; 200 ms, none when `still`), and
+rows arriving staggered on open (`Motion::rise`, an open being a frame
+after a gap of 200 ms). `layer` takes `&mut Motion`, kept in
+`App::sidebar_motion`. Verified with scripted e2e and screenshots: the
+trail drawn with its branches, and the accent moving to the way to
+*Page c* after a click on its row. Not verified by eye: the glide and
+the arrival mid-motion (too quick for the screenshot loop; the glide is
+unit-tested).
+**Repo state:** on `master`, clean; everything above is
+committed.
 **Next up:** M14 step 1, the `config.toml` reader (asked by the owner on
 2026-11-21; format and decisions in M14). M13 step 1, the chained
 GitHub Actions build, is written on the orphan branch `cef-build`

@@ -1076,8 +1076,8 @@ dialogs and fields from the keyboard: page alert / confirm / prompt /
 leave as a question sheet or field, y / n on every question, a typed
 path (Tab, `*`) for file choosers, Ctrl+e to edit a field in your
 editor, Shift+Insert for the primary selection.
-**Repo state:** on `master`; M12 steps 1–14 committed, step 15 done and
-not committed yet; M12 steps 16–17 and M13 planned.
+**Repo state:** on `master`; M12 steps 1–15 done and committed;
+M12 steps 16–17 and M13 planned.
 **Next up:** M12 step 16, search and messages (`?` backward, the sheet
 on F1 and `:keys`, Esc clears the find highlight, `:messages`). Step 17
 follows. M13 (full media support, our own CEF build) runs beside

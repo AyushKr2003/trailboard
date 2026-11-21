@@ -55,7 +55,7 @@ app (trailboard)  winit window · input · omnibox · chrome UI · main loop
 | ✅ | M9 Packaging | Bundle script, `--version`, crash reports, PKGBUILD, Chromium sandbox, first-run welcome |
 | ⬜ | M10 Optional extras | See below; most items on hold |
 | ✅ | M11 Premium look | Corners setting, cards as sheets, board backgrounds, sidebar, command bar, motion, empty board, review pass |
-| 🟡 | **M12 Keyboard first** | Vim-like modes, page keys, scroll sections, command line, cards from a page, search keywords, jumps and marks, user keys, settings, navigation extras, command line power, then (steps 14–17) caret mode, dialogs (below) |
+| 🟡 | **M12 Keyboard first** | Vim-like modes, page keys, scroll sections, command line, cards from a page, search keywords, jumps and marks, user keys, settings, navigation extras, command line power, caret mode, then (steps 15–17) dialogs (below) |
 | ⬜ | **M13 Full media support** | Our own CEF build with H.264/AAC (and HEVC, Widevine if they work), built off this machine, opt-in (below) |
 
 ### Owner decisions that still bind
@@ -829,10 +829,48 @@ marked **Ask** are the owner's call and get asked when their step starts
     `zoom in`; `:repeat 3 repeat 2 tidy` offered nothing and said why
     (`c_nested.png`). Not verified: a real keyboard (Alt keys on this
     compositor), X11, the light theme.
-- ⬜ 14. **Visual and caret mode** (was step 9). `v` caret, `V` line
+- ✅ 14. **Visual and caret mode** (was step 9). `v` caret, `V` line
   selection, `h j k l w b e 0 $ gg G { }` move, `o` swap ends, `y` / Enter
   copy, `Y` to the primary selection; starts at a `/` match or the top of
   the view; the mode pill says *Visual*.
+  - Decided: three states under `PageKeys::Visual(scene::caret::Mode)`:
+    *Caret* (no selection), *Visual* (by characters), *Visual line*. `v`
+    in a page starts Caret; `v` then selects from the caret and stops
+    again; `V` selects lines from a page or either state. Esc drops the
+    selection, then the caret (back to *Page*); `y` / Enter / `Y` copy
+    and go back to *Page*. A toast says how many characters were copied.
+  - Where it starts: after a find (`last_find` set) the find is ended
+    with its match kept as the selection, and the caret goes to the
+    match's start; a mouse selection in view goes straight to Visual with
+    it; a click's caret in view is kept; else the start of the first line
+    of text at the top of the view. No text in view says so.
+  - The page does the moving (`web::caret`, `Selection.modify`), keeping
+    two points (where the selection began, the caret); each move starts
+    from the caret alone and the selection is drawn again, by lines
+    grown with `lineboundary`. The browser's word steps stop at line
+    breaks and block edges, so `w` / `e` / `b` step on until they land
+    on text. `j` / `k` keep the column they started in. The caret is a
+    2 px bar in the theme's accent, in a closed shadow root over the page
+    (the browser draws none in text you can't type in). The page
+    scrolls the caret into view, its scroll areas first.
+  - Its own key table (`keys::visual`, user mode `visual`, a section on
+    the `?` sheet). Unbound letters do nothing; Ctrl/Alt app shortcuts
+    still work; nothing reaches the page. `:` still opens the command
+    line. The mode ends when another card becomes current, the page
+    loads a new document, or a field is clicked (Insert).
+  - Only the main frame's text (not iframes). A copy report is taken
+    only after `y` / `Y` asked for one (any page can write the console).
+  - Verified e2e (`~/.cache/trailboard-e2e-m12`, page `site12/c/caret.html`
+    on :8765, `run13.sh script40 data40`, `script43`): `v` put the caret
+    at the top line (`v_caret.png`); `w v e y` copied *heading*; after
+    `/needle` Esc, `v v e y` copied *needle*; `V j j` selected three whole
+    lines (`v_line.png`) and `o Y` put 143 characters in the primary
+    selection; `3w v 2e y` → *quick brown*; `5w v e y` → *fox*; `2w v 3e`
+    → *The quick brown*; `4w v 2b o 2w y` → *The quick brown fox*; `G`
+    scrolled to the end (`v_bottom.png`) and `{ v } y` copied its last
+    paragraph; Esc twice went Visual → Caret → Page; the `?` sheet's
+    *Caret and Visual* section (`sheet14.png`). Not verified: a real
+    keyboard, right-to-left text, iframes, X11, the light theme.
 - ⬜ 15. **Dialogs and fields from the keyboard.** Our yes/no asks and
   the page's alert / confirm / prompt answer to `y` / `n` / Enter / Esc;
   permission asks (camera, location, notifications) likewise; the file
@@ -965,20 +1003,19 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-21 (thirty-first). Finished M12 step 13,
-command line power: readline keys in every field, Up / Down through
-earlier lines, Tab / Shift+Tab walking the list, Ctrl+Enter, `.`, counts
-before `:` and in the line, `:repeat`, `:later`, Ctrl+Delete; a *Command
-line* section on the `?` sheet.
-**Repo state:** on `master`; M12 steps 1–13 done and committed; M12
-steps 14–17 and M13 planned.
-**Next up:** M12 step 14, visual and caret mode. Steps 15–17 follow in
-order. M13 (full media support, our own CEF build) runs beside M12; its
-builds need a cloud machine. Also retake the README screenshots
+**Last session:** 2026-11-21 (thirty-second). Finished M12 step 14,
+Caret and Visual mode: `v` / `V` in a page, the motions, `o`, copying
+with `y` / Enter / `Y`, starting at a find's match, a key table of its
+own (user mode `visual`) and its section on the `?` sheet.
+**Repo state:** on `master`; M12 steps 1–14 done and committed;
+M12 steps 15–17 and M13 planned.
+**Next up:** M12 step 15, dialogs and fields from the keyboard. Steps 16–17
+follow in order. M13 (full media support, our own CEF build) runs beside
+M12; its builds need a cloud machine. Also retake the README screenshots
 (`docs/images/`) in the new look.
 **Notes:** `:later` lines aren't saved across quits, and there is no
 way to list or cancel waiting ones yet (`:messages`, step 16, could show
-them).
+them). Caret mode works in the main frame's text only (not iframes).
 
 **Small follow-ups (backlog):** the page inspector in a card (`wi`, step
 12); the primary selection set from our window on Hyprland (step 12);

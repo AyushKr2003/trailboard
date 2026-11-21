@@ -31,6 +31,17 @@ All notable changes to Trailboard. The format follows
     you stay where you are, ;m keeps the labels up to open several that way
     (chosen ones dim; Esc ends), ;e types in a field. The corner says what
     the labels do.
+- **Select text from the keyboard.** v in a page puts a caret in its
+  text (the corner says *Caret*): at the match after a / find, at what you
+  selected or clicked if it is in view, else at the top of the view.
+  h j k l and the arrows move it, w / b / e by words, 0 / $ to the ends of
+  the line, { / } by paragraphs, gg / G to the page's ends (a number
+  repeats; the page scrolls along). v selects from there (*Visual*), V
+  whole lines (*Visual line*, also straight from a page), o moves the
+  other end; y or Enter copies, Y puts it in the primary selection. Esc
+  drops the selection, then the caret. Bind your own in the keys file's
+  new `visual` mode (`caret-word`, `copy-selection`…); the `?` sheet has
+  a *Caret and Visual* section.
 - **Your own keys.** A plain-text keys file, `~/.config/trailboard/keys`
   (`:keys-file` opens it, with examples, in a card), binds keys for the
   board, pages, typing in a page, link hints and the command line:

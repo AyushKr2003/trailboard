@@ -4,6 +4,7 @@
 //! with `external_message_pump` + [`pump`], so plain `Rc`/`RefCell` are enough.
 //! The one exception is request blocking ([`shield`]), asked on Chromium's IO thread.
 
+pub mod caret;
 pub mod consent;
 pub mod cosmetic;
 pub mod download;
@@ -91,6 +92,9 @@ pub enum WebEvent {
     /// Page `page`'s next / previous page candidates, answering
     /// [`Page::request_pager`]. Any page can send this; only expect it after asking.
     Pager { page: u64, links: Vec<pager::Link> },
+    /// An answer from Caret / Visual mode in page `page` (see [`caret`]).
+    /// Any page can send this; only take a copy after asking for one.
+    Caret { page: u64, report: caret::Report },
 }
 
 /// Largest favicon side asked of Chromium, px (title bars draw 16 px icons, sharp at 2×).
@@ -1023,6 +1027,13 @@ wrap_display_handler! {
             if let Some(body) = message.strip_prefix(scroll::PREFIX) {
                 if let Some(report) = scroll::parse(body) {
                     emit(WebEvent::Scroll { page: self.shared.key, report });
+                }
+                return 1;
+            }
+            if let Some(body) = message.strip_prefix(caret::PREFIX) {
+                log::trace!("caret: {}", body.chars().take(80).collect::<String>().replace('\n', " | "));
+                if let Some(report) = caret::parse(body) {
+                    emit(WebEvent::Caret { page: self.shared.key, report });
                 }
                 return 1;
             }

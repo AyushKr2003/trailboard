@@ -570,6 +570,23 @@ pub enum Action {
     DownloadPage,
     /// The window full screen or not (`F11`).
     Fullscreen,
+    // Caret and Visual mode (M12 step 14).
+    /// A caret in the page's text (`v`): at a `/` match or a selection in
+    /// view, else the top of the view.
+    Caret,
+    /// Select whole lines (`V`, in a page and in Visual mode).
+    VisualLine,
+    /// Select by characters from the caret, or stop (`v` in Visual mode).
+    SelectChars,
+    /// Move the caret, or the moving end of the selection.
+    CaretMove(caret::Motion),
+    /// The selection's other end moves now (`o`).
+    SwapEnds,
+    /// Copy the selection and leave (`y`, Enter); to the primary selection
+    /// when the flag is set (`Y`).
+    CopySelection(bool),
+    /// Esc: the selection goes, then the caret.
+    CaretBack,
 }
 
 /// What a copy key copies.
@@ -586,6 +603,7 @@ pub enum Yank {
 }
 
 use Action as Ac;
+use crate::caret::{self, Motion as Mo};
 use crate::setcmd::{self, SiteSwitch as SW};
 use crate::sitesettings::Content;
 
@@ -662,6 +680,26 @@ pub const NAMED: &[(&str, Action, &str)] = &[
     ("view-source", Ac::ViewSource, "The page's source, beside"),
     ("download-page", Ac::DownloadPage, "Download the page"),
     ("fullscreen", Ac::Fullscreen, "Full screen on or off"),
+    ("caret", Ac::Caret, "A caret in the text, to select with (v)"),
+    ("visual-line", Ac::VisualLine, "Select whole lines"),
+    ("select-chars", Ac::SelectChars, "Select from the caret, or stop"),
+    ("caret-left", Ac::CaretMove(Mo::Left), "Caret: a character left"),
+    ("caret-right", Ac::CaretMove(Mo::Right), "Caret: a character right"),
+    ("caret-down", Ac::CaretMove(Mo::Down), "Caret: a line down"),
+    ("caret-up", Ac::CaretMove(Mo::Up), "Caret: a line up"),
+    ("caret-word", Ac::CaretMove(Mo::WordNext), "Caret: the next word"),
+    ("caret-word-back", Ac::CaretMove(Mo::WordBack), "Caret: back a word"),
+    ("caret-word-end", Ac::CaretMove(Mo::WordEnd), "Caret: the end of the word"),
+    ("caret-line-start", Ac::CaretMove(Mo::LineStart), "Caret: the start of the line"),
+    ("caret-line-end", Ac::CaretMove(Mo::LineEnd), "Caret: the end of the line"),
+    ("caret-top", Ac::CaretMove(Mo::Top), "Caret: the start of the page"),
+    ("caret-bottom", Ac::CaretMove(Mo::Bottom), "Caret: the end of the page"),
+    ("caret-para-back", Ac::CaretMove(Mo::ParaBack), "Caret: back a paragraph"),
+    ("caret-para", Ac::CaretMove(Mo::ParaNext), "Caret: the next paragraph"),
+    ("swap-ends", Ac::SwapEnds, "Move the selection's other end"),
+    ("copy-selection", Ac::CopySelection(false), "Copy the selection"),
+    ("primary-selection", Ac::CopySelection(true), "The selection to the primary selection"),
+    ("caret-back", Ac::CaretBack, "Drop the selection, then the caret"),
     ("find", Ac::Find, "Find in the page"),
     ("find-next", Ac::FindNext, "Next match"),
     ("find-prev", Ac::FindPrev, "Previous match"),
@@ -1000,6 +1038,8 @@ pub fn page() -> Bindings<Action> {
         ("n", FindNext),
         ("N", FindPrev),
         ("<C-v>", Passthrough),
+        ("v", Caret),
+        ("V", VisualLine),
         ("s", Sections),
         ("]s", NextSection),
         ("[s", PrevSection),
@@ -1046,9 +1086,76 @@ pub fn page() -> Bindings<Action> {
     b
 }
 
+/// Caret and Visual mode's keys (M12 step 14). Keys not here do nothing
+/// in the page; Ctrl and Alt shortcuts the app has still work.
+pub fn visual() -> Bindings<Action> {
+    use Action::*;
+    let mut b = Bindings::new();
+    let table: &[(&str, Action)] = &[
+        ("h", CaretMove(Mo::Left)),
+        ("l", CaretMove(Mo::Right)),
+        ("j", CaretMove(Mo::Down)),
+        ("k", CaretMove(Mo::Up)),
+        ("<Left>", CaretMove(Mo::Left)),
+        ("<Right>", CaretMove(Mo::Right)),
+        ("<Down>", CaretMove(Mo::Down)),
+        ("<Up>", CaretMove(Mo::Up)),
+        ("w", CaretMove(Mo::WordNext)),
+        ("W", CaretMove(Mo::WordNext)),
+        ("b", CaretMove(Mo::WordBack)),
+        ("B", CaretMove(Mo::WordBack)),
+        ("e", CaretMove(Mo::WordEnd)),
+        ("E", CaretMove(Mo::WordEnd)),
+        ("0", CaretMove(Mo::LineStart)),
+        ("^", CaretMove(Mo::LineStart)),
+        ("<Home>", CaretMove(Mo::LineStart)),
+        ("$", CaretMove(Mo::LineEnd)),
+        ("<End>", CaretMove(Mo::LineEnd)),
+        ("gg", CaretMove(Mo::Top)),
+        ("G", CaretMove(Mo::Bottom)),
+        ("{", CaretMove(Mo::ParaBack)),
+        ("}", CaretMove(Mo::ParaNext)),
+        ("v", SelectChars),
+        ("V", VisualLine),
+        ("o", SwapEnds),
+        ("y", CopySelection(false)),
+        ("<Enter>", CopySelection(false)),
+        ("Y", CopySelection(true)),
+        ("<Esc>", CaretBack),
+        (":", CommandLine),
+        ("<F11>", Fullscreen),
+    ];
+    for (seq, a) in table {
+        b.bind(seq, *a).expect("visual keys parse");
+    }
+    b
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn visual_keys_move_select_and_copy() {
+        let v = visual();
+        let get = |s: &str| match v.lookup(&parse(s).unwrap()) {
+            Lookup::Exact(a) | Lookup::ExactAndPrefix(a) => Some(a),
+            _ => None,
+        };
+        assert_eq!(get("w"), Some(Action::CaretMove(caret::Motion::WordNext)));
+        assert_eq!(get("gg"), Some(Action::CaretMove(caret::Motion::Top)));
+        assert_eq!(get("}"), Some(Action::CaretMove(caret::Motion::ParaNext)));
+        assert_eq!(get("Y"), Some(Action::CopySelection(true)));
+        assert_eq!(get("<Enter>"), Some(Action::CopySelection(false)));
+        assert_eq!(get("<Esc>"), Some(Action::CaretBack));
+        assert_eq!(get("d"), None);
+        // v and V start the modes from a page.
+        assert!(page().has(Action::Caret) && page().has(Action::VisualLine));
+        // Every visual action has a name for the key file.
+        for (_, a) in v.iter() {
+            assert!(a.name().is_some(), "{a:?}");
+        }
+    }
 
     fn ch(c: char) -> Chord {
         Chord::plain(Key::Char(c))

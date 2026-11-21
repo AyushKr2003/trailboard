@@ -93,6 +93,7 @@ use std::time::{Duration, Instant};
 
 use compositor::{Background, Layer, Quad, Renderer, Shape, Text};
 use scene::arrange::Arrange;
+use scene::caret;
 use scene::hint;
 use scene::jump::{self, Before, BoardSpot, ScrollSpot};
 use scene::keys::{self, Action as KeyAction, Outcome};
@@ -260,6 +261,8 @@ enum PageKeys {
     Insert,
     /// Every key to the page, Esc included; Shift+Esc back to Page.
     Passthrough,
+    /// A caret in the page's text, selecting or not (`v`, `V`; step 14).
+    Visual(caret::Mode),
 }
 
 impl PageKeys {
@@ -268,8 +271,16 @@ impl PageKeys {
             PageKeys::Page => "Page",
             PageKeys::Insert => "Insert",
             PageKeys::Passthrough => "Passthrough · Shift+Esc to leave",
+            PageKeys::Visual(m) => m.label(),
         }
     }
+}
+
+/// Caret / Visual mode's card (`App::caret`).
+#[derive(Debug, Clone, Copy)]
+struct CaretCard {
+    id: NodeId,
+    copy: bool,
 }
 
 struct LinkHints {
@@ -392,6 +403,9 @@ pub struct App {
     pending: keys::Pending,
     /// Where an entered card's keys go.
     page_keys: PageKeys,
+    /// The card Caret / Visual mode is in, and whether a copy was asked
+    /// for (only then is a copy from the page taken).
+    caret: Option<CaretCard>,
     /// Keys pressed in Page mode that went on to the page, so their release does too.
     forwarded: HashSet<i32>,
     omnibox: Option<Omnibox>,
@@ -764,6 +778,7 @@ impl App {
             sheet_sections: Vec::new(),
             pending: keys::Pending::default(),
             page_keys: PageKeys::Page,
+            caret: None,
             forwarded: HashSet::new(),
             omnibox: None,
             recent_commands,
@@ -2071,7 +2086,15 @@ impl App {
     /// Mode); otherwise they are board keys and the focused card is just the
     /// current one.
     fn typing(&self) -> bool {
-        self.entered() && self.page_keys != PageKeys::Page
+        self.entered() && matches!(self.page_keys, PageKeys::Insert | PageKeys::Passthrough)
+    }
+
+    /// Caret or Visual mode in the entered card (`v`, `V`).
+    fn visual_mode(&self) -> Option<caret::Mode> {
+        match self.page_keys {
+            PageKeys::Visual(m) if self.entered() => Some(m),
+            _ => None,
+        }
     }
 
     /// A card is entered: its page has the keys (Page, Insert or
@@ -2104,6 +2127,9 @@ impl App {
     fn set_page_keys(&mut self, mode: PageKeys) {
         if self.page_keys != mode {
             log::info!("keys: {mode:?}");
+        }
+        if !matches!(mode, PageKeys::Visual(_)) {
+            self.end_caret();
         }
         self.page_keys = mode;
         self.pending.clear();
@@ -2711,6 +2737,8 @@ impl App {
             }
             KeyAction::Insert => self.set_page_keys(PageKeys::Insert),
             KeyAction::Passthrough => self.set_page_keys(PageKeys::Passthrough),
+            KeyAction::Caret => self.start_caret(id, caret::Mode::Caret),
+            KeyAction::VisualLine => self.start_caret(id, caret::Mode::Lines),
             KeyAction::FocusField => {
                 if let Some(p) = self.focused_page() {
                     p.focus_first_field();
@@ -2815,6 +2843,115 @@ impl App {
     }
 
     /// yy yt ym yd yp (and with Shift, to the primary selection).
+    /// `v` / `V`: a caret in card `id`'s text, in `want` (Caret or Lines).
+    /// A find that ran ends first, so its match becomes where the caret
+    /// starts; the page answers with the mode it began in.
+    fn start_caret(&mut self, id: NodeId, want: caret::Mode) {
+        let Some(c) = self.cards.get(&id) else { return };
+        if c.page.kind() != web::PageKind::Web {
+            return self.toast("No caret on this page");
+        }
+        let found = !self.last_find.is_empty();
+        if found {
+            c.page.stop_finding();
+        }
+        let color = self.theme.accent();
+        let css = format!("rgb({},{},{})", color[0], color[1], color[2]);
+        c.page.run_script(&web::caret::start(want.name(), &css, &self.last_find, if found { 60 } else { 0 }));
+        self.set_page_keys(PageKeys::Visual(want));
+        self.caret = Some(CaretCard { id, copy: false });
+        log::info!("caret: start {} on card {}", want.name(), id.0);
+    }
+
+    /// Ends Caret / Visual mode in its page (its caret and selection go).
+    fn end_caret(&mut self) {
+        if let Some(c) = self.caret.take()
+            && let Some(card) = self.cards.get(&c.id)
+        {
+            card.page.run_script(web::caret::STOP);
+        }
+    }
+
+    /// Runs a Caret / Visual mode key (`scene::keys::visual`).
+    fn visual_action(&mut self, action: KeyAction, count: Option<u32>) {
+        let (Some(mode), Some(c)) = (self.visual_mode(), self.caret) else { return };
+        let Some(page) = self.cards.get(&c.id).map(|card| &card.page) else { return };
+        log::debug!("visual key: {action:?} {count:?}");
+        let next = match action {
+            KeyAction::CaretMove(m) => {
+                let n = if m.counts() { count.unwrap_or(1).clamp(1, 1000) } else { 1 };
+                page.run_script(&web::caret::run(m.op(), n));
+                return;
+            }
+            KeyAction::SwapEnds => {
+                page.run_script(&web::caret::swap());
+                return;
+            }
+            KeyAction::CopySelection(primary) => {
+                page.run_script(&web::caret::copy(primary));
+                self.caret = Some(CaretCard { copy: true, ..c });
+                return;
+            }
+            KeyAction::SelectChars => Some(mode.chars()),
+            KeyAction::VisualLine => Some(mode.lines()),
+            KeyAction::CaretBack => mode.back(),
+            a if keys::page().has(a) => return self.page_action(a, count),
+            a => return self.board_action(a, count),
+        };
+        match next {
+            Some(m) => {
+                page.run_script(&web::caret::mode(m.name()));
+                self.page_keys = PageKeys::Visual(m);
+            }
+            None => self.set_page_keys(PageKeys::Page),
+        }
+    }
+
+    /// An answer from Caret / Visual mode in card `id`'s page.
+    fn caret_report(&mut self, id: NodeId, report: web::caret::Report) {
+        use web::caret::Report;
+        let Some(c) = self.caret.filter(|c| c.id == id) else { return };
+        let here = self.visual_mode().is_some() && self.focused == Some(id);
+        match report {
+            Report::Mode(m) => {
+                if here && let Some(m) = caret::Mode::named(&m) {
+                    self.page_keys = PageKeys::Visual(m);
+                }
+            }
+            Report::NoText => {
+                self.caret = None;
+                if here {
+                    self.set_page_keys(PageKeys::Page);
+                }
+                self.toast("No text in view for a caret");
+            }
+            Report::Gone => {
+                self.caret = None;
+                if here {
+                    self.set_page_keys(PageKeys::Page);
+                }
+            }
+            Report::Empty => self.toast("Nothing selected · v starts a selection"),
+            Report::Copy { primary, text } if c.copy => {
+                self.caret = None;
+                let n = text.chars().count();
+                let what = if n == 1 { "1 character".to_string() } else { format!("{n} characters") };
+                if primary {
+                    self.clipboard.set_primary(&text);
+                    self.toast(format!("Put {what} in the primary selection"));
+                } else {
+                    self.clipboard.set_text(&text);
+                    self.toast(format!("Copied {what}"));
+                }
+                log::info!("caret: copied {n} chars from card {}{}", id.0, if primary { " to the primary selection" } else { "" });
+                if here {
+                    self.set_page_keys(PageKeys::Page);
+                }
+            }
+            Report::Copy { .. } => log::warn!("caret: card {} sent a copy nobody asked for", id.0),
+        }
+    }
+
     fn copy_from_card(&mut self, id: NodeId, what: keys::Yank, primary: bool) {
         use keys::Yank;
         let Some(n) = self.scene.node(id) else { return };
@@ -2936,7 +3073,9 @@ impl App {
     /// page tables: in a page if a page has the keys and it is a page key,
     /// else on the board.
     fn run_key_action(&mut self, a: KeyAction, count: Option<u32>) {
-        if self.entered() && keys::page().has(a) {
+        if self.visual_mode().is_some() && keys::visual().has(a) {
+            self.visual_action(a, count);
+        } else if self.entered() && keys::page().has(a) {
             self.page_action(a, count);
         } else {
             self.board_action(a, count);
@@ -3281,7 +3420,7 @@ impl App {
             return;
         }
         match report {
-            web::focus::Report::Field { editable: true, user: true } if self.page_keys == PageKeys::Page => {
+            web::focus::Report::Field { editable: true, user: true } if matches!(self.page_keys, PageKeys::Page | PageKeys::Visual(_)) => {
                 self.set_page_keys(PageKeys::Insert);
             }
             web::focus::Report::Field { editable: false, .. } if self.page_keys == PageKeys::Insert => {
@@ -6316,6 +6455,11 @@ impl App {
                         }
                     }
                 }
+                WebEvent::Caret { page, report } => {
+                    if let Some(id) = self.node_of(page) {
+                        self.caret_report(id, report);
+                    }
+                }
                 WebEvent::Focus { page, report } => {
                     if let Some(id) = self.node_of(page) {
                         self.page_focus(id, report);
@@ -6375,6 +6519,13 @@ impl App {
                         c.loading = loading;
                         c.can_back = can_back;
                         c.can_forward = can_forward;
+                    }
+                    // A new document has no caret: Caret mode ends with the old one.
+                    if loading && self.caret.is_some_and(|c| c.id == id) {
+                        self.caret = None;
+                        if self.focused == Some(id) && matches!(self.page_keys, PageKeys::Visual(_)) {
+                            self.set_page_keys(PageKeys::Page);
+                        }
                     }
                     if loading {
                         self.text_due.remove(&id);
@@ -7588,6 +7739,21 @@ impl App {
         // nothing; other keys (Enter, Tab, arrows, Space, shortcuts) go on to
         // the app's shortcuts and then to the page.
         let mut to_page = self.typing();
+        // Caret / Visual mode: its keys; nothing goes to the page, and a
+        // key that isn't one does nothing unless it is an app shortcut.
+        if pressed
+            && self.visual_mode().is_some()
+            && let Some(chord) = ev.chord(self.mods)
+        {
+            match self.pending.feed(&self.keys.visual, chord, Instant::now(), true) {
+                Outcome::Run { action, count } => return self.visual_action(action, count),
+                Outcome::Wait | Outcome::Cancelled | Outcome::Unbound { swallow: true } => return,
+                Outcome::Unbound { swallow: false } => {}
+            }
+            if chord.is_bare() && matches!(chord.key, keys::Key::Char(_)) {
+                return;
+            }
+        }
         if self.page_mode() {
             if pressed {
                 let chord = ev.chord(self.mods);
@@ -8881,7 +9047,13 @@ impl App {
         if at.elapsed() < PREFIX_PANEL_AFTER {
             return Vec::new();
         }
-        let table = if self.page_mode() { &self.keys.page } else { &self.keys.board };
+        let table = if self.visual_mode().is_some() {
+            &self.keys.visual
+        } else if self.page_mode() {
+            &self.keys.page
+        } else {
+            &self.keys.board
+        };
         userkeys::sheet_rows(&table.after(self.pending.keys()), &|a| self.keys.about(a))
     }
 
@@ -8984,12 +9156,24 @@ impl App {
         // Nothing entered: the next card entered starts afresh.
         if !self.entered() && self.page_keys != PageKeys::Page {
             self.page_keys = PageKeys::Page;
+            self.end_caret();
+        }
+        // Caret mode belongs to its card: another card current ends it.
+        if self.caret.is_some_and(|c| Some(c.id) != self.focused) && matches!(self.page_keys, PageKeys::Visual(_)) {
+            self.set_page_keys(PageKeys::Page);
         }
         // A key sequence left half-typed runs (or is dropped) after a pause.
         let page = self.page_mode();
-        let table = if page { &self.keys.page } else { &self.keys.board };
+        let visual = self.visual_mode().is_some();
+        let table = if visual { &self.keys.visual } else if page { &self.keys.page } else { &self.keys.board };
         if let Some(Outcome::Run { action, count }) = self.pending.expire(table, Instant::now()) {
-            if page { self.page_action(action, count) } else { self.board_action(action, count) }
+            if visual {
+                self.visual_action(action, count)
+            } else if page {
+                self.page_action(action, count)
+            } else {
+                self.board_action(action, count)
+            }
         }
         self.sidebar_peek_tick();
         self.sync_find();

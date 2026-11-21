@@ -23,10 +23,12 @@ pub enum Mode {
     Hints,
     /// In the `:` command line.
     Command,
+    /// Caret and Visual mode (`v`, `V` in a page).
+    Visual,
 }
 
 impl Mode {
-    pub const ALL: [Mode; 5] = [Mode::Board, Mode::Page, Mode::Insert, Mode::Hints, Mode::Command];
+    pub const ALL: [Mode; 6] = [Mode::Board, Mode::Page, Mode::Insert, Mode::Hints, Mode::Command, Mode::Visual];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -35,6 +37,7 @@ impl Mode {
             Mode::Insert => "insert",
             Mode::Hints => "hints",
             Mode::Command => "command",
+            Mode::Visual => "visual",
         }
     }
 
@@ -53,7 +56,7 @@ impl Mode {
 pub fn modes(list: &str) -> Result<Vec<Mode>, String> {
     let mut out = Vec::new();
     for name in list.split(',').map(str::trim) {
-        let m = Mode::named(name).ok_or_else(|| format!("no mode “{name}” (board, page, insert, hints, command)"))?;
+        let m = Mode::named(name).ok_or_else(|| format!("no mode “{name}” (board, page, insert, hints, command, visual)"))?;
         if !out.contains(&m) {
             out.push(m);
         }
@@ -327,6 +330,7 @@ pub struct Keys {
     pub insert: Bindings<Action>,
     pub hints: Bindings<Action>,
     pub command: Bindings<Action>,
+    pub visual: Bindings<Action>,
     /// What [`Action::Line`] `n` runs, and the chain as written.
     pub lines: Vec<(Vec<Step>, String)>,
     pub aliases: Aliases,
@@ -340,6 +344,7 @@ impl Default for Keys {
             insert: Bindings::new(),
             hints: Bindings::new(),
             command: Bindings::new(),
+            visual: keys::visual(),
             lines: Vec::new(),
             aliases: Aliases::default(),
         }
@@ -357,6 +362,7 @@ impl Keys {
             Mode::Insert => &self.insert,
             Mode::Hints => &self.hints,
             Mode::Command => &self.command,
+            Mode::Visual => &self.visual,
         }
     }
 
@@ -367,6 +373,7 @@ impl Keys {
             Mode::Insert => &mut self.insert,
             Mode::Hints => &mut self.hints,
             Mode::Command => &mut self.command,
+            Mode::Visual => &mut self.visual,
         }
     }
 
@@ -477,6 +484,7 @@ impl Keys {
         match m {
             Mode::Board => keys::board().has(a),
             Mode::Page | Mode::Insert => keys::page().has(a),
+            Mode::Visual => keys::visual().has(a) || keys::page().has(a),
             Mode::Hints | Mode::Command => false,
         }
     }

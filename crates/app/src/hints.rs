@@ -34,7 +34,12 @@ pub fn sections(keys: &userkeys::Keys) -> Vec<Section> {
     ]));
     let mut page = userkeys::sheet_rows(&keys.page, &about);
     page.push(("Esc".into(), "Out of a field, then back to the board".into()));
-    let mut out: Vec<Section> = vec![("Keyboard".into(), board), ("In a page (Enter or Solo)".into(), page)];
+    let visual = userkeys::sheet_rows(&keys.visual, &about);
+    let mut out: Vec<Section> = vec![
+        ("Keyboard".into(), board),
+        ("In a page (Enter or Solo)".into(), page),
+        ("Caret and Visual (v · V in a page)".into(), visual),
+    ];
     for (title, table) in [
         ("Typing in a page (your keys)", &keys.insert),
         ("While hints show (your keys)", &keys.hints),

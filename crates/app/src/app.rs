@@ -9023,8 +9023,10 @@ impl App {
             Hit::Board
         };
 
-        // Trail edges under everything: a gentle S-curve from the source's
-        // title bar to the target's. A trail is drawn in its own colour, or a
+        // Trail edges under everything: from the source's side to the
+        // target's, near their tops, turning at right angles halfway across;
+        // the turns are rounded like the cards' corners at this zoom
+        // (`scene::route`), square when the cards are. A trail is drawn in its own colour, or a
         // quiet neutral if it has none; the current card's trail is brought
         // out, so its path can be followed through a busy board.
         // Everything from here to the cards' last layer is the board, which
@@ -9055,8 +9057,6 @@ impl App {
             // Near the top of each card, where its name is.
             let (ya, yb) = (fa.y + (28.0 * k).min(fa.h / 2.0), fb.y + (28.0 * k).min(fb.h / 2.0));
             let (p0, p3) = if fb.x >= fa.right() { ([fa.right(), ya], [fb.x, yb]) } else { ([fa.x, ya], [fb.right(), yb]) };
-            let dx = (p3[0] - p0[0]) * 0.5;
-            let (p1, p2) = ([p0[0] + dx, p0[1]], [p3[0] - dx, p3[1]]);
             let hot = current_trail.contains(&e.from) && current_trail.contains(&e.to);
             let marked = edge_colour.get(&e.from).copied();
             let (colour, alpha) = match (marked, hot) {
@@ -9066,14 +9066,10 @@ impl App {
                 (None, false) => (th.line_strong(), 1.0),
             };
             let width = ((if hot { 2.0 } else { 1.5 }) * k).clamp(scale.max(1.0), 3.0 * scale);
-            let mut prev = p0;
-            for i in 1..=28 {
-                let t = i as f32 / 28.0;
-                let u = 1.0 - t;
-                let x = u * u * u * p0[0] + 3.0 * u * u * t * p1[0] + 3.0 * u * t * t * p2[0] + t * t * t * p3[0];
-                let y = u * u * u * p0[1] + 3.0 * u * u * t * p1[1] + 3.0 * u * t * t * p2[1] + t * t * t * p3[1];
-                edges.quads.push(Quad { shape: Shape::Segment { from: prev, to: [x, y], width }, color: rgb(colour, alpha), texture: None });
-                prev = [x, y];
+            let turn = th.card_corner(k, scale, f32::MAX, f32::MAX);
+            let path = scene::route::elbow(Vec2::new(p0[0], p0[1]), Vec2::new(p3[0], p3[1]), turn);
+            for w in path.windows(2) {
+                edges.quads.push(Quad { shape: Shape::Segment { from: [w[0].x, w[0].y], to: [w[1].x, w[1].y], width }, color: rgb(colour, alpha), texture: None });
             }
             // A dot where the line leaves a card and where it arrives.
             let d = (7.0 * k).clamp(3.0 * scale, 8.0 * scale);

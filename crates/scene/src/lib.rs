@@ -28,6 +28,7 @@ pub mod palette;
 pub mod placement;
 pub mod privacy;
 pub mod read;
+pub mod route;
 pub mod saved;
 pub mod scroll;
 pub mod scrolltarget;

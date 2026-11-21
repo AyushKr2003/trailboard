@@ -209,6 +209,14 @@ and embedding it would put a megabyte in every note), so they ask for
   host, shield count and buttons. Its place is the card's handle whether
   it shows or not.
 - Trails leave and arrive near the top of a card with a dot at each end.
+  Between, a trail runs straight across out of the source's side, straight
+  up or down halfway between the cards, and straight across into the
+  target, turning at right angles (`scene::route::elbow`). Each turn is
+  rounded with the cards' own corner radius at the zoom shown (the
+  *Corners* setting), and is square when the cards are; where the cards
+  are close it shrinks to fit. The sidebar's trails and the welcome page's
+  drawn board turn the same way. (Owner's decision, 2026-11-21; trails
+  were S-curves before.)
 - Messages (toasts, questions, key guides) sit at the foot of the board,
   on the same sheet as the palette (high lift); a question that loses
   something has a red edge.

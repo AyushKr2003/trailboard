@@ -44,6 +44,13 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
   after another as the sidebar opens (all of it still when the desktop
   asks for less motion). The old faint guide lines are gone.
 
+- **Trails turn at right angles.** A trail's line now runs straight out
+  of its card's side, straight up or down halfway between the cards and
+  straight into the next card, instead of an S-curve. Its turns are
+  rounded like the cards' corners and follow the *Corners* setting
+  (square corners, square turns). The sidebar's trails and the welcome
+  page's drawn board turn the same way.
+
 ### Fixed
 
 - **Smooth j / k scrolling.** Holding j or k scrolled in lurches: each

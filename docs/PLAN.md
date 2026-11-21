@@ -471,8 +471,14 @@ trail drawn with its branches, and the accent moving to the way to
 *Page c* after a click on its row. Not verified by eye: the glide and
 the arrival mid-motion (too quick for the screenshot loop; the glide is
 unit-tested).
-**Repo state:** on `master`, clean; everything above is
-committed.
+Then trails turn at right angles (owner's ask): `scene::route::elbow`
+(unit-tested: square turns at 0, arcs on their radius, mirrored, a tight
+gap shrinks the radius, level means straight) gives the board's edges
+across–along–across with turns of `Theme::card_corner` at the zoom; the
+sidebar's elbows use `small_radius`; the welcome stage draws SVG arcs of
+`--radius`. Verified: unit tests, a scripted e2e board with a branching
+trail, headless welcome previews with Rounded and square corners.
+**Repo state:** on `master`, clean; everything above is committed.
 **Next up:** M14 step 1, the `config.toml` reader (asked by the owner on
 2026-11-21; format and decisions in M14). M13 step 1, the chained
 GitHub Actions build, is written on the orphan branch `cef-build`

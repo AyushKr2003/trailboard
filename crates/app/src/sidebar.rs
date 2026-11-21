@@ -709,10 +709,11 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], v: &View, scene: &Sc
             };
             match panel.row_rect(i, scroll) {
                 Some(cr) => {
-                    // Down, then a short curve into the icon's left side.
+                    // Down, then a right-angled turn into the icon's left side.
                     let cy = cr.center().y;
                     let end = base_x + indent * *depth as f32 - 3.0 * ui;
-                    let rr = (end - px).clamp(2.0 * ui, 6.0 * ui);
+                    // The turn is rounded like the sheet's rows (square when they are).
+                    let rr = small.min(end - px).max(0.0);
                     seg(&mut lines, [px, top], [px, cy - rr]);
                     let mut prev = [px, cy - rr];
                     for k in 1..=5 {

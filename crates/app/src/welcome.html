@@ -576,11 +576,21 @@ function trailPaths(svg, list) {
     return { a, b, g, p, d0, d1 };
   });
 }
+// A trail runs across, along and across, turning at right angles halfway,
+// each turn rounded like the cards' corners (`scene::route::elbow`).
+function elbow(p0, p3, radius) {
+  const dy = p3[1] - p0[1];
+  if (Math.abs(dy) < 0.5) return `M${p0} L${p3}`;
+  const mid = (p0[0] + p3[0]) / 2, sx = p3[0] >= p0[0] ? 1 : -1, sy = Math.sign(dy);
+  const r = Math.max(0, Math.min(radius, Math.abs(mid - p0[0]), Math.abs(dy) / 2));
+  return `M${p0} H${mid - sx * r} A${r},${r} 0 0 ${sx * sy > 0 ? 1 : 0} ${mid},${p0[1] + sy * r}` +
+    ` V${p3[1] - sy * r} A${r},${r} 0 0 ${sx * sy > 0 ? 0 : 1} ${mid + sx * r},${p3[1]} H${p3[0]}`;
+}
 function placeTrail(t, Z, draw, hot, alpha) {
   const a = t.a, b = t.b;
   const ay = a.y + Math.min(20, a.h / 2), by = b.y + Math.min(20, b.h / 2);
-  const p0 = [a.x + a.w, ay], p3 = [b.x, by], dx = (p3[0] - p0[0]) / 2;
-  t.p.setAttribute("d", `M${p0} C${p0[0] + dx},${p0[1]} ${p3[0] - dx},${p3[1]} ${p3}`);
+  const p0 = [a.x + a.w, ay], p3 = [b.x, by];
+  t.p.setAttribute("d", elbow(p0, p3, parseFloat(getComputedStyle(root).getPropertyValue("--radius")) || 0));
   const stroke = hot ? v("accent") : v("rulestrong");
   t.p.style.stroke = stroke;
   t.p.style.strokeWidth = hot ? 2 : 1.5;

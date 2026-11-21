@@ -68,6 +68,7 @@ impl Entry {
                 MenuAction::Back => "Alt+←",
                 MenuAction::Forward => "Alt+→",
                 MenuAction::Reload => "Ctrl+R",
+                MenuAction::Inspect(..) => "F12",
                 _ => "",
             },
             _ => "",
@@ -101,6 +102,7 @@ impl Entry {
                 MenuAction::Back => Icon::Back,
                 MenuAction::Forward => Icon::Forward,
                 MenuAction::Reload => Icon::Reload,
+                MenuAction::Inspect(..) => Icon::Code,
             }),
             _ => None,
         }

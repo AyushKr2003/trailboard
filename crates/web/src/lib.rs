@@ -11,6 +11,7 @@ pub mod dialog;
 pub mod download;
 pub mod field;
 pub mod focus;
+pub mod inspector;
 pub mod keys;
 pub mod links;
 pub mod menu;
@@ -128,6 +129,10 @@ pub enum PageKind {
     /// reported; it has no text to send, but may ask for commands with a
     /// console message starting with [`APP_ACTION`] ([`WebEvent::AppAction`]).
     App,
+    /// Chromium's page inspector for another page ([`Page::open_inspector`]).
+    /// Its title and address are not reported (the address is the inspector's
+    /// own), it is never zoomed, blocked or filtered, and it downloads nothing.
+    Inspector,
 }
 
 /// Prefix of the console message an app page sends to run a command.
@@ -298,10 +303,16 @@ fn send_dev_tools(host: &BrowserHost, method: &str, params: &str) -> bool {
     send_dev_tools_id(host, method, params).is_some()
 }
 
-/// [`send_dev_tools`], giving the message's id (its result carries it).
-pub(crate) fn send_dev_tools_id(host: &BrowserHost, method: &str, params: &str) -> Option<i32> {
+/// A DevTools message id no other message of ours uses.
+pub(crate) fn next_devtools_id() -> i32 {
     let id = DEVTOOLS_ID.get() + 1;
     DEVTOOLS_ID.set(id);
+    id
+}
+
+/// [`send_dev_tools`], giving the message's id (its result carries it).
+pub(crate) fn send_dev_tools_id(host: &BrowserHost, method: &str, params: &str) -> Option<i32> {
+    let id = next_devtools_id();
     let msg = format!(r#"{{"id":{id},"method":"{method}","params":{params}}}"#);
     (host.send_dev_tools_message(Some(msg.as_bytes())) != 0).then_some(id)
 }
@@ -558,6 +569,8 @@ struct Shared {
     banner_rejected: std::cell::Cell<bool>,
     /// JavaScript is off in this page (last sent with [`Shared::apply_javascript`]).
     script_off: std::cell::Cell<bool>,
+    /// An inspector page's line to the page it inspects.
+    bridge: RefCell<Option<inspector::Bridge>>,
 }
 
 #[derive(Default)]
@@ -591,7 +604,7 @@ impl Shared {
     fn user_zoom(&self) -> f64 {
         match self.kind {
             PageKind::Web => page_zoom(&self.url.borrow()),
-            PageKind::Note | PageKind::App => 1.0,
+            PageKind::Note | PageKind::App | PageKind::Inspector => 1.0,
         }
     }
 
@@ -1081,6 +1094,13 @@ wrap_display_handler! {
                 }
                 return 1;
             }
+            if self.shared.kind == PageKind::Inspector {
+                let Some(body) = message.strip_prefix(inspector::PREFIX) else { return 0 };
+                if let Some(b) = self.shared.bridge.borrow().as_ref() {
+                    b.on_frontend_message(body);
+                }
+                return 1;
+            }
             if self.shared.kind == PageKind::App {
                 if let Some(action) = message.strip_prefix(APP_ACTION) {
                     emit(WebEvent::AppAction { page: self.shared.key, action: action.to_string() });
@@ -1154,6 +1174,9 @@ wrap_load_handler! {
 
         fn on_load_start(&self, browser: Option<&mut Browser>, frame: Option<&mut Frame>, _transition_type: TransitionType) {
             let Some(frame) = frame else { return };
+            if frame.is_main() != 0 && self.shared.kind == PageKind::Inspector {
+                frame.execute_java_script(Some(&CefString::from(inspector::SHIM)), None, 0);
+            }
             if frame.is_main() != 0 {
                 self.shared.committed.set(true);
                 self.shared.banner_rejected.set(false);
@@ -1244,6 +1267,10 @@ wrap_context_menu_handler! {
             if let Some(m) = model {
                 m.clear();
             }
+            // The inspector draws its own menus in the page.
+            if self.shared.kind == PageKind::Inspector {
+                return;
+            }
             let Some(p) = params else { return };
             let edit = sys::cef_context_menu_edit_state_flags_t::from(p.edit_state_flags()).0;
             let has = |f: sys::cef_context_menu_edit_state_flags_t| edit & f.0 != 0;
@@ -1276,10 +1303,15 @@ wrap_context_menu_handler! {
                     list.into_iter().collect()
                 },
                 site: None,
+                inspect: None,
             };
             // Params are view px; the app works in CSS px.
             let s = *self.shared.scale.borrow();
             let (x, y) = (p.xcoord() as f32 / s, p.ycoord() as f32 / s);
+            let context = menu::MenuContext {
+                inspect: (self.shared.kind == PageKind::Web).then_some((x.round() as i32, y.round() as i32)),
+                ..context
+            };
             log::debug!("page {} context menu at {x:.0},{y:.0}: {context:?}", self.shared.key);
             emit(WebEvent::ContextMenu { page: self.shared.key, x, y, context });
         }
@@ -1419,17 +1451,8 @@ impl Jar {
 }
 
 impl Page {
-    /// Creates a page identified by `key` (the app's card id) at `size` CSS
-    /// pixels. With a `jar`, it keeps cookies and cache there instead of the profile.
-    pub fn new(
-        key: u64,
-        url: &str,
-        kind: PageKind,
-        size: (i32, i32),
-        scale: f32,
-        spawn_beside: &SpawnBeside,
-        jar: Option<&Jar>,
-    ) -> Option<Page> {
+    /// The state and handlers of a new page `key` of `kind` at `url`.
+    fn parts(key: u64, url: &str, kind: PageKind, size: (i32, i32), scale: f32, spawn_beside: &SpawnBeside) -> (StdRc<Shared>, std::sync::Arc<shield::Blocked>, Client) {
         let shared = StdRc::new(Shared {
             key,
             size: RefCell::new(size),
@@ -1449,9 +1472,10 @@ impl Page {
             early: Default::default(),
             banner_rejected: std::cell::Cell::new(false),
             script_off: std::cell::Cell::new(false),
+            bridge: RefCell::new(None),
         });
         let blocked = std::sync::Arc::new(shield::Blocked::default());
-        let mut client = PageClient::new(
+        let client = PageClient::new(
             PageRender::new(shared.clone()),
             PageLife::new(shared.clone()),
             PageRequests::new(shared.clone(), spawn_beside.0.clone(), (kind == PageKind::Web).then(|| shield::guard(blocked.clone()))),
@@ -1464,17 +1488,35 @@ impl Page {
             dialog::js_handler(key),
             dialog::file_handler(key),
         );
-        let window_info = WindowInfo { windowless_rendering_enabled: 1, ..Default::default() };
-        let browser_settings = BrowserSettings {
+        (shared, blocked, client)
+    }
+
+    fn browser_settings() -> BrowserSettings {
+        BrowserSettings {
             windowless_frame_rate: 60,
             background_color: 0xffff_ffff,
             ..Default::default()
-        };
+        }
+    }
+
+    /// Creates a page identified by `key` (the app's card id) at `size` CSS
+    /// pixels. With a `jar`, it keeps cookies and cache there instead of the profile.
+    pub fn new(
+        key: u64,
+        url: &str,
+        kind: PageKind,
+        size: (i32, i32),
+        scale: f32,
+        spawn_beside: &SpawnBeside,
+        jar: Option<&Jar>,
+    ) -> Option<Page> {
+        let (shared, blocked, mut client) = Self::parts(key, url, kind, size, scale, spawn_beside);
+        let window_info = WindowInfo { windowless_rendering_enabled: 1, ..Default::default() };
         let browser = browser_host_create_browser_sync(
             Some(&window_info),
             Some(&mut client),
             Some(&CefString::from(url)),
-            Some(&browser_settings),
+            Some(&Self::browser_settings()),
             None,
             jar.map(|j| j.0.clone()).as_mut(),
         )?;
@@ -1488,6 +1530,37 @@ impl Page {
         let page = Page { browser, shared, blocked };
         page.apply_color_scheme();
         Some(page)
+    }
+
+    /// Opens Chromium's inspector for this page as a page of its own, `key`,
+    /// rendered off screen like any other at `size` CSS px: the inspector's
+    /// own pages, talking to this page through [`inspector::Bridge`]. `at`:
+    /// a point in this page (CSS px) whose element it opens on.
+    pub fn open_inspector(&self, key: u64, size: (i32, i32), scale: f32, at: Option<(f32, f32)>, spawn_beside: &SpawnBeside) -> Option<Page> {
+        let target = self.host()?;
+        let page = Page::new(key, inspector::FRONTEND_URL, PageKind::Inspector, size, scale, spawn_beside, None)?;
+        let bridge = inspector::Bridge::new(&target, page.browser.clone(), at.map(|p| self.view_point(p)))?;
+        *page.shared.bridge.borrow_mut() = Some(bridge);
+        log::info!("page {}: inspector {key} open", self.shared.key);
+        Some(page)
+    }
+
+    /// Points `inspector`, this page's open inspector, at the element at `at` (CSS px).
+    pub fn inspect_at(&self, inspector: &Page, at: (f32, f32)) {
+        if let Some(b) = inspector.shared.bridge.borrow().as_ref() {
+            b.inspect(self.view_point(at));
+        }
+    }
+
+    /// This page is an inspector of `page`'s browser (still the same one).
+    pub fn inspects(&self, page: &Page) -> bool {
+        self.shared.bridge.borrow().as_ref().is_some_and(|b| b.target_id() == page.browser.identifier())
+    }
+
+    /// A point in CSS px as Chromium's view px.
+    fn view_point(&self, (x, y): (f32, f32)) -> (i32, i32) {
+        let s = *self.shared.scale.borrow();
+        ((x * s).round() as i32, (y * s).round() as i32)
     }
 
     /// Sends the colour scheme set with `set_color_scheme` to this page.
@@ -1859,6 +1932,8 @@ impl Page {
 
 impl Drop for Page {
     fn drop(&mut self) {
+        // The bridge holds this page's browser: let it go first.
+        self.shared.bridge.borrow_mut().take();
         if let Some(h) = self.host() {
             h.close_browser(1);
         }

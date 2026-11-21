@@ -386,6 +386,9 @@ pub struct App {
     board_pan: scene::scroll::Pan,
     /// Live browsers. A card in the scene but not here is asleep.
     cards: HashMap<NodeId, Card>,
+    /// Inspector cards and the card each inspects. An inspector lives only
+    /// while both run (`check_inspectors`); it never sleeps and is never saved.
+    inspectors: HashMap<NodeId, NodeId>,
     max_live: usize,
     /// The user's settings (Ctrl+,), saved in `settings.json`.
     settings: Settings,
@@ -840,6 +843,7 @@ impl App {
             page_scroll: Default::default(),
             board_pan: Default::default(),
             cards: HashMap::new(),
+            inspectors: HashMap::new(),
             max_live: live_env.unwrap_or(settings.live_pages),
             blocking: crate::blocking::Blocking::start(data_dir.clone(), settings.block_ads),
             settings,
@@ -1010,7 +1014,7 @@ impl App {
         if self.renderer.is_none() || !self.persist {
             return; // never initialized; don't clobber a saved board with an empty one
         }
-        let board = storage::Board::new(self.scene.clone(), self.camera);
+        let board = storage::Board::new(self.scene.without_inspectors(), self.camera);
         let path = self.board_path();
         match storage::save_board(&path, &board) {
             Ok(()) => self.dirty = false,
@@ -1177,6 +1181,9 @@ impl App {
 
     /// Save the current space and close its pages; keep its undo history for later.
     fn unload_space(&mut self) {
+        for id in self.inspectors.keys().copied().collect::<Vec<_>>() {
+            self.close_inspector(id);
+        }
         self.finish_arrange(true);
         self.save();
         let mut keys: Vec<u64> = self.scene.all_nodes().map(|n| self.page_key(n.id)).collect();
@@ -1550,6 +1557,11 @@ impl App {
             return;
         }
         let Some(n) = self.scene.node(id) else { return };
+        // Only `open_inspector` starts an inspector; a stray one (brought
+        // back by undo) is closed by `check_inspectors`.
+        if n.is_inspector() {
+            return;
+        }
         let css = self.card_css(n);
         let (url, kind) = match &n.note {
             Some(text) => (
@@ -2025,6 +2037,11 @@ impl App {
                 self.ghosts.retain(|g| g.0.id != id);
                 self.ghosts.push(ghost);
             }
+            // An inspector can't be reopened: it isn't kept with the closed cards.
+            if self.scene.node(id).is_some_and(Node::is_inspector) {
+                self.close_inspector(id);
+                continue;
+            }
             if let Some(removed) = self.scene.remove(id) {
                 self.closed.push(removed.clone());
                 gone.push(removed);
@@ -2200,13 +2217,19 @@ impl App {
     /// The focused card takes the keys, in `mode`.
     fn give_keys(&mut self, mode: PageKeys) {
         self.keys_in_page = true;
-        let mode = if mode == PageKeys::Page { self.site_keys(self.focused) } else { mode };
+        // The inspector has its own keys for everything; Shift+Esc leaves.
+        let mode = if mode == PageKeys::Page || self.on_inspector() { self.site_keys(self.focused) } else { mode };
         self.set_page_keys(mode);
     }
 
-    /// Page, or Passthrough for a card whose site starts there (`:site passthrough`).
+    /// Page, or Passthrough for a card whose site starts there (`:site
+    /// passthrough`) and for the inspector, which has keys for everything.
     fn site_keys(&self, id: Option<NodeId>) -> PageKeys {
-        let url = id.and_then(|id| self.scene.node(id)).filter(|n| !n.is_note()).map(|n| n.url.as_str());
+        let node = id.and_then(|id| self.scene.node(id));
+        if node.is_some_and(Node::is_inspector) {
+            return PageKeys::Passthrough;
+        }
+        let url = node.filter(|n| !n.is_note()).map(|n| n.url.as_str());
         match url {
             Some(u) if self.site_rules().allows(u, scene::sitesettings::Content::Passthrough, false) => PageKeys::Passthrough,
             _ => PageKeys::Page,
@@ -2366,6 +2389,7 @@ impl App {
             KeyAction::CommandLine => self.open_command_line(count),
             KeyAction::RepeatLine => self.repeat_line(count),
             KeyAction::Fullscreen => self.toggle_fullscreen(),
+            KeyAction::Inspect => self.toggle_inspector(None),
             _ if idle && self.card_key(action, count) => {}
             // A page key from a user line on the board: it acts on the
             // current card's page.
@@ -2880,6 +2904,7 @@ impl App {
                 }
             }
             KeyAction::Fullscreen => self.toggle_fullscreen(),
+            KeyAction::Inspect => self.toggle_inspector(None),
             KeyAction::Find => self.open_find(false),
             KeyAction::FindBack => self.open_find(true),
             KeyAction::FindNext | KeyAction::FindPrev if !self.last_find.is_empty() => {
@@ -4144,6 +4169,7 @@ impl App {
             },
             Cmd::Home => self.open_home(),
             Cmd::ViewSource => page(self, KeyAction::ViewSource, None),
+            Cmd::Inspect => self.toggle_inspector(None),
             Cmd::SaveFile => page(self, KeyAction::DownloadPage, None),
             Cmd::Fullscreen => self.toggle_fullscreen(),
             Cmd::Zoom => self.run_command(match arg.as_str() {
@@ -6912,9 +6938,12 @@ impl App {
         }
         let vp = self.viewport();
         let screen = Rect::new(0.0, 0.0, vp.x, vp.y);
+        // An inspector and the card it inspects stay live together.
+        let paired = |id: NodeId| self.inspectors.contains_key(&id) || self.inspectors.values().any(|&s| s == id);
         let candidates: Vec<liveness::Candidate> = self
             .scene
             .nodes()
+            .filter(|n| !paired(n.id))
             .map(|n| liveness::Candidate {
                 id: n.id,
                 live: self.cards.contains_key(&n.id),
@@ -8418,6 +8447,16 @@ impl App {
                     self.toggle_fullscreen();
                     true
                 }
+                // And F12 / Ctrl+Shift+i, the inspector: on the inspector
+                // itself even in Passthrough, so the key that opened it closes it.
+                Some(KeyCode::F12) if !ctrl && !shift && !alt && (self.page_keys != PageKeys::Passthrough || self.on_inspector()) => {
+                    self.toggle_inspector(None);
+                    true
+                }
+                Some(KeyCode::KeyI) if ctrl && shift && !alt && (self.page_keys != PageKeys::Passthrough || self.on_inspector()) => {
+                    self.toggle_inspector(None);
+                    true
+                }
                 Some(KeyCode::KeyQ) if ctrl && !shift && !alt => {
                     log::info!("quit (Ctrl+Q)");
                     self.quit = true;
@@ -9806,6 +9845,7 @@ impl App {
         self.run_script();
         self.follow_desktop();
         self.handle_web_events();
+        self.check_inspectors();
         // The save field closed (Esc, or something else opened): the download is off.
         if self.save_as.as_ref().is_some_and(|s| self.omnibox.as_ref().is_none_or(|ob| ob.target != Target::SaveAs(s.id))) {
             let s = self.save_as.take().expect("checked");
@@ -10254,6 +10294,112 @@ impl App {
                     }
                 }
             }
+            MenuAction::Inspect(x, y) => self.inspect_at(id, (x as f32, y as f32)),
+        }
+    }
+
+    // ---------------------------------------------------------------- inspector
+
+    /// F12 / Ctrl+Shift+i / `:inspect`: the current card's inspector beside
+    /// it, or closed if it has one (or is one).
+    fn toggle_inspector(&mut self, at: Option<(f32, f32)>) {
+        let Some(id) = self.current() else {
+            self.toast("No card to inspect");
+            return;
+        };
+        if self.inspectors.contains_key(&id) {
+            self.close_inspector(id);
+        } else if let Some(insp) = self.inspector_of(id) {
+            self.close_inspector(insp);
+        } else {
+            self.open_inspector(id, at);
+        }
+    }
+
+    /// The page menu's *Inspect*: the inspector of card `id`, on the element
+    /// at `at` (CSS px in the page), opened if it isn't.
+    fn inspect_at(&mut self, id: NodeId, at: (f32, f32)) {
+        match self.inspector_of(id) {
+            Some(insp) => {
+                if let (Some(c), Some(i)) = (self.cards.get(&id), self.cards.get(&insp)) {
+                    c.page.inspect_at(&i.page, at);
+                }
+                self.focus(Some(insp));
+                self.ensure_visible(insp);
+            }
+            None => self.open_inspector(id, Some(at)),
+        }
+    }
+
+    /// The focused card is an inspector.
+    fn on_inspector(&self) -> bool {
+        self.focused.is_some_and(|id| self.inspectors.contains_key(&id))
+    }
+
+    /// The inspector card of card `src`, if it has one open.
+    fn inspector_of(&self, src: NodeId) -> Option<NodeId> {
+        self.inspectors.iter().find(|&(_, &s)| s == src).map(|(&i, _)| i)
+    }
+
+    fn open_inspector(&mut self, src: NodeId, at: Option<(f32, f32)>) {
+        let Some(n) = self.scene.node(src) else { return };
+        if n.is_inspector() {
+            return;
+        }
+        self.create_page(src);
+        if !self.cards.contains_key(&src) {
+            self.toast("This card's page isn't running");
+            return;
+        }
+        let Some(id) = self.scene.add_inspector(src, self.card_size) else { return };
+        let css = self.card_css(self.scene.node(id).expect("just added"));
+        let key = self.page_key(id);
+        let made = self.cards[&src].page.open_inspector(key, (css.x as i32, css.y as i32), self.page_scale, at, &self.spawn_beside);
+        let Some(page) = made else {
+            self.scene.remove(id);
+            self.toast("Couldn't open the inspector");
+            return;
+        };
+        log::info!("inspector {} for card {}", id.0, src.0);
+        self.cards.insert(id, Card { page, loading: true, can_back: false, can_forward: false, hidden: false, cursor: web::Cursor::Default });
+        self.inspectors.insert(id, src);
+        self.touch(id);
+        self.dirty = true;
+        if !self.still
+            && let (Some(from), Some(to)) = (self.scene.node(src).map(|n| n.rect), self.scene.node(id).map(|n| n.rect))
+        {
+            self.glides.start(id, motion::open_from(from, to), true, Instant::now());
+        }
+        self.focus(Some(id));
+        self.ensure_visible(id);
+        self.give_keys(PageKeys::Page);
+    }
+
+    /// Takes inspector card `id` off the board and stops its page (which
+    /// lets go of the page it inspected).
+    fn close_inspector(&mut self, id: NodeId) {
+        self.inspectors.remove(&id);
+        if self.scene.remove(id).is_some() {
+            log::info!("inspector {} closed", id.0);
+        }
+        self.drop_page(id);
+    }
+
+    /// Every frame: an inspector goes when its page does (closed, asleep, or
+    /// a new browser in its place), and a card left over without one.
+    fn check_inspectors(&mut self) {
+        let mut gone: Vec<NodeId> = self
+            .inspectors
+            .iter()
+            .filter(|&(i, s)| match (self.cards.get(i), self.cards.get(s)) {
+                (Some(i), Some(s)) => !i.page.inspects(&s.page),
+                _ => true,
+            })
+            .map(|(&i, _)| i)
+            .collect();
+        gone.extend(self.scene.all_nodes().filter(|n| n.is_inspector() && !self.inspectors.contains_key(&n.id)).map(|n| n.id));
+        for id in gone {
+            self.close_inspector(id);
         }
     }
 }

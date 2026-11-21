@@ -630,6 +630,8 @@ pub enum Action {
     DownloadPage,
     /// The window full screen or not (`F11`).
     Fullscreen,
+    /// The card's page inspector beside it, or closed (`F12`, `Ctrl+Shift+i`).
+    Inspect,
     // Caret and Visual mode (M12 step 14).
     /// A caret in the page's text (`v`): at a `/` match or a selection in
     /// view, else the top of the view.
@@ -745,6 +747,7 @@ pub const NAMED: &[(&str, Action, &str)] = &[
     ("view-source", Ac::ViewSource, "The page's source, beside"),
     ("download-page", Ac::DownloadPage, "Download the page"),
     ("fullscreen", Ac::Fullscreen, "Full screen on or off"),
+    ("inspect", Ac::Inspect, "The page inspector beside, or closed"),
     ("caret", Ac::Caret, "A caret in the text, to select with (v)"),
     ("visual-line", Ac::VisualLine, "Select whole lines"),
     ("select-chars", Ac::SelectChars, "Select from the caret, or stop"),
@@ -963,6 +966,8 @@ pub fn board() -> Bindings<Action> {
         (":", CommandLine),
         (".", RepeatLine),
         ("<F11>", Fullscreen),
+        ("<F12>", Inspect),
+        ("<C-S-i>", Inspect),
     ];
     for (seq, a) in table {
         b.bind(seq, *a).expect("board keys parse");
@@ -1132,6 +1137,8 @@ pub fn page() -> Bindings<Action> {
         ("gf", ViewSource),
         ("gd", DownloadPage),
         ("<F11>", Fullscreen),
+        ("<F12>", Inspect),
+        ("<C-S-i>", Inspect),
         ("/", Find),
         ("?", FindBack),
         ("n", FindNext),
@@ -1208,6 +1215,8 @@ pub fn visual() -> Bindings<Action> {
         ("<Esc>", CaretBack),
         (":", CommandLine),
         ("<F11>", Fullscreen),
+        ("<F12>", Inspect),
+        ("<C-S-i>", Inspect),
     ];
     for (seq, a) in table {
         b.bind(seq, *a).expect("visual keys parse");
@@ -1537,6 +1546,8 @@ mod tests {
         assert_eq!(feed("gf"), Outcome::Run { action: Action::ViewSource, count: None });
         assert_eq!(feed("gd"), Outcome::Run { action: Action::DownloadPage, count: None });
         assert_eq!(feed("<F11>"), Outcome::Run { action: Action::Fullscreen, count: None });
+        assert_eq!(feed("<F12>"), Outcome::Run { action: Action::Inspect, count: None });
+        assert_eq!(feed("<C-S-i>"), Outcome::Run { action: Action::Inspect, count: None });
         assert_eq!(feed("yd"), Outcome::Run { action: Action::Copy(Yank::Site, false), count: None });
         assert_eq!(feed("yp"), Outcome::Run { action: Action::Copy(Yank::Clean, false), count: None });
         assert_eq!(feed("yY"), Outcome::Run { action: Action::Copy(Yank::Url, true), count: None });

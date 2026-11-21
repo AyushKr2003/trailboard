@@ -3,7 +3,7 @@
 //! The text is the note; its title is derived from it. "Add to note" quotes
 //! selected page text with a link back to where it came from.
 
-use crate::{Edge, Node, NodeId, Rect, Scene, placement};
+use crate::{Edge, Node, NodeId, Rect, Scene, Vec2, placement};
 
 /// The `url` every note card carries (its page is built by the app).
 pub const NOTE_URL: &str = "trailboard:note";
@@ -28,6 +28,12 @@ pub const ENGINES_TITLE: &str = "Search engines";
 pub const SETTINGS_URL: &str = "trailboard:settings";
 /// The settings page's title.
 pub const SETTINGS_TITLE: &str = "Settings";
+
+/// The `url` of a page inspector card: Chromium's inspector for the card it
+/// is joined to. It lives only while both run, and is never saved.
+pub const INSPECTOR_URL: &str = "trailboard:inspector";
+/// An inspector card's title.
+pub const INSPECTOR_TITLE: &str = "Inspector";
 
 /// Title shown for a note without any text.
 pub const UNTITLED: &str = "Note";
@@ -190,6 +196,11 @@ impl Node {
     pub fn is_sticky(&self) -> bool {
         self.is_note() && self.sticky.is_some()
     }
+
+    /// A page inspector card ([`INSPECTOR_URL`]).
+    pub fn is_inspector(&self) -> bool {
+        !self.is_note() && self.url == INSPECTOR_URL
+    }
 }
 
 impl Scene {
@@ -232,6 +243,23 @@ impl Scene {
         let id = self.add_page(rect, SETTINGS_URL);
         self.nodes.get_mut(&id).expect("just added").title = SETTINGS_TITLE.to_string();
         id
+    }
+
+    /// Adds an inspector card beside card `from`, joined to it, sized `size`.
+    pub fn add_inspector(&mut self, from: NodeId, size: Vec2) -> Option<NodeId> {
+        let id = self.spawn_beside_sized(from, INSPECTOR_URL, size)?;
+        self.nodes.get_mut(&id).expect("just added").title = INSPECTOR_TITLE.to_string();
+        Some(id)
+    }
+
+    /// The board as it is saved: without inspector cards, which can't be restored.
+    pub fn without_inspectors(&self) -> Scene {
+        let mut out = self.clone();
+        let gone: Vec<NodeId> = out.all_nodes().filter(|n| n.is_inspector()).map(|n| n.id).collect();
+        for id in gone {
+            out.remove(id);
+        }
+        out
     }
 
     /// Adds a start page as a card at `rect`.
@@ -291,7 +319,24 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{HEADER_H, STICKY_GRIP_H, Vec2};
+    use crate::{HEADER_H, STICKY_GRIP_H};
+
+    #[test]
+    fn inspectors_are_never_saved() {
+        let mut s = Scene::new();
+        let page = s.add_page(Rect::new(0.0, 0.0, 10.0, 10.0), "https://a/");
+        let insp = s.add_inspector(page, Vec2::new(10.0, 10.0)).unwrap();
+        let n = s.node(insp).unwrap();
+        assert!(n.is_inspector());
+        assert_eq!(n.title, INSPECTOR_TITLE);
+        assert!(s.edges().iter().any(|e| e.from == page && e.to == insp));
+        let saved = s.without_inspectors();
+        assert!(saved.node(insp).is_none());
+        assert!(saved.node(page).is_some());
+        assert!(saved.edges().is_empty());
+        // The live board keeps it.
+        assert!(s.node(insp).is_some());
+    }
 
     #[test]
     fn note_with_text_finds_only_untouched_copies() {

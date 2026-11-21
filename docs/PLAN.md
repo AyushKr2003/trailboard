@@ -77,6 +77,13 @@ app (trailboard)  winit window · input · omnibox · chrome UI · main loop
 - "Read Mode" is called **Solo** in everything the user sees; the code keeps
   `scene::read`, `App::read`, `Command::Read`. "Focus" stays out of
   interface text (it clashes with a field's focus).
+- Page inspector (owner, 2026-11-21): a card beside its page (F12,
+  Ctrl+Shift+I, `:inspect`, right-click → *Inspect*), not a separate
+  window. CEF 156 draws `ShowDevTools` windows Chrome-style only, which
+  can't be windowless, so the card loads the bundled inspector pages
+  (`devtools://devtools/bundled/devtools_app.html`) and `web::inspector`
+  carries their protocol messages to the page in-process. Never a remote
+  debugging port.
 - No outside video player as a feature; video plays in the card (M13).
   `:run` stays for anyone who binds a player in the key file themselves.
 
@@ -152,7 +159,7 @@ code are our own. A card plays the part a tab plays elsewhere. Step 17
 JS-faked scrolling isn't found as a section (the wheel still reaches it); a
 key typed before a field's focus report arrives; caret mode works in the
 main frame only; app-started `wl-copy` can't own the primary selection on
-Hyprland 0.57; `wi` (inspector in a card) needs devtools hosted off-screen.
+Hyprland 0.57.
 
 ---
 
@@ -416,11 +423,27 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-21 (thirty-sixth). Docs only: shortened this
-file (M12 to a summary, old logs pointed to git) and `CHANGELOG.md` (one
-summary per area), and folded `docs/BUGS.md` and `docs/FUTURE.md` into §7
-and §8 here. M12 marked ✅ (the owner removed step 17).
-**Repo state:** on `master`; M12 done and committed; M13 and M14 planned.
+**Last session:** 2026-11-21 (thirty-seventh). The page inspector in a
+card, asked by the owner (backlog `wi`): F12 / Ctrl+Shift+I / `:inspect`
+toggle it beside the current card, the page menu ends with *Inspect* (opens
+on the clicked element). New `web::inspector` (a `WebSocket` stand-in in
+the inspector's page, message ids remapped so the app's own DevTools
+commands stay apart, the app's console channels filtered out, domains
+turned off on close, hosted mode so the inspector's own menus draw in the
+page; the app's page menu stays out of it), `PageKind::Inspector`, `scene::note::INSPECTOR_URL`
+with `Scene::add_inspector` / `without_inspectors` (saving drops them).
+App: `App::inspectors` pairs each inspector with its page;
+`check_inspectors` closes one whose page is closed, asleep or replaced;
+the pair is kept out of the live cap; the inspector takes keys in
+Passthrough. Verified: unit tests, clippy, scripted e2e with screenshots
+(DOM tree, *Inspect* on an `<h1>` selects it with its styles and box,
+console evaluates `document.title + 40 + 2`, the inspector's own
+right-click menu on a node, F12 from inside closes it,
+`d` closes it and Ctrl+Shift+T doesn't bring it back, reload keeps it
+connected, the saved board has no inspector). Not verified: the Network,
+Performance and Memory panels, pages with frames from other sites
+(auto-attached targets), a private space.
+**Repo state:** on `master`, uncommitted: the inspector. M13 and M14 planned.
 **Next up:** M14 step 1, the `config.toml` reader (asked by the owner on
 2026-11-21; format and decisions in M14). M13 step 1, the chained
 GitHub Actions build, is written on the orphan branch `cef-build`
@@ -432,8 +455,9 @@ retake the README screenshots (`docs/images/`) in the new look.
 
 **Backlog:** `:later` lines aren't saved across quits; the messages log is
 this session's only; after Esc clears a find, n starts again from the view;
-closing a card doesn't ask a page's "leave this page?" first; the page
-inspector in a card (`wi`); the primary selection set from our window on
+closing a card doesn't ask a page's "leave this page?" first; the
+inspector's own extras (device toolbar, screencast, opening a file in
+Sources from the page, a docked layout); the primary selection set from our window on
 Hyprland; cookies on / off in the page menu; an entered card that navigates
 to a Passthrough site stays in Page mode until given the keys again; glide
 on undo/redo of moves; follow the desktop's animation switch live; verify

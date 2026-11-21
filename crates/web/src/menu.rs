@@ -34,6 +34,9 @@ pub struct MenuContext {
     pub suggestions: Vec<String>,
     /// JavaScript and images on the page's site (set by the app for web pages).
     pub site: Option<SiteContent>,
+    /// Where the click was (CSS px in the page), for "Inspect"; `None` where
+    /// the menu offers no inspector (notes, the app's pages, the inspector).
+    pub inspect: Option<(i32, i32)>,
 }
 
 /// Whether JavaScript and images are on for a page's site, for its menu.
@@ -93,6 +96,8 @@ pub enum MenuAction {
     Back,
     Forward,
     Reload,
+    /// The page inspector, open on the element at this point (CSS px).
+    Inspect(i32, i32),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -209,6 +214,10 @@ pub fn items(ctx: &MenuContext) -> Vec<MenuItem> {
             sections.push(blocking_items(b));
         }
     }
+    // Last in every web page's menu, whatever was clicked.
+    if let Some((x, y)) = ctx.inspect {
+        sections.push(vec![MenuItem::new("Inspect", MenuAction::Inspect(x, y), true)]);
+    }
     let mut out = Vec::new();
     for (i, s) in sections.into_iter().enumerate() {
         if i > 0 {
@@ -265,6 +274,19 @@ mod tests {
                 MenuItem::Separator => "-".into(),
             })
             .collect()
+    }
+
+    #[test]
+    fn inspect_ends_every_web_page_menu() {
+        let ctx = MenuContext { inspect: Some((3, 4)), ..Default::default() };
+        let got = items(&ctx);
+        assert_eq!(labels(&got), ["Back", "Forward", "Reload", "-", "Select all", "-", "Inspect"]);
+        let MenuItem::Action { action, .. } = got.last().unwrap() else { panic!() };
+        assert_eq!(*action, MenuAction::Inspect(3, 4));
+        let ctx = MenuContext { inspect: Some((0, 0)), link: Some("https://a/".into()), ..Default::default() };
+        assert_eq!(labels(&items(&ctx)).last().unwrap(), "Inspect");
+        // Without a point (notes, app pages) there is no entry.
+        assert!(!labels(&items(&MenuContext::default())).contains(&"Inspect".to_string()));
     }
 
     #[test]

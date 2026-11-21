@@ -101,7 +101,7 @@ const FIXED: &[(&str, &[(&str, &str)])] = &[
             ("Drag its label", "Move"),
             ("Drag corner", "Resize"),
             ("Double-click title", "Fill the view"),
-            ("× · Ctrl+W", "Close"),
+            ("× · d", "Close"),
             ("Tab", "Solo (the card fills the window) / back to the board"),
             ("C on a sticky note", "Its next colour"),
         ],

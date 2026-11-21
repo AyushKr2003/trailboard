@@ -314,9 +314,11 @@ pub enum Outcome<A> {
     Wait,
     /// Esc dropped a half-typed count or sequence.
     Cancelled,
-    /// Not a binding. `swallow`: it ended a half-typed count or sequence and
-    /// is a bare key, so it does nothing else (a Ctrl or Alt chord still goes
-    /// on to the app's other shortcuts).
+    /// Not a binding. `swallow`: it ended a half-typed sequence (any key), or
+    /// a half-typed count as a bare key, so it does nothing else. A Ctrl or
+    /// Alt chord after a lone count still goes on to the app's shortcuts;
+    /// after a started sequence (`g`, Ctrl+w) it doesn't, so Ctrl+w Ctrl+r
+    /// never reloads by accident.
     Unbound { swallow: bool },
 }
 
@@ -357,6 +359,7 @@ impl Pending {
     /// Takes one key. `counts`: digits before a sequence make a count.
     pub fn feed<A: Copy>(&mut self, table: &Bindings<A>, chord: Chord, now: Instant, counts: bool) -> Outcome<A> {
         let was_pending = !self.is_empty();
+        let in_sequence = !self.keys.is_empty();
         if chord == Chord::plain(Key::Esc) && was_pending {
             self.clear();
             return Outcome::Cancelled;
@@ -384,7 +387,7 @@ impl Pending {
             }
             Lookup::None => {
                 self.clear();
-                Outcome::Unbound { swallow: was_pending && chord.is_bare() }
+                Outcome::Unbound { swallow: in_sequence || (was_pending && chord.is_bare()) }
             }
         }
     }
@@ -405,6 +408,59 @@ impl Pending {
         };
         self.clear();
         Some(out)
+    }
+}
+
+/// An edit made in a page's text field for a terminal-style key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldEdit {
+    /// Ctrl+w: the word before the caret.
+    WordBack,
+    /// Ctrl+u: back to the start of the line.
+    LineStart,
+    /// Ctrl+h: the character before the caret.
+    CharBack,
+}
+
+/// What a Ctrl key does while the page has the keys for typing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypingKey {
+    /// Edit the page's field, as our own fields do.
+    Edit(FieldEdit),
+    /// The page gets the key as it is.
+    ToPage,
+    /// The app's shortcut, as anywhere else.
+    App,
+}
+
+/// A Ctrl key while typing in a page: Insert (`passthrough` false) or
+/// Passthrough. Bug report 2026-11-21: app shortcuts that ran here closed
+/// the card (Ctrl+w) or reloaded it (Ctrl+r) mid-sentence.
+/// - Insert: Ctrl+w / Ctrl+u / Ctrl+h edit the field, Ctrl+r goes to the
+///   page (no reload); other shortcuts (palette, address bar…) stay, as
+///   they lose nothing typed.
+/// - Passthrough: every Ctrl+letter goes to the page (web terminals and
+///   editors want them all) but Ctrl+q, and Ctrl+c / x / v, which still
+///   go to the page through the clipboard bridge. Shift+Esc gives our
+///   keys back.
+pub fn typing_key(chord: Chord, passthrough: bool) -> TypingKey {
+    let Key::Char(c) = chord.key else { return TypingKey::App };
+    if !chord.ctrl || chord.alt || !c.is_ascii_alphabetic() {
+        return TypingKey::App;
+    }
+    let c = c.to_ascii_lowercase();
+    if passthrough {
+        return if chord.shift || matches!(c, 'q' | 'c' | 'x' | 'v') { TypingKey::App } else { TypingKey::ToPage };
+    }
+    if chord.shift {
+        return TypingKey::App;
+    }
+    match c {
+        'w' => TypingKey::Edit(FieldEdit::WordBack),
+        'u' => TypingKey::Edit(FieldEdit::LineStart),
+        'h' => TypingKey::Edit(FieldEdit::CharBack),
+        'r' => TypingKey::ToPage,
+        _ => TypingKey::App,
     }
 }
 
@@ -913,6 +969,7 @@ pub fn board() -> Bindings<Action> {
     }
     bind_hint_kinds(&mut b);
     bind_card_numbers(&mut b);
+    bind_window_keys(&mut b);
     // m moves the card on the board (then h/j/k/l), so marks are set with M.
     bind_marks(&mut b, "M");
     bind_jumps(&mut b);
@@ -964,6 +1021,35 @@ fn bind_jumps(b: &mut Bindings<Action>) {
         ("<C-b>", Action::Sidebar),
     ] {
         b.bind(seq, a).expect("jump keys parse");
+    }
+}
+
+/// Ctrl+w then a key, on the board and in a page, as vim's window keys:
+/// h/j/k/l or an arrow the nearest card that way, w / W the next / previous,
+/// p the card before, c / q close. The second key may keep Ctrl held.
+/// Ctrl+w alone does nothing: it waits for its second key (Esc drops it),
+/// so a pause never closes a card (bug report 2026-11-21).
+fn bind_window_keys(b: &mut Bindings<Action>) {
+    use Action::*;
+    for (k, a) in [
+        ("c", Close),
+        ("q", Close),
+        ("h", Move(Dir::Left)),
+        ("j", Move(Dir::Down)),
+        ("k", Move(Dir::Up)),
+        ("l", Move(Dir::Right)),
+        ("w", NextCard),
+        ("W", PrevCard),
+        ("p", OtherCard),
+    ] {
+        b.bind(&format!("<C-w>{k}"), a).expect("window keys parse");
+        // Ctrl+w Ctrl+c is no close in vim (it cancels); Ctrl+w W has no twin.
+        if k != "W" && k != "c" {
+            b.bind(&format!("<C-w><C-{k}>"), a).expect("window keys parse");
+        }
+    }
+    for (k, d) in [("Left", Dir::Left), ("Down", Dir::Down), ("Up", Dir::Up), ("Right", Dir::Right)] {
+        b.bind(&format!("<C-w><{k}>"), Move(d)).expect("window keys parse");
     }
 }
 
@@ -1071,28 +1157,13 @@ pub fn page() -> Bindings<Action> {
         ("<C-S-6>", OtherCard),
         ("co", CloseOthers),
         ("gC", Clone),
-        // Ctrl+w then a direction: the nearest card that way. Ctrl+w alone
-        // still closes the card, once the pause shows nothing follows.
-        ("<C-w>", Close),
-        ("<C-w>c", Close),
-        ("<C-w>q", Close),
-        ("<C-w>h", Move(Dir::Left)),
-        ("<C-w>j", Move(Dir::Down)),
-        ("<C-w>k", Move(Dir::Up)),
-        ("<C-w>l", Move(Dir::Right)),
-        ("<C-w><Left>", Move(Dir::Left)),
-        ("<C-w><Down>", Move(Dir::Down)),
-        ("<C-w><Up>", Move(Dir::Up)),
-        ("<C-w><Right>", Move(Dir::Right)),
-        ("<C-w>w", NextCard),
-        ("<C-w>W", PrevCard),
-        ("<C-w>p", OtherCard),
     ];
     for (seq, a) in table {
         b.bind(seq, *a).expect("page keys parse");
     }
     bind_hint_kinds(&mut b);
     bind_card_numbers(&mut b);
+    bind_window_keys(&mut b);
     bind_marks(&mut b, "m");
     bind_jumps(&mut b);
     bind_toggles(&mut b);
@@ -1326,6 +1397,11 @@ mod tests {
             _ => None,
         };
         assert_eq!(get("j"), Some(Action::Move(Dir::Down)));
+        // Ctrl+w keys work on the board too; Ctrl+w alone is only a start.
+        assert_eq!(get("<C-w>l"), Some(Action::Move(Dir::Right)));
+        assert_eq!(get("<C-w><C-j>"), Some(Action::Move(Dir::Down)));
+        assert_eq!(get("<C-w>c"), Some(Action::Close));
+        assert_eq!(b.lookup(&parse("<C-w>").unwrap()), Lookup::Prefix);
         assert_eq!(get("J"), Some(Action::Pan(Dir::Down)));
         assert_eq!(get("<S-Down>"), Some(Action::Pan(Dir::Down)));
         assert_eq!(get("f"), Some(Action::LinkHints));
@@ -1344,10 +1420,11 @@ mod tests {
         assert_eq!(get("<C-u>"), Some(Action::ScrollUp));
         assert_eq!(get("<A-3>"), Some(Action::NthCard(3)));
         assert_eq!(get("<C-S-6>"), Some(Action::OtherCard));
-        // Only the hint kinds, marks and toggles wait for another key; m stays Arrange.
+        // Only the hint kinds, marks, toggles and Ctrl+w keys wait for another key; m stays Arrange.
         assert!(b.iter().all(|(seq, a)| seq.len() == 1
             || matches!(a, Action::Hint(_) | Action::SetMark(_) | Action::GoMark(_))
-            || seq[0] == ch('t')));
+            || seq[0] == ch('t')
+            || seq[0] == parse("<C-w>").unwrap()[0]));
         // Owner (2026-11-20): t starts toggles everywhere, Tidy is T.
         assert_eq!(b.lookup(&parse("t").unwrap()), Lookup::Prefix);
         assert_eq!(get("T"), Some(Action::Tidy));
@@ -1474,12 +1551,41 @@ mod tests {
         for (seq, a) in b.iter() {
             assert!(a.name().is_some() || matches!(a, Action::SetMark(_) | Action::GoMark(_) | Action::NthCard(_)), "{}", display(seq));
         }
-        // Ctrl+w alone waits, then closes.
+        // Ctrl+w alone waits for its second key and never closes by itself.
         assert_eq!(feed("<C-w>"), Outcome::Wait);
-        assert_eq!(p.expire(&b, t + TIMEOUT), Some(Outcome::Run { action: Action::Close, count: None }));
+        assert_eq!(p.expire(&b, t + TIMEOUT * 5), None);
+        let c = |s: &str| parse(s).unwrap()[0];
+        assert_eq!(p.feed(&b, c("<C-h>"), t, true), Outcome::Run { action: Action::Move(Dir::Left), count: None });
+        // A key that isn't a Ctrl+w key ends it and is swallowed, Ctrl or not.
+        assert_eq!(p.feed(&b, c("<C-w>"), t, true), Outcome::Wait);
+        assert_eq!(p.feed(&b, c("<C-r>"), t, true), Outcome::Unbound { swallow: true });
+        for s in ["<C-w>c", "<C-w>q", "<C-w><C-q>"] {
+            assert_eq!(b.lookup(&parse(s).unwrap()), Lookup::Exact(Action::Close), "{s}");
+        }
+        assert_eq!(b.lookup(&parse("<C-w><C-w>").unwrap()), Lookup::Exact(Action::NextCard));
+        assert_eq!(b.lookup(&parse("<C-w>").unwrap()), Lookup::Prefix);
         // Keys that switch modes stay out of the table.
         for s in ["<Esc>", "<S-Esc>", "<Tab>", "<Enter>", "<Space>", "<C-f>", "<F1>"] {
             assert_eq!(b.lookup(&parse(s).unwrap()), Lookup::None, "{s}");
+        }
+    }
+
+    #[test]
+    fn ctrl_keys_while_typing_edit_instead_of_closing() {
+        let k = |s: &str, pass: bool| typing_key(parse(s).unwrap()[0], pass);
+        assert_eq!(k("<C-w>", false), TypingKey::Edit(FieldEdit::WordBack));
+        assert_eq!(k("<C-u>", false), TypingKey::Edit(FieldEdit::LineStart));
+        assert_eq!(k("<C-h>", false), TypingKey::Edit(FieldEdit::CharBack));
+        assert_eq!(k("<C-r>", false), TypingKey::ToPage);
+        for s in ["<C-k>", "<C-l>", "<C-t>", "<C-q>", "<C-S-w>", "<C-S-t>", "<A-w>", "w", "<F5>"] {
+            assert_eq!(k(s, false), TypingKey::App, "{s}");
+        }
+        // Passthrough: the page's, but quitting, the clipboard and Shift combos.
+        for s in ["<C-w>", "<C-r>", "<C-k>", "<C-l>", "<C-t>", "<C-u>", "<C-h>", "<C-W>"] {
+            assert_eq!(k(s, true), if s == "<C-W>" { TypingKey::App } else { TypingKey::ToPage }, "{s}");
+        }
+        for s in ["<C-q>", "<C-c>", "<C-x>", "<C-v>", "<C-S-t>", "<A-w>", "<C-=>"] {
+            assert_eq!(k(s, true), TypingKey::App, "{s}");
         }
     }
 }

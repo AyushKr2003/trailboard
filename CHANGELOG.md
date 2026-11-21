@@ -7,6 +7,10 @@ All notable changes to Trailboard. The format follows
 ## [Unreleased]
 
 ### Added
+- **Link hints inside frames**, from other sites too (a captcha's "I'm
+  not a robot" box, embedded forms): f and the `;` kinds label what is
+  inside visible frames, three levels deep, and choosing a label clicks,
+  follows or types there.
 - **Use pages from the keyboard.** A card you enter (Enter) and Solo now
   start in *Page* mode, shown in the corner: j/k scroll, h/l sideways, d/u
   half a page, gg/G top and bottom, 0/$ the edges, f follows a link in the
@@ -254,6 +258,15 @@ All notable changes to Trailboard. The format follows
     `:copy site` and `:copy clean`.
 
 ### Changed
+- **Ctrl+W alone no longer closes a card**, on the board or in a page: it
+  waits for its second key (h/j/k/l or arrows the nearest card that way,
+  w / W next / previous, p the card before, c / q close), with Ctrl held
+  or not. A pause, or a key that doesn't follow, does nothing; close
+  with d, Delete, × or Ctrl+W then c.
+- **Typing in a page keeps your text.** In Insert, Ctrl+W deletes the word
+  before the caret, Ctrl+U to the line's start and Ctrl+H a character, as
+  our own fields do; Ctrl+R goes to the page instead of reloading it. In
+  Passthrough the site gets every Ctrl+letter except Ctrl+Q.
 - **p and P wait a moment** in a page for a second p / P (the primary
   selection) before opening the clipboard.
 - **t starts toggles; Tidy is T** on the board (as it already was in the

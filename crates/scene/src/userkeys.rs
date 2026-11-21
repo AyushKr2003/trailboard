@@ -608,9 +608,23 @@ fn alternatives(seqs: &[Vec<Chord>]) -> String {
         last.shift = false;
         Some(t)
     };
+    // Ctrl+w then Ctrl+h is Ctrl+w then h's twin (Ctrl kept held).
+    let held = |s: &Vec<Chord>| {
+        if s.len() < 2 {
+            return None;
+        }
+        let mut t = s.clone();
+        let last = t.last_mut()?;
+        if !last.ctrl {
+            return None;
+        }
+        last.ctrl = false;
+        Some(t)
+    };
     let shown: Vec<String> = seqs
         .iter()
         .filter(|s| unshifted(s).is_none_or(|t| !seqs.contains(&t)))
+        .filter(|s| held(s).is_none_or(|t| !seqs.contains(&t)))
         .map(|s| sheet_keys(s))
         .collect();
     let more = shown.len() > MAX_ALTS;
@@ -822,7 +836,7 @@ mod tests {
         let rows = sheet_rows(&k.page, &|a| k.about(a));
         let row = |about: &str| rows.iter().find(|(_, d)| d == about).map(|(k, _)| k.clone());
         assert_eq!(row("To the top").as_deref(), Some("gg"));
-        assert_eq!(row("Close the card (or the selection)").as_deref(), Some("d · Ctrl+W · Ctrl+W then c · Ctrl+W then q"));
+        assert_eq!(row("Close the card (or the selection)").as_deref(), Some("d · Ctrl+W then c · Ctrl+W then q"), "Ctrl+W alone closes nothing; Ctrl+W then Ctrl+Q is a twin");
         assert_eq!(row("Mark the page's scroll spot").as_deref(), Some("m then a…z"));
         assert_eq!(row("Mark the board spot").as_deref(), Some("m then A…Z"));
         assert_eq!(row("Go to a page mark").as_deref(), Some("' then a…z · ` then a…z"));

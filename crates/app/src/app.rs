@@ -45,8 +45,9 @@
 //! - Ctrl+J downloads (`palette::download_rows`, `scene::download`): files go
 //!   straight to the Downloads folder; Enter opens one, Ctrl+Enter its folder,
 //!   Shift+Delete cancels or removes. Pages with running downloads are parked.
-//! - Ctrl+L address bar, Ctrl+T new card, Ctrl+W close, Ctrl+Shift+T reopen,
-//!   Ctrl+R reload, Alt+←/→ back/forward.
+//! - Ctrl+L address bar, Ctrl+T new card, Ctrl+Shift+T reopen, Ctrl+R reload,
+//!   Alt+←/→ back/forward. While typing in a page, `keys::typing_key` goes
+//!   first: Ctrl+W / Ctrl+U / Ctrl+H edit the field and Ctrl+R is the page's.
 //! - Ctrl+F find in the current card's page (the bar is an `omnibox::Target::Find`;
 //!   `sync_find` stops the search when it closes). Ctrl +/−/0 zoom the current
 //!   page per site (`scene::pagezoom`, saved by `storage::zoom`, applied by
@@ -8386,6 +8387,29 @@ impl App {
             return self.run_key_action(a, None);
         }
 
+        // Ctrl keys while typing in a page (`keys::typing_key`): Ctrl+W,
+        // Ctrl+U and Ctrl+H edit the field in Insert, and Ctrl+R (and in
+        // Passthrough every Ctrl+letter but a few) is the page's, instead of
+        // closing or reloading the card mid-sentence.
+        if pressed
+            && self.typing()
+            && let Some(chord) = ev.chord(self.mods)
+        {
+            match keys::typing_key(chord, self.page_keys == PageKeys::Passthrough) {
+                keys::TypingKey::Edit(edit) => {
+                    self.edit_page_field(edit);
+                    return;
+                }
+                keys::TypingKey::ToPage => {
+                    if let Some(p) = self.focused_page() {
+                        p.send_key(&ev.to_web(self.mods));
+                    }
+                    return;
+                }
+                keys::TypingKey::App => {}
+            }
+        }
+
         if pressed {
             // App shortcuts first.
             let handled = match code {
@@ -8467,12 +8491,11 @@ impl App {
                     self.new_card();
                     true
                 }
-                Some(KeyCode::KeyW) if ctrl => {
-                    if let Some(id) = self.focused {
-                        self.close_card(id);
-                    }
-                    true
-                }
+                // Ctrl+W alone closes nothing (bug report 2026-11-21): the
+                // board and page tables wait for its second key, and while
+                // typing it deletes a word. Here only Caret / Visual mode
+                // reaches it, where it does nothing.
+                Some(KeyCode::KeyW) if ctrl && !alt => true,
                 Some(KeyCode::KeyS) if ctrl && !shift && !alt => {
                     let note = self.focused.filter(|&id| self.scene.node(id).is_some_and(Node::is_note));
                     self.save_markdown(note);
@@ -9855,6 +9878,25 @@ impl App {
         }
         log::debug!("copy from page: {} chars", text.chars().count());
         self.clipboard.copied_from_page(text);
+    }
+
+    /// Ctrl+W / Ctrl+U / Ctrl+H in a page's field: the editing keys
+    /// Chromium knows (Ctrl+Backspace; Shift+Home then Backspace; Backspace),
+    /// sent to the focused frame like typed keys, so they work in frames too.
+    fn edit_page_field(&self, edit: keys::FieldEdit) {
+        use web::keys::{Key, vk};
+        let Some(p) = self.focused_page() else { return };
+        let taps: &[(i32, u32)] = match edit {
+            keys::FieldEdit::WordBack => &[(vk::BACK, web::flags::CONTROL)],
+            keys::FieldEdit::LineStart => &[(vk::HOME, web::flags::SHIFT), (vk::BACK, 0)],
+            keys::FieldEdit::CharBack => &[(vk::BACK, 0)],
+        };
+        for &(code, mods) in taps {
+            for k in Key::tap(code, mods) {
+                p.send_key(&k);
+            }
+        }
+        log::debug!("page field edit: {edit:?}");
     }
 
     /// Ctrl+V (`key`) or the menu's Paste (`None`) in the focused page.

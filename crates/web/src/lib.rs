@@ -1170,6 +1170,11 @@ wrap_load_handler! {
             if self.shared.kind != PageKind::Note {
                 frame.execute_java_script(Some(&CefString::from(focus::script().as_str())), None, 0);
             }
+            // Link hints inside frames: an idle listener in each frame below
+            // the main one answers the main frame's hint script.
+            if self.shared.kind == PageKind::Web && frame.is_main() == 0 {
+                frame.execute_java_script(Some(&CefString::from(links::frame_script())), None, 0);
+            }
             if self.shared.kind == PageKind::Web
                 && let Some(browser) = browser
             {

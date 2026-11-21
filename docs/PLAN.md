@@ -395,6 +395,7 @@ marked **Ask** are the owner's call and get asked when their step starts
     nearest card that way (`scene::nav`), w / W next / previous, p the card
     before, c / q close. Alone it still closes the card once the 1 s pause
     passes. Ctrl+W on the board and in Insert closes at once, as before.
+    *Changed 2026-11-21 (bug fixes below): Ctrl+W alone closes nothing.*
   - co asks first (`Confirm::CloseOthers`, Enter closes), counting folded
     cards too; it is one undo step, so `:undo` (or Ctrl+Z on the board)
     brings them all back and u brings them one at a time. Ctrl+Z in a page
@@ -987,6 +988,46 @@ marked **Ask** are the owner's call and get asked when their step starts
     `?` inside iframes; n after Esc restarts from the view (Chromium
     starts a new search once the selection is gone), not from the match
     that was cleared.
+- ✅ **Bug fixes (2026-11-21, from `docs/BUGS.md`).**
+  - *Ctrl keys while typing and Ctrl+W.* Owner: "fix all", on the plan in
+    BUGS.md. Ctrl+W alone never closes a card: on the board and in a page
+    it only starts `Ctrl+w` sequences (`keys::bind_window_keys`, shared),
+    and waits for the second key with the panel showing (Esc drops it).
+    c / q close; the second key may keep Ctrl held (Ctrl+w Ctrl+h, as in
+    vim; the sheet hides these twins). A key that doesn't finish a started
+    sequence is swallowed even with Ctrl (`Pending::feed`), so Ctrl+w
+    Ctrl+r never reloads; after a lone count Ctrl keys still reach the app
+    shortcuts. While typing (`keys::typing_key`): Insert turns Ctrl+W /
+    Ctrl+U / Ctrl+H into the page's own Ctrl+Backspace / Shift+Home and
+    Backspace / Backspace (`App::edit_page_field`, so frames work too) and
+    gives Ctrl+R to the page; other shortcuts (palette, address bar, new
+    card…) stay, since they lose nothing typed. Passthrough gives the page
+    every Ctrl+letter but Ctrl+Q and Ctrl+C / X / V (the clipboard bridge,
+    which forwards them anyway); Ctrl+Shift keys stay ours. The app-level
+    Ctrl+W close is gone (only Caret / Visual reached it). Page-mode Ctrl+R /
+    E / Y / V / L / F / B keep their meanings (owner's earlier choices).
+    Known: Ctrl+U at a line's start deletes the line break before it.
+  - *Link hints inside frames* (also the backlog's "link hints inside
+    iframes"). `links::frame_script` is an idle listener added to every
+    frame below the main one at load start (web pages). The hint script
+    (`links::script`) collects the main frame's targets in document order
+    with visible frames as places to fill, asks each frame by
+    `postMessage` with a one-time token (answers count only from that
+    frame's window with that token), and each frame does the same for its
+    own frames, 3 levels deep. Waits are 150 / 100 / 50 ms by level, none
+    when no frame is in view. Answers are shifted by the frame's content
+    box (border and padding), trimmed to it and the view, and dropped
+    where `elementFromPoint` isn't the frame. One message as before, so
+    parsing, labels and clicking are unchanged; the 500 limit counts the
+    whole page. Not covered: frames without scripts, scaled or rotated
+    frames (unscaled box), closed shadow DOM.
+  - Verified: unit tests (`keys`, `userkeys`, `links`); `place` checked
+    under node; scripted runs: Insert Ctrl+W / H / U / R, Page and board
+    Ctrl+W with a pause (card kept), Ctrl+w Ctrl+h, Ctrl+w c / q,
+    Passthrough Ctrl+W to the page; a page on localhost:8765 with a frame
+    from 127.0.0.1:8766 and one inside it: f labels the checkbox, link,
+    field and nested button, choosing them ticks, clicks and types;
+    screenshot of the labels.
 - ⬜ 17. **Stretch.** Macros (`q{a-z}` records, `@{a-z}` plays, `@@`
   again); `:screenshot` of a card; `:print`; small user scripts run on
   matching sites from a folder (our own format, opt-in).
@@ -1111,13 +1152,16 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-21 (thirty-fourth). Finished M12 step 16,
-search and messages: `?` finds up the page (n / N follow the search's
-way), Esc clears the marks a find left, the shortcut sheet is F1 /
-`:keys` (still `?` on the board), and `:messages` lists this session's
-toasts and the waiting `:later` lines (copy, run now, forget, cancel).
-**Repo state:** on `master`; M12 steps 1–16 done and committed;
-step 17 and M13 planned.
+**Last session:** 2026-11-21 (thirty-fifth). Fixed both bugs in
+`docs/BUGS.md` (see M12 "Bug fixes (2026-11-21)"): Ctrl+W alone never
+closes a card (board and page wait for its second key; Ctrl held works),
+Insert turns Ctrl+W / U / H into field edits and gives Ctrl+R to the page,
+Passthrough gives the page every Ctrl+letter but Ctrl+Q and copy/paste;
+link hints reach into frames, cross-site and nested, through an idle
+listener in each frame.
+**Repo state:** on `master`; M12 steps 1–16 and the bug fixes done and
+committed; step 17 and M13 planned. `docs/BUGS.md` is new
+and lists none open.
 **Next up:** M12 step 17, stretch (macros `q` / `@`, `:screenshot`,
 `:print`, opt-in user scripts). M13 (full media support, our own CEF
 build) runs beside M12; its builds need a cloud machine. Also retake the
@@ -1147,8 +1191,7 @@ main thread; thumbnails on history rows or the sidebar; keep closed cards
 across restarts; a private space looking different; undo for forgetting a
 page; site icons on history rows; prune unused icons; letter tiles for
 sites without an icon; a zoom badge on zoomed cards; Ctrl+scroll in a page
-to zoom it; keyboard selection of several cards; link hints inside
-iframes; a portal file chooser for Save as Markdown; open `crash.log` from
+to zoom it; keyboard selection of several cards; a portal file chooser for Save as Markdown; open `crash.log` from
 the crash toast; undoing the close of a stack member puts it back in the
 stack; gi on the settings page toasts "No text field here" although its
 search box is an `input type=search` in view (seen in step 8's e2e; a

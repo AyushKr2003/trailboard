@@ -46,6 +46,15 @@ impl Key {
     }
 }
 
+impl Key {
+    /// A press and release of `vk` with `modifiers` (`flags::*`) and no
+    /// text: an editing key made by the app (Ctrl+Backspace for Ctrl+W).
+    pub fn tap(vk: i32, modifiers: u32) -> [Key; 2] {
+        let k = Key { pressed: true, vk, native: 0, modifiers, text: None };
+        [k.clone(), Key { pressed: false, ..k }]
+    }
+}
+
 /// Windows virtual-key codes used by Chromium.
 pub mod vk {
     pub const BACK: i32 = 0x08;

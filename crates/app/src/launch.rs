@@ -57,7 +57,7 @@ pub fn command<S: AsRef<str>>(args: &[S]) -> Command {
     Command::Run
 }
 
-/// `trailboard 0.1.0 (CEF …)`, for `--version` and crash reports.
+/// `trailboard 0.2.0 (CEF …)`, for `--version` and crash reports.
 pub fn version_line() -> String {
     format!("trailboard {} (CEF {})", env!("CARGO_PKG_VERSION"), web::engine_version())
 }

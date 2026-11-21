@@ -60,6 +60,7 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
 - Read Mode is now called Solo; `t` starts toggles and Tidy is `T`; the
   trails sidebar is Ctrl+B and `b` / `B` open saved pages.
 - Shortcuts follow the logical key, so they work on any layout.
+- Version 0.2.0 (`Cargo.toml`, PKGBUILD).
 - Docs: `docs/PLAN.md` and this file shortened; `docs/BUGS.md` and
   `docs/FUTURE.md` folded into the plan (§7 and §8).
 

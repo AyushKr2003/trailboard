@@ -24,7 +24,7 @@ pub fn log_path(data_dir: &Path) -> PathBuf {
 pub struct Report<'a> {
     /// Local time, already formatted.
     pub when: &'a str,
-    /// `trailboard 0.1.0 (CEF …)`.
+    /// `trailboard 0.2.0 (CEF …)`.
     pub version: &'a str,
     /// Thread name, or "unnamed".
     pub thread: &'a str,

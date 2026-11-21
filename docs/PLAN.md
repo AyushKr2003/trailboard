@@ -55,7 +55,7 @@ app (trailboard)  winit window · input · omnibox · chrome UI · main loop
 | ✅ | M9 Packaging | Bundle script, `--version`, crash reports, PKGBUILD, Chromium sandbox, first-run welcome |
 | ⬜ | M10 Optional extras | See below; most items on hold |
 | ✅ | M11 Premium look | Corners setting, cards as sheets, board backgrounds, sidebar, command bar, motion, empty board, review pass |
-| 🟡 | **M12 Keyboard first** | Vim-like modes, page keys, scroll sections, command line, cards from a page, search keywords, jumps and marks, user keys, settings, navigation extras, command line power, caret mode, dialogs and fields, then (steps 16–17) search and messages, stretch (below) |
+| 🟡 | **M12 Keyboard first** | Vim-like modes, page keys, scroll sections, command line, cards from a page, search keywords, jumps and marks, user keys, settings, navigation extras, command line power, caret mode, dialogs and fields, search and messages, then (step 17) stretch (below) |
 | ⬜ | **M13 Full media support** | Our own CEF build with H.264/AAC (and HEVC, Widevine if they work), built off this machine, opt-in (below) |
 
 ### Owner decisions that still bind
@@ -944,9 +944,49 @@ marked **Ask** are the owner's call and get asked when their step starts
     run by the app (Y's primary copy, `:run wl-copy`) stays alive but the
     selection reads empty; from a shell it works. To look into (step 12/14
     code, not this step's).
-- ⬜ 16. **Search and messages.** `?` searches backward (**Owner,
+- ✅ 16. **Search and messages.** `?` searches backward (**Owner,
   2026-11-20:** yes; the shortcut sheet moves to `F1` and `:keys`); Esc clears the
   find highlight; `:messages` lists the last toasts and errors.
+  - `?` is `find-back` in the page table (`keys::Action::FindBack`): the
+    find bar with `App::find_back` set, placeholder *Find up the page*;
+    typing and Enter search up, Shift+Enter down. n follows the last
+    search's way, N the other (vim's rule); `/`, Ctrl+F and `:find` search
+    down again.
+  - Decided: `?` on the board (no card entered) still opens the sheet, as
+    there is nothing to search there; F1 and `:keys` / `:help` open it
+    anywhere. The empty board's chip, the palette row and the welcome page
+    say F1.
+  - Esc: `App::find_marks` is the card whose page still shows find marks
+    (after n / N, or after the bar closed on a search, which leaves the
+    active match selected). An Esc with that card current clears them
+    (`Page::clear_find`: Chromium's stop-finding with *clear selection*,
+    then the page's selection is emptied) and does nothing else; the next
+    Esc does what Esc did before. Starting the caret (v) or a new load
+    forgets the marks.
+  - `:messages` (`scene::messages`): every toast is logged (the last 200,
+    this session only; a toast repeating straight after itself counts up).
+    The list (`Target::Messages`, `palette::message_rows`) shows waiting
+    `:later` lines first (soonest first, "runs in 3 min"), then messages
+    newest first with when and how many times. Enter copies a message /
+    runs a waiting line now; Shift+Delete or Ctrl+Delete forgets / cancels
+    (`:later` lines now have ids, `LaterLine`). `:messages clear` empties
+    the log. "Errors" are the toasts that report them: there is no separate
+    error log, and command-line mistakes shown under the line (not as a
+    toast) aren't listed.
+  - Verified e2e (`~/.cache/trailboard-e2e-m12`, page `site12/f/find.html`
+    on :8765, `run13.sh script60 data60`): `?fox` → *Find up the page*
+    with Enter *Previous* (`f_back.png`), Enter → match 6 of 6 (it
+    wrapped up from the top); Esc closed the bar leaving fox 6 selected
+    (`f_left.png`, marks kept); Esc cleared it and stayed in Page mode
+    (`f_clear.png`); n marked the matches again (`f_n.png`); `/fox` then
+    searched down; F1 showed the sheet (`f_sheet.png`); `:later 60000
+    reload` then `:messages` → the waiting line and its toast
+    (`f_msgs.png`); Shift+Delete cancelled the line (*Cancelled :reload*
+    listed, `f_msgs2.png`); `:messages clear` → *No messages yet*
+    (`f_empty.png`). Not verified: a real keyboard, X11, the light theme,
+    `?` inside iframes; n after Esc restarts from the view (Chromium
+    starts a new search once the selection is gone), not from the match
+    that was cleared.
 - ⬜ 17. **Stretch.** Macros (`q{a-z}` records, `@{a-z}` plays, `@@`
   again); `:screenshot` of a card; `:print`; small user scripts run on
   matching sites from a folder (our own format, opt-in).
@@ -1071,23 +1111,23 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-21 (thirty-third). Finished M12 step 15,
-dialogs and fields from the keyboard: page alert / confirm / prompt /
-leave as a question sheet or field, y / n on every question, a typed
-path (Tab, `*`) for file choosers, Ctrl+e to edit a field in your
-editor, Shift+Insert for the primary selection.
-**Repo state:** on `master`; M12 steps 1–15 done and committed;
-M12 steps 16–17 and M13 planned.
-**Next up:** M12 step 16, search and messages (`?` backward, the sheet
-on F1 and `:keys`, Esc clears the find highlight, `:messages`). Step 17
-follows. M13 (full media support, our own CEF build) runs beside
-M12; its builds need a cloud machine. Also retake the README screenshots
-(`docs/images/`) in the new look.
-**Notes:** `:later` lines aren't saved across quits, and there is no
-way to list or cancel waiting ones yet (`:messages`, step 16, could show
-them). Caret mode works in the main frame's text only (not iframes).
-`wl-copy` started by the app doesn't take the selection on this machine
-(Y's primary copy reads empty afterwards); see step 15's *Known*.
+**Last session:** 2026-11-21 (thirty-fourth). Finished M12 step 16,
+search and messages: `?` finds up the page (n / N follow the search's
+way), Esc clears the marks a find left, the shortcut sheet is F1 /
+`:keys` (still `?` on the board), and `:messages` lists this session's
+toasts and the waiting `:later` lines (copy, run now, forget, cancel).
+**Repo state:** on `master`; M12 steps 1–16 done, step 16 not committed
+yet; step 17 and M13 planned.
+**Next up:** M12 step 17, stretch (macros `q` / `@`, `:screenshot`,
+`:print`, opt-in user scripts). M13 (full media support, our own CEF
+build) runs beside M12; its builds need a cloud machine. Also retake the
+README screenshots (`docs/images/`) in the new look.
+**Notes:** `:later` lines still aren't saved across quits (`:messages`
+now lists and cancels them). The messages log is this session's only
+and holds toasts; command-line mistakes shown under the line aren't in
+it. After Esc clears a find, n starts again from the view. Caret mode
+works in the main frame's text only (not iframes). `wl-copy` started by
+the app doesn't take the selection on this machine (step 15's *Known*).
 Closing a card doesn't ask a page's "leave this page?" first.
 
 **Small follow-ups (backlog):** the page inspector in a card (`wi`, step

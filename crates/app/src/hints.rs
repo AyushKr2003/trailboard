@@ -1,4 +1,4 @@
-//! The keyboard and mouse sheet, shown with `?` or F1 when no page has the keys.
+//! The keyboard and mouse sheet, shown with F1 or `:keys`, or `?` on the board.
 //!
 //! A panel at most three quarters of the window each way (smaller when the
 //! shortcuts need less), with a header that stays put: the title, how to
@@ -74,7 +74,8 @@ const FIXED: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl+S", "Save board or note as Markdown"),
             ("Ctrl+Shift+T", "Reopen closed card"),
             ("Ctrl+Q", "Quit"),
-            ("? · F1", "Show / hide these shortcuts"),
+            ("F1 · ? on the board", "Show / hide these shortcuts (also :keys)"),
+            (":messages", "Messages shown lately, lines waiting to run"),
             (":keys-file", "Your own keys (then :reload-keys)"),
         ],
     ),
@@ -134,6 +135,7 @@ const FIXED: &[(&str, &[(&str, &str)])] = &[
             ("Alt+Left · Alt+Right", "Back / forward"),
             ("Ctrl+R", "Reload"),
             ("Ctrl+F", "Find in page (Enter: next)"),
+            ("Esc", "Clear the marks a find left"),
             ("Ctrl++ · Ctrl+− · Ctrl+0", "Zoom page / actual size"),
             ("Ctrl+C · X · V", "Copy / cut / paste"),
             ("Right-click", "Page menu"),

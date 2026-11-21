@@ -58,12 +58,13 @@
 //!   card's title bar moves the whole selection; Delete/Backspace closes it. A click
 //!   on the board or Esc clears it.
 //!
-//! - `?` with no card focused shows a sheet of shortcuts; Esc, `?` or a click hides it.
+//! - F1, `:keys`, or `?` on the board shows a sheet of shortcuts; Esc, F1, `?` or a click hides it.
 //! - Right-click in a page opens a context menu (drawn by the app); Esc, a click
 //!   outside, scrolling or moving the board closes it.
 //! - Ctrl+C / Ctrl+X / Ctrl+V in a page go through the desktop clipboard (see `clipboard`).
 //! - IME (e.g. fcitx5) composition goes to the focused page or the address bar.
-//! - F1 (anywhere) or `?` (no card focused) shows the shortcuts; Ctrl+Q quits.
+//! - `?` in a page finds backward (`/` forward); Esc clears the marks a find left.
+//! - `:messages` lists this session's toasts and the `:later` lines waiting; Ctrl+Q quits.
 //! - Ctrl+S saves the focused note, or else the whole board, as Markdown in
 //!   `Documents/Trailboard` (`scene::export`, `storage::export`); a note's page
 //!   menu has *Save as Markdown* too.
@@ -276,6 +277,16 @@ impl PageKeys {
     }
 }
 
+/// A `:later` line waiting to run.
+struct LaterLine {
+    /// Stays the same while it waits (the messages list's row).
+    id: u64,
+    at: Instant,
+    line: String,
+    /// The hint's link it had (`{hint-url}`).
+    hint_url: Option<String>,
+}
+
 /// Caret / Visual mode's card (`App::caret`).
 #[derive(Debug, Clone, Copy)]
 struct CaretCard {
@@ -416,7 +427,11 @@ pub struct App {
     /// too), for `.`.
     last_line: Option<String>,
     /// `:later` lines waiting: when, the chain, the hint's link it had.
-    later: Vec<(Instant, String, Option<String>)>,
+    later: Vec<LaterLine>,
+    /// The last `LaterLine::id` given.
+    later_ids: u64,
+    /// Every toast this session, for `:messages`.
+    messages: scene::messages::Messages,
     /// Every space's jump list and marks (`scene::jump`, `storage::jumps`).
     places: jump::Places,
     places_dirty: bool,
@@ -565,6 +580,11 @@ pub struct App {
     found: Option<(i32, i32)>,
     /// What find in page last looked for; the bar opens with it.
     last_find: String,
+    /// The last search went up the page (`?`): n goes up too, N down.
+    find_back: bool,
+    /// The card whose page still shows find marks (after n / N, or the
+    /// bar closing on a match); Esc clears them before doing anything else.
+    find_marks: Option<NodeId>,
     /// When the Menu key (or Shift+F10) asked a page for its menu: the menu
     /// that answers opens with its first item highlighted.
     menu_by_key: Option<Instant>,
@@ -842,6 +862,8 @@ impl App {
             recent_commands,
             last_line: None,
             later: Vec::new(),
+            later_ids: 0,
+            messages: Default::default(),
             places,
             places_dirty: false,
             jumping: false,
@@ -921,6 +943,8 @@ impl App {
             finding: None,
             found: None,
             last_find: String::new(),
+            find_back: false,
+            find_marks: None,
             menu_by_key: None,
             page_index,
             text_due: HashMap::new(),
@@ -1107,6 +1131,7 @@ impl App {
     fn toast_for(&mut self, msg: impl Into<String>, show: Duration) {
         let msg = msg.into();
         log::info!("toast: {msg}");
+        self.messages.push(&msg, now_ms());
         self.toast = Some((msg, Instant::now() + show));
     }
 
@@ -2854,15 +2879,19 @@ impl App {
                 }
             }
             KeyAction::Fullscreen => self.toggle_fullscreen(),
-            KeyAction::Find => self.open_find(),
+            KeyAction::Find => self.open_find(false),
+            KeyAction::FindBack => self.open_find(true),
             KeyAction::FindNext | KeyAction::FindPrev if !self.last_find.is_empty() => {
+                // n keeps the way the last search went (/ down, ? up); N the other.
+                let forward = (action == KeyAction::FindNext) != self.find_back;
                 if let Some(p) = self.focused_page() {
                     for _ in 0..times {
-                        p.find(&self.last_find, action == KeyAction::FindNext, true);
+                        p.find(&self.last_find, forward, true);
                     }
+                    self.find_marks = Some(id);
                 }
             }
-            KeyAction::FindNext | KeyAction::FindPrev => self.open_find(),
+            KeyAction::FindNext | KeyAction::FindPrev => self.open_find(self.find_back),
             KeyAction::CommandLine => self.open_command_line(count),
             KeyAction::RepeatLine => self.repeat_line(count),
             KeyAction::Close => self.close_from_page(id),
@@ -2918,6 +2947,7 @@ impl App {
         if found {
             c.page.stop_finding();
         }
+        self.find_marks = None;
         let color = self.theme.accent();
         let css = format!("rgb({},{},{})", color[0], color[1], color[2]);
         c.page.run_script(&web::caret::start(want.name(), &css, &self.last_find, if found { 60 } else { 0 }));
@@ -3733,9 +3763,10 @@ impl App {
 
     // ---------------------------------------------------------------- find in page, page zoom
 
-    /// Ctrl+F: the find bar for the current card's page, with the last search
-    /// selected (and run again, so its matches show at once).
-    fn open_find(&mut self) {
+    /// Ctrl+F or `/` (`back` false), `?` (true): the find bar for the current
+    /// card's page, with the last search selected (and run again, so its
+    /// matches show at once). Searching back, typing and Enter go up the page.
+    fn open_find(&mut self, back: bool) {
         let Some(id) = self.focused.filter(|id| self.cards.contains_key(id)) else {
             self.toast("Pick a page to find in first");
             return;
@@ -3746,10 +3777,11 @@ impl App {
         let text = self.last_find.clone();
         self.omnibox = Some(Omnibox::new(&text, Target::Find(id)));
         self.found = None;
+        self.find_back = back;
         if !text.is_empty() {
-            self.cards[&id].page.find(&text, true, false);
+            self.cards[&id].page.find(&text, !back, false);
         }
-        log::info!("find open on card {}", id.0);
+        log::info!("find open on card {}{}", id.0, if back { " (backward)" } else { "" });
     }
 
     /// Keeps the page being searched in step with the find bar: a closed bar
@@ -3767,8 +3799,17 @@ impl App {
             open = None;
         }
         if self.finding != open {
-            if let Some(c) = self.finding.and_then(|old| self.cards.get(&old)) {
+            if let Some(old) = self.finding
+                && let Some(c) = self.cards.get(&old)
+            {
                 c.page.stop_finding();
+                // Its match stays selected until Esc.
+                if !self.last_find.is_empty() {
+                    self.find_marks = Some(old);
+                }
+            }
+            if open.is_some() {
+                self.find_marks = None;
             }
             if open.is_none() {
                 self.found = None;
@@ -3851,17 +3892,69 @@ impl App {
     /// `:later` lines whose time has come.
     fn run_due_later(&mut self) {
         let now = Instant::now();
-        if !self.later.iter().any(|(at, ..)| *at <= now) {
+        if !self.later.iter().any(|l| l.at <= now) {
             return;
         }
-        let (due, wait): (Vec<_>, Vec<_>) = std::mem::take(&mut self.later).into_iter().partition(|(at, ..)| *at <= now);
+        let (due, wait): (Vec<_>, Vec<_>) = std::mem::take(&mut self.later).into_iter().partition(|l| l.at <= now);
         self.later = wait;
-        for (_, line, hint_url) in due {
-            log::info!("command line: later {line:?}");
-            match userkeys::steps(&line, &self.keys.aliases) {
-                Ok(steps) => self.run_steps(&steps, hint_url.as_deref()),
-                Err(e) => self.toast(format!("later: {e}")),
+        for l in due {
+            self.run_later(l);
+        }
+    }
+
+    fn run_later(&mut self, l: LaterLine) {
+        log::info!("command line: later {:?}", l.line);
+        match userkeys::steps(&l.line, &self.keys.aliases) {
+            Ok(steps) => self.run_steps(&steps, l.hint_url.as_deref()),
+            Err(e) => self.toast(format!("later: {e}")),
+        }
+    }
+
+    // ---------------------------------------------------------------- messages
+
+    /// `:messages`: the toasts shown this session and the `:later` lines
+    /// waiting, in a list (Enter copies a message or runs a line now,
+    /// Shift+Delete forgets or cancels it).
+    fn open_messages(&mut self) {
+        self.menu = None;
+        self.link_hints = None;
+        self.finish_arrange(true);
+        self.omnibox = Some(Omnibox::new("", Target::Messages));
+        log::info!("messages open: {} shown, {} waiting", self.messages.len(), self.later.len());
+    }
+
+    /// The messages list's rows.
+    fn message_rows(&self, query: &str) -> Vec<palette::Row> {
+        let now = Instant::now();
+        let waiting: Vec<palette::Waiting> = self
+            .later
+            .iter()
+            .map(|l| palette::Waiting { id: l.id, line: &l.line, left_ms: l.at.saturating_duration_since(now).as_millis() as u64 })
+            .collect();
+        palette::message_rows(query, &waiting, &self.messages, local_ms(now_ms()), local_ms)
+    }
+
+    /// Shift+Delete in the messages list: forgets a message, or cancels a
+    /// waiting line. The list stays, its highlight kept in range.
+    fn drop_message_row(&mut self, item: &Item) {
+        match item {
+            Item::Message(id) => {
+                self.messages.remove(*id);
+                log::info!("message {id} forgotten");
             }
+            Item::Waiting(id) => {
+                if let Some(i) = self.later.iter().position(|l| l.id == *id) {
+                    let l = self.later.remove(i);
+                    log::info!("later {:?} cancelled", l.line);
+                    // Said on the toast, which is logged too.
+                    self.toast(format!("Cancelled :{}", l.line));
+                }
+            }
+            _ => return,
+        }
+        let n = self.omnibox.as_ref().map(|ob| self.message_rows(&ob.text).len()).unwrap_or(0);
+        if let Some(ob) = self.omnibox.as_mut() {
+            ob.sel = ob.sel.min(n.saturating_sub(1));
         }
     }
 
@@ -4026,7 +4119,7 @@ impl App {
                 if parsed.arg.is_some() {
                     self.last_find = arg.clone();
                 }
-                self.open_find();
+                self.open_find(false);
             }
             Cmd::Copy => {
                 let what = match arg.as_str() {
@@ -4151,6 +4244,11 @@ impl App {
             Cmd::Downloads => self.run_command(Command::Downloads),
             Cmd::Settings => self.run_command(Command::Settings),
             Cmd::Keys => self.run_command(Command::Shortcuts),
+            Cmd::Messages if arg == "clear" => {
+                self.messages.clear();
+                log::info!("messages cleared");
+            }
+            Cmd::Messages => self.run_command(Command::Messages),
             Cmd::Bind | Cmd::Unbind | Cmd::Alias => {
                 let entry = storage::keyfile::parse_line(&format!("{} {arg}", parsed.spec.name));
                 match entry.and_then(|e| e.ok_or_else(|| "nothing to do".to_string())).and_then(|e| self.keys.apply(&e)) {
@@ -4209,7 +4307,13 @@ impl App {
                     if ms >= 1000 {
                         self.toast(format!("In {} s: {line}", (ms as f64 / 1000.0 * 10.0).round() / 10.0));
                     }
-                    self.later.push((Instant::now() + Duration::from_millis(ms), line, hint_url.map(str::to_string)));
+                    self.later_ids += 1;
+                    self.later.push(LaterLine {
+                        id: self.later_ids,
+                        at: Instant::now() + Duration::from_millis(ms),
+                        line,
+                        hint_url: hint_url.map(str::to_string),
+                    });
                 }
                 Err(e) => self.toast(format!("later: {e}")),
             },
@@ -4245,6 +4349,18 @@ impl App {
             Item::Download(key) => self.open_download(key),
             Item::AllowedSite(site) => self.block_site_again(&site),
             Item::Photo(path) => self.set_space_photo(path),
+            Item::Message(id) => {
+                if let Some(text) = self.messages.get(id).map(|m| m.text.clone()) {
+                    self.clipboard.set_text(&text);
+                    self.toast("Copied the message");
+                }
+            }
+            Item::Waiting(id) => {
+                if let Some(i) = self.later.iter().position(|l| l.id == id) {
+                    let l = self.later.remove(i);
+                    self.run_later(l);
+                }
+            }
             Item::Run(line) | Item::Recent(line) => self.run_line(&line),
             Item::Complete(line) if userkeys::steps(&line, &self.keys.aliases).is_ok() => self.run_line(&line),
             Item::Complete(line) => self.fill_command_line(&line),
@@ -5332,6 +5448,9 @@ impl App {
         if ob.target == Target::AllowedSites {
             return palette::allowed_rows(&ob.text, &self.blocking.allowed_sites(), &self.scene);
         }
+        if ob.target == Target::Messages {
+            return self.message_rows(&ob.text);
+        }
         if ob.target == Target::Downloads {
             let missing = |p: &str| std::fs::symlink_metadata(p).is_err();
             return palette::download_rows(&ob.text, &self.downloads, missing, local_ms(now_ms()), local_ms);
@@ -5767,7 +5886,7 @@ impl App {
                 Some(p) => p.reload(),
                 None => self.toast("No page to reload"),
             },
-            Command::FindInPage => self.open_find(),
+            Command::FindInPage => self.open_find(false),
             Command::MarkCard => self.toggle_mark(),
             Command::FillView => self.fill_current(),
             Command::PageMenu => {
@@ -5801,6 +5920,7 @@ impl App {
             Command::Welcome => self.show_guide(),
             Command::ToggleBlocking => self.toggle_blocking(self.current()),
             Command::AllowedSites => self.open_allowed_sites(),
+            Command::Messages => self.open_messages(),
             Command::Quit => {
                 log::info!("quit (palette)");
                 self.quit = true;
@@ -6976,6 +7096,10 @@ impl App {
                         c.can_back = can_back;
                         c.can_forward = can_forward;
                     }
+                    // Nor find marks: Esc needn't clear them.
+                    if loading && self.find_marks == Some(id) {
+                        self.find_marks = None;
+                    }
                     // A new document has no caret: Caret mode ends with the old one.
                     if loading && self.caret.is_some_and(|c| c.id == id) {
                         self.caret = None;
@@ -7885,7 +8009,8 @@ impl App {
             return;
         }
         let f1 = ev.named == Some(NamedKey::F1) && !ctrl && !alt;
-        if pressed && (f1 || (is_question && !ctrl && !alt && !self.typing() && self.omnibox.is_none() && self.menu.is_none())) {
+        // ? shows them on the board only: in a page it searches backward.
+        if pressed && (f1 || (is_question && !ctrl && !alt && !self.entered() && self.omnibox.is_none() && self.menu.is_none())) {
             self.menu = None;
             self.pending.clear();
             self.show_hints();
@@ -7932,7 +8057,7 @@ impl App {
         let setting_sel = self
             .omnibox
             .as_ref()
-            .filter(|ob| ob.target == Target::AllowedSites)
+            .filter(|ob| matches!(ob.target, Target::AllowedSites | Target::Messages))
             .and_then(|ob| self.list_rows(ob).into_iter().nth(ob.sel).map(|r| r.item));
         if let Some(ob) = self.omnibox.as_mut() {
             if !pressed {
@@ -8040,6 +8165,11 @@ impl App {
                         self.block_site_again(site);
                     }
                 }
+                Some(NamedKey::Delete) if (ctrl || shift) && ob.target == Target::Messages => {
+                    if let Some(item) = &setting_sel {
+                        self.drop_message_row(item);
+                    }
+                }
                 Some(NamedKey::Delete) if ctrl && !shift && ob.target.is_list() => self.forget_selected(),
                 Some(NamedKey::Delete) if ctrl && !shift => ob.kill_word_forward(),
                 _ if ctrl && code == Some(KeyCode::KeyK) && ob.target == Target::Palette => self.omnibox = None,
@@ -8048,7 +8178,8 @@ impl App {
                     if let Target::Find(id) = ob.target
                         && let Some(c) = self.cards.get(&id)
                     {
-                        c.page.find(&ob.text, !shift, true);
+                        // Up the page after ?, so Shift+Enter goes down.
+                        c.page.find(&ob.text, shift == self.find_back, true);
                     }
                 }
                 _ if ctrl && code == Some(KeyCode::KeyH) && ob.target == Target::History => {
@@ -8173,7 +8304,7 @@ impl App {
                 self.last_find = ob.text.clone();
                 self.found = None;
                 if let Some(c) = self.cards.get(&id) {
-                    c.page.find(&ob.text, true, false);
+                    c.page.find(&ob.text, !self.find_back, false);
                 }
             }
             // New text, new results: back to the best one, and the walks
@@ -8354,7 +8485,7 @@ impl App {
                     true
                 }
                 Some(KeyCode::KeyF) if ctrl && !alt && !shift => {
-                    self.open_find();
+                    self.open_find(false);
                     true
                 }
                 Some(KeyCode::ContextMenu) if !ctrl && !alt => {
@@ -8411,6 +8542,15 @@ impl App {
                         p.blur_field();
                     }
                     self.set_page_keys(PageKeys::Page);
+                    true
+                }
+                // Find marks left in the current card's page go first.
+                Some(KeyCode::Escape) if self.find_marks.is_some() && self.find_marks == self.focused && self.drag_is_idle() => {
+                    if let Some(p) = self.focused_page() {
+                        p.clear_find();
+                    }
+                    self.find_marks = None;
+                    log::info!("find marks cleared");
                     true
                 }
                 Some(KeyCode::Escape) if self.read.is_some() && self.drag_is_idle() => {
@@ -9214,6 +9354,7 @@ impl App {
                     "Find a card, space or command · : for a command line",
                     &[("↑", ""), ("↓", "Move"), ("Enter", "Open"), ("Shift+Enter", "Open beside"), ("Esc", "Close")],
                 ),
+                Target::Find(_) if self.find_back => (Icon::Find, "Find up the page", &[("Enter", "Previous"), ("Shift+Enter", "Next")]),
                 Target::Find(_) => (Icon::Find, "Find in page", &[("Enter", "Next"), ("Shift+Enter", "Previous")]),
                 Target::History => (
                     Icon::History,
@@ -9226,6 +9367,11 @@ impl App {
                     &[("Enter", "Open file"), ("Ctrl+Enter", "Show folder"), ("Shift+Del", "Cancel or remove"), ("Esc", "Close")],
                 ),
                 Target::AllowedSites => (Icon::Shield, "Sites with ads allowed", &[("Enter", "Block ads again"), ("Esc", "Close")]),
+                Target::Messages => (
+                    Icon::Note,
+                    "Search messages",
+                    &[("Enter", "Copy · run now"), ("Shift+Del", "Forget · cancel"), ("Esc", "Close")],
+                ),
                 Target::Photo => (Icon::Picture, "Find a picture or type its path", &[("Enter", "Use as background"), ("Esc", "Close")]),
                 Target::SaveAs(_) => (Icon::Download, "Save download as", &[("Enter", "Save"), ("Esc", "Cancel")]),
                 Target::Prompt(_) => (Icon::Note, "Your answer", &[("Enter", "OK"), ("Esc", "Cancel")]),
@@ -9308,6 +9454,7 @@ impl App {
                     (Target::History, true, _) => "No pages in history yet",
                     (Target::Downloads, true, _) => "No downloads yet",
                     (Target::AllowedSites, true, _) => "Ads are blocked on every site",
+                    (Target::Messages, true, _) => "No messages yet",
                     (Target::Photo, true, _) => "No pictures in Pictures or the theme's backgrounds · type a picture's path",
                     _ => "Nothing found",
                 };
@@ -10386,8 +10533,8 @@ impl App {
                     }
                 }
                 Cmd::Find => match self.omnibox.as_ref().filter(|ob| matches!(ob.target, Target::Find(_))) {
-                    None => log::info!("script find: closed"),
-                    Some(ob) => log::info!("script find: {:?} on {:?} found={:?}", ob.text, ob.target, self.found),
+                    None => log::info!("script find: closed marks={:?}", self.find_marks.map(|id| id.0)),
+                    Some(ob) => log::info!("script find: {:?} on {:?} found={:?} back={}", ob.text, ob.target, self.found, self.find_back),
                 },
                 Cmd::Palette => match self.omnibox.as_ref().filter(|ob| ob.target.is_list()) {
                     None => log::info!("script palette: closed"),

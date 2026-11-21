@@ -149,7 +149,7 @@ setuid `chrome-sandbox` helper. The Arch package installs it; for the archive, s
 | `td` · `tj` · `:set` | Dark pages · JavaScript for this site · any setting by name |
 | `]]` · `gu` · `Ctrl+A` | Next page · up the address · the address's last number up |
 | `N` | New note |
-| `?` | Every shortcut |
+| `F1` · `:keys` | Every shortcut |
 
 The rest (settings, downloads, history, blocking, where your data lives) is in the **[guide](docs/GUIDE.md)**.
 

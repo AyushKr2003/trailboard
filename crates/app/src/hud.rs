@@ -210,7 +210,7 @@ pub fn nudge(r: &mut Renderer, text: &str, action: &str, keys: &str, mid_x: f32,
 pub const WELCOME_ACTIONS: [(&str, &str, Go); 3] = [
     ("Open a page", "Ctrl+T", Go::Command(Command::NewCard)),
     ("Search everything", "Ctrl+K", Go::Palette),
-    ("All keys", "?", Go::Command(Command::Shortcuts)),
+    ("All keys", "F1", Go::Command(Command::Shortcuts)),
 ];
 
 /// The welcome's big line, and the one under it (a private space says

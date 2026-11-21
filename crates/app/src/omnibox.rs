@@ -36,6 +36,8 @@ pub enum Target {
     /// The answer to a page's `prompt` (`App::dialogs`); closing the field
     /// cancels it.
     Prompt(u64),
+    /// `:messages` (`palette::message_rows`): the text filters them.
+    Messages,
     /// The path for a page's file chooser (`App::choosing`); closing the
     /// field cancels it. Tab completes.
     Files(u64),
@@ -46,7 +48,7 @@ impl Target {
     pub fn is_list(&self) -> bool {
         matches!(
             self,
-            Target::Palette | Target::History | Target::Downloads | Target::AllowedSites | Target::Photo
+            Target::Palette | Target::History | Target::Downloads | Target::AllowedSites | Target::Photo | Target::Messages
         )
     }
 }

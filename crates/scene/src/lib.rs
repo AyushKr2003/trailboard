@@ -15,6 +15,7 @@ pub mod icon;
 pub mod keys;
 pub mod history;
 pub mod liveness;
+pub mod messages;
 pub mod jump;
 pub mod mark;
 pub mod motion;

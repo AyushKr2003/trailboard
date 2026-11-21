@@ -1612,6 +1612,16 @@ impl Page {
         }
     }
 
+    /// Ends find in page and clears its marks, the active match's selection
+    /// included (Esc after a search). A search the find bar already ended
+    /// left that match as the page's selection, so it is dropped too.
+    pub fn clear_find(&self) {
+        if let Some(h) = self.host() {
+            h.stop_finding(1);
+        }
+        self.run_script("window.getSelection && window.getSelection().removeAllRanges();");
+    }
+
     pub fn set_hidden(&self, hidden: bool) {
         if let Some(h) = self.host() {
             h.was_hidden(hidden as _);

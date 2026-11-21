@@ -66,6 +66,7 @@ pub enum Cmd {
     Downloads,
     Settings,
     Keys,
+    Messages,
     Bind,
     Unbind,
     Alias,
@@ -159,6 +160,7 @@ pub struct Spec {
 
 const ZOOM: &[&str] = &["in", "out", "reset"];
 const COPY: &[&str] = &["address", "title", "markdown", "site", "clean"];
+const MESSAGES: &[&str] = &["clear"];
 const RELOAD: &[&str] = &["fresh"];
 
 const fn s(cmd: Cmd, name: &'static str, aliases: &'static [&'static str], arg: Arg, arg_hint: &'static str, about: &'static str) -> Spec {
@@ -234,6 +236,7 @@ pub const COMMANDS: &[Spec] = &[
     s(Cmd::Site, "site", &[], Req(Kind::Site), "<javascript|images|cookies|ads|passthrough> [on|off]", "Switch something for this site (saved)"),
     s(Cmd::SiteSession, "site-session", &[], Req(Kind::Site), "<javascript|images|cookies|ads|passthrough> [on|off]", "Switch something for this site until you quit"),
     s(Cmd::Keys, "keys", &["help"], No, "", "Keyboard shortcuts"),
+    s(Cmd::Messages, "messages", &[], Opt(Kind::Choice(MESSAGES)), "[clear]", "Messages shown lately, and lines waiting to run (clear: forget the messages)"),
     s(Cmd::Bind, "bind", &[], Req(Kind::Text), "<modes> <keys> <command>", "Bind keys until restart (modes: board,page,insert,hints,command)"),
     s(Cmd::Unbind, "unbind", &[], Req(Kind::Text), "<modes> <keys>", "Unbind keys until restart"),
     s(Cmd::Alias, "alias", &[], Req(Kind::Text), "<name> <command>", "A short name for a command, until restart"),

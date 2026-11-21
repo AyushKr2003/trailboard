@@ -479,6 +479,10 @@ pub enum Action {
     /// An empty address bar whose Enter opens beside the card.
     AddressBarBeside,
     Find,
+    /// `?`: the find bar, searching up the page; n then goes up too.
+    FindBack,
+    /// The next match in the direction of the last search (`n`), and the
+    /// other way (`N`).
     FindNext,
     FindPrev,
     /// All keys to the page, Esc included, until Shift+Esc.
@@ -706,8 +710,9 @@ pub const NAMED: &[(&str, Action, &str)] = &[
     ("primary-selection", Ac::CopySelection(true), "The selection to the primary selection"),
     ("caret-back", Ac::CaretBack, "Drop the selection, then the caret"),
     ("find", Ac::Find, "Find in the page"),
-    ("find-next", Ac::FindNext, "Next match"),
-    ("find-prev", Ac::FindPrev, "Previous match"),
+    ("find-back", Ac::FindBack, "Find backward in the page"),
+    ("find-next", Ac::FindNext, "Next match (the way you searched)"),
+    ("find-prev", Ac::FindPrev, "Match the other way"),
     ("next-card", Ac::NextCard, "Next card (reading order)"),
     ("prev-card", Ac::PrevCard, "Previous card (reading order)"),
     ("pick-card", Ac::PickCard, "Go to a card by title"),
@@ -1042,6 +1047,7 @@ pub fn page() -> Bindings<Action> {
         ("gd", DownloadPage),
         ("<F11>", Fullscreen),
         ("/", Find),
+        ("?", FindBack),
         ("n", FindNext),
         ("N", FindPrev),
         ("<C-v>", Passthrough),
@@ -1462,6 +1468,8 @@ mod tests {
         assert_eq!(feed("PP"), Outcome::Run { action: Action::PrimaryBeside, count: None });
         assert_eq!(feed(";Y"), Outcome::Run { action: Action::Hint(hint::Kind::Primary), count: None });
         assert_eq!(feed(";I"), Outcome::Run { action: Action::Hint(hint::Kind::ImageHere), count: None });
+        // ? searches backward in a page (step 16); the shortcut sheet is F1.
+        assert_eq!(feed("?"), Outcome::Run { action: Action::FindBack, count: None });
         // Every action a key reaches has a name for the key file.
         for (seq, a) in b.iter() {
             assert!(a.name().is_some() || matches!(a, Action::SetMark(_) | Action::GoMark(_) | Action::NthCard(_)), "{}", display(seq));
@@ -1470,7 +1478,7 @@ mod tests {
         assert_eq!(feed("<C-w>"), Outcome::Wait);
         assert_eq!(p.expire(&b, t + TIMEOUT), Some(Outcome::Run { action: Action::Close, count: None }));
         // Keys that switch modes stay out of the table.
-        for s in ["<Esc>", "<S-Esc>", "<Tab>", "<Enter>", "<Space>", "<C-f>", "?"] {
+        for s in ["<Esc>", "<S-Esc>", "<Tab>", "<Enter>", "<Space>", "<C-f>", "<F1>"] {
             assert_eq!(b.lookup(&parse(s).unwrap()), Lookup::None, "{s}");
         }
     }

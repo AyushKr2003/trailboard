@@ -56,6 +56,19 @@ All notable changes to Trailboard. The format follows
     it back. Shift+Insert pastes the primary selection. Both are in the
     keys file's `insert` mode (`edit-in-editor`, `paste-primary`) and on
     the `?` sheet under *Typing in a page*.
+- **Search up the page, and see past messages.** `?` in a page opens
+  find searching backward (Enter goes up, Shift+Enter down); after it, n
+  keeps going up and N down, as after `/` they go down and up. Esc clears
+  the marks a find leaves (the highlighted matches, or the match left
+  selected when the bar closes) before it does anything else.
+  - The shortcut sheet is now F1 or `:keys` (`?` still shows it on the
+    board, where there is nothing to search); the welcome page and the
+    empty board say F1.
+  - `:messages` lists this session's messages, newest first (a repeat
+    counts instead of adding a row), and the `:later` lines still waiting
+    with when they run. Type to filter; Enter copies a message or runs a
+    waiting line now; Shift+Delete forgets a message or cancels the line.
+    `:messages clear` empties the list. In the palette as *Messages*.
 - **Your own keys.** A plain-text keys file, `~/.config/trailboard/keys`
   (`:keys-file` opens it, with examples, in a card), binds keys for the
   board, pages, typing in a page, link hints and the command line:

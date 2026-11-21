@@ -73,6 +73,7 @@ pub enum Command {
     Downloads,
     Settings,
     Shortcuts,
+    Messages,
     Welcome,
     ToggleBlocking,
     AllowedSites,
@@ -134,7 +135,8 @@ pub const COMMANDS: &[CommandInfo] = &[
     c(Command::ClearCookies, "Clear cookies", "", "delete erase site data sign out logins privacy"),
     c(Command::Downloads, "Downloads", "Ctrl+J", "files saved folder download list"),
     c(Command::Settings, "Settings", "Ctrl+,", "preferences options configure search engine history colours"),
-    c(Command::Shortcuts, "Keyboard shortcuts", "?", "help keys hints sheet"),
+    c(Command::Shortcuts, "Keyboard shortcuts", "F1", "help keys hints sheet"),
+    c(Command::Messages, "Messages", "", "log toasts errors notices notifications later waiting"),
     c(Command::Welcome, "Welcome page", "", "guide help getting started tour introduction first note"),
     c(Command::ToggleBlocking, "Allow or block ads on this site", "", "adblock trackers privacy whitelist exception protections"),
     c(Command::AllowedSites, "Sites with ads allowed", "", "adblock trackers privacy whitelist allowlist exceptions protections blocking list"),
@@ -167,6 +169,12 @@ pub enum Item {
     /// Command line: a completion. Enter runs it if it is a whole command,
     /// else (like Tab) puts it in the field.
     Complete(String),
+    /// A row of `:messages` (`scene::messages::Message::id`): Enter copies
+    /// it, Shift+Delete forgets it.
+    Message(u64),
+    /// A `:later` line waiting to run (`App::later`'s id): Shift+Delete
+    /// cancels it, Enter runs it now.
+    Waiting(u64),
 }
 
 /// A result row.
@@ -381,7 +389,7 @@ pub fn section(row: &Row, empty: bool) -> &'static str {
         Item::Run(_) => "Run",
         Item::Recent(_) => "Recent",
         Item::Complete(_) => "Commands",
-        Item::Download(_) | Item::AllowedSite(_) | Item::Photo(_) => "",
+        Item::Download(_) | Item::AllowedSite(_) | Item::Photo(_) | Item::Message(_) | Item::Waiting(_) => "",
     }
 }
 
@@ -587,6 +595,43 @@ pub fn allowed_rows(query: &str, sites: &[(String, bool)], scene: &Scene) -> Vec
     palette::rank(query, &cands).into_iter().map(|r| Row { positions: r.positions, ..items[r.index].clone() }).collect()
 }
 
+/// A `:later` line waiting to run, for the messages list.
+pub struct Waiting<'a> {
+    pub id: u64,
+    pub line: &'a str,
+    /// Milliseconds until it runs.
+    pub left_ms: u64,
+}
+
+/// The messages list's rows (`:messages`): lines waiting to run, soonest
+/// first, then the messages shown, newest first, each with when (and how
+/// many times in a row). A query filters both by their text.
+pub fn message_rows(
+    query: &str,
+    waiting: &[Waiting],
+    log: &scene::messages::Messages,
+    now: i64,
+    local: impl Fn(i64) -> i64,
+) -> Vec<Row> {
+    let mut waits: Vec<&Waiting> = waiting.iter().collect();
+    waits.sort_by_key(|w| w.left_ms);
+    let row = |item, label: String, detail| Row { item, label, detail, positions: Vec::new(), dot: None, history: None };
+    let items: Vec<Row> = waits
+        .iter()
+        .map(|w| row(Item::Waiting(w.id), format!(":{}", w.line), format!("Waiting · runs {}", scene::messages::wait_label(w.left_ms))))
+        .chain(log.newest().map(|m| {
+            let when = scene::when::label(local(m.at_ms), now);
+            let detail = if m.times > 1 { format!("{when} · {} times", m.times) } else { when };
+            row(Item::Message(m.id), m.text.clone(), detail)
+        }))
+        .collect();
+    if query.trim().is_empty() {
+        return items;
+    }
+    let cands: Vec<Candidate> = items.iter().map(|r| Candidate { text: &r.label, alt: "" }).collect();
+    palette::rank(query, &cands).into_iter().map(|r| Row { positions: r.positions, ..items[r.index].clone() }).collect()
+}
+
 /// The photo list (*Background photo…*): the desktop's wallpaper first,
 /// then `files` (each with its folder's name), filtered by `query`. A query
 /// that is the path of a picture file adds it on top. `current` (the
@@ -650,6 +695,7 @@ pub fn command_icon(c: Command) -> Icon {
         Sidebar => Icon::Sidebar,
         Read => Icon::Expand,
         LinkHints | Shortcuts => Icon::Keyboard,
+        Messages => Icon::Note,
         Arrange => Icon::Grip,
         SaveMarkdown | Downloads => Icon::Download,
         Undo | Reopen => Icon::Undo,
@@ -689,6 +735,8 @@ fn row_icon(row: &Row) -> Icon {
         Item::Photo(_) => Icon::Picture,
         Item::Run(_) | Item::Complete(_) => Icon::Keyboard,
         Item::Recent(_) => Icon::History,
+        Item::Message(_) => Icon::Note,
+        Item::Waiting(_) => Icon::History,
     }
 }
 
@@ -1392,6 +1440,34 @@ mod tests {
         assert_eq!(r[2].detail, "example.org · 3 Jan");
         assert!(r.iter().all(|r| r.history.is_some()));
         assert_eq!(r[1].history.as_deref(), Some("https://doc.rust-lang.org/book/"));
+    }
+
+    #[test]
+    fn message_list_rows() {
+        let mut log = scene::messages::Messages::default();
+        // 1 Jan 2026 10:00 and 10:05 UTC, read as local time with no offset.
+        let t = 1_767_261_600_000;
+        log.push("Copied the address", t);
+        log.push("No link here", t + 300_000);
+        log.push("No link here", t + 300_000);
+        let waiting = [Waiting { id: 7, line: "reload", left_ms: 90_000 }, Waiting { id: 3, line: "back", left_ms: 4_000 }];
+        let r = message_rows("", &waiting, &log, t + 600_000, |ms| ms);
+        let got: Vec<(&str, &str)> = r.iter().map(|r| (r.label.as_str(), r.detail.as_str())).collect();
+        assert_eq!(
+            got,
+            [
+                (":back", "Waiting · runs in 4 s"),
+                (":reload", "Waiting · runs in 2 min"),
+                ("No link here", "Today 10:05 · 2 times"),
+                ("Copied the address", "Today 10:00"),
+            ]
+        );
+        assert_eq!(r[0].item, Item::Waiting(3));
+        assert!(matches!(r[3].item, Item::Message(_)));
+        let r = message_rows("link", &waiting, &log, t, |ms| ms);
+        assert_eq!(r[0].label, "No link here");
+        assert!(message_rows("zzqx", &waiting, &log, t, |ms| ms).is_empty());
+        assert!(message_rows("", &[], &Default::default(), t, |ms| ms).is_empty());
     }
 
     #[test]

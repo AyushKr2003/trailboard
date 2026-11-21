@@ -8,8 +8,7 @@
 #                                          # deadline and leave a checkpoint
 #
 # Directories (override with env):
-#   CEF_WORK  source checkout (~40 GB)        default /mnt/cef
-#   CEF_OUT   build output (~25 GB)           default $HOME/cef-out
+#   CEF_WORK  source checkout and build output (~80 GB) default /mnt/cef
 #   CKPT_IN   checkpoint to resume from       default (none)
 #   CKPT_OUT  where to write a checkpoint     default $HOME/ckpt
 #   DIST_OUT  where the finished archive goes default $HOME/dist
@@ -18,7 +17,8 @@
 # source file's mtime to one fixed date, and unpacks the previous stage's
 # output directory (newer mtimes) on top. Ninja/Siso then see only the
 # unfinished steps as dirty. The output directory is all that has to travel
-# between jobs.
+# between jobs. It stays at src/out/: the build files use paths relative
+# to it (../../buildtools/…), so it can't live behind a symlink.
 #
 # Outputs (for GitHub Actions, when $GITHUB_OUTPUT is set): done=true|false.
 set -euo pipefail
@@ -28,7 +28,6 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$HERE/cef.conf"
 
 W="${CEF_WORK:-/mnt/cef}"
-OUT="${CEF_OUT:-$HOME/cef-out}"
 CKPT_IN="${CKPT_IN:-}"
 CKPT_OUT="${CKPT_OUT:-$HOME/ckpt}"
 DIST_OUT="${DIST_OUT:-$HOME/dist}"
@@ -38,9 +37,9 @@ OUTDIR_NAME=Release_GN_x64
 say() { echo "::group::$*" 2>/dev/null; echo "==> $*"; }
 end() { echo "::endgroup::" 2>/dev/null || true; }
 out() { [[ -n "${GITHUB_OUTPUT:-}" ]] && echo "$1" >>"$GITHUB_OUTPUT" || true; }
-disk() { df -h "$W" "$(dirname "$OUT")" 2>/dev/null | sort -u; }
+disk() { df -h "$W" "$CKPT_OUT" 2>/dev/null | sort -u; }
 
-mkdir -p "$W" "$(dirname "$OUT")" "$CKPT_OUT" "$DIST_OUT"
+mkdir -p "$W" "$CKPT_OUT" "$DIST_OUT"
 export GN_DEFINES="${GN_DEFINES//$'\n'/ }"
 export CEF_ARCHIVE_FORMAT=tar.bz2
 export DEPOT_TOOLS_UPDATE=1
@@ -85,13 +84,9 @@ if [[ -x "$SRC/build/install-build-deps.sh" ]] && [[ -n "${CI:-}" ]]; then
     end
 fi
 
-# ---- 2. move the output directory to the other disk, resume ---------------
-say "Output directory and checkpoint"
-if [[ ! -L "$SRC/out" ]]; then
-    rm -rf "$OUT"
-    mv "$SRC/out" "$OUT"
-    ln -s "$OUT" "$SRC/out"
-fi
+# ---- 2. resume from the previous stage ------------------------------------
+say "Checkpoint"
+OUT="$SRC/out"
 # One fixed mtime for every source file, so outputs from an earlier stage
 # (newer) count as up to date.
 find "$SRC" -path "$SRC/out" -prune -o -exec touch -h -d '2000-01-01 00:00:00' {} + 2>/dev/null || true

@@ -28,7 +28,7 @@ jobs:
           echo "deadline=$(( $(date +%s) + 350 * 60 ))" >> "$GITHUB_OUTPUT"
           echo "prev=$(( ${{ inputs.stage }} - 1 ))" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Free disk space
         run: scripts/free-disk.sh

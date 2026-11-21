@@ -54,7 +54,7 @@ needed) and adds swap for the final link.
 with ~100 GB free and ideally 16 GB+ RAM:
 
 ```sh
-CEF_WORK=/big/disk/cef CEF_OUT=/big/disk/cef-out DIST_OUT=./dist scripts/build-cef.sh
+CEF_WORK=/big/disk/cef DIST_OUT=./dist scripts/build-cef.sh
 ```
 
 ## Updating to a new CEF

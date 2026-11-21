@@ -48,6 +48,10 @@ with *Welcome page* in Ctrl+K.
 | Start a program on a page or link | `:run program words…` starts it without a shell (quote words with spaces), `{url}` and `{title}` filled in; `:hint command` labels the links and runs the command on the one you choose with `{hint-url}` its address (`:hint-many` until Esc). For example, in the keys file: `alias play run mpv {hint-url}` and `bind page ;v hint play` |
 | Close / reopen / clone cards from a page | d closes the card and goes on to the next one (Ctrl+W alone too, after a short pause); u reopens the last closed card (a number reopens that many); co closes every other card in the space after asking (`:card-only`; `:undo` brings them back); gC opens the page again beside it (`:clone`) |
 | Type in a page | click a field, choose one with f, or press gi (first field) or i (anywhere); the corner shows *Insert*. Esc leaves the field and gives the keys back; Esc again goes to the board |
+| Edit a field in your editor | Ctrl+e while typing in a field: its text opens in `$VISUAL` / `$EDITOR` (in a terminal: `xdg-terminal-exec`, `$TERMINAL`, or the first one found); save and quit, and the text goes back into the field. `TRAILBOARD_EDITOR` names an editor that opens its own window instead (`gvim -f`, `code --wait`; `{file}` marks where the file goes). Password fields stay out |
+| Paste the primary selection | Shift+Insert while typing in a field (what you last selected anywhere, as a middle click pastes) |
+| Answer a page's dialogs | a page's `alert`, `confirm` and "Leave this page?" show as a sheet near the top, naming the site: Enter or y is OK (Leave), Esc, n or any other key Cancel (Stay). A `prompt` is a field with the page's question under it: Enter sends what you typed, Esc cancels. Our own questions (delete a space, clear history…) take y and n too |
+| Choose files for a page | a page's *Choose file* opens a path field instead of a window, in the folder you last chose from: Tab completes, Enter chooses, Esc cancels. `~` is your home; a `*` in the last part picks several files where the page takes several (`~/Pictures/*.png`). It says what the page accepts (`.pdf image/*`); a wrong path keeps the field open and says why |
 | Select and copy a page's text from the keyboard | v in a page puts a caret in its text (the corner shows *Caret*): at the match after a / find, at a selection or click in view, else at the start of the first line in view. h j k l (or the arrows) move it, w / b / e by words, 0 / $ to the line's ends, { / } by paragraphs, gg / G to the page's ends; a number repeats (3w); the page scrolls to keep it in view. v starts a selection from there (*Visual*), V selects whole lines (*Visual line*; V from a page starts there); o moves the other end. y or Enter copies and goes back to *Page*, Y puts it in the primary selection. Esc drops the selection, then the caret. With the mouse's selection in view, v goes straight to *Visual* with it. Your own keys: mode `visual`, names like `caret-word`, `copy-selection` |
 | Let a site have every key (its own shortcuts) | Ctrl+V in a page; the corner shows *Passthrough*; Shift+Esc ends it |
 | Close card / reopen closed | × on its label or Ctrl+W / Ctrl+Shift+T |
@@ -178,8 +182,8 @@ draws pages off screen, so `chrome://settings` isn't there):
 - *JavaScript* and *Images* on or off everywhere; the page menu turns either
   on or off for one site (kept in `sites.json`) and reloads its pages.
 - *Camera*, *Microphone*, *Location*, *Notifications*: Ask, Allow or Block.
-  Asked, a line at the foot of the window says which site wants what: Enter allows, Esc
-  blocks, and the answer holds for that site until you quit. Pages only get
+  Asked, a line at the foot of the window says which site wants what: Enter or y allows,
+  Esc, n or any other key blocks, and the answer holds for that site until you quit. Pages only get
   location and the camera on secure sites (`https:` or `localhost`), and
   location has no position source in this Chromium build, so an allowed
   site still hears "position unavailable".

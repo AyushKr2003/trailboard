@@ -587,6 +587,11 @@ pub enum Action {
     CopySelection(bool),
     /// Esc: the selection goes, then the caret.
     CaretBack,
+    // Typing in a page (M12 step 15).
+    /// The field's text in your editor; saved, it comes back (`Ctrl+e`).
+    EditInEditor,
+    /// Paste the primary selection into the field (`Shift+Insert`).
+    PastePrimary,
 }
 
 /// What a copy key copies.
@@ -718,6 +723,8 @@ pub const NAMED: &[(&str, Action, &str)] = &[
     ("close-others", Ac::CloseOthers, "Close the other cards (asks first)"),
     ("clone", Ac::Clone, "Open this page again beside it"),
     ("command-line", Ac::CommandLine, "Command line"),
+    ("edit-in-editor", Ac::EditInEditor, "Edit the field's text in your editor"),
+    ("paste-primary", Ac::PastePrimary, "Paste the primary selection"),
     ("repeat-line", Ac::RepeatLine, "The last command line again"),
     ("pan-left", Ac::Pan(Dir::Left), "Pan left"),
     ("pan-down", Ac::Pan(Dir::Down), "Pan down"),
@@ -1131,9 +1138,28 @@ pub fn visual() -> Bindings<Action> {
     b
 }
 
+/// Keys while typing in a page (Insert mode, M12 step 15). Every other
+/// key goes to the page.
+pub fn insert() -> Bindings<Action> {
+    let mut b = Bindings::new();
+    b.bind("<C-e>", Action::EditInEditor).expect("insert keys parse");
+    b.bind("<S-Insert>", Action::PastePrimary).expect("insert keys parse");
+    b
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn insert_keys_edit_and_paste() {
+        let i = insert();
+        assert_eq!(i.lookup(&parse("<C-e>").unwrap()), Lookup::Exact(Action::EditInEditor));
+        assert_eq!(i.lookup(&parse("<S-Insert>").unwrap()), Lookup::Exact(Action::PastePrimary));
+        for (_, a) in i.iter() {
+            assert!(a.name().is_some(), "{a:?}");
+        }
+    }
 
     #[test]
     fn visual_keys_move_select_and_copy() {

@@ -897,13 +897,18 @@ pub struct Field<'a> {
 }
 
 /// Draws `hints` (keys and what they do) right to left, ending at `right`;
-/// returns the left edge. A hint with no label is only its keys.
+/// returns the left edge, less a gap. A hint with no label is only its
+/// keys, and sits close to the hint after it, whose label it shares
+/// (`↑ ↓ Move`, `y Enter OK`).
 #[allow(clippy::too_many_arguments)]
 fn draw_hints(l: &mut Layer, r: &mut Renderer, hints: &[(&str, &str)], right: f32, mid_y: f32, clip: Rect, th: &Theme, ui: f32) -> f32 {
     let size = type_::SMALL * ui;
     let ksize = type_::CAPTION * ui;
     let mut x = right;
-    for (keys, label) in hints.iter().rev() {
+    for (i, (keys, label)) in hints.iter().rev().enumerate() {
+        if i > 0 {
+            x -= if label.is_empty() { 4.0 * ui } else { 14.0 * ui };
+        }
         if !label.is_empty() {
             let w = r.measure(label, size, false);
             x -= w;
@@ -914,9 +919,77 @@ fn draw_hints(l: &mut Layer, r: &mut Renderer, hints: &[(&str, &str)], right: f3
         let caps: Vec<&str> = keys.split('+').collect();
         let widths: Vec<f32> = caps.iter().map(|k| r.measure(k, ksize, false)).collect();
         x = chrome::draw_keycaps(l, &caps, &widths, x, mid_y, ksize, th, ui, clip);
-        x -= if label.is_empty() { 3.0 * ui } else { 14.0 * ui };
     }
-    x
+    if hints.is_empty() { x } else { x - 14.0 * ui }
+}
+
+/// `text` broken into lines no wider than `max_w` (as `measure` says),
+/// at spaces where it can, inside a word where it must; its own line
+/// breaks are kept, a blank line too.
+pub fn wrap(text: &str, max_w: f32, mut measure: impl FnMut(&str) -> f32) -> Vec<String> {
+    let mut out = Vec::new();
+    for para in text.split('\n') {
+        let mut line = String::new();
+        for word in para.split(' ').filter(|w| !w.is_empty()) {
+            let tried = if line.is_empty() { word.to_string() } else { format!("{line} {word}") };
+            if measure(&tried) <= max_w {
+                line = tried;
+                continue;
+            }
+            if !line.is_empty() {
+                out.push(std::mem::take(&mut line));
+            }
+            // A word wider than the line goes on in pieces.
+            for c in word.chars() {
+                line.push(c);
+                if measure(&line) > max_w && line.chars().count() > 1 {
+                    let last = line.pop().expect("two chars");
+                    out.push(std::mem::replace(&mut line, last.to_string()));
+                }
+            }
+        }
+        out.push(line);
+    }
+    out
+}
+
+/// The most message lines a question shows; the last says `…` if cut.
+pub const QUESTION_LINES: usize = 10;
+
+/// A question sheet with its top edge at `top` (x, y, width): `title` in
+/// secondary text, `message` wrapped under it, and the keys that answer
+/// at its foot. Returns the layer and the sheet.
+#[allow(clippy::too_many_arguments)]
+pub fn question_layer(r: &mut Renderer, top: Rect, title: &str, message: &str, hints: &[(&str, &str)], th: &Theme, ui: f32, radius: f32) -> (Layer, Rect) {
+    let pad = INSET * ui;
+    let (tsize, bsize) = (type_::SMALL * ui, type_::BODY * ui);
+    let line = chrome::line_h(bsize) + 2.0 * ui;
+    let text_w = (top.w - 2.0 * pad).max(40.0);
+    let mut lines = if message.is_empty() { Vec::new() } else { wrap(message, text_w, |t| r.measure(t, bsize, false)) };
+    if lines.len() > QUESTION_LINES {
+        lines.truncate(QUESTION_LINES);
+        let last = lines.pop().unwrap_or_default();
+        lines.push(r.ellipsize(&format!("{last} …"), bsize, false, text_w));
+    }
+    let title_h = if title.is_empty() { 0.0 } else { chrome::line_h(tsize) + 6.0 * ui };
+    let foot_h = if hints.is_empty() { 12.0 * ui } else { 36.0 * ui };
+    let h = (pad + title_h + lines.len() as f32 * line + foot_h).round();
+    let sheet = Rect::new(top.x, top.y, top.w, h);
+    let mut l = Layer::default();
+    chrome::panel(&mut l, sheet, radius, th, ui, chrome::Lift::High, th.panel());
+    let clip = Rect::new(sheet.x + pad, sheet.y, text_w, sheet.h);
+    let mut y = sheet.y + pad;
+    if !title.is_empty() {
+        let shown = r.ellipsize(title, tsize, false, text_w);
+        chrome::text(&mut l, shown, sheet.x + pad, y + chrome::line_h(tsize) / 2.0, tsize, rgb(th.text2(), 1.0), clip, false);
+        y += title_h;
+    }
+    for t in lines {
+        chrome::text(&mut l, t, sheet.x + pad, y + line / 2.0, bsize, rgb(th.text(), 1.0), clip, false);
+        y += line;
+    }
+    draw_hints(&mut l, r, hints, sheet.right() - pad, sheet.bottom() - foot_h / 2.0 - 2.0 * ui, sheet, th, ui);
+    (l, sheet)
 }
 
 /// The field: its icon, what was typed (or what to type), the caret, and
@@ -1107,6 +1180,16 @@ pub fn runs(text: &str, positions: &[usize]) -> Vec<(String, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wrap_breaks_at_spaces_then_inside_words() {
+        let w = |t: &str| t.chars().count() as f32;
+        assert_eq!(wrap("the quick brown fox", 10.0, w), ["the quick", "brown fox"]);
+        assert_eq!(wrap("a\n\nb", 10.0, w), ["a", "", "b"]);
+        assert_eq!(wrap("abcdefghijkl", 5.0, w), ["abcde", "fghij", "kl"]);
+        assert_eq!(wrap("", 5.0, w), [""]);
+        assert_eq!(wrap("hi  there", 20.0, w), ["hi there"]);
+    }
 
     fn board() -> Scene {
         let mut s = Scene::new();

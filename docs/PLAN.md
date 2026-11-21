@@ -55,7 +55,7 @@ app (trailboard)  winit window · input · omnibox · chrome UI · main loop
 | ✅ | M9 Packaging | Bundle script, `--version`, crash reports, PKGBUILD, Chromium sandbox, first-run welcome |
 | ⬜ | M10 Optional extras | See below; most items on hold |
 | ✅ | M11 Premium look | Corners setting, cards as sheets, board backgrounds, sidebar, command bar, motion, empty board, review pass |
-| 🟡 | **M12 Keyboard first** | Vim-like modes, page keys, scroll sections, command line, cards from a page, search keywords, jumps and marks, user keys, settings, navigation extras, command line power, caret mode, then (steps 15–17) dialogs (below) |
+| 🟡 | **M12 Keyboard first** | Vim-like modes, page keys, scroll sections, command line, cards from a page, search keywords, jumps and marks, user keys, settings, navigation extras, command line power, caret mode, dialogs and fields, then (steps 16–17) search and messages, stretch (below) |
 | ⬜ | **M13 Full media support** | Our own CEF build with H.264/AAC (and HEVC, Widevine if they work), built off this machine, opt-in (below) |
 
 ### Owner decisions that still bind
@@ -871,11 +871,79 @@ marked **Ask** are the owner's call and get asked when their step starts
     paragraph; Esc twice went Visual → Caret → Page; the `?` sheet's
     *Caret and Visual* section (`sheet14.png`). Not verified: a real
     keyboard, right-to-left text, iframes, X11, the light theme.
-- ⬜ 15. **Dialogs and fields from the keyboard.** Our yes/no asks and
+- ✅ 15. **Dialogs and fields from the keyboard.** Our yes/no asks and
   the page's alert / confirm / prompt answer to `y` / `n` / Enter / Esc;
   permission asks (camera, location, notifications) likewise; the file
   chooser takes a typed path; `Ctrl+e` in a field edits its text in
   `$EDITOR` and puts it back; `Shift+Insert` pastes the primary selection.
+  - `web::dialog`: a `JsdialogHandler` (alert, confirm, prompt,
+    beforeunload) and a `DialogHandler` (file chooser) per page; each
+    waits by id until `dialog::answer` / `dialog::choose`
+    (`WebEvent::DialogAsked`, `FilesAsked`, `DialogWithdrawn` on Chromium's
+    reset). Before this, CEF cancelled every page dialog (no parent window).
+  - Page dialogs queue behind permission asks (`App::dialogs`, one shows
+    at a time, only with no field open). Alert / confirm / leave are
+    `Confirm::Dialog`, drawn as a question sheet where the field goes
+    (`palette::question_layer`, wrapped message, at most 10 lines; site
+    as title; keys at its foot). A prompt is a field (`Target::Prompt`)
+    with the sheet under it; closing the field cancels. A dialog of a card
+    that closed or slept is cancelled, except "leave", which is allowed
+    (the card is gone already; closing a card doesn't ask yet).
+  - Every yes/no question: Enter or y yes; n, Esc or any other key no (as
+    before, a stray key is the safe answer). The sheet lists `y Enter OK
+    · n Esc Cancel`; `draw_hints` now groups a key with no label with the
+    hint after it (`↑ ↓ Move` reads as one group too).
+  - File chooser (`Target::Files`, `pathfield`): `~` or an absolute path;
+    Tab completes as far as names agree (a lone folder gets `/`; dotfiles
+    only for a dot); `*` in the last part picks several where the page
+    takes several (one only for a single-file chooser, which says how many
+    fit); a folder, missing file or missing parent keeps the field open
+    with a toast. Starts in the session's last folder (else home); Save
+    starts with Chromium's suggested name. The page's accept list shows at
+    the field's end. No system file dialog (portal) fallback.
+  - `Ctrl+e` (`edit-in-editor`) and `Shift+Insert` (`paste-primary`) are
+    a new default `insert` table (`keys::insert`), on the `?` sheet as
+    *Typing in a page*. The field is read in the focused frame under a
+    token (`web::field`; text inputs, text areas, editable content;
+    password fields are left out) and its text goes to
+    `$XDG_RUNTIME_DIR/trailboard/field-N.txt` (0600). The editor:
+    `TRAILBOARD_EDITOR` as is (`{file}` or appended; for editors with
+    their own window), else `$VISUAL` / `$EDITOR` / `vi` in
+    `xdg-terminal-exec`, `$TERMINAL -e`, or the first known terminal;
+    words split at spaces. When it exits the text goes back through
+    `execCommand('insertText')` (so the page's handlers and undo see it;
+    a value setter plus `input` / `change` if that fails); one trailing
+    line end is dropped; unchanged text is left alone. An editor that
+    returns within 2 s without saving (a terminal handing off to a
+    running one) is followed by watching the file for its first save. A
+    gone field or card keeps the file and says where.
+  - Shift+Insert reads the primary selection (`wl-paste --primary`, else
+    arboard) and pastes it like Ctrl+V's text path (`Page::paste_text`).
+  - Verified e2e (`~/.cache/trailboard-e2e-m12`, page `site12/d/dialogs.html`
+    on :8765, `run13.sh script50 data50`, `script52`–`54`): the alert sheet
+    with a wrapped two-paragraph message (`d_alert.png`), y → `undefined`;
+    confirm n → `false`, Enter → `true` (`d_confirm.png`); prompt with
+    *Ada* selected and the question under it (`d_prompt.png`), typed
+    *Grace* → `Grace`, Esc → `null`; multi-file chooser: typed path, Tab
+    → `upload/`, `*.txt` → a.txt and b.txt sent (`d_files.png`); the
+    single-file chooser (accepts `.txt image/*`) refused `*.txt` (2 fit),
+    then `b` Tab → b.txt sent; Ctrl+e in the textarea with
+    `TRAILBOARD_EDITOR` = a stand-in script → the new two-line text in the
+    field and *Text put back* (`d_edited.png`); the same through
+    `xdg-terminal-exec` → kitty (`script54`); Shift+Insert appended the
+    primary selection set from the shell (`d_paste.png`); `:set location
+    ask` then the location button → the ask, y allowed it (`d_perm.png`);
+    arm leave, r → "Reload this page?" (`d_leave2.png`), n stayed, r Enter
+    reloaded; closing the card with leave armed closed it.
+    Not verified: X11, the light theme, a real keyboard, `showSaveFilePicker`
+    / folder choosers, a page in an iframe asking, many dialogs at once.
+  - Known: CEF logs "Default dialog implementation requires a parent
+    window handle" once after each answered "leave" question although our
+    handler answered it (the page does leave or stay as answered).
+    Children the app starts can't own a Wayland selection here: `wl-copy`
+    run by the app (Y's primary copy, `:run wl-copy`) stays alive but the
+    selection reads empty; from a shell it works. To look into (step 12/14
+    code, not this step's).
 - ⬜ 16. **Search and messages.** `?` searches backward (**Owner,
   2026-11-20:** yes; the shortcut sheet moves to `F1` and `:keys`); Esc clears the
   find highlight; `:messages` lists the last toasts and errors.
@@ -1003,19 +1071,24 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-21 (thirty-second). Finished M12 step 14,
-Caret and Visual mode: `v` / `V` in a page, the motions, `o`, copying
-with `y` / Enter / `Y`, starting at a find's match, a key table of its
-own (user mode `visual`) and its section on the `?` sheet.
-**Repo state:** on `master`; M12 steps 1–14 done and committed;
-M12 steps 15–17 and M13 planned.
-**Next up:** M12 step 15, dialogs and fields from the keyboard. Steps 16–17
-follow in order. M13 (full media support, our own CEF build) runs beside
+**Last session:** 2026-11-21 (thirty-third). Finished M12 step 15,
+dialogs and fields from the keyboard: page alert / confirm / prompt /
+leave as a question sheet or field, y / n on every question, a typed
+path (Tab, `*`) for file choosers, Ctrl+e to edit a field in your
+editor, Shift+Insert for the primary selection.
+**Repo state:** on `master`; M12 steps 1–14 committed, step 15 done and
+not committed yet; M12 steps 16–17 and M13 planned.
+**Next up:** M12 step 16, search and messages (`?` backward, the sheet
+on F1 and `:keys`, Esc clears the find highlight, `:messages`). Step 17
+follows. M13 (full media support, our own CEF build) runs beside
 M12; its builds need a cloud machine. Also retake the README screenshots
 (`docs/images/`) in the new look.
 **Notes:** `:later` lines aren't saved across quits, and there is no
 way to list or cancel waiting ones yet (`:messages`, step 16, could show
 them). Caret mode works in the main frame's text only (not iframes).
+`wl-copy` started by the app doesn't take the selection on this machine
+(Y's primary copy reads empty afterwards); see step 15's *Known*.
+Closing a card doesn't ask a page's "leave this page?" first.
 
 **Small follow-ups (backlog):** the page inspector in a card (`wi`, step
 12); the primary selection set from our window on Hyprland (step 12);

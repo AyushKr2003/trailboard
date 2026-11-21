@@ -349,6 +349,7 @@ struct Anims {
     omnibox: crate::chrome::Appear,
     menu: crate::chrome::Appear,
     toast: crate::chrome::Appear,
+    question: crate::chrome::Appear,
     sheet: crate::chrome::Appear,
     sidebar: crate::chrome::Appear,
     welcome: crate::chrome::Appear,
@@ -630,6 +631,60 @@ pub struct App {
     /// Sites asking for a permission, waiting for Enter (allow) or Esc; the
     /// first is the question showing (`Confirm::Permission`).
     asks: Vec<Ask>,
+    /// Pages' own dialogs (alert, confirm, prompt, leave), shown after any
+    /// permission question; the first is the one showing.
+    dialogs: Vec<PageDialog>,
+    /// A page's file chooser waiting for a path (`Target::Files`).
+    choosing: Option<Choosing>,
+    /// The folder last chosen from, where the next file chooser starts.
+    files_dir: Option<std::path::PathBuf>,
+    /// Ctrl+e in a field: waiting for its text, then for the editor.
+    editing: Option<Editing>,
+    /// The last token given to a field read (`web::field`).
+    field_token: u64,
+}
+
+/// A page's dialog waiting for the user.
+struct PageDialog {
+    id: u64,
+    node: NodeId,
+    kind: web::dialog::Kind,
+    site: String,
+    message: String,
+    /// A prompt's text to start with.
+    default: String,
+    /// It has been put in front of the user.
+    shown: bool,
+}
+
+/// A page's file chooser waiting for a path.
+struct Choosing {
+    id: u64,
+    mode: web::dialog::FileMode,
+    /// The types the page wants (`.pdf`, `image/*`).
+    accept: Vec<String>,
+    /// The name Chromium suggests when saving.
+    name: String,
+}
+
+/// A text field being edited in the user's editor (`Ctrl+e`).
+struct Editing {
+    node: NodeId,
+    /// The frame the field is in and the token it was read under.
+    frame: String,
+    token: u64,
+    /// The field's text as it was read.
+    original: String,
+    /// The file the editor has (once the text came).
+    file: Option<std::path::PathBuf>,
+    /// The editor (or its terminal) while it runs.
+    child: Option<std::process::Child>,
+    /// When the editor started, or the last step was taken.
+    since: Instant,
+    /// The file's time when written, to see the editor save it.
+    written: Option<std::time::SystemTime>,
+    /// The new text was sent to the page; waiting for its answer.
+    sent: bool,
 }
 
 /// A download waiting for a path (*Save downloads to: Ask each time*).
@@ -689,6 +744,9 @@ enum Confirm {
     ClearCookies,
     /// The first of `App::asks`: Enter allows, anything else blocks.
     Permission,
+    /// The first of `App::dialogs` (not a prompt, which is a field):
+    /// Enter or y is OK, anything else Cancel.
+    Dialog,
 }
 
 /// The desktop's locale (`en_IN.UTF-8`): `LC_ALL`, `LC_MESSAGES` or `LANG`.
@@ -897,6 +955,11 @@ impl App {
             sidebar_out: None,
             save_as: None,
             asks: Vec::new(),
+            dialogs: Vec::new(),
+            choosing: None,
+            files_dir: None,
+            editing: None,
+            field_token: 0,
         };
         app.apply_browsing();
         app.apply_site_content();
@@ -3073,7 +3136,9 @@ impl App {
     /// page tables: in a page if a page has the keys and it is a page key,
     /// else on the board.
     fn run_key_action(&mut self, a: KeyAction, count: Option<u32>) {
-        if self.visual_mode().is_some() && keys::visual().has(a) {
+        if keys::insert().has(a) {
+            self.insert_action(a);
+        } else if self.visual_mode().is_some() && keys::visual().has(a) {
             self.visual_action(a, count);
         } else if self.entered() && keys::page().has(a) {
             self.page_action(a, count);
@@ -4825,7 +4890,7 @@ impl App {
         if self.confirm.is_some() {
             return; // another question first (it may be this one)
         }
-        let Some(ask) = self.asks.first() else { return };
+        let Some(ask) = self.asks.first() else { return self.show_next_dialog() };
         let what: Vec<&str> = ask.kinds.iter().map(|k| k.name()).collect();
         let site = pagezoom::site_of(&ask.origin);
         let msg = format!("{site} wants your {} · Enter allows · Esc blocks", what.join(" and "));
@@ -4857,6 +4922,385 @@ impl App {
             self.confirm = None;
             self.toast = None;
             self.show_next_ask();
+        }
+    }
+
+    // ---------------------------------------------------------------- page dialogs
+
+    /// Page `page` shows `alert`, `confirm`, `prompt` or asks before it is
+    /// left: queued behind any question showing; the first shows.
+    fn dialog_asked(&mut self, page: u64, id: u64, kind: web::dialog::Kind, origin: &str, message: &str, default: &str) {
+        let Some(node) = self.node_of(page).filter(|n| self.cards.contains_key(n)) else {
+            // A card closed already: its page may go (closing asked nothing; Ctrl+Shift+T brings the address back).
+            web::dialog::answer(id, matches!(kind, web::dialog::Kind::Leave { .. }), "");
+            return;
+        };
+        let url = self.scene.node(node).map(|n| n.url.clone()).unwrap_or_default();
+        let site = pagezoom::site_of(if origin.is_empty() { &url } else { origin });
+        let message = web::dialog::tidy_message(message, 2000);
+        self.dialogs.push(PageDialog { id, node, kind, site, message, default: default.to_string(), shown: false });
+        self.show_next_ask();
+    }
+
+    /// Puts the first page dialog in front of the user, once nothing else
+    /// asks and no field is open: a prompt as a field, the rest as a question.
+    fn show_next_dialog(&mut self) {
+        if self.confirm.is_some() || self.omnibox.is_some() {
+            return;
+        }
+        let Some(d) = self.dialogs.first_mut() else { return };
+        d.shown = true;
+        log::info!("dialog {}: showing {:?} from {}: {:?}", d.id, d.kind, d.site, d.message.chars().take(80).collect::<String>());
+        self.menu = None;
+        self.toast = None;
+        if d.kind == web::dialog::Kind::Prompt {
+            let mut ob = Omnibox::new(&d.default, Target::Prompt(d.id));
+            ob.select_all = !d.default.is_empty();
+            self.omnibox = Some(ob);
+        } else {
+            self.confirm = Some(Confirm::Dialog);
+        }
+    }
+
+    /// The dialog showing was answered: `ok` (OK, Leave) or not, with a prompt's `text`.
+    fn answer_dialog(&mut self, ok: bool, text: &str) {
+        if self.confirm == Some(Confirm::Dialog) {
+            self.confirm = None;
+        }
+        if self.dialogs.first().is_none_or(|d| !d.shown) {
+            return;
+        }
+        let d = self.dialogs.remove(0);
+        let waited = web::dialog::answer(d.id, ok, text);
+        log::info!("dialog {}: {} (was waiting: {waited})", d.id, if ok { "OK" } else { "cancelled" });
+        self.show_next_ask();
+    }
+
+    /// Chromium dropped dialog `id` (its page navigated or closed).
+    fn dialog_withdrawn(&mut self, id: u64) {
+        let Some(i) = self.dialogs.iter().position(|d| d.id == id) else { return };
+        let d = self.dialogs.remove(i);
+        log::info!("dialog {id}: withdrawn");
+        if d.shown {
+            if self.confirm == Some(Confirm::Dialog) {
+                self.confirm = None;
+            }
+            if self.omnibox.as_ref().is_some_and(|ob| ob.target == Target::Prompt(id)) {
+                self.omnibox = None;
+            }
+        }
+    }
+
+    /// Each frame: dialogs of cards that went away are dropped, a prompt or
+    /// file chooser whose field closed is cancelled, the next question shows.
+    fn tend_dialogs(&mut self) {
+        let gone: Vec<(u64, bool)> = self
+            .dialogs
+            .iter()
+            .filter(|d| !self.cards.contains_key(&d.node))
+            .map(|d| (d.id, matches!(d.kind, web::dialog::Kind::Leave { .. })))
+            .collect();
+        for (id, leave) in gone {
+            web::dialog::answer(id, leave, "");
+            self.dialog_withdrawn(id);
+        }
+        if let Some(d) = self.dialogs.first()
+            && d.shown
+            && d.kind == web::dialog::Kind::Prompt
+            && self.omnibox.as_ref().is_none_or(|ob| ob.target != Target::Prompt(d.id))
+        {
+            self.answer_dialog(false, "");
+        }
+        if let Some(c) = &self.choosing
+            && self.omnibox.as_ref().is_none_or(|ob| ob.target != Target::Files(c.id))
+        {
+            let c = self.choosing.take().expect("checked");
+            web::dialog::choose(c.id, &[]);
+            log::info!("file chooser {}: cancelled", c.id);
+        }
+        if self.confirm.is_none() {
+            self.show_next_ask();
+        }
+    }
+
+    /// The question sheet for the dialog showing: title, message, keys.
+    fn dialog_words(d: &PageDialog) -> (String, String, &'static [(&'static str, &'static str)]) {
+        use web::dialog::Kind;
+        match d.kind {
+            Kind::Alert => (format!("{} says", d.site), d.message.clone(), &[("y", ""), ("Enter", "OK")]),
+            Kind::Confirm => (format!("{} asks", d.site), d.message.clone(), &[("y", ""), ("Enter", "OK"), ("n", ""), ("Esc", "Cancel")]),
+            Kind::Prompt => (format!("{} asks", d.site), d.message.clone(), &[]),
+            Kind::Leave { reload } => (
+                d.site.clone(),
+                format!("{} this page? Changes you made may not be saved.", if reload { "Reload" } else { "Leave" }),
+                if reload {
+                    &[("y", ""), ("Enter", "Reload"), ("n", ""), ("Esc", "Stay")]
+                } else {
+                    &[("y", ""), ("Enter", "Leave"), ("n", ""), ("Esc", "Stay")]
+                },
+            ),
+        }
+    }
+
+    // ---------------------------------------------------------------- file chooser
+
+    /// A page opened a file chooser: the path is typed in a field
+    /// (`Target::Files`), starting in the folder last chosen from.
+    fn files_asked(&mut self, page: u64, id: u64, mode: web::dialog::FileMode, default: &str, accept: Vec<String>) {
+        if self.node_of(page).is_none_or(|n| !self.cards.contains_key(&n)) {
+            web::dialog::choose(id, &[]);
+            return;
+        }
+        if let Some(old) = self.choosing.take() {
+            web::dialog::choose(old.id, &[]);
+        }
+        let home = home_path();
+        let suggested = std::path::Path::new(default);
+        let name = suggested.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let dir = self.files_dir.clone().filter(|d| d.is_dir()).unwrap_or_else(|| home.clone());
+        let start = if suggested.is_absolute() && mode == web::dialog::FileMode::Save {
+            crate::pathfield::shorten(suggested, &home)
+        } else {
+            let mut t = crate::pathfield::shorten(&dir, &home);
+            if !t.ends_with('/') {
+                t.push('/');
+            }
+            if mode == web::dialog::FileMode::Save {
+                t.push_str(&name);
+            }
+            t
+        };
+        log::info!("file chooser {id}: {mode:?}, starting at {start}");
+        self.choosing = Some(Choosing { id, mode, accept, name });
+        self.menu = None;
+        let mut ob = Omnibox::new(&start, Target::Files(id));
+        ob.select_all = false;
+        self.omnibox = Some(ob);
+    }
+
+    /// Enter in the file chooser's field: the path (or, with `*`, the
+    /// paths) go to the page if they fit what it asked for; else the field
+    /// stays open and a toast says why.
+    fn choose_files(&mut self, id: u64, text: &str) {
+        use web::dialog::FileMode;
+        let Some(c) = self.choosing.as_ref().filter(|c| c.id == id) else { return };
+        let (mode, name) = (c.mode, c.name.clone());
+        let home = home_path();
+        let again = |this: &mut Self, msg: String| {
+            this.toast(msg);
+            let mut ob = Omnibox::new(text, Target::Files(id));
+            ob.select_all = false;
+            this.omnibox = Some(ob);
+        };
+        let Some(path) = crate::pathfield::expand(text, &home) else {
+            return again(self, "Give a full path, like ~/Documents/file.pdf".to_string());
+        };
+        let shown = crate::pathfield::shorten(&path, &home);
+        let paths: Vec<std::path::PathBuf> = match mode {
+            FileMode::Open | FileMode::OpenMany => {
+                let picked = crate::pathfield::pick(&path, crate::pathfield::read_dir);
+                if picked.is_empty() {
+                    return again(self, format!("No files fit {shown}"));
+                }
+                if picked.len() > 1 && mode == FileMode::Open {
+                    return again(self, format!("{} files fit · this page takes one", picked.len()));
+                }
+                if picked.len() == 1 && picked[0].is_dir() {
+                    return again(self, format!("{shown} is a folder · Tab lists what is in it"));
+                }
+                if let Some(missing) = picked.iter().find(|p| !p.is_file()) {
+                    return again(self, format!("No file {}", crate::pathfield::shorten(missing, &home)));
+                }
+                picked
+            }
+            FileMode::Folder if path.is_dir() => vec![path],
+            FileMode::Folder => return again(self, format!("No folder {shown}")),
+            FileMode::Save => {
+                let p = if path.is_dir() { path.join(if name.is_empty() { "download" } else { &name }) } else { path };
+                if !p.parent().is_some_and(|d| d.is_dir()) {
+                    return again(self, format!("No folder for {}", crate::pathfield::shorten(&p, &home)));
+                }
+                vec![p]
+            }
+        };
+        self.choosing = None;
+        let waited = web::dialog::choose(id, &paths);
+        log::info!("file chooser {id}: chose {paths:?} (was waiting: {waited})");
+        self.files_dir = paths[0].parent().map(|d| if mode == FileMode::Folder { paths[0].clone() } else { d.to_path_buf() });
+        match paths.as_slice() {
+            [one] => self.toast(format!("Chose {}", one.file_name().map_or_else(|| shown.clone(), |n| n.to_string_lossy().into_owned()))),
+            many => self.toast(format!("Chose {} files", many.len())),
+        }
+    }
+
+    // ---------------------------------------------------------------- typing keys
+
+    /// Insert mode's own keys (`keys::insert`): the field in your editor,
+    /// the primary selection pasted.
+    fn insert_action(&mut self, action: KeyAction) {
+        let Some(id) = self.focused.filter(|_| self.entered()) else { return };
+        match action {
+            KeyAction::PastePrimary => match self.clipboard.primary().filter(|t| !t.is_empty()) {
+                Some(text) => {
+                    if let Some(card) = self.cards.get(&id) {
+                        card.page.paste_text(&text);
+                    }
+                }
+                None => self.toast("Nothing in the primary selection"),
+            },
+            KeyAction::EditInEditor => {
+                if let Some(e) = &self.editing
+                    && e.child.is_some()
+                {
+                    return self.toast("A field is in your editor already · close it first");
+                }
+                if let Some(old) = self.editing.take()
+                    && let Some(f) = old.file
+                {
+                    let _ = std::fs::remove_file(f);
+                }
+                let Some(card) = self.cards.get(&id) else { return };
+                self.field_token += 1;
+                let token = self.field_token;
+                let Some(frame) = card.page.read_field(token) else { return };
+                log::info!("editor: reading field {token} in frame {frame}");
+                self.editing = Some(Editing {
+                    node: id,
+                    frame,
+                    token,
+                    original: String::new(),
+                    file: None,
+                    child: None,
+                    since: Instant::now(),
+                    written: None,
+                    sent: false,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    /// A page's answer about the field being edited.
+    fn field_report(&mut self, node: NodeId, report: web::field::Report) {
+        use web::field::Report;
+        let Some(e) = self.editing.as_mut().filter(|e| e.node == node) else { return };
+        match report {
+            Report::Text { token, text } if token == e.token && e.file.is_none() => self.start_editor(text),
+            Report::NoField { token } if token == e.token && e.file.is_none() => {
+                self.editing = None;
+                self.toast("No text field has the keys here");
+            }
+            Report::Put { token } if token == e.token && e.sent => {
+                if let Some(f) = self.editing.take().and_then(|e| e.file) {
+                    let _ = std::fs::remove_file(f);
+                }
+                log::info!("editor: text put back in field {token}");
+                self.toast("Text put back");
+            }
+            Report::Gone { token } if token == e.token && e.sent => {
+                let file = self.editing.take().and_then(|e| e.file).map(|f| f.display().to_string()).unwrap_or_default();
+                self.toast(format!("The field is gone · your text is in {file}"));
+            }
+            _ => {}
+        }
+    }
+
+    /// The field's text came: it goes to a private file and the editor starts on it.
+    fn start_editor(&mut self, text: String) {
+        use std::os::unix::process::CommandExt;
+        let Some(e) = self.editing.as_mut() else { return };
+        let file = crate::editor::file_for(e.token);
+        if let Err(err) = crate::editor::write_private(&file, &text) {
+            self.editing = None;
+            return self.toast(format!("Can't write the text for your editor: {err}"));
+        }
+        let Some(words) = crate::editor::command(&file, |n| std::env::var(n).ok(), crate::editor::on_path) else {
+            let _ = std::fs::remove_file(&file);
+            self.editing = None;
+            return self.toast("No terminal for your editor · set TRAILBOARD_EDITOR to a command");
+        };
+        let started = std::process::Command::new(&words[0])
+            .args(&words[1..])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .process_group(0)
+            .spawn();
+        match started {
+            Ok(child) => {
+                log::info!("editor: started {words:?} (pid {})", child.id());
+                e.written = std::fs::metadata(&file).and_then(|m| m.modified()).ok();
+                e.original = text;
+                e.file = Some(file);
+                e.child = Some(child);
+                e.since = Instant::now();
+                self.toast("Editing in your editor · save and quit to put the text back");
+            }
+            Err(err) => {
+                log::warn!("editor: {words:?}: {err}");
+                let _ = std::fs::remove_file(&file);
+                self.editing = None;
+                self.toast(format!("Can't start {}: {err}", words[0]));
+            }
+        }
+    }
+
+    /// Each frame: when the editor ends, or (if it handed the file to an
+    /// editor already running and returned at once) when the file is saved,
+    /// the text goes back into the field.
+    fn tend_editor(&mut self) {
+        const ANSWER: Duration = Duration::from_secs(3);
+        const HANDED_OFF: Duration = Duration::from_secs(2);
+        let Some(e) = self.editing.as_mut() else { return };
+        let Some(file) = e.file.clone() else {
+            if e.since.elapsed() > ANSWER {
+                self.editing = None;
+                self.toast("The page didn't say what is in the field");
+            }
+            return;
+        };
+        if e.sent {
+            if e.since.elapsed() > ANSWER {
+                let e = self.editing.take().expect("checked");
+                self.toast(format!("The page didn't take the text · it is in {}", file.display()));
+                log::warn!("editor: no answer for field {}", e.token);
+            }
+            return;
+        }
+        let modified = std::fs::metadata(&file).and_then(|m| m.modified()).ok();
+        let done = match e.child.as_mut() {
+            Some(c) => match c.try_wait() {
+                Ok(None) => false,
+                Ok(Some(status)) => {
+                    e.child = None;
+                    let quick = e.since.elapsed() < HANDED_OFF && modified == e.written;
+                    log::info!("editor: exited ({status}){}", if quick { "; watching the file for a save" } else { "" });
+                    !quick
+                }
+                Err(err) => {
+                    log::warn!("editor: {err}");
+                    e.child = None;
+                    true
+                }
+            },
+            None => modified != e.written,
+        };
+        if !done {
+            return;
+        }
+        let text = std::fs::read_to_string(&file).map(|t| crate::editor::saved_text(&t)).unwrap_or_else(|_| e.original.clone());
+        if text == e.original {
+            let _ = std::fs::remove_file(&file);
+            self.editing = None;
+            return self.toast("The text is as it was");
+        }
+        let sent = self.cards.get(&e.node).is_some_and(|c| c.page.write_field(&e.frame, e.token, &text));
+        if sent {
+            e.sent = true;
+            e.since = Instant::now();
+        } else {
+            self.editing = None;
+            self.toast(format!("The card is gone · your text is in {}", file.display()));
         }
     }
 
@@ -5262,7 +5706,7 @@ impl App {
             Confirm::CloseOthers(_) => "Kept the cards".to_string(),
             Confirm::ClearHistory => "Kept history".to_string(),
             Confirm::ClearCookies => "Kept cookies".to_string(),
-            Confirm::Permission => String::new(), // `answer_ask` says what happened
+            Confirm::Permission | Confirm::Dialog => String::new(), // answered elsewhere
         }
     }
 
@@ -5270,6 +5714,8 @@ impl App {
     fn decline(&mut self, confirm: Confirm) {
         if confirm == Confirm::Permission {
             self.answer_ask(false);
+        } else if confirm == Confirm::Dialog {
+            self.answer_dialog(false, "");
         } else {
             self.toast(self.kept(confirm));
         }
@@ -6400,6 +6846,16 @@ impl App {
                     }
                 }
                 WebEvent::PermissionWithdrawn { id } => self.permission_withdrawn(id),
+                WebEvent::DialogAsked { page, id, kind, origin, message, default } => {
+                    self.dialog_asked(page, id, kind, &origin, &message, &default)
+                }
+                WebEvent::FilesAsked { page, id, mode, default, accept, .. } => self.files_asked(page, id, mode, &default, accept),
+                WebEvent::DialogWithdrawn { id } => self.dialog_withdrawn(id),
+                WebEvent::Field { page, report } => {
+                    if let Some(id) = self.node_of(page) {
+                        self.field_report(id, report);
+                    }
+                }
                 WebEvent::OpenBeside { source, url } => {
                     let Some(src) = self.node_of(source) else { continue };
                     if self.scene.node(src).is_some()
@@ -7394,12 +7850,15 @@ impl App {
             // Enter deletes the space; any other key (but a modifier) keeps it and is dropped.
             if pressed && !matches!(ev.named, Some(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super)) {
                 self.confirm = None;
-                match (ev.named, confirm) {
-                    (Some(NamedKey::Enter), Confirm::DeleteSpace) => self.delete_space(),
-                    (Some(NamedKey::Enter), Confirm::CloseOthers(keep)) => self.close_others(keep),
-                    (Some(NamedKey::Enter), Confirm::ClearHistory) => self.clear_history(),
-                    (Some(NamedKey::Enter), Confirm::ClearCookies) => self.clear_cookies(),
-                    (Some(NamedKey::Enter), Confirm::Permission) => self.answer_ask(true),
+                // Enter or y says yes; n, Esc and the rest say no.
+                let yes = ev.named == Some(NamedKey::Enter) || (!ctrl && !alt && ev.text.as_deref().is_some_and(|t| t.eq_ignore_ascii_case("y")));
+                match (yes, confirm) {
+                    (true, Confirm::DeleteSpace) => self.delete_space(),
+                    (true, Confirm::CloseOthers(keep)) => self.close_others(keep),
+                    (true, Confirm::ClearHistory) => self.clear_history(),
+                    (true, Confirm::ClearCookies) => self.clear_cookies(),
+                    (true, Confirm::Permission) => self.answer_ask(true),
+                    (true, Confirm::Dialog) => self.answer_dialog(true, ""),
                     _ => self.decline(confirm),
                 }
             }
@@ -7482,6 +7941,14 @@ impl App {
             let before = ob.text.clone();
             if ctrl && code == Some(KeyCode::KeyJ) && ob.target == Target::Downloads {
                 self.omnibox = None;
+                return;
+            }
+            // A file chooser's path: Tab completes the last part.
+            if matches!(ob.target, Target::Files(_)) && !ctrl && !alt && ev.named == Some(NamedKey::Tab) {
+                match crate::pathfield::complete(&ob.text, &home_path(), crate::pathfield::read_dir) {
+                    Some(t) => ob.set(&t),
+                    None => log::debug!("files: nothing to complete for {:?}", ob.text),
+                }
                 return;
             }
             let command_line = ob.target == Target::Palette && palette::is_command(&ob.text);
@@ -7634,6 +8101,12 @@ impl App {
                         self.rename_space(&ob.text);
                     } else if let Target::SaveAs(id) = ob.target {
                         self.save_download_as(id, &ob.text);
+                    } else if let Target::Prompt(id) = ob.target {
+                        if self.dialogs.first().is_some_and(|d| d.id == id) {
+                            self.answer_dialog(true, &ob.text);
+                        }
+                    } else if let Target::Files(id) = ob.target {
+                        self.choose_files(id, &ob.text);
                     } else if let Target::NameTrail(id) = ob.target {
                         self.name_trail(id, &ob.text);
                     } else if let Some(url) = self.settings.resolve_url(&ob.text) {
@@ -8755,6 +9228,17 @@ impl App {
                 Target::AllowedSites => (Icon::Shield, "Sites with ads allowed", &[("Enter", "Block ads again"), ("Esc", "Close")]),
                 Target::Photo => (Icon::Picture, "Find a picture or type its path", &[("Enter", "Use as background"), ("Esc", "Close")]),
                 Target::SaveAs(_) => (Icon::Download, "Save download as", &[("Enter", "Save"), ("Esc", "Cancel")]),
+                Target::Prompt(_) => (Icon::Note, "Your answer", &[("Enter", "OK"), ("Esc", "Cancel")]),
+                Target::Files(_) => {
+                    use web::dialog::FileMode;
+                    let (icon, words) = match self.choosing.as_ref().map(|c| c.mode) {
+                        Some(FileMode::Save) => (Icon::Download, "Where to save it"),
+                        Some(FileMode::Folder) => (Icon::Board, "Path of a folder"),
+                        Some(FileMode::OpenMany) => (Icon::Plus, "Path of a file · * picks several"),
+                        _ => (Icon::Plus, "Path of a file"),
+                    };
+                    (icon, words, &[("Tab", "Complete"), ("Enter", "Choose"), ("Esc", "Cancel")])
+                }
                 Target::Beside => (Icon::Globe, "Search or enter address", &[("Enter", "Open beside")]),
                 Target::Behind => (Icon::Globe, "Search or enter address", &[("Enter", "Open beside, stay here")]),
                 _ => (Icon::Globe, "Search or enter address", &[("Enter", "Open"), ("Shift+Enter", "Open beside")]),
@@ -8775,6 +9259,8 @@ impl App {
                     (n, 0) => format!("{n} matches"),
                     (n, a) => format!("{a} of {n}"),
                 }),
+                // A file chooser says what the page takes.
+                (Target::Files(_), _) => self.choosing.as_ref().filter(|c| !c.accept.is_empty()).map(|c| c.accept.join(" ")),
                 // An address bar: a keyword names the site it searches (`gh foo`).
                 (Target::Focused | Target::NewCard | Target::Beside | Target::Behind, _) => match self.settings.resolve(&ob.text) {
                     // Short: the query is in the field already.
@@ -8924,10 +9410,27 @@ impl App {
             let l = self.message(&text, 0.0, vp.y - 16.0 * ui, false);
             layers.push(l);
         }
+        // A page's dialog: a sheet where the field goes (under it, for a prompt).
+        let asking = self.dialogs.first().filter(|d| {
+            d.shown && (self.confirm == Some(Confirm::Dialog) || self.omnibox.as_ref().is_some_and(|ob| ob.target == Target::Prompt(d.id)))
+        });
+        let came = self.anim.question.update(asking.map(|d| anim_key(d.id)), Instant::now());
+        if let Some(d) = asking {
+            let (title, message, hints) = Self::dialog_words(d);
+            let field = palette::field_rect_from(vp, ui, sidebar_w);
+            let top = if d.kind == web::dialog::Kind::Prompt { Rect::new(field.x, field.bottom() + 8.0 * ui, field.w, 0.0) } else { field };
+            let radius = th.radius(scale);
+            if let Some(rd) = self.renderer.as_mut() {
+                let (mut l, _) = palette::question_layer(rd, top, &title, &message, hints, &th, ui, radius);
+                crate::chrome::arrive(&mut l, came, 6.0 * ui);
+                layers.push(l);
+            }
+        }
         if let Some((msg, at)) = &self.toast {
-            if self.confirm.is_some() || Instant::now() < *at {
+            let asks = self.confirm.is_some_and(|c| c != Confirm::Dialog);
+            if asks || Instant::now() < *at {
                 let msg = msg.clone();
-                let warn = self.confirm.is_some();
+                let warn = asks;
                 let came = self.anim.toast.update(Some(anim_key(&msg)), Instant::now());
                 let mut l = self.message(&msg, mid_x, bottom, warn);
                 // It rises into place.
@@ -9144,10 +9647,9 @@ impl App {
                 self.close_blank_card(s.page);
             }
         }
-        // A permission question dropped by another (a space switch, say) comes back.
-        if self.confirm.is_none() && !self.asks.is_empty() {
-            self.show_next_ask();
-        }
+        // A question dropped by another (a space switch, say) comes back.
+        self.tend_dialogs();
+        self.tend_editor();
         if let Some(msg) = self.blocking.tick(Instant::now(), self.settings.block_ads) {
             self.toast(msg);
         }
@@ -9568,6 +10070,11 @@ impl App {
 }
 
 /// `path` with the home folder written as `~`.
+/// The home folder (`$HOME`).
+fn home_path() -> std::path::PathBuf {
+    std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default()
+}
+
 fn home_relative(path: &std::path::Path) -> String {
     match std::env::var_os("HOME").map(std::path::PathBuf::from) {
         Some(home) if home.as_os_str().len() > 1 => match path.strip_prefix(&home) {

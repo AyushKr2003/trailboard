@@ -341,7 +341,7 @@ impl Default for Keys {
         Keys {
             board: keys::board(),
             page: keys::page(),
-            insert: Bindings::new(),
+            insert: keys::insert(),
             hints: Bindings::new(),
             command: Bindings::new(),
             visual: keys::visual(),
@@ -483,7 +483,8 @@ impl Keys {
     fn works_in(&self, m: Mode, a: Action) -> bool {
         match m {
             Mode::Board => keys::board().has(a),
-            Mode::Page | Mode::Insert => keys::page().has(a),
+            Mode::Page => keys::page().has(a),
+            Mode::Insert => keys::insert().has(a) || keys::page().has(a),
             Mode::Visual => keys::visual().has(a) || keys::page().has(a),
             Mode::Hints | Mode::Command => false,
         }

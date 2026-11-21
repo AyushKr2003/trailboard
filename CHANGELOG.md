@@ -42,6 +42,20 @@ All notable changes to Trailboard. The format follows
   drops the selection, then the caret. Bind your own in the keys file's
   new `visual` mode (`caret-word`, `copy-selection`…); the `?` sheet has
   a *Caret and Visual* section.
+- **Dialogs and fields from the keyboard.** A page's `alert`, `confirm`
+  and "Leave this page?" now show as a sheet near the top of the window,
+  naming the site, instead of being cancelled: Enter or y is OK (Leave),
+  Esc or n Cancel (Stay). A `prompt` is a field with the page's question
+  under it. Our own questions and a site's camera / location /
+  notification asks take y and n too.
+  - A page's file chooser is a path field: Tab completes, `~` is home,
+    `*` in the last part picks several files; it starts in the folder you
+    last chose from and says what the page accepts.
+  - Ctrl+e in a field opens its text in your editor (`$VISUAL` /
+    `$EDITOR` in a terminal, or `TRAILBOARD_EDITOR`); save and quit puts
+    it back. Shift+Insert pastes the primary selection. Both are in the
+    keys file's `insert` mode (`edit-in-editor`, `paste-primary`) and on
+    the `?` sheet under *Typing in a page*.
 - **Your own keys.** A plain-text keys file, `~/.config/trailboard/keys`
   (`:keys-file` opens it, with examples, in a card), binds keys for the
   board, pages, typing in a page, link hints and the command line:

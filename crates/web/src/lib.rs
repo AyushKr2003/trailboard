@@ -7,7 +7,9 @@
 pub mod caret;
 pub mod consent;
 pub mod cosmetic;
+pub mod dialog;
 pub mod download;
+pub mod field;
 pub mod focus;
 pub mod keys;
 pub mod links;
@@ -83,6 +85,18 @@ pub enum WebEvent {
     PermissionAsked { page: u64, id: u64, origin: String, kinds: Vec<permission::Kind> },
     /// Chromium withdrew permission request `id` (the page navigated or closed).
     PermissionWithdrawn { id: u64 },
+    /// Page `page` shows `alert`, `confirm`, `prompt` or asks before it is
+    /// left. Answer with [`dialog::answer`]. `default`: a prompt's text.
+    DialogAsked { page: u64, id: u64, kind: dialog::Kind, origin: String, message: String, default: String },
+    /// Page `page` opened a file chooser. Answer with [`dialog::choose`].
+    /// `default`: a path or name Chromium suggests; `accept`: the types the
+    /// page wants (`.pdf`, `image/*`).
+    FilesAsked { page: u64, id: u64, mode: dialog::FileMode, title: String, default: String, accept: Vec<String> },
+    /// Chromium dropped dialog `id` itself (the page navigated or closed).
+    DialogWithdrawn { id: u64 },
+    /// An answer about a text field from [`Page::read_field`] or
+    /// [`Page::write_field`]. Any page can send this; only act on a token you gave.
+    Field { page: u64, report: field::Report },
     /// Where page `page`'s keyboard focus went (see [`focus`]). Any page can
     /// send this about itself; the app only acts on the card it is using.
     Focus { page: u64, report: focus::Report },
@@ -1037,6 +1051,12 @@ wrap_display_handler! {
                 }
                 return 1;
             }
+            if let Some(body) = message.strip_prefix(field::PREFIX) {
+                if let Some(report) = field::parse(body) {
+                    emit(WebEvent::Field { page: self.shared.key, report });
+                }
+                return 1;
+            }
             if let Some(body) = message.strip_prefix(pager::PREFIX) {
                 emit(WebEvent::Pager { page: self.shared.key, links: pager::parse(body) });
                 return 1;
@@ -1286,7 +1306,7 @@ wrap_find_handler! {
     }
 }
 
-// One handler per CEF callback group makes `PageClient::new` take eight.
+// One handler per CEF callback group makes `PageClient::new` take eleven.
 #[allow(clippy::too_many_arguments)]
 mod client {
 use super::*;
@@ -1301,11 +1321,19 @@ wrap_client! {
         find: FindHandler,
         downloads: DownloadHandler,
         permissions: PermissionHandler,
+        dialogs: JsdialogHandler,
+        files: DialogHandler,
     }
 
     impl Client {
         fn permission_handler(&self) -> Option<PermissionHandler> {
             Some(self.permissions.clone())
+        }
+        fn jsdialog_handler(&self) -> Option<JsdialogHandler> {
+            Some(self.dialogs.clone())
+        }
+        fn dialog_handler(&self) -> Option<DialogHandler> {
+            Some(self.files.clone())
         }
         fn render_handler(&self) -> Option<RenderHandler> {
             Some(self.render.clone())
@@ -1428,6 +1456,8 @@ impl Page {
             PageFind::new(shared.clone()),
             PageDownloads::new(shared.clone()),
             permission::handler(key),
+            dialog::js_handler(key),
+            dialog::file_handler(key),
         );
         let window_info = WindowInfo { windowless_rendering_enabled: 1, ..Default::default() };
         let browser_settings = BrowserSettings {
@@ -1738,6 +1768,21 @@ impl Page {
             js_string(text)
         );
         f.execute_java_script(Some(&CefString::from(script.as_str())), None, 0);
+    }
+
+    /// Sends the focused text field's text as a [`WebEvent::Field`] report
+    /// under `token`; returns the frame it runs in, for [`Page::write_field`].
+    pub fn read_field(&self, token: u64) -> Option<String> {
+        let f = self.edit_frame()?;
+        f.execute_java_script(Some(&CefString::from(field::read(token).as_str())), None, 0);
+        Some(CefString::from(&f.identifier()).to_string())
+    }
+
+    /// Puts `text` into the field [`Page::read_field`] read under `token` in `frame`.
+    pub fn write_field(&self, frame: &str, token: u64, text: &str) -> bool {
+        let Some(f) = self.browser.frame_by_identifier(Some(&CefString::from(frame))) else { return false };
+        f.execute_java_script(Some(&CefString::from(field::write(token, text).as_str())), None, 0);
+        true
     }
 
     /// Runs `script` in the page's main frame.

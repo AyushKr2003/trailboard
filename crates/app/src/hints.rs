@@ -41,7 +41,7 @@ pub fn sections(keys: &userkeys::Keys) -> Vec<Section> {
         ("Caret and Visual (v · V in a page)".into(), visual),
     ];
     for (title, table) in [
-        ("Typing in a page (your keys)", &keys.insert),
+        ("Typing in a page", &keys.insert),
         ("While hints show (your keys)", &keys.hints),
         ("In the command line (your keys)", &keys.command),
     ] {
@@ -609,7 +609,10 @@ mod tests {
         assert!(page.contains(&("gs".to_string(), ":open https://e.com/{url}".to_string())));
         assert!(!page.iter().any(|(_, d)| d == "To the top"));
         let insert = all.iter().find(|(n, _)| n.starts_with("Typing")).unwrap();
-        assert_eq!(insert.1, vec![("Ctrl+E".to_string(), "Scroll down".to_string())]);
+        // A user's binding replaces the default's on its key; the other default stays.
+        assert!(insert.1.contains(&("Ctrl+E".to_string(), "Scroll down".to_string())), "{:?}", insert.1);
+        assert!(insert.1.iter().any(|(_, d)| d == "Paste the primary selection"), "{:?}", insert.1);
+        assert!(!insert.1.iter().any(|(_, d)| d.contains("editor")), "{:?}", insert.1);
         assert!(all.iter().any(|(n, rows)| n == "Your aliases" && rows[0].0 == ":wb"));
     }
 

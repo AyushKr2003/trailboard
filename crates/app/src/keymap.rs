@@ -186,6 +186,7 @@ impl KeyIn {
             "pageup" => named(PageUp, N::PageUp, None),
             "pagedown" => named(PageDown, N::PageDown, None),
             "space" => named(Space, N::Space, Some(" ")),
+            "insert" => named(Insert, N::Insert, None),
             "menu" => named(ContextMenu, N::ContextMenu, None),
             f if f.len() >= 2 && f.starts_with('f') && f[1..].parse::<u8>().is_ok_and(|n| (1..=12).contains(&n)) => {
                 const FS: [(KeyCode, NamedKey); 12] = [

@@ -33,6 +33,12 @@ pub enum Target {
     /// The space's background photo (`palette::photo_rows`): the text filters
     /// the pictures offered, or is a picture file's path.
     Photo,
+    /// The answer to a page's `prompt` (`App::dialogs`); closing the field
+    /// cancels it.
+    Prompt(u64),
+    /// The path for a page's file chooser (`App::choosing`); closing the
+    /// field cancels it. Tab completes.
+    Files(u64),
 }
 
 impl Target {

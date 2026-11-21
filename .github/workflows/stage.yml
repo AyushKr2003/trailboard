@@ -1,0 +1,70 @@
+# One stage of the CEF build: sync, resume from the previous stage's
+# checkpoint, compile for up to ~5 hours, then either hand on a new
+# checkpoint (done=false) or the finished archive (done=true).
+name: CEF build stage
+
+on:
+  workflow_call:
+    inputs:
+      stage:
+        type: number
+        required: true
+    outputs:
+      done:
+        value: ${{ jobs.build.outputs.done }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    # GitHub stops a hosted job at 6 h; the script stops compiling ~40 min
+    # before this to pack the checkpoint.
+    timeout-minutes: 355
+    outputs:
+      done: ${{ steps.build.outputs.done }}
+    steps:
+      - name: Start time and previous stage
+        id: meta
+        run: |
+          echo "deadline=$(( $(date +%s) + 350 * 60 ))" >> "$GITHUB_OUTPUT"
+          echo "prev=$(( ${{ inputs.stage }} - 1 ))" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: scripts/free-disk.sh
+
+      - name: Get the previous checkpoint
+        if: inputs.stage > 1
+        uses: actions/download-artifact@v4
+        with:
+          name: checkpoint-${{ steps.meta.outputs.prev }}
+          path: /mnt/ckpt-in
+
+      - name: Build
+        id: build
+        env:
+          STAGE_DEADLINE: ${{ steps.meta.outputs.deadline }}
+          CKPT_IN: ${{ inputs.stage > 1 && '/mnt/ckpt-in/out.tar.zst' || '' }}
+          CKPT_OUT: /home/runner/ckpt
+          DIST_OUT: /home/runner/dist
+        run: scripts/build-cef.sh
+
+      - name: Hand on the checkpoint
+        if: steps.build.outputs.done == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkpoint-${{ inputs.stage }}
+          path: /home/runner/ckpt/out.tar.zst
+          compression-level: 0
+          overwrite: true
+          retention-days: 2
+
+      - name: Keep the finished archive
+        if: steps.build.outputs.done == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cef-dist
+          path: /home/runner/dist/
+          compression-level: 0
+          overwrite: true
+          retention-days: 7

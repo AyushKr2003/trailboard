@@ -1,0 +1,93 @@
+# Build CEF with full media support on GitHub-hosted runners and publish it
+# as a release. A hosted job stops after 6 hours and a CEF build takes
+# longer on 4 cores, so the compile runs as a chain of up to eight stages,
+# each resuming from the previous one's checkpoint. Stages after the one
+# that finishes are skipped.
+#
+# Starts on a push to this branch that changes the build files.
+name: Build CEF
+
+on:
+  push:
+    branches: [cef-build]
+    paths:
+      - cef.conf
+      - scripts/**
+      - .github/workflows/**
+  workflow_dispatch:
+
+concurrency:
+  group: cef-build
+  cancel-in-progress: true
+
+jobs:
+  s1:
+    uses: ./.github/workflows/stage.yml
+    with: { stage: 1 }
+  s2:
+    needs: s1
+    if: always() && needs.s1.result == 'success' && needs.s1.outputs.done != 'true'
+    uses: ./.github/workflows/stage.yml
+    with: { stage: 2 }
+  s3:
+    needs: s2
+    if: always() && needs.s2.result == 'success' && needs.s2.outputs.done != 'true'
+    uses: ./.github/workflows/stage.yml
+    with: { stage: 3 }
+  s4:
+    needs: s3
+    if: always() && needs.s3.result == 'success' && needs.s3.outputs.done != 'true'
+    uses: ./.github/workflows/stage.yml
+    with: { stage: 4 }
+  s5:
+    needs: s4
+    if: always() && needs.s4.result == 'success' && needs.s4.outputs.done != 'true'
+    uses: ./.github/workflows/stage.yml
+    with: { stage: 5 }
+  s6:
+    needs: s5
+    if: always() && needs.s5.result == 'success' && needs.s5.outputs.done != 'true'
+    uses: ./.github/workflows/stage.yml
+    with: { stage: 6 }
+  s7:
+    needs: s6
+    if: always() && needs.s6.result == 'success' && needs.s6.outputs.done != 'true'
+    uses: ./.github/workflows/stage.yml
+    with: { stage: 7 }
+  s8:
+    needs: s7
+    if: always() && needs.s7.result == 'success' && needs.s7.outputs.done != 'true'
+    uses: ./.github/workflows/stage.yml
+    with: { stage: 8 }
+
+  release:
+    needs: [s1, s2, s3, s4, s5, s6, s7, s8]
+    if: always() && contains(needs.*.outputs.done, 'true')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: cef-dist
+          path: dist
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          source cef.conf
+          tag="cef-${CEF_SHORT}-media"
+          cd dist
+          ls -la
+          notes="CEF ${CEF_SHORT} (commit ${CEF_COMMIT}) for Trailboard, built with full media support:
+          H.264, AAC, HEVC (via VA-API), Widevine enabled. Patent-licensed codecs: for your own use.
+
+          $(cat BUILD-INFO.txt)"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" ./* --clobber
+            gh release edit "$tag" --notes "$notes"
+          else
+            gh release create "$tag" ./* --title "CEF ${CEF_SHORT} with media codecs" \
+              --notes "$notes" --target "$GITHUB_SHA"
+          fi

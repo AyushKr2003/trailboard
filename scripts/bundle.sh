@@ -16,6 +16,15 @@ if [[ ! -f "$CEF/libcef.so" ]]; then
     exit 1
 fi
 
+# A CEF with patent-licensed codecs (H.264/AAC) is for local use only; its
+# archive.json says "codecs": true. Refuse to bundle it unless asked.
+if grep -q '"codecs": *true' "$CEF/archive.json" 2>/dev/null && [[ "${ALLOW_CODECS:-}" != 1 ]]; then
+    echo "The CEF at $CEF has proprietary codecs and isn't for publishing." >&2
+    echo "Install the standard one somewhere (CEF_PATH=DIR scripts/install-cef.sh) and bundle with" >&2
+    echo "CEF_PATH=DIR, or set ALLOW_CODECS=1 for a bundle you keep to yourself." >&2
+    exit 1
+fi
+
 cd "$ROOT"
 CEF_PATH="$CEF" cargo build --release -p trailboard
 VERSION="$(./target/release/trailboard --version | awk '{print $2}')"

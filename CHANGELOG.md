@@ -56,6 +56,16 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
 
 ### Changed
 
+- **H.264 and AAC video.** `scripts/install-cef.sh --codecs` installs a CEF
+  build with the patent-licensed codecs (same CEF version, third-party,
+  pinned by SHA-256), and the Arch package uses it by default
+  (`TRAILBOARD_CODECS=0` for the standard one). `scripts/bundle.sh` refuses
+  to package it unless `ALLOW_CODECS=1`.
+- `scripts/install-cef.sh` pins both engines by name and SHA-256 (no build
+  index lookup), checks tools, disk space and a running Trailboard first,
+  works on disk instead of `/tmp`, swaps the new copy in only once it's
+  complete, skips a build that's already installed (`--force`), and writes
+  `.cargo/config.toml` when it's missing; `--help` lists the options.
 - Ctrl+W alone no longer closes a card; it starts `Ctrl+w` sequences.
 - Read Mode is now called Solo; `t` starts toggles and Tidy is `T`; the
   trails sidebar is Ctrl+B and `b` / `B` open saved pages.

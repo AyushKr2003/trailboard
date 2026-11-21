@@ -60,7 +60,8 @@ app (trailboard)  winit window · input · omnibox · chrome UI · main loop
 | ⬜ | M10 Optional extras | See §8; most items on hold |
 | ✅ | M11 Premium look | Corners setting, cards as sheets, board backgrounds, sidebar, command bar, motion, empty board, review pass |
 | ✅ | M12 Keyboard first | Vim-like modes, page keys, scroll sections, command line, cards as tabs, search keywords, jumps/marks/saved pages, user key file, settings and site toggles, navigation extras, caret/visual mode, dialogs and fields, find back, `:messages` |
-| ⬜ | **M13 Full media support** | Our own CEF build with H.264/AAC (and HEVC, Widevine if they work), built off this machine, opt-in |
+| 🟡 | **M13 Full media support** | H.264/AAC now via an interim third-party CEF (`install-cef.sh --codecs`, Arch default); next our own build (and HEVC, Widevine if they work) on GitHub Actions |
+| ⬜ | **M14 Config file** | One hand-editable `~/.config/trailboard/config.toml` for settings, key bindings and theme; the UI writes it without losing comments |
 
 ### Owner decisions that still bind
 
@@ -169,23 +170,92 @@ CEF leaves these off by default for patent licensing; it builds them with
 release CEF links it in).
 
 **Constraints.** A Chromium build needs ~100 GB of disk and ideally ≥16 GB
-of RAM; this machine has 7.6 GB and ~13 GB free, so builds run on a rented
+of RAM; this machine has 7.6 GB and ~13 GB free, so builds run elsewhere:
+on GitHub Actions (see "Approach" below), or as a fallback on a rented
 cloud machine (about 32 cores / 64 GB: 2–4 h per build). Each CEF update
 (Chromium security fixes every few weeks) needs a rebuild, or the engine
-falls behind. H.264 / AAC are patent-licensed: fine for the owner's own
-use; public releases keep the standard CEF and the codec build stays
-opt-in. Only builds we make ourselves are used (no third-party engine
-binaries).
+falls behind. H.264 / AAC are patent-licensed: a codecs engine is
+installed on the user's machine from its own source (never shipped inside
+a Trailboard bundle); the portable bundle keeps the standard CEF. Our own
+build replaces the interim third-party one below once it exists.
+
+**Prebuilt test** (owner's request, 2026-11-21). tobagin/karere's release
+`cef-156.0.26-proprietary-codecs` is the same CEF commit we pin
+(`156.0.26+g8ea0c73`, Chromium 156.0.8078.88), and its headers match ours.
+It's unpacked in `~/.cache/trailboard-cef-karere/cef` (sha256 checked) and
+swapped in at run time without a rebuild:
+`CEF_PATH=$K LD_LIBRARY_PATH=$K target/debug/trailboard` (the binary uses
+RUNPATH, so `LD_LIBRARY_PATH` wins). Result (`~/.cache/trailboard-e2e-karere`):
+H.264, AAC, MP3, VP9, AV1 and Opus → "probably"; HEVC → no; Widevine → no;
+a local H.264/AAC `.mp4` plays in a card (640×360, frames advancing). So a
+codecs build works with our off-screen cards unchanged. Real sites were not
+tried.
+
+**Interim CEF** (owner's decisions, 2026-11-21): use the karere build until
+our own build (step 1) exists, then point the same pins at ours. Anyone can
+install it:
+
+- `scripts/install-cef.sh --codecs` installs it; `--standard` (the default)
+  installs CEF's own download. Both are pinned by name and SHA-256 in the
+  script (no build-index lookup), checked before install, unpacked on disk
+  beside the target (not `/tmp`) and swapped in only when complete. The
+  script refuses while Trailboard runs, checks tools and free space, skips
+  an installed build unless `--force`, deletes the download after success,
+  and writes `.cargo/config.toml` if missing.
+- The Arch PKGBUILD uses the codecs build **by default**;
+  `TRAILBOARD_CODECS=0 makepkg` gives the standard one.
+- `archive.json` keeps the fields the `cef` crate's build script reads
+  (`name`, `sha1`; `sha1` is empty for the codecs build, whose release
+  gives only a SHA-256) and marks it `"codecs": true`. `scripts/bundle.sh`
+  refuses such a CEF unless `ALLOW_CODECS=1`, so the portable archive
+  never carries it.
+- The pins live in two places that must move together with the `cef`
+  crate: `scripts/install-cef.sh` and `packaging/arch/PKGBUILD`.
+- On the owner's machine: codecs at `~/.local/share/cef`, the standard one
+  at `~/.local/share/cef-standard` (for bundles).
+- Before AUR: the owner should confirm shipping a PKGBUILD that downloads a
+  patent-licensed third-party engine by default is acceptable there.
+
+**Approach: build on GitHub Actions** (owner's choice, 2026-11-21). Instead
+of a rented cloud machine, CEF is built on GitHub's hosted runners, in the
+way atlas-engineer/cef does it (CEF with H.264/AAC for Nyxt, public
+workflow): the compile is split into a chain of up to eight time-boxed
+jobs, because a hosted job stops after 6 hours. Each job saves the build
+state and `out/` (zstd) as a checkpoint, and the next job resumes from it.
+The last job packs a minimal distribution
+(`cef_binary_<version>_linux64_minimal.tar.bz2` and a `.sha256`) and
+publishes it as a release tagged with the CEF version. This needs no cloud
+account and nothing big on this machine, and it still counts as a build we
+make ourselves (we own the workflow and can read every log).
+
+- **Where:** a separate build repo (say `trailboard-cef`), not this one, so
+  the browser repo stays small and its CI stays fast. Public, because
+  hosted runners' minutes are free for public repos (a private repo uses
+  a monthly allowance a CEF build would exhaust).
+- **Clean room:** we write our own workflow and scripts from the method;
+  nothing is copied from atlas-engineer's repo.
+- **Pinned:** the workflow takes the CEF version as an input and defaults
+  to the one `install-cef.sh` pins (156.0.26 now), so the result matches
+  the `cef` crate.
+- **To check in step 1:** the runner's free disk (a CEF checkout is large;
+  remove the preinstalled toolchains first), the per-repo cache and
+  artifact size limits for the checkpoints, total wall time per build, and
+  whether HEVC (step 3) and Widevine (step 4) flags fit the same chain.
+- **Fallback:** a rented cloud machine running the same script, if the
+  runners turn out too small.
 
 **Steps:**
 
-- ⬜ 1. **Build script.** `scripts/build-cef.sh`: on a fresh Linux machine,
+- ⬜ 1. **Build script and workflow.** The chained GitHub Actions workflow
+  above, around `scripts/build-cef.sh`: on a fresh Linux machine,
   fetch CEF's build tooling for the branch matching `install-cef.sh`'s
   version, build the minimal distribution with
   `is_official_build=true proprietary_codecs=true ffmpeg_branding=Chrome`,
   and pack it the way the CEF downloads are packed (same layout, a SHA-1
-  and the build flags written beside it). Documented in the README:
-  machine size, time, cost, and how to fetch the result.
+  and the build flags written beside it). The same script runs inside each
+  workflow job (resuming from the checkpoint) or in one go on a big
+  machine. Documented in the README: how to start a build, how long it
+  takes, and how to fetch the release.
 - ⬜ 2. **Install and check.** `install-cef.sh --from <tarball>` installs a
   local build into `~/.local/share/cef` (the standard download stays the
   default). Trailboard logs at start which build it runs (standard or
@@ -219,6 +289,96 @@ unless asked).
 
 ---
 
+### M14: Config file ⬜
+
+Asked by the owner on 2026-11-21: one file a user can edit by hand that
+holds everything they can change — settings, key bindings and the theme.
+Today these live in three places: `$DATA/settings.json` (app-written
+JSON), `$XDG_CONFIG_HOME/trailboard/keys` (our line format) and the
+Omarchy palette (`theme.rs`, read-only for us).
+
+**Decisions** (2026-11-21):
+
+- **Format: TOML.** It has comments, sections and clear line/column
+  errors; it works with `serde`; Linux users know it. Rejected: JSON (no
+  comments, poor to hand-edit), YAML (indentation traps, `no` → `false`,
+  weaker Rust crates), KDL/RON (less known, weaker editor support).
+- **Path:** `$XDG_CONFIG_HOME/trailboard/config.toml`
+  (`~/.config/trailboard/config.toml`). Board, history and other state stay
+  in `$DATA`; only things the user chooses go in the config.
+- **One source of truth.** Once `config.toml` exists, it is the only place
+  settings, keys and theme are read from. The settings page, `:set`,
+  `:toggle` and `t` keys write it back with **`toml_edit`**, changing only
+  the touched value and keeping the user's comments, order and blank lines.
+- **Forgiving reads**, as `settings.rs` does now: each field is read on
+  its own; a bad or unknown value keeps its default, is reported with its
+  line in `:messages` and a toast, and the rest still load. A file that
+  doesn't parse at all keeps the last good config.
+- **Versioned:** a top-level `version = 1`; later changes migrate.
+- **Key bindings keep their command syntax.** One table per mode list,
+  `key = "command"` per line, so `scene::userkeys` keeps the meaning; only
+  the container changes. An empty string unbinds. Aliases get their own
+  table.
+- **Theme overrides, not replaces.** Default is to follow Omarchy as now;
+  `[theme]` can set any palette key (`accent`, `background`, …, the names
+  in `theme::FALLBACK`) as `"#rrggbb"`, plus `mode = "follow" | "dark" |
+  "light"`. Unset keys still come from Omarchy or the fallback. Derived
+  colours (`quiet`, `loud`, …) are computed from the result, so
+  DESIGN.md's contrast rules still hold.
+
+**Shape:**
+
+```toml
+version = 1
+
+[general]       # search, new_card, live_pages, default_zoom, language, …
+[look]          # corners, corner_radius, board_background, page_colours, scroll_speed, space_panel
+[privacy]       # block_ads, history, block_third_party_cookies, do_not_track, javascript, images
+[permissions]   # camera, microphone, location, notifications = "ask" | "allow" | "block"
+[network]       # proxy, proxy_server
+[downloads]     # download_to
+[[search.keywords]]   # keyword, name, url
+[theme]         # mode, accent = "#7aa2f7", …
+[keys.page]     # gs = "open https://web.archive.org/web/{url}"; d = "" unbinds
+[keys."board,page"]
+[aliases]       # play = "run mpv {hint-url}"
+```
+
+**Steps:**
+
+- ⬜ 1. **Reader.** `storage::config`: the `toml` and `toml_edit` crates,
+  parse into `Settings`, key entries and theme overrides field by field,
+  with errors that carry a line number. Unit tests for every section, bad
+  values, unknown keys, a newer `version`.
+- ⬜ 2. **Migration and switch.** On start with no `config.toml`, write
+  one from `settings.json` and `keys` (commented, every section present,
+  defaults shown as comments). Leave the old files untouched as a
+  backup; once `config.toml` exists they aren't read, and `:messages`
+  says so once. Tests: v1/v2 `settings.json`, a key file with binds,
+  unbinds and aliases.
+- ⬜ 3. **Writing back.** Every UI path that saved `settings.json` edits
+  `config.toml` through `toml_edit` instead (atomic write, comments kept).
+  Test: a commented file round-trips through a `:set` unchanged but for
+  the one value.
+- ⬜ 4. **Live reload and commands.** Watch the file (`desktop`'s
+  `notify` watcher); apply on save, with errors in `:messages`.
+  `:config` opens it in `$EDITOR`, `:config-reload` re-reads it;
+  `:keys-file` points at the `[keys]` part. The `?` sheet shows the
+  new bindings live, as now.
+- ⬜ 5. **Theme.** `[theme]` overrides on top of the Omarchy palette in
+  `theme.rs`, `mode` forcing dark/light. Screenshot check: an override
+  accent, a forced light mode, and Omarchy theme switches still followed
+  for unset keys.
+- ⬜ 6. **Docs.** A config section in `docs/GUIDE.md` with every key, its
+  values and default; README mention; CHANGELOG.
+
+**Open (decide while building):** whether per-site settings
+(`sitesettings.rs`) belong in the config too (lean: no, they're state
+set from the page); whether to accept `config.d/*.toml` drop-ins (lean:
+not now).
+
+---
+
 ## 4. Testing
 
 | Layer | How |
@@ -248,11 +408,14 @@ screenshot check for visual changes.
 file (M12 to a summary, old logs pointed to git) and `CHANGELOG.md` (one
 summary per area), and folded `docs/BUGS.md` and `docs/FUTURE.md` into §7
 and §8 here. M12 marked ✅ (the owner removed step 17).
-**Repo state:** on `master`; M12 done and committed; M13 planned.
-**Next up:** M13 step 1, `scripts/build-cef.sh` for a rented cloud machine
-(the owner is looking at a cloud account; a low-memory local mode is an
-option if they build here with an external drive). Also retake the README
-screenshots (`docs/images/`) in the new look.
+**Repo state:** on `master`; M12 done and committed; M13 and M14 planned.
+**Next up:** M14 step 1, the `config.toml` reader (asked by the owner on
+2026-11-21; format and decisions in M14). M13 step 1 is now a chained
+GitHub Actions build in a separate public repo (no cloud account needed;
+see M13 "Approach"); the owner creates that repo. Until then the
+karere codecs CEF is installed at `~/.local/share/cef` (M13 "Interim
+CEF"); bundle with `CEF_PATH=~/.local/share/cef-standard`. Also
+retake the README screenshots (`docs/images/`) in the new look.
 
 **Backlog:** `:later` lines aren't saved across quits; the messages log is
 this session's only; after Esc clears a find, n starts again from the view;

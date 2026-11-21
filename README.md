@@ -91,11 +91,11 @@ Each trail as a tree. Walk it with `j`/`k`, pin it, rename it.
 
 ## Install
 
-**Arch / Omarchy**: builds from source, fetches its own Chromium engine, adds a launcher entry.
+**Arch / Omarchy**: builds from source, fetches its own Chromium engine (with H.264/AAC video, see below), adds a launcher entry.
 
 ```sh
 git clone https://github.com/AyushKr2003/trailboard && cd trailboard/packaging/arch
-makepkg -si
+makepkg -si                         # TRAILBOARD_CODECS=0 makepkg -si for the standard engine
 ```
 
 **Any other distro**: build a portable archive (~150 MB), unpack it anywhere, run `./trailboard`.
@@ -107,18 +107,16 @@ makepkg -si
 <details>
 <summary><b>Run from source</b> (for development)</summary>
 
-Needs Rust, CMake, Ninja and a Vulkan driver.
+Needs Rust, CMake, Ninja, curl and a Vulkan driver.
 
 ```sh
-./scripts/install-cef.sh                 # Chromium engine (CEF) into ~/.local/share/cef
-mkdir -p .cargo && cat > .cargo/config.toml <<EOF
-[env]
-CEF_PATH = "$HOME/.local/share/cef"
-[target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=-Wl,-rpath,$HOME/.local/share/cef"]
-EOF
+./scripts/install-cef.sh --codecs       # Chromium engine (CEF) into ~/.local/share/cef
 cargo run --release -p trailboard -- https://en.wikipedia.org/wiki/Turbofan
 ```
+
+`install-cef.sh` also writes the local `.cargo/config.toml` (CEF's path and
+rpath) if you don't have one. Run it again with `--standard` or `--codecs`
+to switch engines; `--help` lists the options.
 
 `cargo test` and `cargo clippy` must pass before a change goes in.
 
@@ -130,6 +128,25 @@ cargo run --release -p trailboard -- https://en.wikipedia.org/wiki/Turbofan
 On kernels without unprivileged user namespaces (e.g. linux-hardened), Chromium needs its
 setuid `chrome-sandbox` helper. The Arch package installs it; for the archive, see the
 [guide](docs/GUIDE.md#running-it).
+
+</details>
+
+<details>
+<summary><b>Videos stuck at 0:00?</b> (H.264 and AAC)</summary>
+
+CEF's standard download can't play H.264 or AAC, the formats most video outside
+YouTube uses (Twitch, X, Reddit, plain `.mp4` links), because they are
+patent-licensed. Two engines are on offer:
+
+| | Standard | Codecs (`--codecs`, Arch package default) |
+|---|---|---|
+| Source | CEF's own download | The same CEF version built with H.264/AAC, from the [karere project's release](https://github.com/tobagin/karere/releases/tag/cef-156.0.26-proprietary-codecs) |
+| Plays | VP9, AV1, Opus, MP3 | Those, plus H.264 and AAC |
+| Use | Anything, including redistribution | Your own machine; `scripts/bundle.sh` won't package it |
+
+Both are pinned and checked by SHA-256. The codecs build is a third-party binary
+we use until Trailboard has its own (see [the plan](docs/PLAN.md), M13). HEVC and
+DRM video (Widevine) play in neither.
 
 </details>
 

@@ -12,11 +12,13 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
 ### Added
 
 - **Page inspector.** F12, Ctrl+Shift+I or `:inspect` opens Chromium's
-  inspector (elements, styles, console, sources, network) in a card beside
-  the page, joined to it; right-click → *Inspect* opens it on the clicked
-  element. It runs in an ordinary off-screen card and talks to the page
+  inspector (elements, styles, console, sources, network) docked in the
+  page's own card, on the right or at the bottom, with a divider to drag;
+  or in a card of its own beside the page (`:inspect beside`, or the
+  button above the card). Right-click → *Inspect* opens it on the clicked
+  element. It runs off screen like a page and talks to the page
   in-process (`web::inspector`), with no debugging port. It takes every
-  key (Passthrough), closes with its page, and is never saved.
+  key while clicked (Passthrough), closes with its page, and is never saved.
 
 - **Board and cards.** Web pages as live cards on an infinite board (CEF
   off-screen rendering, wgpu). Links open beside their source, joined by a

@@ -71,6 +71,7 @@ struct Inst {
     // z: softness (shadow blur px; an outline's width)  w: textured (0/1)
     @location(2) params: vec4f,
     // xy: how many texture widths/heights the rect spans (1, 1: exactly fills it)
+    // z: corners left square (1 top-left, 2 top-right, 4 bottom-right, 8 bottom-left)
     @location(3) uv: vec4f,
 };
 
@@ -81,6 +82,7 @@ struct VOut {
     @location(2) color: vec4f,
     @location(3) params: vec4f,
     @location(4) uv: vec2f,
+    @location(5) square: f32,
 };
 
 @vertex
@@ -116,6 +118,7 @@ fn vs_quad(@builtin(vertex_index) vi: u32, i: Inst) -> VOut {
     o.pos = vec4f(p.x / g.viewport.x * 2.0 - 1.0, 1.0 - p.y / g.viewport.y * 2.0, 0.0, 1.0);
     o.color = i.color;
     o.params = i.params;
+    o.square = i.uv.z;
     return o;
 }
 
@@ -140,6 +143,12 @@ fn fs_quad(v: VOut) -> @location(0) vec4f {
         var r = min(v.params.y, min(v.half.x, v.half.y));
         // Kind 2: square top corners (local.y < 0 is the top half).
         if (v.params.x > 1.5 && v.params.x < 2.5 && v.local.y < 0.0) {
+            r = 0.0;
+        }
+        // Corners left square, by which quarter this is.
+        let left = v.local.x < 0.0;
+        let corner = select(select(4u, 8u, left), select(2u, 1u, left), v.local.y < 0.0);
+        if ((u32(v.square + 0.5) & corner) != 0u) {
             r = 0.0;
         }
         let d = sd_round_rect(v.local, v.half, r);

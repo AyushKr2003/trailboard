@@ -9,6 +9,7 @@
 //! click 400 300        # left press + release
 //! pclick 1 20 40       # left-click card 1's page at CSS px (20, 40)
 //! prclick 1 20 40      # same, right button
+//! iclick 1 20 40       # left-click the inspector docked in card 1 at CSS px (20, 40) (irclick: right)
 //! wheel 0 -3           # line deltas (mouse wheel notches)
 //! touchpad 0 -8        # touchpad pixel deltas; `touchpad 0 0 end` lifts the fingers
 //! ctrlwheel 2
@@ -52,6 +53,7 @@ pub enum Cmd {
     RightClick(f32, f32),
     /// Click inside card `id`'s page at CSS px; `right` uses the right button.
     PageClick { id: u64, x: f32, y: f32, right: bool },
+    DockClick { id: u64, x: f32, y: f32, right: bool },
     Wheel(f32, f32),
     /// Touchpad pixel deltas; `end` is the fingers lifting.
     Touchpad { dx: f32, dy: f32, end: bool },
@@ -137,6 +139,7 @@ fn parse(line: &str) -> Option<Cmd> {
         "click" | "sclick" => Cmd::Click(num(0), num(1), word == "sclick"),
         "rclick" => Cmd::RightClick(num(0), num(1)),
         "pclick" | "prclick" => Cmd::PageClick { id: num(0) as u64, x: num(1), y: num(2), right: word == "prclick" },
+        "iclick" | "irclick" => Cmd::DockClick { id: num(0) as u64, x: num(1), y: num(2), right: word == "irclick" },
         "wheel" => Cmd::Wheel(num(0), num(1)),
         "touchpad" => Cmd::Touchpad { dx: num(0), dy: num(1), end: rest.split_whitespace().nth(2) == Some("end") },
         "ctrlwheel" => Cmd::CtrlWheel(num(0)),

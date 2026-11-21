@@ -6,6 +6,7 @@ pub mod address;
 pub mod arrange;
 pub mod caret;
 pub mod command;
+pub mod dock;
 pub mod export;
 pub mod fold;
 pub mod geom;

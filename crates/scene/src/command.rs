@@ -163,6 +163,7 @@ const ZOOM: &[&str] = &["in", "out", "reset"];
 const COPY: &[&str] = &["address", "title", "markdown", "site", "clean"];
 const MESSAGES: &[&str] = &["clear"];
 const RELOAD: &[&str] = &["fresh"];
+const INSPECT: &[&str] = &["right", "bottom", "beside"];
 
 const fn s(cmd: Cmd, name: &'static str, aliases: &'static [&'static str], arg: Arg, arg_hint: &'static str, about: &'static str) -> Spec {
     Spec { cmd, name, aliases, arg, arg_hint, about }
@@ -207,7 +208,7 @@ pub const COMMANDS: &[Spec] = &[
     s(Cmd::Stop, "stop", &[], No, "", "Stop loading the page"),
     s(Cmd::Home, "home", &[], No, "", "A start page beside the card"),
     s(Cmd::ViewSource, "view-source", &[], No, "", "The page's source in a card beside"),
-    s(Cmd::Inspect, "inspect", &[], No, "", "The page inspector beside, or closed"),
+    s(Cmd::Inspect, "inspect", &[], Opt(Kind::Choice(INSPECT)), "[right|bottom|beside]", "The page inspector in the card, or closed (right, bottom: docked there; beside: in a card of its own)"),
     s(Cmd::SaveFile, "save-file", &[], No, "", "Download the page as a file"),
     s(Cmd::Fullscreen, "fullscreen", &[], No, "", "Full screen on or off"),
     s(Cmd::Zoom, "zoom", &[], Req(Kind::Choice(ZOOM)), "<in|out|reset>", "Zoom the page"),

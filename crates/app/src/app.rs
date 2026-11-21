@@ -96,6 +96,7 @@ use std::time::{Duration, Instant};
 use compositor::{Background, Layer, Quad, Renderer, Shape, Text};
 use scene::arrange::Arrange;
 use scene::caret;
+use scene::dock;
 use scene::hint;
 use scene::jump::{self, Before, BoardSpot, ScrollSpot};
 use scene::keys::{self, Action as KeyAction, Outcome};
@@ -217,6 +218,20 @@ fn page_key(epoch: u64, id: NodeId) -> u64 {
     (epoch << KEY_ID_BITS) | id.0
 }
 
+/// Set in a page key for the inspector docked in that card (`App::docks`).
+const DOCK_BIT: u64 = 1 << (KEY_ID_BITS - 1);
+
+/// Browser and texture key for the inspector docked in card `id`.
+fn dock_key(epoch: u64, id: NodeId) -> u64 {
+    page_key(epoch, id) | DOCK_BIT
+}
+
+/// A wheel notch in the docked inspector, px.
+const WHEEL_LINE: f32 = 100.0;
+
+/// Width of the divider between a page and its docked inspector, CSS px.
+const DOCK_GAP: f32 = 6.0;
+
 /// Per-space state that lives only for this session.
 #[derive(Default)]
 struct Session {
@@ -238,6 +253,10 @@ enum Drag {
     Resize { id: NodeId, anchor: Vec2, start: Rect },
     /// Mouse is down inside a page; moves and release go to it.
     Page { id: NodeId, button: WebButton },
+    /// The same inside card `id`'s docked inspector.
+    Dock { id: NodeId, button: WebButton },
+    /// Dragging the divider between card `id`'s page and its inspector.
+    Divider { id: NodeId },
 }
 
 /// Link hints on card `id`: its visible links (rects in the page view's CSS
@@ -354,6 +373,25 @@ struct Card {
     cursor: web::Cursor,
 }
 
+/// A docked card's parts on screen: the page and the inspector (screen
+/// rect, CSS size each) and the divider between them.
+struct DockParts {
+    page: (Rect, Vec2),
+    divider: Rect,
+    inspector: (Rect, Vec2),
+}
+
+/// The page inspector docked in a card, beside or below its page (`App::docks`).
+struct Dock {
+    page: Page,
+    side: dock::Side,
+    /// The inspector's share of the card (`scene::dock::split`).
+    share: f32,
+    hidden: bool,
+    /// Cursor the inspector asked for, shown while the pointer is over it.
+    cursor: web::Cursor,
+}
+
 /// Appear animations of the overlays.
 #[derive(Default)]
 struct Anims {
@@ -389,6 +427,13 @@ pub struct App {
     /// Inspector cards and the card each inspects. An inspector lives only
     /// while both run (`check_inspectors`); it never sleeps and is never saved.
     inspectors: HashMap<NodeId, NodeId>,
+    /// Inspectors docked in their page's card, by card. Like inspector
+    /// cards they live only while their page does and are never saved.
+    docks: HashMap<NodeId, Dock>,
+    /// The keys go to the focused card's docked inspector, not its page.
+    dock_keys: bool,
+    /// Where the next docked inspector opens (the side used last).
+    dock_side: dock::Side,
     max_live: usize,
     /// The user's settings (Ctrl+,), saved in `settings.json`.
     settings: Settings,
@@ -484,6 +529,8 @@ pub struct App {
     /// The CSS size each live card's last uploaded frame was laid out at, so
     /// a frame from before a resize is drawn at its own size, not stretched.
     page_css: HashMap<NodeId, (f32, f32)>,
+    /// The same for each docked inspector.
+    dock_css: HashMap<NodeId, (f32, f32)>,
     /// The trails sidebar (Ctrl+B): collapsed groups, highlight and scroll.
     sidebar: scene::sidebar::Sidebar,
     sidebar_open: bool,
@@ -844,6 +891,9 @@ impl App {
             board_pan: Default::default(),
             cards: HashMap::new(),
             inspectors: HashMap::new(),
+            docks: HashMap::new(),
+            dock_keys: false,
+            dock_side: dock::Side::default(),
             max_live: live_env.unwrap_or(settings.live_pages),
             blocking: crate::blocking::Blocking::start(data_dir.clone(), settings.block_ads),
             settings,
@@ -892,6 +942,7 @@ impl App {
             read: None,
             read_morph: None,
             page_css: HashMap::new(),
+            dock_css: HashMap::new(),
             sidebar: Default::default(),
             sidebar_open: false,
             sidebar_keys: false,
@@ -1000,6 +1051,7 @@ impl App {
     pub fn shutdown(&mut self) {
         self.save();
         self.stop_downloads();
+        self.docks.clear();
         self.cards.clear(); // closes every browser before CEF shuts down
         self.parked.clear();
     }
@@ -1126,7 +1178,12 @@ impl App {
 
     /// The card a page key belongs to, if that page is from the current space.
     fn node_of(&self, key: u64) -> Option<NodeId> {
-        (key >> KEY_ID_BITS == self.epoch).then_some(NodeId(key & ((1 << KEY_ID_BITS) - 1)))
+        (key >> KEY_ID_BITS == self.epoch && key & DOCK_BIT == 0).then_some(NodeId(key & ((1 << KEY_ID_BITS) - 1)))
+    }
+
+    /// The card whose docked inspector has page key `key`.
+    fn dock_of(&self, key: u64) -> Option<NodeId> {
+        (key >> KEY_ID_BITS == self.epoch && key & DOCK_BIT != 0).then_some(NodeId(key & (DOCK_BIT - 1)))
     }
 
     fn toast(&mut self, msg: impl Into<String>) {
@@ -1183,6 +1240,9 @@ impl App {
     fn unload_space(&mut self) {
         for id in self.inspectors.keys().copied().collect::<Vec<_>>() {
             self.close_inspector(id);
+        }
+        for id in self.docks.keys().copied().collect::<Vec<_>>() {
+            self.close_dock(id);
         }
         self.finish_arrange(true);
         self.save();
@@ -1490,14 +1550,60 @@ impl App {
         read::card_css(card, self.read_layout().css.0)
     }
 
-    /// Where card `id`'s page is drawn (screen px) and its size in CSS px.
-    fn page_view(&self, id: NodeId) -> Option<(Rect, Vec2)> {
+    /// Card `id`'s content area (screen px) and its size in CSS px: the
+    /// page's, or the page's and its docked inspector's together.
+    fn content_view(&self, id: NodeId) -> Option<(Rect, Vec2)> {
         if self.read == Some(id) {
             let l = self.read_layout();
             return Some((l.content, Vec2::new(l.css.0 as f32, l.css.1 as f32)));
         }
         let n = self.scene.node(id)?;
         Some((self.to_screen_rect(n.rect), self.card_css(n)))
+    }
+
+    /// Where card `id`'s page is drawn (screen px) and its size in CSS px.
+    fn page_view(&self, id: NodeId) -> Option<(Rect, Vec2)> {
+        let (r, css) = self.content_view(id)?;
+        Some(self.dock_split(id, r, css).map_or((r, css), |s| s.page))
+    }
+
+    /// Card `id`'s content at `r` (screen px), `css` CSS px, split around
+    /// its docked inspector; `None` without one.
+    fn dock_split(&self, id: NodeId, r: Rect, css: Vec2) -> Option<DockParts> {
+        let d = self.docks.get(&id)?;
+        let s = dock::split(Rect::new(0.0, 0.0, css.x, css.y), d.side, d.share, DOCK_GAP);
+        let k = r.w / css.x.max(1e-3);
+        let to = |c: Rect| Rect::new(r.x + c.x * k, r.y + c.y * k, c.w * k, c.h * k);
+        Some(DockParts {
+            page: (to(s.page), Vec2::new(s.page.w, s.page.h)),
+            divider: to(s.divider),
+            inspector: (to(s.inspector), Vec2::new(s.inspector.w, s.inspector.h)),
+        })
+    }
+
+    /// Screen point → CSS px in card `id`'s docked inspector.
+    fn dock_point(&self, id: NodeId, screen: Vec2) -> Option<(i32, i32)> {
+        let (r, css) = self.content_view(id)?;
+        let (r, css) = self.dock_split(id, r, css)?.inspector;
+        let k = css.x / r.w.max(1e-3);
+        Some((((screen.x - r.x) * k).round() as i32, ((screen.y - r.y) * k).round() as i32))
+    }
+
+    /// What a point in card `id`'s content is over: its page, its docked
+    /// inspector, or the divider between them.
+    fn content_hit(&self, id: NodeId, screen: Vec2) -> Hit {
+        if let Some((r, css)) = self.content_view(id)
+            && let Some(parts) = self.dock_split(id, r, css)
+        {
+            // A little wider than it looks, to be easy to catch.
+            if parts.divider.inflate(2.0 * self.scale()).contains(screen) {
+                return Hit::Divider(id);
+            }
+            if parts.inspector.0.contains(screen) {
+                return Hit::Inspector(id);
+            }
+        }
+        Hit::Content(id)
     }
 
     /// Screen point → CSS px in card `id`'s page.
@@ -2053,6 +2159,7 @@ impl App {
 
     /// Put a card to sleep: close its browser but keep its last frame on screen.
     fn sleep_page(&mut self, id: NodeId) {
+        self.close_dock(id);
         if let Some(card) = self.cards.remove(&id) {
             self.release(card.page);
             log::info!("sleeping card {} ({} live)", id.0, self.cards.len());
@@ -2061,6 +2168,7 @@ impl App {
 
     /// Stop the live browser of a card that has left the scene.
     fn drop_page(&mut self, id: NodeId) {
+        self.close_dock(id);
         self.dirty = true;
         if let Some(card) = self.cards.remove(&id) {
             self.release(card.page);
@@ -2158,6 +2266,10 @@ impl App {
         if let Some(old) = self.focused.and_then(|o| self.cards.get(&o)) {
             old.page.set_focus(false);
         }
+        if let Some(d) = self.focused.and_then(|o| self.docks.get(&o)) {
+            d.page.set_focus(false);
+        }
+        self.dock_keys = false;
         if let (Some(old), Some(_)) = (self.focused, id) {
             self.alt_card = Some(old);
             // Going to another card is a jump: '' comes back here.
@@ -2185,7 +2297,13 @@ impl App {
     }
 
     fn focused_page(&self) -> Option<&Page> {
-        self.focused.and_then(|id| self.cards.get(&id)).map(|c| &c.page)
+        let id = self.focused?;
+        if self.dock_keys
+            && let Some(d) = self.docks.get(&id)
+        {
+            return Some(&d.page);
+        }
+        self.cards.get(&id).map(|c| &c.page)
     }
 
     /// Keys go to the focused page (after a click in it, Enter, or in Read
@@ -2218,7 +2336,13 @@ impl App {
     fn give_keys(&mut self, mode: PageKeys) {
         self.keys_in_page = true;
         // The inspector has its own keys for everything; Shift+Esc leaves.
-        let mode = if mode == PageKeys::Page || self.on_inspector() { self.site_keys(self.focused) } else { mode };
+        let mode = if self.on_inspector() {
+            PageKeys::Passthrough
+        } else if mode == PageKeys::Page {
+            self.site_keys(self.focused)
+        } else {
+            mode
+        };
         self.set_page_keys(mode);
     }
 
@@ -4169,7 +4293,7 @@ impl App {
             },
             Cmd::Home => self.open_home(),
             Cmd::ViewSource => page(self, KeyAction::ViewSource, None),
-            Cmd::Inspect => self.toggle_inspector(None),
+            Cmd::Inspect => self.inspect_command(&arg),
             Cmd::SaveFile => page(self, KeyAction::DownloadPage, None),
             Cmd::Fullscreen => self.toggle_fullscreen(),
             Cmd::Zoom => self.run_command(match arg.as_str() {
@@ -6894,12 +7018,27 @@ impl App {
             updates.push((n.id, on_screen, size));
         }
         for (id, visible, size) in updates {
+            // A docked inspector takes its share of the card.
+            let (size, insp) = match self.docks.get(&id) {
+                Some(d) => {
+                    let s = dock::split(Rect::new(0.0, 0.0, size.0 as f32, size.1 as f32), d.side, d.share, DOCK_GAP);
+                    ((s.page.w as i32, s.page.h as i32), Some((s.inspector.w as i32, s.inspector.h as i32)))
+                }
+                None => (size, None),
+            };
             if let Some(card) = self.cards.get_mut(&id) {
                 if card.hidden == visible {
                     card.hidden = !visible;
                     card.page.set_hidden(!visible);
                 }
                 card.page.resize(size, page_scale);
+            }
+            if let (Some(d), Some(insp)) = (self.docks.get_mut(&id), insp) {
+                if d.hidden == visible {
+                    d.hidden = !visible;
+                    d.page.set_hidden(!visible);
+                }
+                d.page.resize(insp, page_scale);
             }
         }
     }
@@ -6939,7 +7078,7 @@ impl App {
         let vp = self.viewport();
         let screen = Rect::new(0.0, 0.0, vp.x, vp.y);
         // An inspector and the card it inspects stay live together.
-        let paired = |id: NodeId| self.inspectors.contains_key(&id) || self.inspectors.values().any(|&s| s == id);
+        let paired = |id: NodeId| self.inspectors.contains_key(&id) || self.inspectors.values().any(|&s| s == id) || self.docks.contains_key(&id);
         let candidates: Vec<liveness::Candidate> = self
             .scene
             .nodes()
@@ -7007,7 +7146,7 @@ impl App {
                     }
                 }
                 WebEvent::OpenBeside { source, url } => {
-                    let Some(src) = self.node_of(source) else { continue };
+                    let Some(src) = self.node_of(source).or_else(|| self.dock_of(source)) else { continue };
                     if self.scene.node(src).is_some()
                         && let Some(id) = self.open_card(Rect::default(), &url, Some(src)) {
                             self.ensure_visible(id);
@@ -7038,6 +7177,20 @@ impl App {
                     }
                 }
                 WebEvent::CursorChanged { page, cursor } => {
+                    if let Some(id) = self.dock_of(page) {
+                        if let Some(d) = self.docks.get_mut(&id) {
+                            d.cursor = cursor;
+                        }
+                        let over = match self.drag {
+                            Drag::Dock { id: d, .. } => d == id,
+                            Drag::None => self.hit(self.cursor) == Hit::Inspector(id),
+                            _ => false,
+                        };
+                        if over {
+                            self.set_cursor(cursor);
+                        }
+                        continue;
+                    }
                     let Some(id) = self.node_of(page) else { continue };
                     if let Some(c) = self.cards.get_mut(&id) {
                         c.cursor = cursor;
@@ -7352,7 +7505,7 @@ impl App {
 
     fn hit(&self, screen: Vec2) -> Hit {
         if let Some(id) = self.read {
-            return if self.read_layout().content.contains(screen) { Hit::Content(id) } else { Hit::ReadBar(id) };
+            return if self.read_layout().content.contains(screen) { self.content_hit(id, screen) } else { Hit::ReadBar(id) };
         }
         let w = self.to_world(screen);
         let top = self.scene.topmost_at(w);
@@ -7401,7 +7554,7 @@ impl App {
         if w.x > n.rect.right() - grip.min(n.rect.w / 4.0) && w.y > n.rect.bottom() - grip.min(n.rect.h / 4.0) {
             return Hit::Grip(id);
         }
-        Hit::Content(id)
+        self.content_hit(id, screen)
     }
 
     fn mouse_input(&mut self, state: ElementState, button: MouseButton) {
@@ -7649,9 +7802,43 @@ impl App {
                     let start = self.scene.node(id).expect("hit node").rect;
                     self.drag = Drag::Resize { id, anchor: self.to_world(p), start };
                 }
+                Hit::Inspector(id) => {
+                    self.selection.clear();
+                    self.focus(Some(id));
+                    self.set_dock_keys(true);
+                    self.give_keys(PageKeys::Passthrough);
+                    if let (Some(d), Some((x, y))) = (self.docks.get(&id), self.dock_point(id, p)) {
+                        d.page.mouse_button(x, y, mods, web_button, false, self.click_count.min(3));
+                    }
+                    self.drag = Drag::Dock { id, button: web_button };
+                }
+                Hit::Divider(id) => {
+                    self.selection.clear();
+                    self.focus(Some(id));
+                    self.drag = Drag::Divider { id };
+                }
+                Hit::DockSide(id) => {
+                    self.keys_in_page = false;
+                    self.focus(Some(id));
+                    let side = self.docks.get(&id).map_or(self.dock_side, |d| d.side.flip());
+                    self.dock_to(id, side);
+                    self.menu_pressed = true;
+                }
+                Hit::Undock(id) => {
+                    self.undock(id);
+                    self.menu_pressed = true;
+                }
+                Hit::Redock(id) => {
+                    if let Some(&src) = self.inspectors.get(&id) {
+                        self.close_inspector(id);
+                        self.open_dock(src, self.dock_side, None);
+                    }
+                    self.menu_pressed = true;
+                }
                 Hit::Content(id) => {
                     self.selection.clear();
                     self.focus(Some(id));
+                    self.set_dock_keys(false);
                     // Insert until the page says the click wasn't in a field
                     // (`WebEvent::Focus`), so typing right after a click lands.
                     self.give_keys(PageKeys::Insert);
@@ -7669,6 +7856,10 @@ impl App {
             if let Drag::Page { id, button: b } = self.drag
                 && let (Some(card), Some((x, y))) = (self.cards.get(&id), self.page_point(id, p)) {
                     card.page.mouse_button(x, y, mods, b, true, self.click_count.min(3));
+                }
+            if let Drag::Dock { id, button: b } = self.drag
+                && let (Some(d), Some((x, y))) = (self.docks.get(&id), self.dock_point(id, p)) {
+                    d.page.mouse_button(x, y, mods, b, true, self.click_count.min(3));
                 }
             match self.drag {
                 Drag::Resize { id, start, .. } => self.history.moved(&self.scene, id, start),
@@ -7784,9 +7975,35 @@ impl App {
                     card.page.mouse_move(x, y, mods | held, false);
                 }
             }
+            Drag::Dock { id, button } => {
+                let held = match button {
+                    WebButton::Left => web::flags::LEFT_MOUSE,
+                    WebButton::Middle => web::flags::MIDDLE_MOUSE,
+                    WebButton::Right => web::flags::RIGHT_MOUSE,
+                };
+                if let (Some(d), Some((x, y))) = (self.docks.get(&id), self.dock_point(id, p)) {
+                    d.page.mouse_move(x, y, mods | held, false);
+                }
+            }
+            Drag::Divider { id } => {
+                if let Some((r, css)) = self.content_view(id)
+                    && let Some(d) = self.docks.get_mut(&id)
+                {
+                    let gap = DOCK_GAP * r.w / css.x.max(1e-3);
+                    d.share = dock::share_at(r, d.side, p.x, p.y, gap);
+                }
+            }
             Drag::None => {
                 let hit = self.hit(p);
                 let prev_hit = self.hit(prev);
+                if let Hit::Inspector(id) = hit
+                    && let (Some(d), Some((x, y))) = (self.docks.get(&id), self.dock_point(id, p)) {
+                        d.page.mouse_move(x, y, mods, false);
+                    }
+                if let (Hit::Inspector(old), false) = (prev_hit, hit == prev_hit)
+                    && let (Some(d), Some((x, y))) = (self.docks.get(&old), self.dock_point(old, p)) {
+                        d.page.mouse_move(x, y, mods, true);
+                    }
                 if let Hit::Content(id) = hit
                     && let (Some(card), Some((x, y))) = (self.cards.get(&id), self.page_point(id, p)) {
                         card.page.mouse_move(x, y, mods, false);
@@ -7800,7 +8017,13 @@ impl App {
                     Hit::Header(_) => web::Cursor::Grab,
                     Hit::Grip(_) => web::Cursor::ResizeSE,
                     Hit::Close(_) | Hit::Back(_) | Hit::Forward(_) | Hit::Reload(_) | Hit::Badge(_) | Hit::Shield(_) | Hit::Tag(_) => web::Cursor::Pointer,
+                    Hit::DockSide(_) | Hit::Undock(_) | Hit::Redock(_) => web::Cursor::Pointer,
                     Hit::Content(id) => self.cards.get(&id).map_or(web::Cursor::Default, |c| c.cursor),
+                    Hit::Inspector(id) => self.docks.get(&id).map_or(web::Cursor::Default, |d| d.cursor),
+                    Hit::Divider(id) => match self.docks.get(&id).map(|d| d.side) {
+                        Some(dock::Side::Bottom) => web::Cursor::ResizeNS,
+                        _ => web::Cursor::ResizeEW,
+                    },
                     Hit::Board | Hit::ReadBar(_) => web::Cursor::Default,
                 };
                 self.set_cursor(cursor);
@@ -7868,6 +8091,18 @@ impl App {
                 self.scale(),
             );
             self.camera_moved();
+            return;
+        }
+        if let Hit::Inspector(id) = self.hit(self.cursor)
+            && Some(id) == self.focused
+        {
+            // The inspector scrolls as Chromium does it, without our glide.
+            if let (Some(d), Some((x, y))) = (self.docks.get(&id), self.dock_point(id, self.cursor)) {
+                let speed = self.settings.scroll_speed.factor();
+                let (dx, dy) = if lines { (dx * WHEEL_LINE * speed, dy * WHEEL_LINE * speed) } else { (dx, dy) };
+                d.page.mouse_wheel(x, y, keymap::modifiers(self.mods), dx as i32, dy as i32, !lines);
+            }
+            self.board_pan.stop();
             return;
         }
         if let Hit::Content(id) | Hit::Grip(id) = self.hit(self.cursor)
@@ -8682,6 +8917,12 @@ impl App {
                 r.update_page(page_key(epoch, *id), f.width, f.height, &f.pixels, f.serial);
                 self.page_css.insert(*id, f.css);
             }
+            self.dock_css.clear();
+            for (id, d) in &self.docks {
+                let f = d.page.frame();
+                r.update_page(dock_key(epoch, *id), f.width, f.height, &f.pixels, f.serial);
+                self.dock_css.insert(*id, f.css);
+            }
             for s in self.icons.values() {
                 r.update_page(s.key, s.icon.width, s.icon.height, &s.icon.pixels, s.serial);
             }
@@ -8918,17 +9159,27 @@ impl App {
             crate::chrome::fill(&mut l, frame, radius, rgb(sticky.map_or_else(|| th.card(focused), |c| th.sticky_strip(c, focused)), 1.0));
             let key = page_key(epoch, n.id);
             let has_tex = self.renderer.as_ref().is_some_and(|r| r.has_page(key));
+            // With a docked inspector the page takes its part of the card.
+            let parts = self.dock_split(n.id, content, self.card_css(n));
+            let (page_rect, page_css) = parts.as_ref().map_or((content, self.card_css(n)), |p| p.page);
             // A live page's last frame at its own size: right after a resize
             // (leaving Solo, resizing the card) it is cropped or filled
             // out, never squashed, until the page paints at the new size.
             let extent = match (card, self.page_css.get(&n.id)) {
-                (Some(_), Some(&css)) => read::extent(self.card_css(n), css),
+                (Some(_), Some(&css)) => read::extent(page_css, css),
                 _ => [1.0, 1.0],
+            };
+            let side = self.docks.get(&n.id).map(|d| d.side);
+            let square = match (sticky, side) {
+                (Some(_), _) => compositor::corners::TOP,
+                (None, Some(dock::Side::Right)) => compositor::corners::RIGHT,
+                (None, Some(dock::Side::Bottom)) => compositor::corners::BOTTOM,
+                (None, None) => 0,
             };
             l.quads.push(Quad {
                 // The page is the card: clipped to its rounded shape. (A
                 // sticky note's page sits under its strip: rounded below only.)
-                shape: Shape::Page { rect: content, radius, round_bottom: sticky.is_some(), extent },
+                shape: Shape::Page { rect: page_rect, radius, square, extent },
                 color: match (has_tex, asleep) {
                     (true, false) => [1.0; 4],
                     (true, true) => [0.72, 0.72, 0.74, 1.0], // a sleeping card's last frame, dimmed
@@ -8937,6 +9188,10 @@ impl App {
                 },
                 texture: has_tex.then_some(key),
             });
+            if let (Some(parts), Some(side)) = (&parts, side) {
+                let hot = hover == Hit::Divider(n.id) || matches!(self.drag, Drag::Divider { id } if id == n.id);
+                self.dock_layer(&mut l, n.id, parts, side, radius, focused, hot);
+            }
             if asleep && !has_tex && sticky.is_none() {
                 // Never painted: the site's icon and the title, centred, so
                 // the card still says what it is.
@@ -9067,6 +9322,15 @@ impl App {
                         buttons.push((Hit::Reload(n.id), crate::icons::Icon::Reload, true));
                         buttons.push((Hit::Forward(n.id), crate::icons::Icon::Forward, c.can_forward));
                         buttons.push((Hit::Back(n.id), crate::icons::Icon::Back, c.can_back));
+                    }
+                    // A docked inspector: to the other side, or to a card
+                    // of its own; an inspector card: back into its page's.
+                    if self.docks.contains_key(&n.id) && frame.w >= BAR_NAV_MIN * ui {
+                        buttons.push((Hit::Undock(n.id), crate::icons::Icon::Trail, true));
+                        buttons.push((Hit::DockSide(n.id), crate::icons::Icon::Sidebar, true));
+                    }
+                    if self.inspectors.contains_key(&n.id) {
+                        buttons.push((Hit::Redock(n.id), crate::icons::Icon::Sidebar, true));
                     }
                     for (hit, icon, enabled) in buttons {
                         let cell = Rect::new(right - btn, bar.y, btn, bar.h);
@@ -9712,11 +9976,41 @@ impl App {
         });
         l.quads.push(Quad { shape: Shape::Rect { rect: frame, radius }, color: rgb(th.card(true), 1.0), texture: None });
         l.quads.push(Quad {
-            shape: Shape::Page { rect: mo.content, radius, round_bottom: true, extent },
+            shape: Shape::Page { rect: mo.content, radius, square: compositor::corners::TOP, extent },
             color: if has_tex { [1.0; 4] } else { rgb(th.placeholder(), 1.0) },
             texture: has_tex.then_some(key),
         });
         Some(l)
+    }
+
+    /// Card `id`'s docked inspector and the divider before it.
+    #[allow(clippy::too_many_arguments)]
+    fn dock_layer(&self, l: &mut Layer, id: NodeId, parts: &DockParts, side: dock::Side, radius: f32, focused: bool, hot: bool) {
+        let th = &self.theme;
+        let scale = self.scale();
+        let key = dock_key(self.epoch, id);
+        let has_tex = self.renderer.as_ref().is_some_and(|r| r.has_page(key));
+        let (rect, css) = parts.inspector;
+        let extent = self.dock_css.get(&id).map_or([1.0, 1.0], |&c| read::extent(css, c));
+        let square = match side {
+            dock::Side::Right => compositor::corners::LEFT,
+            dock::Side::Bottom => compositor::corners::TOP,
+        };
+        l.quads.push(Quad {
+            shape: Shape::Page { rect, radius, square, extent },
+            color: if has_tex { [1.0; 4] } else { rgb(th.placeholder(), 1.0) },
+            texture: has_tex.then_some(key),
+        });
+        // The divider: the card's own colour with a line down its middle,
+        // the accent while it is under the pointer or dragged.
+        let d = parts.divider;
+        crate::chrome::fill(l, d, 0.0, rgb(th.card(focused), 1.0));
+        let w = if hot { 2.0 * scale } else { scale.max(1.0) };
+        let line = match side {
+            dock::Side::Right => Rect::new(d.center().x - w / 2.0, d.y, w, d.h),
+            dock::Side::Bottom => Rect::new(d.x, d.center().y - w / 2.0, d.w, w),
+        };
+        crate::chrome::fill(l, line, 0.0, rgb(if hot { th.accent() } else { th.line_strong() }, 1.0));
     }
 
     /// Solo: card `id`'s page across the whole window.
@@ -9728,12 +10022,19 @@ impl App {
         let has_tex = self.renderer.as_ref().is_some_and(|r| r.has_page(key));
         let loading = self.cards.get(&id).is_some_and(|c| c.loading);
         let mut l = Layer::default();
-        let extent = self.page_css.get(&id).map_or([1.0, 1.0], |&css| read::extent(Vec2::new(lay.css.0 as f32, lay.css.1 as f32), css));
+        let full = Vec2::new(lay.css.0 as f32, lay.css.1 as f32);
+        let parts = self.dock_split(id, lay.content, full);
+        let (rect, css) = parts.as_ref().map_or((lay.content, full), |p| p.page);
+        let extent = self.page_css.get(&id).map_or([1.0, 1.0], |&c| read::extent(css, c));
         l.quads.push(Quad {
-            shape: Shape::Page { rect: lay.content, radius: 0.0, round_bottom: false, extent },
+            shape: Shape::Page { rect, radius: 0.0, square: 0, extent },
             color: if has_tex { [1.0; 4] } else { rgb(th.placeholder(), 1.0) },
             texture: has_tex.then_some(key),
         });
+        if let (Some(parts), Some(side)) = (&parts, self.docks.get(&id).map(|d| d.side)) {
+            let hot = self.hover == Hit::Divider(id) || matches!(self.drag, Drag::Divider { id: d } if d == id);
+            self.dock_layer(&mut l, id, parts, side, 0.0, true, hot);
+        }
         // No title bar: the page fills the window. A loading page shows a
         // thin moving line across its top edge.
         if loading {
@@ -10309,16 +10610,68 @@ impl App {
         };
         if self.inspectors.contains_key(&id) {
             self.close_inspector(id);
+        } else if self.docks.contains_key(&id) {
+            self.close_dock(id);
         } else if let Some(insp) = self.inspector_of(id) {
             self.close_inspector(insp);
         } else {
-            self.open_inspector(id, at);
+            self.open_dock(id, self.dock_side, at);
         }
+    }
+
+    /// `:inspect [right|bottom|beside]`: no argument toggles it; `right` /
+    /// `bottom` dock it there (moving it from its own card, or to the other
+    /// side); `beside` gives it a card of its own.
+    fn inspect_command(&mut self, arg: &str) {
+        let Some(id) = self.current() else {
+            self.toast("No card to inspect");
+            return;
+        };
+        // The card inspected, whether `id` is it or its inspector card.
+        let src = self.inspectors.get(&id).copied().unwrap_or(id);
+        if let Some(side) = dock::Side::parse(arg) {
+            if let Some(insp) = self.inspector_of(src) {
+                self.close_inspector(insp);
+            }
+            self.dock_to(src, side);
+        } else if arg == "beside" {
+            if self.inspector_of(src).is_none() {
+                self.undock(src);
+            }
+        } else {
+            self.toggle_inspector(None);
+        }
+    }
+
+    /// Card `id`'s inspector docked on `side`: moved there, or opened.
+    fn dock_to(&mut self, id: NodeId, side: dock::Side) {
+        self.dock_side = side;
+        match self.docks.get_mut(&id) {
+            Some(d) => {
+                d.side = side;
+                log::info!("inspector of card {} docked {side:?}", id.0);
+            }
+            None => self.open_dock(id, side, None),
+        }
+    }
+
+    /// Card `id`'s docked inspector moved to a card of its own beside it.
+    fn undock(&mut self, id: NodeId) {
+        self.close_dock(id);
+        self.open_inspector(id, None);
     }
 
     /// The page menu's *Inspect*: the inspector of card `id`, on the element
     /// at `at` (CSS px in the page), opened if it isn't.
     fn inspect_at(&mut self, id: NodeId, at: (f32, f32)) {
+        if let (Some(c), Some(d)) = (self.cards.get(&id), self.docks.get(&id)) {
+            c.page.inspect_at(&d.page, at);
+            self.focus(Some(id));
+            self.set_dock_keys(true);
+            self.give_keys(PageKeys::Passthrough);
+            self.ensure_visible(id);
+            return;
+        }
         match self.inspector_of(id) {
             Some(insp) => {
                 if let (Some(c), Some(i)) = (self.cards.get(&id), self.cards.get(&insp)) {
@@ -10333,7 +10686,7 @@ impl App {
 
     /// The focused card is an inspector.
     fn on_inspector(&self) -> bool {
-        self.focused.is_some_and(|id| self.inspectors.contains_key(&id))
+        self.focused.is_some_and(|id| self.inspectors.contains_key(&id) || (self.dock_keys && self.docks.contains_key(&id)))
     }
 
     /// The inspector card of card `src`, if it has one open.
@@ -10346,6 +10699,7 @@ impl App {
         if n.is_inspector() {
             return;
         }
+        self.close_dock(src);
         self.create_page(src);
         if !self.cards.contains_key(&src) {
             self.toast("This card's page isn't running");
@@ -10375,6 +10729,76 @@ impl App {
         self.give_keys(PageKeys::Page);
     }
 
+    /// Card `id`'s inspector docked in it on `side`; `at`: an element to
+    /// open on (CSS px in the page).
+    fn open_dock(&mut self, id: NodeId, side: dock::Side, at: Option<(f32, f32)>) {
+        let Some(n) = self.scene.node(id) else { return };
+        if n.is_inspector() || self.docks.contains_key(&id) {
+            return;
+        }
+        self.create_page(id);
+        if !self.cards.contains_key(&id) {
+            self.toast("This card's page isn't running");
+            return;
+        }
+        let css = self.card_css(self.scene.node(id).expect("checked"));
+        let s = dock::split(Rect::new(0.0, 0.0, css.x, css.y), side, dock::DEFAULT_SHARE, DOCK_GAP);
+        let size = (s.inspector.w as i32, s.inspector.h as i32);
+        let key = dock_key(self.epoch, id);
+        let Some(page) = self.cards[&id].page.open_inspector(key, size, self.page_scale, at, &self.spawn_beside) else {
+            self.toast("Couldn't open the inspector");
+            return;
+        };
+        log::info!("inspector docked {side:?} in card {}", id.0);
+        self.dock_side = side;
+        self.docks.insert(id, Dock { page, side, share: dock::DEFAULT_SHARE, hidden: false, cursor: web::Cursor::Default });
+        self.focus(Some(id));
+        self.set_dock_keys(true);
+        self.give_keys(PageKeys::Passthrough);
+        self.ensure_visible(id);
+    }
+
+    /// Takes card `id`'s docked inspector away; the page has the card again.
+    fn close_dock(&mut self, id: NodeId) {
+        if self.docks.remove(&id).is_none() {
+            return;
+        }
+        log::info!("inspector in card {} closed", id.0);
+        self.dock_css.remove(&id);
+        let key = dock_key(self.epoch, id);
+        if let Some(r) = self.renderer.as_mut() {
+            r.remove_page(key);
+        }
+        if self.focused == Some(id) && self.dock_keys {
+            self.dock_keys = false;
+            if let Some(c) = self.cards.get(&id) {
+                c.page.set_focus(true);
+            }
+            if self.page_keys == PageKeys::Passthrough {
+                self.set_page_keys(self.site_keys(Some(id)));
+            }
+        }
+        if matches!(self.drag, Drag::Dock { id: d, .. } | Drag::Divider { id: d } if d == id) {
+            self.drag = Drag::None;
+        }
+    }
+
+    /// The keys go to the focused card's docked inspector (`on`) or its page.
+    fn set_dock_keys(&mut self, on: bool) {
+        let Some(id) = self.focused else { return };
+        let on = on && self.docks.contains_key(&id);
+        if self.dock_keys == on {
+            return;
+        }
+        self.dock_keys = on;
+        if let Some(c) = self.cards.get(&id) {
+            c.page.set_focus(!on);
+        }
+        if let Some(d) = self.docks.get(&id) {
+            d.page.set_focus(on);
+        }
+    }
+
     /// Takes inspector card `id` off the board and stops its page (which
     /// lets go of the page it inspected).
     fn close_inspector(&mut self, id: NodeId) {
@@ -10400,6 +10824,15 @@ impl App {
         gone.extend(self.scene.all_nodes().filter(|n| n.is_inspector() && !self.inspectors.contains_key(&n.id)).map(|n| n.id));
         for id in gone {
             self.close_inspector(id);
+        }
+        let stale: Vec<NodeId> = self
+            .docks
+            .iter()
+            .filter(|&(id, d)| !self.cards.get(id).is_some_and(|c| d.page.inspects(&c.page)))
+            .map(|(&id, _)| id)
+            .collect();
+        for id in stale {
+            self.close_dock(id);
         }
     }
 }
@@ -10509,6 +10942,22 @@ impl App {
                     self.mouse_input(ElementState::Pressed, button);
                     self.mouse_input(ElementState::Released, button);
                 }
+                Cmd::DockClick { id, x, y, right } => {
+                    let id = NodeId(id);
+                    let at = self.content_view(id).and_then(|(r, css)| self.dock_split(id, r, css)).map(|p| {
+                        let (r, css) = p.inspector;
+                        let k = r.w / css.x.max(1e-3);
+                        Vec2::new(r.x + x * k, r.y + y * k)
+                    });
+                    let Some(p) = at else {
+                        log::warn!("script: card {} has no docked inspector", id.0);
+                        continue;
+                    };
+                    let button = if right { MouseButton::Right } else { MouseButton::Left };
+                    self.cursor_moved(p);
+                    self.mouse_input(ElementState::Pressed, button);
+                    self.mouse_input(ElementState::Released, button);
+                }
                 Cmd::Wheel(x, y) => self.wheel(MouseScrollDelta::LineDelta(x, y), TouchPhase::Moved),
                 Cmd::Touchpad { dx, dy, end } => {
                     let phase = if end { TouchPhase::Ended } else { TouchPhase::Moved };
@@ -10608,6 +11057,13 @@ impl App {
                         );
                         if let Some(text) = &n.note {
                             log::info!("script note {}: {:?}", n.id.0, text);
+                        }
+                        if let Some(d) = self.docks.get(&n.id) {
+                            let div = self.content_view(n.id).and_then(|(r, css)| self.dock_split(n.id, r, css)).map(|p| p.divider).unwrap_or_default();
+                            log::info!(
+                                "script dock {}: {:?} share={:.2} keys={} divider screen ({:.0},{:.0} {:.0}x{:.0})",
+                                n.id.0, d.side, d.share, self.dock_keys && self.focused == Some(n.id), div.x, div.y, div.w, div.h
+                            );
                         }
                         if let Some(c) = n.sticky.as_ref().filter(|_| n.is_sticky()) {
                             log::info!("script sticky {}: colour={c}", n.id.0);
@@ -10833,6 +11289,14 @@ fn max_live_from_env() -> Option<usize> {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Hit {
     Board,
+    /// A card's docked inspector, and the divider before it.
+    Inspector(NodeId),
+    Divider(NodeId),
+    /// The title bar's buttons for a docked inspector (other side, own
+    /// card) and an inspector card's (back into its page's card).
+    DockSide(NodeId),
+    Undock(NodeId),
+    Redock(NodeId),
     Header(NodeId),
     Close(NodeId),
     /// The title bar's back, forward and reload buttons.
@@ -10856,6 +11320,7 @@ impl Hit {
         match *self {
             Hit::Board => None,
             Hit::Header(id) | Hit::Close(id) | Hit::Back(id) | Hit::Forward(id) | Hit::Reload(id) | Hit::Grip(id) | Hit::Content(id) | Hit::ReadBar(id) | Hit::Badge(id) | Hit::Shield(id) | Hit::Tag(id) => Some(id),
+            Hit::Inspector(id) | Hit::Divider(id) | Hit::DockSide(id) | Hit::Undock(id) | Hit::Redock(id) => Some(id),
         }
     }
 }

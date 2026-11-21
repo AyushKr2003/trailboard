@@ -58,8 +58,20 @@ pub enum Shape {
     /// how many of the texture's widths and heights the rect spans (1, 1
     /// fills it exactly, like `Rect`). Past the texture (extent > 1) the
     /// page's left-edge colour of that row fills in; below 1 it is cropped.
-    /// `round_bottom` rounds the bottom corners only, like `RoundBottom`.
-    Page { rect: Rect, radius: f32, round_bottom: bool, extent: [f32; 2] },
+    /// `square`: the corners left square, a mask of [`corners`] (0: all round).
+    Page { rect: Rect, radius: f32, square: u8, extent: [f32; 2] },
+}
+
+/// Corners of a [`Shape::Page`], to leave square.
+pub mod corners {
+    pub const TOP_LEFT: u8 = 1;
+    pub const TOP_RIGHT: u8 = 2;
+    pub const BOTTOM_RIGHT: u8 = 4;
+    pub const BOTTOM_LEFT: u8 = 8;
+    pub const TOP: u8 = TOP_LEFT | TOP_RIGHT;
+    pub const BOTTOM: u8 = BOTTOM_LEFT | BOTTOM_RIGHT;
+    pub const LEFT: u8 = TOP_LEFT | BOTTOM_LEFT;
+    pub const RIGHT: u8 = TOP_RIGHT | BOTTOM_RIGHT;
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -98,6 +110,7 @@ struct Instance {
     color: [f32; 4],
     params: [f32; 4],
     /// xy: texture extent (see `Shape::Page`); 1, 1 for everything else.
+    /// z: corners left square (`corners` mask), 0 for everything else.
     uv: [f32; 4],
 }
 
@@ -498,11 +511,11 @@ impl Renderer {
                         params: [2.0, radius, 0.0, if tex.is_some() { 1.0 } else { 0.0 }],
                         uv: FULL,
                     },
-                    Shape::Page { rect, radius, round_bottom, extent } => Instance {
+                    Shape::Page { rect, radius, square, extent } => Instance {
                         a: [rect.x, rect.y, rect.w, rect.h],
                         color: q.color,
-                        params: [if round_bottom { 2.0 } else { 0.0 }, radius, 0.0, if tex.is_some() { 1.0 } else { 0.0 }],
-                        uv: [extent[0].max(1e-3), extent[1].max(1e-3), 0.0, 0.0],
+                        params: [0.0, radius, 0.0, if tex.is_some() { 1.0 } else { 0.0 }],
+                        uv: [extent[0].max(1e-3), extent[1].max(1e-3), square as f32, 0.0],
                     },
                     Shape::Shadow { rect, radius, blur } => Instance {
                         a: [rect.x, rect.y, rect.w, rect.h],

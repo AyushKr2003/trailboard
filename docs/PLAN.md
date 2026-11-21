@@ -77,9 +77,10 @@ app (trailboard)  winit window · input · omnibox · chrome UI · main loop
 - "Read Mode" is called **Solo** in everything the user sees; the code keeps
   `scene::read`, `App::read`, `Command::Read`. "Focus" stays out of
   interface text (it clashes with a field's focus).
-- Page inspector (owner, 2026-11-21): a card beside its page (F12,
-  Ctrl+Shift+I, `:inspect`, right-click → *Inspect*), not a separate
-  window. CEF 156 draws `ShowDevTools` windows Chrome-style only, which
+- Page inspector (owner, 2026-11-21): in its page's own card, docked on
+  the right by default (bottom on request), as in a browser tab; a card
+  of its own beside the page stays as the "undocked" choice. Never a
+  separate window (F12, Ctrl+Shift+I, `:inspect`, right-click → *Inspect*). CEF 156 draws `ShowDevTools` windows Chrome-style only, which
   can't be windowless, so the card loads the bundled inspector pages
   (`devtools://devtools/bundled/devtools_app.html`) and `web::inspector`
   carries their protocol messages to the page in-process. Never a remote
@@ -423,27 +424,29 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-21 (thirty-seventh). The page inspector in a
-card, asked by the owner (backlog `wi`): F12 / Ctrl+Shift+I / `:inspect`
-toggle it beside the current card, the page menu ends with *Inspect* (opens
-on the clicked element). New `web::inspector` (a `WebSocket` stand-in in
-the inspector's page, message ids remapped so the app's own DevTools
-commands stay apart, the app's console channels filtered out, domains
-turned off on close, hosted mode so the inspector's own menus draw in the
-page; the app's page menu stays out of it), `PageKind::Inspector`, `scene::note::INSPECTOR_URL`
-with `Scene::add_inspector` / `without_inspectors` (saving drops them).
-App: `App::inspectors` pairs each inspector with its page;
-`check_inspectors` closes one whose page is closed, asleep or replaced;
-the pair is kept out of the live cap; the inspector takes keys in
-Passthrough. Verified: unit tests, clippy, scripted e2e with screenshots
-(DOM tree, *Inspect* on an `<h1>` selects it with its styles and box,
-console evaluates `document.title + 40 + 2`, the inspector's own
-right-click menu on a node, F12 from inside closes it,
-`d` closes it and Ctrl+Shift+T doesn't bring it back, reload keeps it
-connected, the saved board has no inspector). Not verified: the Network,
-Performance and Memory panels, pages with frames from other sites
-(auto-attached targets), a private space.
-**Repo state:** on `master`, uncommitted: the inspector. M13 and M14 planned.
+**Last session:** 2026-11-21 (thirty-eighth). The page inspector docked
+in its page's card (owner's ask), on top of the thirty-seventh session's
+inspector card (commit `14a7004`). F12 now docks it on the right; the
+title bar's buttons move it to the bottom or to a card of its own (whose
+button docks it back); `:inspect right|bottom|beside`; the divider
+drags. New `scene::dock` (split and divider share, unit-tested);
+`compositor::corners` (a page quad can leave corners square: each pane
+keeps the card's outer corners). App: `App::docks` (an inspector `Page`
+per card under `dock_key`, a page key with `DOCK_BIT`), `content_view`
+/ `page_view` / `dock_split` (the page part is what hints, menus and
+clicks see), `Hit::Inspector` / `Divider` / `DockSide` / `Undock` /
+`Redock`, `Drag::Dock` / `Divider`, `dock_keys` (keys to the inspector
+after a click in it, Passthrough), docked cards kept out of the live cap,
+closed when the page sleeps or goes. Script: `iclick` / `irclick`, and
+`cards` logs each dock. Verified: unit tests, clippy, scripted e2e with
+screenshots (docked right, its console, moved to the bottom, *Inspect*
+from the page part, Solo with the page laid out at its part's width,
+divider drag to share 0.69, undock to a card and back, F12 closes, the
+separate card's flows unchanged, nothing saved). Not verified: clicking
+the title bar's dock buttons by pointer (the same code runs from
+`:inspect`), the morph into and out of Solo draws the page across the
+whole card while docked; the Network, Performance and Memory panels.
+**Repo state:** on `master`, uncommitted: the docked inspector.
 **Next up:** M14 step 1, the `config.toml` reader (asked by the owner on
 2026-11-21; format and decisions in M14). M13 step 1, the chained
 GitHub Actions build, is written on the orphan branch `cef-build`

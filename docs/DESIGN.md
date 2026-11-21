@@ -96,6 +96,7 @@ tests check it stays inside its box at every size.
 
 Overlays ease out into place in 160 ms and leave at once. Loading is a line
 gliding along a card's top edge. Nothing bounces or loops for decoration.
+App pages have more motion of their own; see *Motion on app pages* below.
 
 The board moves with cubic ease-out (`scene::motion`), and only in what is
 drawn: the model is already at its end, so clicks, saving and undo never
@@ -126,6 +127,42 @@ the card level (`--bg`), boxes on it the panel level (`--card`), with
 and `--shade` (the shadow hue). Same rules as the chrome: the accent only
 for a switch that is on, the current section, focus and the main button; a
 chosen segment is raised, not coloured; destructive buttons in `--danger`.
+
+### Motion on app pages
+
+The welcome, start and settings pages move more than the chrome, because the
+owner asked for motion-led pages (2026-11-21). The rule is that **they move
+the way the board moves**: every effect is one of the board's own motions,
+not borrowed decoration.
+
+- **Grows from its source.** Things arrive from what led to them: a page
+  grows out of its source card's side (85% → 100%, origin at the side), a
+  menu or dialog grows out of the button or point that opened it.
+- **Lines draw.** Trails, icon strokes and progress draw along their length
+  (`pathLength="1"`, dash offset), tied to the scroll where they show it.
+- **Scroll is the camera.** The welcome page pins a stage while its run
+  scrolls past, and the scroll drives the board's camera through six
+  chapters (open beside, step back, fold, spaces, Solo), each a different
+  motion. Labels keep their size on screen and show once cards are small;
+  dots stay 20–40 px apart, as on the board.
+- **Nothing loops.** Motion comes from scroll or input and settles, so a
+  page at rest paints nothing (every card is an off-screen renderer). The
+  only timer is the start page's clock, whose changed digits turn over once
+  a minute.
+- **Two curves.** `--out` (the board's ease-out) for what arrives, and
+  `--spring` (a `linear()` spring: one overshoot under 4%, settled by 70%)
+  for what the hand moves: switches, a choice's sliding thumb, a card that
+  leans toward the pointer and springs back.
+- **Native first.** Scroll-driven animations (`view()`, `scroll()`,
+  `animation-range`), `@starting-style` for arrivals (only on a page's
+  first drawing), `sibling-index()` staggers, scroll-state queries for
+  headings that dock, view transitions when settings are filtered. Script
+  only where choreography needs it (the welcome stage, damped toward the
+  scroll at τ = 85 ms).
+- **Less motion.** The app passes the desktop's switch as `still` in the
+  theme (`welcome::set_still`), along with `prefers-reduced-motion`: no
+  transitions or animations, and the welcome stage shows each chapter's
+  end state.
 
 They can't load the bundled Inter (a `data:` page has no way to our files,
 and embedding it would put a megabyte in every note), so they ask for

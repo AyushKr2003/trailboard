@@ -5,500 +5,780 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Welcome to Trailboard</title>
 <style>
+/* The welcome page tells Trailboard with Trailboard's own motion
+   (docs/DESIGN.md, "Motion on app pages"): a pinned theatre where the
+   scroll is the board's camera. Cards grow out of the side of the page
+   they came from, trails draw, the camera steps back and labels appear,
+   a trail folds into a stack, the space slides away, a card goes Solo.
+   Nothing loops: everything is a function of the scroll or an answer to
+   input, so a page at rest paints nothing. Colours come from the app
+   (`tbTheme`); `still` (the desktop asks for less motion) shows each
+   chapter's end at once. */
 :root {
-  --bg: #16161a; --fg: #e8e8ea; --dim: #9a9aa2; --accent: #ffd60a; --accentfg: #16161a;
-  --card: #222228; --rule: #34343c; --board: #1b1b20;
+  --bg: #16161a; --fg: #e8e8ea; --dim: #9a9aa2; --faint: #75757e; --accent: #ffd60a; --accentfg: #16161a;
+  --accenttext: #ffd60a; --accentsoft: #4a4426;
+  --card: #222228; --hover: #2c2d35; --well: #121216; --rule: #34343c; --rulestrong: #4a4b55; --shade: #000;
   --boardbg: #141418; --dots: #3a3a42; --sticky: #e6c35c; --stickystrip: #cdb052; --stickyink: #1d1a12; --trail2: #8fc66b;
-  --tile: color-mix(in srgb, var(--fg) 4%, var(--bg));
-  --tile-hi: color-mix(in srgb, var(--fg) 7%, var(--bg));
-  --edge: color-mix(in srgb, var(--fg) 10%, transparent);
-  --soft: color-mix(in srgb, var(--accent) 16%, var(--bg));
-  --body: color-mix(in srgb, var(--fg) 76%, var(--bg));
-  /* A web page inside a card: light, as most pages are, tinted by the theme. */
+  --radius: 0px; --r-sm: min(4px, var(--radius)); --r: min(12px, var(--radius));
+  --font: "Inter", "Adwaita Sans", system-ui, sans-serif;
+  /* The board's ease-out, and a spring for what the hand moves (one
+     overshoot under 4%, settled by 70%). */
+  --out: cubic-bezier(.22, .9, .28, 1);
+  --spring: linear(0, .25 6%, .6 14%, .86 23%, 1.02 33%, 1.035 40%, 1.01 54%, .998 70%, 1);
   --page: color-mix(in srgb, var(--fg) 22%, #f3f4f7);
   --ink: color-mix(in srgb, var(--boardbg) 34%, transparent);
-  /* Corners follow Hyprland's window rounding (sharp on Omarchy's default);
-     small things are capped at 4px, cards in drawings at 8px. */
-  --radius: 0px; --r-sm: min(4px, var(--radius)); --rc: min(8px, var(--radius));
+  --body: color-mix(in srgb, var(--fg) 78%, var(--bg));
+  --lift: 0 1px 2px color-mix(in srgb, var(--shade) 30%, transparent), 0 10px 30px color-mix(in srgb, var(--shade) 30%, transparent);
   color-scheme: dark;
 }
-:root.light { color-scheme: light; --tile: color-mix(in srgb, var(--fg) 3%, var(--bg)); --edge: color-mix(in srgb, var(--fg) 12%, transparent);
-  --page: #ffffff; --ink: color-mix(in srgb, var(--fg) 26%, transparent); }
+:root.light { color-scheme: light; --page: #ffffff; --ink: color-mix(in srgb, var(--fg) 26%, transparent);
+  --lift: 0 1px 2px color-mix(in srgb, var(--shade) 10%, transparent), 0 10px 30px color-mix(in srgb, var(--shade) 10%, transparent); }
 * { box-sizing: border-box; }
 html, body { margin: 0; }
-body {
-  background: var(--bg); color: var(--fg);
-  font: 15px/1.6 system-ui, -apple-system, "Segoe UI", "Inter", sans-serif;
-  -webkit-font-smoothing: antialiased;
-}
-main { max-width: 1000px; margin: 0 auto; padding: 44px 44px 52px; }
-h1, h2, h3 { margin: 0; line-height: 1.2; letter-spacing: -0.02em; }
-h1 { font-size: 38px; font-weight: 700; }
-h2 { font-size: 21px; font-weight: 650; }
+body { background: var(--bg); color: var(--fg); font: 15px/1.6 var(--font); font-feature-settings: "cv11";
+  -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+h1, h2, h3, p { margin: 0; }
+h1, h2 { letter-spacing: -0.035em; line-height: 1.04; text-wrap: balance; }
 h3 { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
-p { margin: 0; }
-.dim { color: var(--dim); }
+button { font: inherit; color: inherit; }
+:focus { outline: none; }
+:focus-visible { outline: 2px solid var(--accenttext); outline-offset: 3px; }
+::selection { background: var(--accentsoft); }
 
-/* keys: one cap per key, as in the shortcut sheet */
-kbd {
-  display: inline-block; min-width: 1.75em; padding: 0 6px; margin: 0 1px;
-  font: 600 11.5px/1.75 system-ui, sans-serif;
-  text-align: center; color: color-mix(in srgb, var(--fg) 85%, var(--bg));
+/* keycaps; they press in turn when what they belong to is pointed at */
+kbd { display: inline-block; min-width: 1.8em; padding: 0 6px; margin: 0 1px;
+  font: 600 11.5px/1.8 var(--font); text-align: center; color: color-mix(in srgb, var(--fg) 86%, var(--bg));
   background: color-mix(in srgb, var(--fg) 7%, var(--bg)); border: 1px solid var(--rule); border-bottom-width: 2px;
-  border-radius: var(--r-sm); vertical-align: 1px; white-space: nowrap;
+  border-radius: var(--r-sm); vertical-align: 1px; white-space: nowrap; }
+.keys { display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; }
+.or { margin: 0 4px; color: var(--faint); font-size: 12px; }
+@keyframes tap { 40% { transform: translateY(1px); border-bottom-width: 1px; background: var(--hover); } }
+:is(button, .row):hover kbd { animation: tap .3s var(--out) calc(sibling-index() * 60ms - 60ms) both; }
+
+.btn { display: inline-flex; align-items: center; gap: 10px; padding: 10px 12px 10px 16px; cursor: pointer;
+  font-size: 14px; font-weight: 600; border-radius: max(var(--r-sm), min(8px, var(--radius)));
+  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent); background: color-mix(in srgb, var(--fg) 5%, var(--bg));
+  transition: background .15s, border-color .15s, transform .4s var(--spring); }
+.btn:hover { background: color-mix(in srgb, var(--fg) 9%, var(--bg)); border-color: color-mix(in srgb, var(--fg) 20%, transparent); }
+.btn:active { transform: scale(.97); transition-duration: .08s; }
+.btn.main { background: var(--accent); color: var(--accentfg); border-color: transparent; }
+.btn.main:hover { background: color-mix(in srgb, var(--accent) 88%, var(--fg)); }
+.btn.main kbd { background: color-mix(in srgb, var(--accentfg) 12%, transparent); color: var(--accentfg);
+  border-color: color-mix(in srgb, var(--accentfg) 26%, transparent); }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; }
+
+.eyebrow { display: inline-flex; align-items: center; gap: 10px; font-size: 12px; font-weight: 650;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--dim); }
+.eyebrow .n { color: var(--accenttext); font-variant-numeric: tabular-nums; }
+
+/* ---- the theatre: a tall run of scroll with the stage pinned in it ---- */
+.theatre { position: relative; height: 640vh; }
+.pin { position: sticky; top: 0; height: 100vh; min-height: 460px; display: grid;
+  grid-template-columns: minmax(300px, 40%) 1fr; gap: 0; overflow: hidden; }
+.copy { position: relative; display: grid; align-content: center; padding: 40px 28px 92px 48px; }
+.blk { grid-area: 1 / 1; max-width: 30em; pointer-events: none; }
+.blk.on { pointer-events: auto; }
+.blk > * { opacity: 0; transform: translateY(var(--from, 22px)); filter: blur(4px);
+  transition: opacity .32s var(--out), transform .55s var(--out), filter .4s var(--out);
+  transition-delay: calc(var(--i, 0) * 55ms); }
+.blk.on > * { opacity: 1; transform: none; filter: none; }
+.blk.pre > * { transition: none; }
+@starting-style { .blk.on > * { opacity: 0; transform: translateY(22px); filter: blur(4px); } }
+.blk h1 { margin-top: 18px; font-size: clamp(38px, 5.6vw, 66px); font-weight: 720; }
+.blk h2 { margin-top: 14px; font-size: clamp(27px, 3.4vw, 40px); font-weight: 700; }
+.blk p { margin-top: 16px; font-size: 16px; color: var(--body); max-width: 27em; }
+.blk p b { color: var(--fg); font-weight: 650; }
+.blk .actions { margin-top: 26px; }
+.blk .hint { margin-top: 22px; font-size: 13px; line-height: 2.2; color: var(--dim); }
+.blk .hint .keys { margin-right: 4px; }
+.mark { width: 24px; height: 24px; }
+.scrollcue { display: inline-flex; align-items: center; gap: 10px; margin-top: 30px; font-size: 12.5px; color: var(--faint); }
+.scrollcue i { position: relative; width: 1px; height: 26px; background: var(--rule); overflow: hidden; }
+.scrollcue i::after { content: ""; position: absolute; left: -2px; top: 0; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--accent); transform: translate(0, calc(var(--hero, 0) * 22px)); }
+
+/* the chapters, as stops on a trail */
+.rail { position: absolute; left: 48px; right: 28px; bottom: 34px; display: flex; justify-content: space-between;
+  opacity: var(--railo, 0); transform: translateY(calc((1 - var(--railo, 0)) * 8px)); }
+.rail::before, .rail::after { content: ""; position: absolute; left: 5px; right: 5px; top: 5px; height: 1px; background: var(--rule); }
+.rail::after { background: var(--accent); transform-origin: 0 50%; transform: scaleX(var(--fill, 0)); }
+.stop { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: flex-start; gap: 9px;
+  padding: 0; border: 0; background: none; cursor: pointer; color: var(--faint); font-size: 11px; font-weight: 600;
+  letter-spacing: .06em; text-transform: uppercase; transition: color .2s; }
+.stop:last-child { align-items: flex-end; }
+.stop i { width: 11px; height: 11px; border-radius: 50%; background: var(--bg); border: 1.5px solid var(--rulestrong);
+  transition: background .2s, border-color .2s, transform .45s var(--spring); }
+.stop.done i { background: var(--accent); border-color: var(--accent); }
+.stop.on { color: var(--fg); }
+.stop.on i { transform: scale(1.35); background: var(--accent); border-color: var(--accent); }
+.stop:hover { color: var(--fg); }
+
+/* the stage: a window onto a board, moved by the camera */
+.stage { position: relative; margin: 20px 20px 20px 0; overflow: hidden; border-radius: var(--r);
+  border: 1px solid color-mix(in srgb, var(--fg) 9%, transparent); background: var(--boardbg); isolation: isolate;
+  opacity: 0; transform: scale(.96); animation: arrive .8s var(--out) .15s forwards; }
+@keyframes arrive { to { opacity: 1; transform: none; } }
+.mood { position: absolute; inset: 0; z-index: -2; }
+.mood.a { background: radial-gradient(120% 90% at 0% 0%, color-mix(in oklab, var(--accent) 10%, var(--boardbg)), var(--boardbg) 72%); }
+.mood.b { background: radial-gradient(120% 90% at 0% 0%, color-mix(in oklab, var(--trail2) 13%, var(--boardbg)), var(--boardbg) 72%); opacity: 0; }
+.dots { position: absolute; inset: 0; z-index: -1; opacity: .75;
+  background-image: radial-gradient(circle, var(--dots) 1.1px, transparent 1.6px); }
+.layer { position: absolute; inset: 0; will-change: transform, opacity; }
+.world { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+.world svg.trails { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; }
+.trails path { fill: none; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.c { position: absolute; will-change: transform, opacity; }
+.c .sheet { position: absolute; inset: 0; overflow: hidden; border-radius: var(--radius); background: var(--page);
+  box-shadow: var(--lift); }
+.c .sheet svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.c .ring { position: absolute; inset: 0; border-radius: var(--radius); pointer-events: none; }
+.c.sticky text { font: 500 12px var(--font); }
+.c.sticky .sheet { background: var(--sticky); box-shadow: inset 0 12px 0 var(--stickystrip), var(--lift); }
+.lab { position: absolute; display: flex; align-items: center; gap: 6px; height: 20px; transform-origin: 0 0;
+  font: 600 11.5px/1 var(--font); color: var(--dim); white-space: nowrap; pointer-events: none; }
+.lab.cur { color: var(--fg); }
+.lab i { flex: none; width: 10px; height: 10px; border-radius: min(3px, var(--radius)); background: var(--x, var(--accent)); }
+.lab span.t { overflow: hidden; text-overflow: ellipsis; }
+.lab .tag, .lab .cnt { flex: none; display: inline-grid; place-items: center; height: 18px; padding: 0 8px;
+  border-radius: min(9px, var(--radius)); font-size: 10.5px; font-weight: 700; background: var(--accent); color: var(--accentfg);
+  transform-origin: 0 50%; }
+.lab .cnt { padding: 0 6px; background: var(--fg); color: var(--bg); }
+.scrim { position: absolute; inset: 0; z-index: 1; background: color-mix(in srgb, var(--shade) 70%, transparent); opacity: 0; pointer-events: none; }
+.space { position: absolute; left: 14px; top: 14px; z-index: 3; display: flex; align-items: center; gap: 8px; height: 30px;
+  padding: 0 12px 0 10px; border-radius: min(8px, var(--radius)); font-size: 12.5px; font-weight: 600;
+  background: color-mix(in srgb, var(--card) 86%, transparent); border: 1px solid var(--rule); box-shadow: var(--lift); }
+.space i { width: 8px; height: 8px; border-radius: 50%; background: var(--sd, var(--accent)); transition: background .3s; }
+.space .nm { display: inline-grid; overflow: hidden; height: 18px; }
+.space .nm span { grid-area: 1 / 1; line-height: 18px; transition: transform .45s var(--out), opacity .3s; }
+.space .nm span:last-child { transform: translateY(100%); opacity: 0; }
+.space.b .nm span:first-child { transform: translateY(-100%); opacity: 0; }
+.space.b .nm span:last-child { transform: none; opacity: 1; }
+.soloing { position: absolute; right: 14px; bottom: 14px; z-index: 3; display: flex; align-items: center; gap: 8px; font-size: 12.5px;
+  color: var(--dim); opacity: 0; transform: translateY(6px); transition: opacity .3s, transform .45s var(--out); }
+.soloing.on { opacity: 1; transform: none; }
+
+/* ---- the rest: sections that arrive as they scroll in ---- */
+.after { max-width: 1040px; margin: 0 auto; padding: 40px 48px 64px; }
+.sec { margin-top: 120px; }
+.sec:first-child { margin-top: 40px; }
+.sec-h { display: grid; grid-template-columns: 1fr; gap: 12px; margin-bottom: 32px; }
+.sec-h h2 { font-size: clamp(28px, 3.6vw, 44px); font-weight: 700; }
+.sec-h p { color: var(--dim); font-size: 15.5px; max-width: 34em; }
+@supports ((animation-timeline: view()) and (animation-range: entry)) {
+  .rise { animation: rise linear both; animation-timeline: view(); animation-range: entry 0% entry 70%; }
+  .rise.late { animation-range: entry calc(10% + var(--col, 0) * 14%) entry calc(75% + var(--col, 0) * 14%); }
+  .draw :is(path, rect, circle) { stroke-dasharray: 1; animation: draw linear both; animation-timeline: --tile;
+    animation-range: entry 40% cover 45%; }
+  .tile { view-timeline: --tile block; }
+  .solo { animation: solo linear both; animation-timeline: view(); animation-range: entry 0% cover 45%; }
 }
-.keys { white-space: nowrap; display: inline-flex; align-items: center; gap: 2px; }
+@keyframes rise { from { opacity: 0; transform: translateY(38px); } }
+@keyframes draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes solo { from { opacity: .2; transform: scale(.86); clip-path: inset(10% 14% round var(--r)); } to { clip-path: inset(0 round var(--r)); } }
+
+/* where the keys go: one card, toggled between the two modes */
+.modes { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 28px; align-items: stretch; }
+.demo { position: relative; min-height: 270px; border-radius: var(--r); overflow: hidden; border: 1px solid var(--rule);
+  background: radial-gradient(120% 100% at 0% 0%, color-mix(in oklab, var(--accent) 8%, var(--boardbg)), var(--boardbg) 70%);
+  cursor: pointer; }
+.demo::before { content: ""; position: absolute; inset: 0; opacity: .7;
+  background-image: radial-gradient(circle, var(--dots) 1.1px, transparent 1.6px); background-size: 20px 20px; }
+.dc { position: absolute; top: 50%; border-radius: var(--radius); background: var(--page); box-shadow: var(--lift);
+  transition: transform .5s var(--spring), box-shadow .35s var(--out); }
+.dc.l { left: 7%; width: 22%; height: 38%; transform: translateY(-50%); }
+.dc.m { left: 34%; width: 34%; height: 56%; transform: translateY(-50%);
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--accent) 80%, transparent), var(--lift); }
+.dc.r { left: 73%; width: 20%; height: 38%; transform: translateY(-50%); }
+.dc.m::before { content: "Hello Tokio"; position: absolute; left: 0; bottom: calc(100% + 7px); font-size: 11.5px; font-weight: 600; color: var(--fg); }
+.dc .ln { position: absolute; left: 10%; height: 5px; border-radius: 3px; background: var(--ink); transition: width .5s var(--out); }
+.dc .caret { position: absolute; left: 10%; top: 66%; width: 1.5px; height: 12px; background: var(--boardbg); opacity: 0; transition: opacity .2s; }
+.demo.page .dc.m { transform: translateY(-50%) scale(1.06); box-shadow: 0 0 0 3px var(--accent), var(--lift); }
+.demo.page .dc.l { transform: translate(-6px, -50%) scale(.96); opacity: .7; }
+.demo.page .dc.r { transform: translate(6px, -50%) scale(.96); opacity: .7; }
+.demo.page .dc .caret { opacity: 1; }
+.demo .pill { position: absolute; left: 14px; bottom: 14px; display: inline-flex; align-items: center; gap: 8px; height: 26px; padding: 0 10px;
+  border-radius: min(13px, var(--radius)); font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  background: var(--card); border: 1px solid var(--rule); }
+.demo .pill i { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); transition: background .25s; }
+.demo.page .pill i { background: var(--accent); }
+.demo .pill span { display: inline-grid; overflow: hidden; height: 16px; }
+.demo .pill b { grid-area: 1 / 1; line-height: 16px; font-weight: 700; transition: transform .45s var(--out), opacity .25s; }
+.demo .pill b + b, .demo.page .pill b:first-child { transform: translateY(100%); opacity: 0; }
+.demo.page .pill b + b { transform: none; opacity: 1; }
+.side { display: flex; flex-direction: column; gap: 16px; }
+.seg { position: relative; display: grid; grid-template-columns: 1fr 1fr; padding: 3px; border-radius: max(var(--r-sm), min(8px, var(--radius)));
+  background: var(--well); border: 1px solid var(--rule); }
+.seg .thumb { position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc(50% - 3px); border-radius: max(0px, min(6px, var(--radius) - 2px));
+  background: var(--hover); box-shadow: 0 1px 2px color-mix(in srgb, var(--shade) 30%, transparent), inset 0 0 0 1px var(--rule);
+  transition: transform .5s var(--spring); }
+.demo.page ~ .side .thumb, .side.page .thumb { transform: translateX(100%); }
+.seg button { position: relative; z-index: 1; height: 34px; border: 0; background: none; cursor: pointer; font-size: 13px; font-weight: 600; color: var(--dim); transition: color .2s; }
+.seg button[aria-checked="true"] { color: var(--fg); }
+.lists { display: grid; }
+.lists ul { grid-area: 1 / 1; margin: 0; padding: 0; list-style: none; transition: opacity .25s, transform .45s var(--out), filter .3s; }
+.lists ul.off { opacity: 0; transform: translateY(10px); filter: blur(3px); pointer-events: none; }
+.lists li { position: relative; padding: 11px 0 11px 22px; border-top: 1px solid var(--rule); color: var(--body); font-size: 14.5px; }
+.lists li::before { content: ""; position: absolute; left: 3px; top: 1.15em; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.lists li:first-child { border-top: 0; }
+
+/* shortcuts: a key pressed lights its row */
+.groups { display: grid; gap: 18px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.group { border-radius: var(--r); border: 1px solid var(--rule); background: var(--card); padding: 6px 18px 8px; }
+.group h3 { padding: 13px 0 7px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .1em; color: var(--accenttext); }
+.row { position: relative; display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 8px 0;
+  border-top: 1px solid var(--rule); font-size: 14px; }
+.row::before { content: ""; position: absolute; inset: 0 -10px; z-index: -1; border-radius: var(--r-sm); background: var(--accentsoft); opacity: 0; }
+.group { isolation: isolate; }
+.row.lit::before { animation: lit 1.2s var(--out); }
+.row.lit kbd { animation: tap .3s var(--out) calc(sibling-index() * 60ms - 60ms) both; }
+@keyframes lit { 0% { opacity: 1; } 100% { opacity: 0; } }
+.row > span:first-child { color: var(--body); }
 .row .keys { color: var(--dim); font-size: 13px; }
-.or { color: var(--dim); font-size: 12px; margin: 0 4px; }
-
-/* hero */
-.eyebrow { display: inline-flex; align-items: center; gap: 10px; margin-bottom: 16px;
-  font-size: 12.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); }
-.mark { width: 26px; height: 26px; }
-.lead { margin-top: 14px; font-size: 16.5px; line-height: 1.6; color: var(--body); max-width: 40em; }
-.lead b { color: var(--fg); font-weight: 650; }
-.actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
-button {
-  font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
-  display: inline-flex; align-items: center; gap: 10px;
-  padding: 9px 12px 9px 15px; border-radius: var(--radius);
-  border: 1px solid var(--edge); background: var(--tile); color: var(--fg);
-  transition: background .15s, border-color .15s;
-}
-button:hover { background: var(--tile-hi); border-color: color-mix(in srgb, var(--fg) 18%, transparent); }
-button:active { transform: translateY(1px); }
-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-button.primary { background: var(--accent); color: var(--accentfg); border-color: transparent; }
-button.primary:hover { background: color-mix(in srgb, var(--accent) 88%, var(--fg)); }
-button kbd { font-size: 11px; }
-button.primary kbd { background: color-mix(in srgb, var(--accentfg) 12%, transparent); color: var(--accentfg);
-  border-color: color-mix(in srgb, var(--accentfg) 24%, transparent); }
-
-/* the board, drawn as the app draws it (see the script) */
-figure { margin: 30px 0 0; }
-.board { display: block; width: 100%; height: auto; border-radius: var(--radius); border: 1px solid var(--edge); background: var(--boardbg); }
-.board .title, .mini .title { font: 600 9px system-ui, sans-serif; }
-.board .tagt { font: 650 9.5px system-ui, sans-serif; }
-.board .note { font: 500 10px system-ui, sans-serif; }
-.board .card { animation: rise .45s ease-out both; }
-.board .trail { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw .7s ease-out both; }
-@keyframes rise { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
-@keyframes draw { to { stroke-dashoffset: 0; } }
-figcaption { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 12px; font-size: 13px; color: var(--dim); }
-figcaption span { display: inline-flex; align-items: center; gap: 8px; }
-.sw { display: inline-block; width: 18px; height: 12px; border-radius: var(--r-sm); flex: none; }
-.sw.ring { border: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 35%, transparent); }
-.sw.line { height: 0; border-top: 2px solid color-mix(in srgb, var(--accent) 70%, transparent); border-radius: 0; }
-.sw.tag { width: 26px; background: var(--accent); }
-.sw.sticky { background: var(--sticky); box-shadow: inset 0 3px 0 var(--stickystrip); }
-
-/* sections */
-section { margin-top: 56px; }
-.head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; margin-bottom: 18px; }
-.head p { color: var(--dim); font-size: 14px; }
-.grid { display: grid; gap: 14px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.tile { background: var(--tile); border: 1px solid var(--edge); border-radius: var(--radius); padding: 19px 19px 18px; }
-.tile p, .step p { margin-top: 6px; color: var(--body); font-size: 14px; }
-.icon { width: 34px; height: 34px; border-radius: var(--r-sm); display: grid; place-items: center; margin-bottom: 13px;
-  background: var(--soft); color: var(--accent); }
-.icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-
-/* steps */
-.steps { counter-reset: step; display: grid; gap: 14px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.step { padding: 17px; border-radius: var(--radius); border: 1px solid var(--edge); background: var(--tile); }
-.step::before { counter-increment: step; content: counter(step); display: grid; place-items: center;
-  width: 24px; height: 24px; border-radius: 50%; margin-bottom: 11px;
-  font-size: 12.5px; font-weight: 700; background: var(--accent); color: var(--accentfg); }
-
-/* where the keys go */
-.modes { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 14px; align-items: stretch; }
-.mode { border-radius: var(--radius); border: 1px solid var(--edge); background: var(--tile); padding: 18px; }
-.mini { display: block; width: 100%; height: auto; margin-bottom: 14px; border-radius: var(--r-sm); border: 1px solid var(--edge); background: var(--boardbg); }
-.mode ul { margin: 10px 0 0; padding: 0; list-style: none; }
-.mode li { position: relative; padding-left: 16px; margin-top: 7px; font-size: 14px; color: var(--body); }
-.mode li::before { content: ""; position: absolute; left: 2px; top: .62em; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
-.switch { display: flex; flex-direction: column; justify-content: center; gap: 12px; font-size: 12.5px; color: var(--dim); text-align: center; }
-.switch div { white-space: nowrap; }
-
-/* shortcut groups */
-.groups { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.group { border-radius: var(--radius); border: 1px solid var(--edge); background: var(--tile); padding: 6px 18px 8px; }
-.group h3 { padding: 12px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--accent); font-weight: 650; }
-.row { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 7px 0; border-top: 1px solid var(--edge); font-size: 14px; }
-.row > span:first-child { min-width: 0; color: var(--body); }
 .group h3 + .row { border-top: 0; }
+.tryit { display: inline-flex; align-items: center; gap: 8px; color: var(--dim); font-size: 14px; }
+.tryit .last { min-width: 4em; color: var(--fg); font-weight: 600; transition: opacity .2s; }
 
-/* closing */
-.cta { margin-top: 56px; border-radius: var(--radius); padding: 26px 28px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 18px;
-  background: var(--tile); border: 1px solid var(--edge); border-left: 3px solid var(--accent); }
-.cta h2 { font-size: 20px; }
-.cta p { margin-top: 5px; color: var(--body); }
-.cta .actions { margin-top: 0; }
-.fine { margin-top: 20px; text-align: center; font-size: 13px; color: var(--dim); }
+/* good to know: icons draw as they come in */
+.grid { display: grid; gap: 18px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.tile { padding: 22px 20px 20px; border-radius: var(--r); border: 1px solid var(--rule); background: var(--card);
+  transition: border-color .2s, transform .5s var(--spring); }
+.tile:hover { border-color: var(--rulestrong); transform: translateY(-3px); }
+.tile p { margin-top: 7px; color: var(--body); font-size: 14px; }
+.icon { width: 38px; height: 38px; margin-bottom: 16px; border-radius: min(8px, var(--radius)); display: grid; place-items: center;
+  background: var(--accentsoft); color: var(--accenttext); }
+.icon svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 
-/* narrower cards */
-@media (max-width: 860px) {
-  .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* the close: a card that grows to the window as it comes in */
+.cta { margin-top: 120px; padding: 56px 48px; border-radius: var(--r); text-align: center; position: relative; overflow: hidden;
+  background: radial-gradient(90% 120% at 50% 0%, color-mix(in oklab, var(--accent) 12%, var(--card)), var(--card) 70%);
+  border: 1px solid var(--rule); }
+.cta h2 { font-size: clamp(30px, 4.4vw, 52px); font-weight: 720; }
+.cta p { margin: 14px auto 0; max-width: 30em; color: var(--body); }
+.cta .actions { justify-content: center; margin-top: 28px; }
+.fine { margin-top: 26px; text-align: center; font-size: 13px; color: var(--dim); }
+
+@media (max-width: 820px) {
+  .pin { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .copy { padding: 24px 20px 66px; align-content: start; min-height: 300px; }
+  .rail { left: 20px; right: 20px; bottom: 18px; }
+  .stop span { display: none; }
+  .stage { margin: 0 16px 16px; }
+  .scrollcue { display: none; }
+  .after { padding: 24px 20px 48px; }
+  .modes, .groups { grid-template-columns: 1fr; }
+  .grid { grid-template-columns: 1fr 1fr; }
+  .cta { padding: 40px 24px; }
 }
-@media (max-width: 720px) {
-  main { padding: 32px 24px 44px; }
-  h1 { font-size: 31px; }
-  .grid, .groups { grid-template-columns: 1fr; }
-  .modes { grid-template-columns: 1fr; }
-  .switch { flex-direction: row; justify-content: center; gap: 18px; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .board .card, .board .trail { animation: none; stroke-dashoffset: 0; }
-}
+@media (max-width: 540px) { .grid { grid-template-columns: 1fr; } }
+:root.still *, :root.still *::before, :root.still *::after { animation: none !important; transition: none !important; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+:root.still .stage { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) { .stage { opacity: 1; transform: none; } }
 </style>
 </head>
 <body>
-<main>
 
-<header>
-  <div class="eyebrow">
-    <svg class="mark" viewBox="0 0 26 26" aria-hidden="true">
-      <path d="M10.5 6.5 C 13.5 6.5, 12.5 13, 15.5 13" fill="none" stroke="var(--accent)" stroke-width="1.6"/>
-      <rect x="1.5" y="3" width="9" height="7" rx="2" fill="var(--accent)"/>
-      <rect x="15.5" y="9.5" width="9" height="7" rx="2" fill="none" stroke="var(--accent)" stroke-width="1.6"/>
-      <rect x="6" y="18" width="9" height="6" rx="2" fill="none" stroke="var(--dim)" stroke-width="1.6"/>
-    </svg>
-    Welcome to Trailboard
-  </div>
-  <h1>Browse on a board, not in tabs.</h1>
-  <p class="lead">Every page is a <b>live card</b> on one infinite board. Open a link and it lands <b>beside</b> the page it came from, joined by a line, so every search leaves a <b>trail</b> you can see, rearrange and pick up again tomorrow.</p>
-  <div class="actions">
-    <button class="primary" onclick="act('new-card')">Open a page <span class="keys"><kbd>Ctrl</kbd><kbd>T</kbd></span></button>
-    <button onclick="act('palette')">Find anything <span class="keys"><kbd>Ctrl</kbd><kbd>K</kbd></span></button>
-    <button onclick="act('shortcuts')">All shortcuts <span class="keys"><kbd>F1</kbd></span></button>
-  </div>
+<div class="theatre" id="theatre">
+  <div class="pin">
+    <div class="copy" id="copy">
+      <div class="blk on" data-ch="0">
+        <div class="eyebrow" style="--i:0">
+          <svg class="mark" viewBox="0 0 26 26" aria-hidden="true">
+            <path d="M10.5 6.5 C 13.5 6.5, 12.5 13, 15.5 13" fill="none" stroke="var(--accent)" stroke-width="1.6"/>
+            <rect x="1.5" y="3" width="9" height="7" rx="2" fill="var(--accent)"/>
+            <rect x="15.5" y="9.5" width="9" height="7" rx="2" fill="none" stroke="var(--accent)" stroke-width="1.6"/>
+            <rect x="6" y="18" width="9" height="6" rx="2" fill="none" stroke="var(--dim)" stroke-width="1.6"/>
+          </svg>
+          Welcome to Trailboard
+        </div>
+        <h1 style="--i:1">Browse on a board, not in tabs.</h1>
+        <p style="--i:2">Every page is a <b>live card</b> on one infinite board. A link opens <b>beside</b> the page it came from, so every search leaves a <b>trail</b> you can see, rearrange and pick up tomorrow.</p>
+        <div class="actions" style="--i:3">
+          <button class="btn main" onclick="act('new-card')">Open a page <span class="keys"><kbd>Ctrl</kbd><kbd>T</kbd></span></button>
+          <button class="btn" onclick="act('palette')">Find anything <span class="keys"><kbd>Ctrl</kbd><kbd>K</kbd></span></button>
+        </div>
+        <div class="scrollcue" style="--i:4"><i></i>Scroll, and the board moves with you</div>
+      </div>
+      <div class="blk" data-ch="1">
+        <div class="eyebrow" style="--i:0"><span class="n">1</span>Open beside</div>
+        <h2 style="--i:1">Every link lands next to where it came from.</h2>
+        <p style="--i:2">Click a link and the new page grows out of the side of the old one, joined by a line. Nothing is replaced, so you never lose your place.</p>
+        <div class="hint" style="--i:3">Click a link<span class="or">·</span>or <span class="keys"><kbd>Shift</kbd><kbd>Enter</kbd></span> to open beside</div>
+      </div>
+      <div class="blk" data-ch="2">
+        <div class="eyebrow" style="--i:0"><span class="n">2</span>Step back</div>
+        <h2 style="--i:1">Zoom out and see the whole search.</h2>
+        <p style="--i:2">Pages keep running when you look away. Pull back and every card shows its name, so a big board still has landmarks.</p>
+        <div class="hint" style="--i:3"><span class="keys"><kbd>Esc</kbd></span> for the board<span class="or">·</span><span class="keys"><kbd>Ctrl</kbd></span> + scroll to zoom<span class="or">·</span><span class="keys"><kbd>Shift</kbd><kbd>F</kbd></span> fits it all</div>
+      </div>
+      <div class="blk" data-ch="3">
+        <div class="eyebrow" style="--i:0"><span class="n">3</span>Fold</div>
+        <h2 style="--i:1">Name a trail, then fold it away.</h2>
+        <p style="--i:2">A trail is one line of thought. Name it, colour it, and fold it into a stack that keeps its place until you need it again.</p>
+        <div class="hint" style="--i:3"><span class="keys"><kbd>R</kbd></span> name<span class="or">·</span><span class="keys"><kbd>C</kbd></span> colour<span class="or">·</span><span class="keys"><kbd>S</kbd></span> fold into a stack</div>
+      </div>
+      <div class="blk" data-ch="4">
+        <div class="eyebrow" style="--i:0"><span class="n">4</span>Spaces</div>
+        <h2 style="--i:1">A whole board for each part of your life.</h2>
+        <p style="--i:2">A space is a separate board, one per project. Switch in a keystroke and each one is exactly where you left it.</p>
+        <div class="hint" style="--i:3"><span class="keys"><kbd>Ctrl</kbd><kbd>PgDn</kbd></span> next space<span class="or">·</span><span class="keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>N</kbd></span> new</div>
+      </div>
+      <div class="blk" data-ch="5">
+        <div class="eyebrow" style="--i:0"><span class="n">5</span>Solo</div>
+        <h2 style="--i:1">Then read, full-window.</h2>
+        <p style="--i:2">When it's time to read, the current card grows to fill the window. Press the same key and it goes back to its place on the board.</p>
+        <div class="hint" style="--i:3"><span class="keys"><kbd>Tab</kbd></span> in and out<span class="or">·</span><span class="keys"><kbd>z</kbd></span> fills the view</div>
+      </div>
+      <nav class="rail" id="rail" aria-label="Chapters">
+        <button class="stop" data-go="1"><i></i><span>Open beside</span></button>
+        <button class="stop" data-go="2"><i></i><span>Step back</span></button>
+        <button class="stop" data-go="3"><i></i><span>Fold</span></button>
+        <button class="stop" data-go="4"><i></i><span>Spaces</span></button>
+        <button class="stop" data-go="5"><i></i><span>Solo</span></button>
+      </nav>
+    </div>
 
-  <figure>
-    <svg class="board" id="board" viewBox="0 0 800 300" role="img" aria-label="A board: a search card with a named trail leading to two pages, one of them current and leading on to a third, and a sticky note"></svg>
-    <figcaption>
-      <span><i class="sw ring"></i>The current card</span>
-      <span><i class="sw line"></i>A trail, from a page to the link it opened</span>
-      <span><i class="sw tag"></i>The trail's name</span>
-      <span><i class="sw sticky"></i>A sticky note</span>
-    </figcaption>
-  </figure>
-</header>
-
-<section>
-  <div class="head"><h2>Three ideas</h2><p>Everything else follows from these.</p></div>
-  <div class="grid">
-    <div class="tile">
-      <div class="icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18"/></svg></div>
-      <h3>Cards</h3>
-      <p>Each page is a live card. Move it, resize it, zoom out to see them all. Pages keep running, so nothing reloads when you look away.</p>
+    <div class="stage" id="stage" role="img" aria-label="A board: a search card opens two pages beside it, joined by trails; the camera steps back, the trail folds into a stack, the board slides to another space and one card fills the window.">
+      <div class="mood a" id="moodA"></div><div class="mood b" id="moodB"></div>
+      <div class="dots" id="dots"></div>
+      <div class="layer" id="L1"><div class="world" id="W1"><svg class="trails" id="T1"></svg></div></div>
+      <div class="layer" id="L2"><div class="world" id="W2"><svg class="trails" id="T2"></svg></div></div>
+      <div class="space" id="space"><i></i><span class="nm"><span>Work</span><span>Home</span></span></div>
+      <div class="soloing" id="soloing"><span class="keys"><kbd>Tab</kbd></span> back to the board</div>
     </div>
-    <div class="tile">
-      <div class="icon"><svg viewBox="0 0 24 24"><rect x="2.5" y="4" width="7" height="6" rx="1.5"/><rect x="14.5" y="14" width="7" height="6" rx="1.5"/><path d="M9.5 7c5 0 0 10 5 10"/></svg></div>
-      <h3>Trails</h3>
-      <p>Links open beside their source and stay joined. A trail is the path of one line of thought: name it, colour it, fold it into a stack.</p>
-    </div>
-    <div class="tile">
-      <div class="icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/></svg></div>
-      <h3>Spaces</h3>
-      <p>A space is a whole separate board, one per project. Switch between them in a keystroke; each remembers exactly where you were.</p>
-    </div>
-  </div>
-</section>
-
-<section>
-  <div class="head"><h2>Your first minute</h2><p>Four steps, and you know the basics.</p></div>
-  <div class="steps">
-    <div class="step"><h3>Open a page</h3><p>Press <kbd>Ctrl</kbd><kbd>T</kbd>, type an address or a search, then <kbd>Enter</kbd>.</p></div>
-    <div class="step"><h3>Follow a link</h3><p>Click any link. The new page appears beside the old one, joined by a trail.</p></div>
-    <div class="step"><h3>Step back</h3><p>Press <kbd>Esc</kbd> for the board. Drag to pan, <kbd>Ctrl</kbd> + scroll to zoom.</p></div>
-    <div class="step"><h3>Focus</h3><p>Press <kbd>Tab</kbd> to read the current card full-window, and <kbd>Tab</kbd> again to return.</p></div>
-  </div>
-</section>
-
-<section>
-  <div class="head"><h2>Where your keys go</h2><p>The one thing worth learning first.</p></div>
-  <div class="modes">
-    <div class="mode">
-      <svg class="mini" data-mini="board" viewBox="0 0 300 92" aria-hidden="true"></svg>
-      <h3>On the board <span class="dim">· thin ring</span></h3>
-      <ul>
-        <li>The card is <em>current</em>, and keys drive the board.</li>
-        <li><kbd>h</kbd><kbd>j</kbd><kbd>k</kbd><kbd>l</kbd> or the arrow keys move between cards.</li>
-        <li>Single letters are commands: <kbd>T</kbd> tidy, <kbd>N</kbd> note.</li>
-      </ul>
-    </div>
-    <div class="switch">
-      <div><kbd>Enter</kbd> or click &rarr;</div>
-      <div>&larr; <kbd>Esc</kbd></div>
-    </div>
-    <div class="mode">
-      <svg class="mini" data-mini="page" viewBox="0 0 300 92" aria-hidden="true"></svg>
-      <h3>In the page <span class="dim">· heavy ring</span></h3>
-      <ul>
-        <li>The page <em>has the keys</em>, just like any browser tab.</li>
-        <li>Type into forms, scroll, use the site's own shortcuts.</li>
-        <li><kbd>Esc</kbd> hands the keys back to the board.</li>
-      </ul>
-    </div>
-  </div>
-</section>
-
-<section>
-  <div class="head"><h2>Shortcuts worth knowing</h2><p><kbd>F1</kbd> shows them all, any time.</p></div>
-  <div class="groups">
-    <div class="group">
-      <h3>Get around</h3>
-      <div class="row"><span>Pan / zoom</span><span class="keys">drag<span class="or">·</span><kbd>Ctrl</kbd> + scroll</span></div>
-      <div class="row"><span>Next card</span><span class="keys"><kbd>h</kbd><kbd>j</kbd><kbd>k</kbd><kbd>l</kbd></span></div>
-      <div class="row"><span>See everything</span><span class="keys"><kbd>Shift</kbd><kbd>F</kbd></span></div>
-      <div class="row"><span>Fill the view with a card</span><span class="keys"><kbd>z</kbd></span></div>
-      <div class="row"><span>Read full-window</span><span class="keys"><kbd>Tab</kbd></span></div>
-    </div>
-    <div class="group">
-      <h3>Open and find</h3>
-      <div class="row"><span>New card / address bar</span><span class="keys"><kbd>Ctrl</kbd><kbd>T</kbd><span class="or">or</span><kbd>Ctrl</kbd><kbd>L</kbd></span></div>
-      <div class="row"><span>Find cards, history, commands</span><span class="keys"><kbd>Ctrl</kbd><kbd>K</kbd></span></div>
-      <div class="row"><span>Open beside the current card</span><span class="keys"><kbd>Shift</kbd><kbd>Enter</kbd></span></div>
-      <div class="row"><span>Follow a link by keyboard</span><span class="keys"><kbd>f</kbd></span></div>
-      <div class="row"><span>Close / reopen a card</span><span class="keys"><kbd>Ctrl</kbd><kbd>W</kbd><span class="or">or</span><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>T</kbd></span></div>
-    </div>
-    <div class="group">
-      <h3>Organise</h3>
-      <div class="row"><span>Trails sidebar</span><span class="keys"><kbd>Ctrl</kbd><kbd>B</kbd></span></div>
-      <div class="row"><span>Tidy the board</span><span class="keys"><kbd>T</kbd></span></div>
-      <div class="row"><span>Fold a trail into a stack</span><span class="keys"><kbd>S</kbd></span></div>
-      <div class="row"><span>Name / colour a trail</span><span class="keys"><kbd>R</kbd><span class="or">or</span><kbd>C</kbd></span></div>
-      <div class="row"><span>Undo a board change</span><span class="keys"><kbd>Ctrl</kbd><kbd>Z</kbd></span></div>
-    </div>
-    <div class="group">
-      <h3>Notes and spaces</h3>
-      <div class="row"><span>Note / sticky note</span><span class="keys"><kbd>N</kbd><span class="or">or</span><kbd>Shift</kbd><kbd>N</kbd></span></div>
-      <div class="row"><span>Save as Markdown</span><span class="keys"><kbd>Ctrl</kbd><kbd>S</kbd></span></div>
-      <div class="row"><span>New space</span><span class="keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>N</kbd></span></div>
-      <div class="row"><span>Switch space</span><span class="keys"><kbd>Ctrl</kbd><kbd>PgDn</kbd><span class="or">or</span><kbd>Ctrl</kbd><kbd>PgUp</kbd></span></div>
-      <div class="row"><span>Private space</span><span class="keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>P</kbd></span></div>
-    </div>
-  </div>
-</section>
-
-<section>
-  <div class="head"><h2>Good to know</h2><p>So nothing comes as a surprise.</p></div>
-  <div class="grid">
-    <div class="tile">
-      <div class="icon"><svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg></div>
-      <h3>Dimmed cards are asleep</h3>
-      <p>To save memory only the cards you use most stay live. The rest show their last picture until you click them or bring them into view.</p>
-    </div>
-    <div class="tile">
-      <div class="icon"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
-      <h3>Saved as you go</h3>
-      <p>Boards, spaces and notes are saved continuously and come back exactly as you left them. There is nothing to save by hand.</p>
-    </div>
-    <div class="tile">
-      <div class="icon"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6z"/></svg></div>
-      <h3>Ads and trackers blocked</h3>
-      <p>Ads, trackers and cookie banners are stopped. The shield on a card's label counts them; click it to allow a site that needs ads.</p>
-    </div>
-    <div class="tile">
-      <div class="icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg></div>
-      <h3>Search remembers words</h3>
-      <p>History keeps the text of pages you open, so <kbd>Ctrl</kbd><kbd>K</kbd> finds them by any word. <kbd>Ctrl</kbd><kbd>H</kbd> lists them; turn it off in Settings.</p>
-    </div>
-    <div class="tile">
-      <div class="icon"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div>
-      <h3>Private spaces</h3>
-      <p><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>P</kbd> makes a space private: its pages stay out of history and its cookies are forgotten when you quit.</p>
-    </div>
-    <div class="tile">
-      <div class="icon"><svg viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19.5h14"/></svg></div>
-      <h3>Downloads, no dialogs</h3>
-      <p>Files go straight to your Downloads folder. <kbd>Ctrl</kbd><kbd>J</kbd> lists them, and <kbd>Ctrl</kbd><kbd>,</kbd> opens Settings for the rest.</p>
-    </div>
-  </div>
-</section>
-
-<div class="cta">
-  <div>
-    <h2>Ready when you are.</h2>
-    <p>Open your first page, or keep this guide nearby while you explore.</p>
-  </div>
-  <div class="actions">
-    <button class="primary" onclick="act('new-card')">Open a page <span class="keys"><kbd>Ctrl</kbd><kbd>T</kbd></span></button>
-    <button onclick="act('settings')">Settings <span class="keys"><kbd>Ctrl</kbd><kbd>,</kbd></span></button>
   </div>
 </div>
 
-<p class="fine">This page lives on your board like any card: close it with <kbd>Ctrl</kbd><kbd>W</kbd>, and bring it back any time with <em>Welcome</em> in <kbd>Ctrl</kbd><kbd>K</kbd>.</p>
+<div class="after">
+  <section class="sec">
+    <div class="sec-h rise"><div class="eyebrow">The one thing to learn first</div><h2>Where your keys go.</h2>
+      <p>A thin ring means the board has the keys; a heavy ring means the page does. Click the card to swap.</p></div>
+    <div class="modes rise">
+      <div class="demo" id="demo" role="button" tabindex="0" aria-label="Swap where the keys go">
+        <div class="dc l"><i class="ln" style="top:24%;width:60%"></i><i class="ln" style="top:44%;width:76%"></i></div>
+        <div class="dc m"><i class="ln" style="top:16%;width:46%;height:8px"></i><i class="ln" style="top:36%;width:80%"></i><i class="ln" style="top:48%;width:72%"></i><i class="caret"></i></div>
+        <div class="dc r"><i class="ln" style="top:24%;width:56%"></i><i class="ln" style="top:44%;width:70%"></i></div>
+        <div class="pill"><i></i><span><b>Board has the keys</b><b>Page has the keys</b></span></div>
+      </div>
+      <div class="side" id="side">
+        <div class="seg" role="radiogroup" aria-label="Where the keys go"><span class="thumb"></span>
+          <button role="radio" aria-checked="true" data-mode="board">On the board</button><button role="radio" aria-checked="false" data-mode="page">In the page</button></div>
+        <div class="lists">
+          <ul id="lboard">
+            <li><span class="keys"><kbd>h</kbd><kbd>j</kbd><kbd>k</kbd><kbd>l</kbd></span> or the arrows move between cards.</li>
+            <li>Single letters are commands: <kbd>T</kbd> tidies, <kbd>N</kbd> adds a note.</li>
+            <li><kbd>Enter</kbd> or a click hands the keys to the page.</li>
+          </ul>
+          <ul id="lpage" class="off">
+            <li>The page has the keys, just like any browser tab.</li>
+            <li>Type into forms, scroll, use the site's own shortcuts.</li>
+            <li><kbd>Esc</kbd> hands the keys back to the board.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
 
-</main>
+  <section class="sec">
+    <div class="sec-h rise"><div class="eyebrow">Shortcuts worth knowing</div><h2>Learnt by hand, not by heart.</h2>
+      <p>Every menu shows its key, and <kbd>F1</kbd> lists them all. Point at a row, or press a letter key, and its keys light up. <span class="tryit">Last pressed: <span class="last" id="last">—</span></span></p></div>
+    <div class="groups" id="groups">
+      <div class="group rise late" style="--col:0">
+        <h3>Get around</h3>
+        <div class="row" data-k="drag"><span>Pan / zoom</span><span class="keys">drag<span class="or">·</span><kbd>Ctrl</kbd> + scroll</span></div>
+        <div class="row" data-k="h j k l arrowleft arrowdown arrowup arrowright"><span>Next card</span><span class="keys"><kbd>h</kbd><kbd>j</kbd><kbd>k</kbd><kbd>l</kbd></span></div>
+        <div class="row" data-k="shift+f"><span>See everything</span><span class="keys"><kbd>Shift</kbd><kbd>F</kbd></span></div>
+        <div class="row" data-k="z"><span>Fill the view with a card</span><span class="keys"><kbd>z</kbd></span></div>
+        <div class="row" data-k="tab"><span>Read full-window</span><span class="keys"><kbd>Tab</kbd></span></div>
+      </div>
+      <div class="group rise late" style="--col:1">
+        <h3>Open and find</h3>
+        <div class="row" data-k="ctrl+t ctrl+l"><span>New card / address bar</span><span class="keys"><kbd>Ctrl</kbd><kbd>T</kbd><span class="or">or</span><kbd>Ctrl</kbd><kbd>L</kbd></span></div>
+        <div class="row" data-k="ctrl+k"><span>Find cards, history, commands</span><span class="keys"><kbd>Ctrl</kbd><kbd>K</kbd></span></div>
+        <div class="row" data-k="shift+enter"><span>Open beside the current card</span><span class="keys"><kbd>Shift</kbd><kbd>Enter</kbd></span></div>
+        <div class="row" data-k="f"><span>Follow a link by keyboard</span><span class="keys"><kbd>f</kbd></span></div>
+        <div class="row" data-k="ctrl+w ctrl+shift+t"><span>Close / reopen a card</span><span class="keys"><kbd>Ctrl</kbd><kbd>W</kbd><span class="or">or</span><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>T</kbd></span></div>
+      </div>
+      <div class="group rise late" style="--col:0">
+        <h3>Organise</h3>
+        <div class="row" data-k="ctrl+b"><span>Trails sidebar</span><span class="keys"><kbd>Ctrl</kbd><kbd>B</kbd></span></div>
+        <div class="row" data-k="shift+t"><span>Tidy the board</span><span class="keys"><kbd>T</kbd></span></div>
+        <div class="row" data-k="shift+s"><span>Fold a trail into a stack</span><span class="keys"><kbd>S</kbd></span></div>
+        <div class="row" data-k="shift+r shift+c"><span>Name / colour a trail</span><span class="keys"><kbd>R</kbd><span class="or">or</span><kbd>C</kbd></span></div>
+        <div class="row" data-k="ctrl+z"><span>Undo a board change</span><span class="keys"><kbd>Ctrl</kbd><kbd>Z</kbd></span></div>
+      </div>
+      <div class="group rise late" style="--col:1">
+        <h3>Notes and spaces</h3>
+        <div class="row" data-k="n shift+n"><span>Note / sticky note</span><span class="keys"><kbd>N</kbd><span class="or">or</span><kbd>Shift</kbd><kbd>N</kbd></span></div>
+        <div class="row" data-k="ctrl+s"><span>Save as Markdown</span><span class="keys"><kbd>Ctrl</kbd><kbd>S</kbd></span></div>
+        <div class="row" data-k="ctrl+shift+n"><span>New space</span><span class="keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>N</kbd></span></div>
+        <div class="row" data-k="ctrl+pagedown ctrl+pageup"><span>Switch space</span><span class="keys"><kbd>Ctrl</kbd><kbd>PgDn</kbd><span class="or">or</span><kbd>Ctrl</kbd><kbd>PgUp</kbd></span></div>
+        <div class="row" data-k="ctrl+shift+p"><span>Private space</span><span class="keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>P</kbd></span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="sec-h rise"><div class="eyebrow">Good to know</div><h2>So nothing comes as a surprise.</h2></div>
+    <div class="grid">
+      <div class="tile rise late" style="--col:0">
+        <div class="icon draw"><svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg></div>
+        <h3>Dimmed cards are asleep</h3>
+        <p>Only the cards you use most stay live, to save memory. The rest show their last picture until you click them or bring them into view.</p>
+      </div>
+      <div class="tile rise late" style="--col:1">
+        <div class="icon draw"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+        <h3>Saved as you go</h3>
+        <p>Boards, spaces and notes are saved all the time and come back exactly as you left them. There is nothing to save by hand.</p>
+      </div>
+      <div class="tile rise late" style="--col:2">
+        <div class="icon draw"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6z"/></svg></div>
+        <h3>Ads and trackers blocked</h3>
+        <p>Ads, trackers and cookie banners are stopped. The shield on a card's label counts them; click it to allow a site that needs ads.</p>
+      </div>
+      <div class="tile rise late" style="--col:0">
+        <div class="icon draw"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg></div>
+        <h3>Search remembers words</h3>
+        <p>History keeps the text of the pages you open, so <kbd>Ctrl</kbd><kbd>K</kbd> finds them by any word. <kbd>Ctrl</kbd><kbd>H</kbd> lists them; turn it off in Settings.</p>
+      </div>
+      <div class="tile rise late" style="--col:1">
+        <div class="icon draw"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div>
+        <h3>Private spaces</h3>
+        <p><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>P</kbd> makes a space private: its pages stay out of history and its cookies are forgotten when you quit.</p>
+      </div>
+      <div class="tile rise late" style="--col:2">
+        <div class="icon draw"><svg viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19.5h14"/></svg></div>
+        <h3>Downloads, no dialogs</h3>
+        <p>Files go straight to your Downloads folder. <kbd>Ctrl</kbd><kbd>J</kbd> lists them, and <kbd>Ctrl</kbd><kbd>,</kbd> opens Settings for the rest.</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="cta solo">
+    <div class="eyebrow">Ready when you are</div>
+    <h2 style="margin-top:14px">Start a trail.</h2>
+    <p>Open your first page, or keep this guide nearby while you explore.</p>
+    <div class="actions">
+      <button class="btn main" onclick="act('new-card')">Open a page <span class="keys"><kbd>Ctrl</kbd><kbd>T</kbd></span></button>
+      <button class="btn" onclick="act('shortcuts')">All shortcuts <span class="keys"><kbd>F1</kbd></span></button>
+      <button class="btn" onclick="act('settings')">Settings <span class="keys"><kbd>Ctrl</kbd><kbd>,</kbd></span></button>
+    </div>
+  </div>
+  <p class="fine">This page lives on your board like any card: close it with <kbd>Ctrl</kbd><kbd>W</kbd>, and bring it back any time with <em>Welcome</em> in <kbd>Ctrl</kbd><kbd>K</kbd>.</p>
+</div>
+
 <script>
 // Buttons ask the app for one of its commands (see web::APP_ACTION).
 function act(name) { console.log(__PREFIX__ + name); }
+const $ = (id) => document.getElementById(id);
+const root = document.documentElement;
+const still = () => root.classList.contains("still") || matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-// The board pictures, drawn the way the app draws the board: dots on the
-// board colour; cards that are just their page, rounded like the windows,
-// each named by a label above it (site icon, title); trails from the
-// source's right edge to the target's left edge, near the top of each, as
-// an S-curve with level handles halfway across and a dot at each end, quiet
-// unless they are the current card's; a trail's name on a tag before its
-// first card's label; the current card with an accent ring (thin while the
-// board has the keys, heavy while the page has them); a sticky note as
-// paper with a deeper strip.
+// ---- easing --------------------------------------------------------------
+const clamp = (t) => Math.max(0, Math.min(1, t));
+const out = (t) => 1 - (1 - t) ** 3;
+const io = (t) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
+const lerp = (a, b, t) => a + (b - a) * t;
+const lerpR = (a, b, t) => ({ x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t), w: lerp(a.w, b.w, t), h: lerp(a.h, b.h, t) });
+
+// ---- the scene, in board units -------------------------------------------
+// Chapters start at these points of the theatre's scroll (0 hero … 5 Solo).
+const CH = [0, 0.1, 0.3, 0.48, 0.65, 0.83, 1];
+// Space one: a search, two pages opened from it, a third from one of them,
+// and a sticky note. Space two: three pages of another project.
+const S1 = {
+  A: { x: 0, y: 70, w: 240, h: 168, title: "async runtimes - Search", kind: "search", x_: "accent" },
+  B: { x: 320, y: 0, w: 250, h: 160, title: "Tutorial: Hello Tokio", kind: "article", x_: "trail2" },
+  C: { x: 320, y: 206, w: 250, h: 96, title: "Asynchronous Programming in Rust", kind: "text", x_: "dim" },
+  D: { x: 652, y: 34, w: 184, h: 128, title: "Runtime benchmarks", kind: "chart", x_: "accent" },
+  N: { x: 652, y: 204, w: 184, h: 98, sticky: ["Compare with smol", "and async-std", "before Friday"] },
+};
+const S2 = {
+  F: { x: 0, y: 30, w: 300, h: 196, title: "Sourdough, step by step", kind: "article", x_: "trail2" },
+  G: { x: 384, y: 0, w: 226, h: 132, title: "Weekend ferry times", kind: "text", x_: "accent" },
+  H: { x: 384, y: 176, w: 226, h: 120, title: "Flat prices, this year", kind: "chart", x_: "dim" },
+};
+// Where the camera looks, chapter by chapter.
+const CAM = [
+  { x: -50, y: 30, w: 340, h: 250 },   // hero: the search alone, close
+  { x: -40, y: -40, w: 650, h: 380 },  // open beside: the search and its two pages
+  { x: -130, y: -110, w: 1100, h: 540 }, // step back: everything, small
+  { x: -70, y: -10, w: 930, h: 340 },  // fold: the stack and the note
+  { x: -40, y: -40, w: 690, h: 380 },  // spaces: the other board
+];
+
+// ---- building it ---------------------------------------------------------
 const NS = "http://www.w3.org/2000/svg";
-const BAR = 0;
-let uid = 0;
-function el(parent, name, attrs, text) {
-  const e = document.createElementNS(NS, name);
-  for (const k in attrs) e.setAttribute(k, attrs[k]);
-  if (text != null) e.textContent = text;
-  parent.appendChild(e);
-  return e;
-}
-const v = (name) => `var(--${name})`;
-const mixed = (a, pct, b) => `color-mix(in srgb, ${a} ${pct}%, ${b})`;
-const radius = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--radius")) || 0;
-
-function dots(svg, w, h) {
-  const id = "dots" + uid++;
-  const p = el(el(svg, "defs", {}), "pattern", { id, width: 20, height: 20, patternUnits: "userSpaceOnUse", x: 4, y: 4 });
-  el(p, "circle", { cx: 1.2, cy: 1.2, r: 1.1, fill: v("dots") });
-  el(svg, "rect", { width: w, height: h, fill: v("boardbg") });
-  el(svg, "rect", { width: w, height: h, fill: `url(#${id})` });
-}
-
-// The page inside a card, as a sketch: what kind of page it is.
-function page(g, c) {
-  const x = c.x + 12, w = c.w - 24;
-  let y = c.y + BAR + 11;
-  const line = (lw, h = 4, fill = v("ink")) => { el(g, "rect", { x, y, width: lw, height: h, rx: h / 2, fill }); y += h + 5; };
-  const link = mixed(v("accent"), 72, v("boardbg"));
+const v = (n) => `var(--${n})`;
+function sketch(c) {
+  // The page inside a card, as a drawing: what kind of page it is.
+  const { w, h } = c, x = 14, lw = w - 28, ink = v("ink");
+  const link = `color-mix(in srgb, ${v("accent")} 72%, ${v("boardbg")})`;
+  let y = 14, s = "";
+  const line = (f, hh = 4.5, fill = ink) => { s += `<rect x="${x}" y="${y}" width="${lw * f}" height="${hh}" rx="${hh / 2}" fill="${fill}"/>`; y += hh + 6; };
   if (c.kind === "search") {
-    el(g, "rect", { x, y, width: w, height: 15, rx: Math.min(radius(), 7.5), fill: "none", stroke: v("ink"), "stroke-width": 1.2 });
-    el(g, "circle", { cx: x + 8, cy: y + 7.5, r: 3, fill: "none", stroke: v("ink"), "stroke-width": 1.2 });
-    y += 25;
-    for (const lw of [0.62, 0.5, 0.56]) {
-      line(w * lw, 4.5, link);
-      line(w * 0.92);
-      line(w * 0.7);
-      y += 5;
-    }
+    s += `<rect x="${x}" y="${y}" width="${lw}" height="17" rx="3" fill="none" stroke="${ink}" stroke-width="1.2"/>`;
+    s += `<circle cx="${x + 9}" cy="${y + 8.5}" r="3.2" fill="none" stroke="${ink}" stroke-width="1.2"/>`;
+    y += 28;
+    for (const f of [0.62, 0.5, 0.56]) { line(f, 5, link); line(0.92); line(0.7); y += 4; }
   } else if (c.kind === "article") {
-    line(w * 0.6, 7, mixed(v("boardbg"), 55, "transparent"));
+    line(0.6, 8, `color-mix(in srgb, ${v("boardbg")} 55%, transparent)`);
     y += 2;
-    el(g, "rect", { x, y, width: w * 0.42, height: 50, rx: Math.min(radius(), 3), fill: mixed(v("accent"), 30, v("page")) });
-    const tx = x + w * 0.42 + 10, tw = w * 0.58 - 10;
-    for (let i = 0; i < 5; i++) el(g, "rect", { x: tx, y: y + i * 10 + 2, width: tw * [1, 0.92, 0.97, 0.86, 0.6][i], height: 4, rx: 2, fill: v("ink") });
-    y += 60;
-    for (const lw of [1, 0.95, 0.98, 0.74]) line(w * lw);
+    s += `<rect x="${x}" y="${y}" width="${lw * 0.42}" height="${h * 0.34}" rx="3" fill="color-mix(in srgb, ${v(c.x_)} 34%, ${v("page")})"/>`;
+    const tx = x + lw * 0.42 + 10, tw = lw * 0.58 - 10;
+    [1, 0.92, 0.97, 0.86, 0.6].forEach((f, i) => { s += `<rect x="${tx}" y="${y + i * 10 + 2}" width="${tw * f}" height="4" rx="2" fill="${ink}"/>`; });
+    y += h * 0.34 + 10;
+    for (const f of [1, 0.95, 0.98, 0.74, 0.9, 0.6]) { if (y > h - 10) break; line(f, 4); }
   } else if (c.kind === "chart") {
-    line(w * 0.5, 6, mixed(v("boardbg"), 55, "transparent"));
-    const base = c.y + c.h - 14, top = y + 6, bw = (w - 8) / 6;
-    el(g, "rect", { x, y: base, width: w, height: 1.2, fill: v("ink") });
+    line(0.5, 6, `color-mix(in srgb, ${v("boardbg")} 55%, transparent)`);
+    const base = h - 16, top = y + 6, bw = (lw - 8) / 6;
+    s += `<rect x="${x}" y="${base}" width="${lw}" height="1.2" fill="${ink}"/>`;
     [0.55, 0.8, 0.4, 0.95, 0.65, 0.3].forEach((f, i) => {
       const bh = (base - top) * f;
-      el(g, "rect", { x: x + 4 + i * bw, y: base - bh, width: bw * 0.62, height: bh, fill: i === 3 ? v("trail2") : mixed(v("accent"), 78, v("page")) });
+      s += `<rect x="${x + 4 + i * bw}" y="${base - bh}" width="${bw * 0.62}" height="${bh}" fill="${i === 3 ? v("trail2") : `color-mix(in srgb, ${v("accent")} 78%, ${v("page")})`}"/>`;
     });
   } else {
-    for (const lw of [0.7, 1, 0.94, 0.98, 0.6]) { line(w * lw); if (y > c.y + c.h - 10) break; }
+    for (const f of [0.55, 1, 0.94, 0.98, 0.6, 0.9, 0.8]) { if (y > h - 12) break; line(f); }
+  }
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMinYMin slice">${s}</svg>`;
+}
+
+function build(world, cards) {
+  for (const [id, c] of Object.entries(cards)) {
+    const el = document.createElement("div");
+    el.className = "c" + (c.sticky ? " sticky" : "");
+    el.innerHTML = c.sticky
+      ? `<div class="sheet"><svg viewBox="0 0 ${c.w} ${c.h}">${c.sticky.map((t, i) => `<text x="12" y="${32 + i * 17}" fill="${v("stickyink")}">${t}</text>`).join("")}</svg></div>`
+      : `<div class="sheet">${sketch(c)}</div><div class="ring"></div>`;
+    world.appendChild(el);
+    c.el = el;
+    c.id = id;
+    c.ring = el.querySelector(".ring");
+    c.home = { x: c.x, y: c.y, w: c.w, h: c.h };
+    if (!c.sticky) {
+      const lab = document.createElement("div");
+      lab.className = "lab";
+      lab.innerHTML = `${id === "A" ? `<span class="cnt">4</span><span class="tag">Research</span>` : ""}<i style="--x:${v(c.x_)}"></i><span class="t">${c.title}</span>`;
+      world.appendChild(lab);
+      c.lab = lab;
+    }
+  }
+}
+function trailPaths(svg, list) {
+  return list.map(([a, b]) => {
+    const g = document.createElementNS(NS, "g");
+    const p = document.createElementNS(NS, "path");
+    p.setAttribute("pathLength", "1");
+    p.style.strokeDasharray = "1";
+    const d0 = document.createElementNS(NS, "circle"), d1 = document.createElementNS(NS, "circle");
+    g.append(p, d0, d1);
+    svg.appendChild(g);
+    return { a, b, g, p, d0, d1 };
+  });
+}
+function placeTrail(t, Z, draw, hot, alpha) {
+  const a = t.a, b = t.b;
+  const ay = a.y + Math.min(20, a.h / 2), by = b.y + Math.min(20, b.h / 2);
+  const p0 = [a.x + a.w, ay], p3 = [b.x, by], dx = (p3[0] - p0[0]) / 2;
+  t.p.setAttribute("d", `M${p0} C${p0[0] + dx},${p0[1]} ${p3[0] - dx},${p3[1]} ${p3}`);
+  const stroke = hot ? v("accent") : v("rulestrong");
+  t.p.style.stroke = stroke;
+  t.p.style.strokeWidth = hot ? 2 : 1.5;
+  t.p.style.strokeDashoffset = String(1 - draw);
+  for (const [d, at, show] of [[t.d0, p0, draw > 0.02], [t.d1, p3, draw > 0.98]]) {
+    d.setAttribute("cx", at[0]); d.setAttribute("cy", at[1]); d.setAttribute("r", 3 / Z);
+    d.style.fill = stroke; d.style.opacity = show ? 1 : 0;
+  }
+  t.g.style.opacity = alpha;
+}
+
+build($("W1"), S1);
+build($("W2"), S2);
+const T1 = trailPaths($("T1"), [[S1.A, S1.B], [S1.A, S1.C], [S1.B, S1.D]]);
+const T2 = trailPaths($("T2"), [[S2.F, S2.G], [S2.F, S2.H]]);
+const stops = [...document.querySelectorAll(".stop")];
+const blks = [...document.querySelectorAll(".blk")];
+
+// ---- one frame of the theatre at progress p ------------------------------
+let W = 0, H = 0, chapter = 0;
+function measure() { W = $("stage").offsetWidth; H = $("stage").offsetHeight; }
+function fit(r) { const Z = Math.min(W / r.w, H / r.h); return { Z, tx: W / 2 - (r.x + r.w / 2) * Z, ty: H / 2 - (r.y + r.h / 2) * Z }; }
+const seg = (p, a, b) => clamp((p - a) / (b - a));
+
+function setCard(c, Z, { rect = c.home, o = 1, s = 1, origin = "50% 50%", ring = 0, lab = 0, z = 1 }) {
+  const e = c.el.style;
+  e.left = rect.x + "px"; e.top = rect.y + "px"; e.width = rect.w + "px"; e.height = rect.h + "px";
+  e.opacity = o; e.transform = s === 1 ? "" : `scale(${s})`; e.transformOrigin = origin; e.zIndex = z;
+  if (c.ring) c.ring.style.boxShadow = ring ? `0 0 0 ${ring / Z}px ${ring > 2 ? v("accent") : `color-mix(in srgb, ${v("accent")} 80%, transparent)`}` : "none";
+  if (c.lab) {
+    const l = c.lab.style;
+    l.left = rect.x + "px"; l.top = rect.y + "px";
+    l.transform = `scale(${1 / Z}) translateY(-27px)`;
+    l.maxWidth = Math.max(40, rect.w * Z) + "px";
+    l.opacity = Math.min(o, lab);
+    c.lab.classList.toggle("cur", !!ring);
   }
 }
 
-// One card; `ring` is "board", "page" or nothing.
-function card(svg, c, delay) {
-  const g = el(svg, "g", { class: "card", style: `animation-delay:${delay}s` });
-  const r = Math.min(radius(), 8);
-  const clip = "card" + uid++;
-  el(el(el(svg, "defs", {}), "clipPath", { id: clip }), "rect", { x: c.x, y: c.y, width: c.w, height: c.h, rx: r });
-  const inner = el(g, "g", { "clip-path": `url(#${clip})` });
-  if (c.sticky) {
-    el(inner, "rect", { x: c.x, y: c.y, width: c.w, height: c.h, fill: v("sticky") });
-    el(inner, "rect", { x: c.x, y: c.y, width: c.w, height: 12, fill: v("stickystrip") });
-    c.text.forEach((t, i) => el(inner, "text", { class: "note", x: c.x + 11, y: c.y + 30 + i * 15, fill: v("stickyink") }, t));
-  } else {
-    el(inner, "rect", { x: c.x, y: c.y, width: c.w, height: c.h, fill: v("page") });
-    // The label above the card: its site's icon and its title.
-    const lx = c.x + (c.lead || 0);
-    el(g, "rect", { x: lx, y: c.y - 15, width: 8, height: 8, rx: 2, fill: v(c.icon || "accent") });
-    const tclip = "t" + uid++;
-    el(el(el(svg, "defs", {}), "clipPath", { id: tclip }), "rect", { x: lx + 12, y: c.y - 22, width: Math.max(c.w - (c.lead || 0) - 12, 1), height: 20 });
-    el(g, "text", { class: "title", x: lx + 13, y: c.y - 7.5, fill: c.ring ? v("fg") : v("dim"), "clip-path": `url(#${tclip})` }, c.title);
-    page(inner, c);
+function frame(p) {
+  const { A, B, C, D, N } = S1, { F, G, H: Hc } = S2;
+  // The camera.
+  const k1 = io(seg(p, 0.1, 0.21)), k2 = io(seg(p, 0.3, 0.46)), k3 = io(seg(p, 0.48, 0.6)), k4 = io(seg(p, 0.66, 0.8)), k5 = io(seg(p, 0.83, 0.97));
+  let cam = lerpR(CAM[0], CAM[1], k1);
+  if (p > 0.3) cam = lerpR(CAM[1], CAM[2], k2);
+  if (p > 0.48) cam = lerpR(CAM[2], CAM[3], k3);
+  if (p > 0.66) cam = lerpR(CAM[3], CAM[4], k4);
+  if (p > 0.83) cam = lerpR(CAM[4], { x: F.x - 6, y: F.y - 6, w: F.w + 12, h: F.h + 12 }, k5);
+  const { Z, tx, ty } = fit(cam);
+  const t = `translate(${tx}px,${ty}px) scale(${Z})`;
+  $("W1").style.transform = t; $("W2").style.transform = t;
+  // Dots move with the board and stay 20–40 px apart.
+  let d = 20 * Z; while (d < 20) d *= 2; while (d > 40) d /= 2;
+  $("dots").style.backgroundSize = `${d}px ${d}px`;
+  $("dots").style.backgroundPosition = `${tx % d}px ${ty % d}px`;
+  // Labels show on the current card, and on every card once cards are small.
+  const small = clamp((fit(CAM[1]).Z * 0.82 - Z) / (fit(CAM[1]).Z * 0.25));
+
+  // Open beside: each page grows out of its source's side, after its trail.
+  const gB = out(seg(p, 0.15, 0.21)), gC = out(seg(p, 0.22, 0.28)), gD = out(seg(p, 0.34, 0.41)), gN = out(seg(p, 0.4, 0.46));
+  const fold = io(seg(p, 0.53, 0.62));
+  const cur = p < 0.15 ? "A" : p < 0.36 ? "B" : p < 0.5 ? "D" : "A";
+  const stack = (k) => ({ x: A.x + 7 * k, y: A.y - 7 * k, w: A.w, h: A.h });
+  setCard(A, Z, { ring: cur === "A" ? 1.5 : 0, lab: 1, z: 5 });
+  const member = (c, g, k) => setCard(c, Z, {
+    rect: lerpR(c.home, stack(k), fold), o: g, s: 0.85 + 0.15 * g, origin: "0% 12%",
+    ring: cur === c.id ? 1.5 : 0, lab: Math.max(cur === c.id ? 1 : 0, small) * (1 - fold), z: 4 - k,
+  });
+  member(B, gB, 1); member(C, gC, 2); member(D, gD, 3);
+  setCard(N, Z, { o: gN, s: 1.06 - 0.06 * gN });
+  const lab = A.lab;
+  const tag = out(seg(p, 0.49, 0.53)), cnt = out(seg(p, 0.6, 0.64));
+  lab.querySelector(".tag").style.cssText = `transform:scaleX(${tag});opacity:${tag};margin-right:${(tag - 1) * 70}px`;
+  lab.querySelector(".cnt").style.cssText = `transform:scale(${cnt});opacity:${cnt};margin-right:${(cnt - 1) * 26}px`;
+  const hot = p < 0.5;
+  placeTrail(T1[0], Z, io(seg(p, 0.12, 0.17)), hot, 1 - fold);
+  placeTrail(T1[1], Z, io(seg(p, 0.19, 0.24)), hot, 1 - fold);
+  placeTrail(T1[2], Z, io(seg(p, 0.31, 0.37)), hot, 1 - fold);
+
+  // Spaces: this board slides away and fades, the other slides in; the tint
+  // cross-fades and the space's name turns over.
+  const sw = io(seg(p, 0.66, 0.78));
+  $("L1").style.cssText = `transform:translateX(${-90 * sw}px);opacity:${1 - clamp(sw * 2)}`;
+  $("L2").style.cssText = `transform:translateX(${90 * (1 - sw)}px);opacity:${clamp(sw * 2 - 1)};visibility:${sw > 0.5 ? "visible" : "hidden"}`;
+  $("moodB").style.opacity = sw;
+  $("space").classList.toggle("b", sw > 0.5);
+  $("space").style.setProperty("--sd", sw > 0.5 ? v("trail2") : v("accent"));
+
+  // Solo: the current card grows to the window and the board dims.
+  const solo = k5;
+  setCard(F, Z, { ring: solo > 0.6 ? 3 : 1.5, lab: 1, z: 5 });
+  setCard(G, Z, { lab: small, o: 1 - solo * 0.5 });
+  setCard(Hc, Z, { lab: small, o: 1 - solo * 0.5 });
+  for (const tr of T2) placeTrail(tr, Z, 1, false, 1 - solo);
+  $("soloing").classList.toggle("on", solo > 0.85);
+
+  // The copy and the chapter rail.
+  let ch = 0;
+  while (ch < 5 && p >= CH[ch + 1]) ch++;
+  setChapter(ch);
+  root.style.setProperty("--hero", clamp(p / CH[1]));
+  $("rail").style.setProperty("--railo", out(seg(p, 0.05, 0.1)));
+  $("rail").style.setProperty("--fill", clamp((p - CH[1]) / (CH[5] - CH[1])));
+  stops.forEach((s, i) => { s.classList.toggle("on", ch === i + 1); s.classList.toggle("done", ch > i + 1); });
+}
+
+// A new chapter's copy comes in from the side the reader is going to.
+function setChapter(ch) {
+  if (ch === chapter) return;
+  const down = ch > chapter;
+  const old = blks[chapter], nu = blks[ch];
+  old.style.setProperty("--from", down ? "-26px" : "26px");
+  old.classList.remove("on");
+  nu.classList.add("pre");
+  nu.style.setProperty("--from", down ? "26px" : "-26px");
+  void nu.offsetWidth;
+  nu.classList.remove("pre");
+  nu.classList.add("on");
+  chapter = ch;
+}
+
+// ---- the scroll drives it, through a little damping ----------------------
+let target = 0, shown = 0, last = 0, raf = 0;
+function progress() {
+  const th = $("theatre"), run = th.offsetHeight - innerHeight;
+  return clamp((scrollY - th.offsetTop) / Math.max(1, run));
+}
+function quantised(p) {
+  // With less motion, each chapter is shown as it ends.
+  let ch = 0;
+  while (ch < 5 && p >= CH[ch + 1]) ch++;
+  return [0, 0.29, 0.47, 0.64, 0.82, 1][ch];
+}
+function tick(now) {
+  const dt = Math.min(64, now - (last || now));
+  last = now;
+  shown += (target - shown) * (1 - Math.exp(-dt / 85));
+  if (Math.abs(target - shown) < 0.0004) shown = target;
+  frame(shown);
+  raf = shown === target ? 0 : requestAnimationFrame(tick);
+  if (!raf) last = 0;
+}
+function onScroll() {
+  target = progress();
+  if (still()) { shown = target; frame(quantised(target)); return; }
+  if (!raf) raf = requestAnimationFrame(tick);
+}
+addEventListener("scroll", onScroll, { passive: true });
+addEventListener("resize", () => { measure(); shown = target = progress(); frame(still() ? quantised(shown) : shown); });
+for (const s of stops) s.addEventListener("click", () => {
+  const th = $("theatre"), run = th.offsetHeight - innerHeight, i = +s.dataset.go;
+  const at = i === 5 ? 1 : (CH[i] + CH[i + 1]) / 2 + 0.04;
+  scrollTo({ top: th.offsetTop + run * at, behavior: still() ? "auto" : "smooth" });
+});
+
+// ---- where the keys go ---------------------------------------------------
+function mode(page) {
+  $("demo").classList.toggle("page", page);
+  $("side").classList.toggle("page", page);
+  $("lboard").classList.toggle("off", page);
+  $("lpage").classList.toggle("off", !page);
+  for (const b of document.querySelectorAll(".seg button")) b.setAttribute("aria-checked", String((b.dataset.mode === "page") === page));
+}
+$("demo").addEventListener("click", () => mode(!$("demo").classList.contains("page")));
+$("demo").addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); mode(!$("demo").classList.contains("page")); } });
+for (const b of document.querySelectorAll(".seg button")) b.addEventListener("click", () => mode(b.dataset.mode === "page"));
+
+// ---- shortcuts: a key pressed lights the rows that use it -----------------
+const NAMES = { " ": "space", escape: "esc" };
+document.addEventListener("keydown", (e) => {
+  if (e.repeat || ["Control", "Shift", "Alt", "Meta"].includes(e.key)) return;
+  const key = e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase();
+  const combo = (e.ctrlKey ? "ctrl+" : "") + (e.altKey ? "alt+" : "") + (e.shiftKey ? "shift+" : "") + (NAMES[key] || key);
+  const rows = [...document.querySelectorAll(".row[data-k]")].filter((r) => r.dataset.k.split(" ").includes(combo));
+  $("last").textContent = combo.split("+").map((k) => (k.length === 1 ? k.toUpperCase() : k[0].toUpperCase() + k.slice(1))).join(" + ");
+  for (const r of rows) {
+    r.classList.remove("lit");
+    void r.offsetWidth;
+    r.classList.add("lit");
   }
-  // A hairline edge, or the ring.
-  if (c.ring) {
-    const rw = c.ring === "page" ? 3 : 2;
-    el(g, "rect", { x: c.x - rw / 2, y: c.y - rw / 2, width: c.w + rw, height: c.h + rw, rx: r ? r + rw / 2 : 0, fill: "none",
-      stroke: v("accent"), "stroke-width": rw, "stroke-opacity": c.ring === "page" ? 1 : 0.7 });
-  } else if (!c.sticky) {
-    el(g, "rect", { x: c.x + 0.5, y: c.y + 0.5, width: c.w - 1, height: c.h - 1, rx: r, fill: "none", stroke: v("rule") });
-  }
-  return g;
-}
+  if (rows.length && !still()) rows[0].scrollIntoView({ block: "nearest", behavior: "smooth" });
+});
 
-// A trail edge from card a to card b, as the app draws it; `hot` is an
-// edge of the current card's trail.
-function trail(svg, a, b, hot, delay) {
-  const ay = a.y + Math.min(18, a.h / 2), by = b.y + Math.min(18, b.h / 2);
-  const [p0, p3] = b.x >= a.x + a.w ? [[a.x + a.w, ay], [b.x, by]] : [[a.x, ay], [b.x + b.w, by]];
-  const dx = (p3[0] - p0[0]) / 2;
-  const stroke = v(hot ? "accent" : "rulestrong");
-  el(svg, "path", { class: "trail", d: `M${p0} C${p0[0] + dx},${p0[1]} ${p3[0] - dx},${p3[1]} ${p3}`, pathLength: 1, fill: "none",
-    stroke, "stroke-width": hot ? 2 : 1.5, "stroke-linecap": "round", style: `animation-delay:${delay}s` });
-  for (const p of [p0, p3]) el(svg, "circle", { class: "card", cx: p[0], cy: p[1], r: 2.8, fill: stroke, style: `animation-delay:${delay + 0.2}s` });
-}
-
-// A trail's name above its first card.
-function tag(svg, c, name, delay) {
-  const g = el(svg, "g", { class: "card", style: `animation-delay:${delay}s` });
-  const h = 16, pad = 7;
-  const t = el(g, "text", { class: "tagt", x: c.x + pad, y: c.y - 5 - h + 11.5, fill: v("accentfg") }, name);
-  const w = t.getComputedTextLength() + 2 * pad;
-  const r = radius() > 0 ? h / 2 : 0;
-  g.insertBefore(el(g, "rect", { x: c.x, y: c.y - 5 - h, width: w, height: h, rx: r, fill: v("accent") }), t);
-}
-
-function drawBoard() {
-  const svg = document.getElementById("board");
-  svg.replaceChildren();
-  dots(svg, 800, 300);
-  const A = { x: 36, y: 96, w: 214, h: 170, title: "async runtimes - Search", icon: "accent", kind: "search", lead: 66 };
-  const B = { x: 326, y: 40, w: 222, h: 150, title: "Tutorial: Hello Tokio", icon: "trail2", kind: "article", ring: "board" };
-  const C = { x: 326, y: 214, w: 222, h: 66, title: "Asynchronous Programming in Rust", icon: "dim" };
-  const D = { x: 612, y: 66, w: 156, h: 112, title: "Runtime benchmarks", icon: "accent", kind: "chart" };
-  const N = { x: 612, y: 200, w: 156, h: 80, sticky: true, text: ["Compare with smol", "and async-std", "before Friday"] };
-  // Trails under the cards, each drawn as its target appears.
-  trail(svg, A, B, true, 0.35);
-  trail(svg, A, C, true, 0.6);
-  trail(svg, B, D, true, 0.85);
-  card(svg, A, 0);
-  tag(svg, A, "Research", 0.1);
-  card(svg, B, 0.5);
-  card(svg, C, 0.75);
-  card(svg, D, 1.0);
-  card(svg, N, 1.2);
-}
-
-// The two key modes: one card, ringed as the board or the page has the keys.
-function drawMinis() {
-  for (const svg of document.querySelectorAll("svg.mini")) {
-    svg.replaceChildren();
-    dots(svg, 300, 92);
-    const mode = svg.dataset.mini;
-    card(svg, { x: 16, y: 24, w: 80, h: 50, title: "Search", icon: "dim" }, 0);
-    card(svg, { x: 110, y: 14, w: 112, h: 66, title: "Hello Tokio", icon: "trail2", ring: mode }, 0);
-    card(svg, { x: 232, y: 24, w: 60, h: 50, title: "Docs", icon: "accent" }, 0);
-  }
-}
-
-function draw() { drawBoard(); drawMinis(); }
+// Icons draw as their tiles come in: each stroke as one length.
+for (const s of document.querySelectorAll(".draw :is(path, rect, circle)")) s.setAttribute("pathLength", "1");
 
 // The app sets the theme's colours, now and whenever the theme changes.
 window.tbTheme = function (t) {
-  for (const k in t) if (k !== "light") document.documentElement.style.setProperty("--" + k, t[k]);
-  document.documentElement.classList.toggle("light", !!t.light);
-  draw();
+  for (const k in t) if (k !== "light" && k !== "still") root.style.setProperty("--" + k, t[k]);
+  root.classList.toggle("light", !!t.light);
+  root.classList.toggle("still", !!t.still);
+  // Page drawings use the theme's colours by name, so they follow by themselves.
+  measure();
+  frame(still() ? quantised(progress()) : shown);
 };
 window.tbTheme(__THEME__);
+shown = target = progress();
+frame(still() ? quantised(shown) : shown);
 </script>
 </body>
 </html>

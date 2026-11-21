@@ -9,6 +9,23 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
 
 ## [Unreleased]
 
+### Changed
+
+- **Welcome, start and settings pages redesigned around motion** that
+  uses the board's own movements (docs/DESIGN.md, "Motion on app pages").
+  The welcome page is a pinned stage where scrolling moves the board's
+  camera through six chapters: a link opening beside its source, stepping
+  back, folding a trail, switching spaces and Solo. It is followed by a
+  card you click to swap where the keys go, shortcut rows that light up
+  when their key is pressed, and icons that draw themselves as they come
+  in. On the start page the clock's digits turn over as they change, the
+  field docks at the top while scrolling, recent cards lean toward the
+  pointer, and menus and dialogs grow out of what opened them. The settings
+  side column is a trail with a bead that rides it as you scroll; headings
+  dock, a choice's thumb slides, a change says "Saved", and filtering
+  moves rows to their new places. Nothing loops, and pages are still when
+  the desktop asks for less motion (passed to pages as `still`).
+
 ### Added
 
 - **Page inspector.** F12, Ctrl+Shift+I or `:inspect` opens Chromium's

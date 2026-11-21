@@ -424,29 +424,26 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-21 (thirty-eighth). The page inspector docked
-in its page's card (owner's ask), on top of the thirty-seventh session's
-inspector card (commit `14a7004`). F12 now docks it on the right; the
-title bar's buttons move it to the bottom or to a card of its own (whose
-button docks it back); `:inspect right|bottom|beside`; the divider
-drags. New `scene::dock` (split and divider share, unit-tested);
-`compositor::corners` (a page quad can leave corners square: each pane
-keeps the card's outer corners). App: `App::docks` (an inspector `Page`
-per card under `dock_key`, a page key with `DOCK_BIT`), `content_view`
-/ `page_view` / `dock_split` (the page part is what hints, menus and
-clicks see), `Hit::Inspector` / `Divider` / `DockSide` / `Undock` /
-`Redock`, `Drag::Dock` / `Divider`, `dock_keys` (keys to the inspector
-after a click in it, Passthrough), docked cards kept out of the live cap,
-closed when the page sleeps or goes. Script: `iclick` / `irclick`, and
-`cards` logs each dock. Verified: unit tests, clippy, scripted e2e with
-screenshots (docked right, its console, moved to the bottom, *Inspect*
-from the page part, Solo with the page laid out at its part's width,
-divider drag to share 0.69, undock to a card and back, F12 closes, the
-separate card's flows unchanged, nothing saved). Not verified: clicking
-the title bar's dock buttons by pointer (the same code runs from
-`:inspect`), the morph into and out of Solo draws the page across the
-whole card while docked; the Network, Performance and Memory panels.
-**Repo state:** on `master`, uncommitted: the docked inspector.
+**Last session:** 2026-11-21 (thirty-ninth). The owner asked for the
+welcome, start and settings pages to be redesigned around motion. The
+decision is recorded in DESIGN.md under "Motion on app pages": the pages
+move the way the board moves, and nothing loops. `welcome.html` is
+rewritten as a pinned stage where scrolling drives the board's camera
+through six chapters, followed by an interactive keys demo, a shortcut
+finder that lights up on keypress, self-drawing icons and a growing close.
+`start.html` and `settings.html` keep their logic and gain a motion layer.
+In settings, the app's echo of a change no longer redraws a page that
+already shows it, which would cut short what is moving. The desktop's
+less-motion switch reaches pages as `still` in the theme JSON
+(`welcome::set_still`, set in `App::new`). Verified: unit tests, clippy,
+scripted e2e with screenshots. The welcome stage was scrolled through all
+chapters in Solo; settings were scrolled (headings dock, bead moves) and
+*New card* clicked (thumb slides, "Saved"). The start page's field docks
+on scroll. Headless Chromium previews covered every chapter, the light
+theme and `still`. Not verified: the start page's recent cards and pins in
+the real app (a fresh profile has none), the lean and digit roll by eye
+over time, and the settings view transition while typing.
+**Repo state:** on `master`, clean; the redesign is commit `feat(pages): redesign welcome, start and settings`.
 **Next up:** M14 step 1, the `config.toml` reader (asked by the owner on
 2026-11-21; format and decisions in M14). M13 step 1, the chained
 GitHub Actions build, is written on the orphan branch `cef-build`

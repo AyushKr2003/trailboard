@@ -11,7 +11,11 @@
    above it like the cards on the board. Flat on the card level; groups and
    menus at the panel level; the field a recess. Colours come from the app
    (`tbTheme`); corners follow Hyprland. The accent only marks focus, a
-   switch that is on, a pinned page's pin and the main button. */
+   switch that is on, a pinned page's pin and the main button.
+   Motion (docs/DESIGN.md, "Motion on app pages"): the column arrives once,
+   from the field outward; the clock's digits turn over when they change;
+   scrolling docks the field at the top; cards lean toward the pointer;
+   menus and dialogs grow out of what opened them. Nothing loops. */
 :root {
   --bg: #1b1c22; --fg: #e6e6e9; --dim: #a0a0a8; --faint: #7a7a83;
   --accent: #ffd60a; --accentfg: #000; --accenttext: #ffd60a; --accentsoft: #4a4426;
@@ -21,6 +25,8 @@
   --r: min(12px, var(--radius)); --r-sm: min(6px, var(--radius));
   --font: "Inter", "Adwaita Sans", system-ui, sans-serif;
   --ease: cubic-bezier(.2, .8, .2, 1);
+  --out: cubic-bezier(.22, .9, .28, 1);
+  --spring: linear(0, .25 6%, .6 14%, .86 23%, 1.02 33%, 1.035 40%, 1.01 54%, .998 70%, 1);
   --lift: 0 1px 2px color-mix(in srgb, var(--shade) 28%, transparent), 0 6px 18px color-mix(in srgb, var(--shade) 22%, transparent);
   --float: 0 1px 3px color-mix(in srgb, var(--shade) 30%, transparent), 0 12px 32px color-mix(in srgb, var(--shade) 40%, transparent);
   --mono-l: 0.80; --mono-c: 0.10; --mono-bg: 16%;
@@ -54,8 +60,10 @@ svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor;
 .ghost.sm { width: 24px; height: 24px; }
 
 .panel { background: var(--card); border: 1px solid var(--rule); border-radius: var(--r); box-shadow: var(--float); }
-.pop { position: fixed; z-index: 20; opacity: 0; transform: translateY(-4px); pointer-events: none;
-  transition: opacity .16s var(--ease), transform .16s var(--ease); }
+.pop { position: fixed; z-index: 20; opacity: 0; transform: scale(.94); pointer-events: none;
+  transform-origin: var(--ox, 100%) var(--oy, 0%);
+  transition: opacity .14s var(--ease), transform .14s var(--ease); }
+.pop.open { transition: opacity .16s var(--ease), transform .42s var(--spring); }
 .pop.open { opacity: 1; transform: none; pointer-events: auto; }
 kbd { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px;
   font: 600 11px/1 var(--font); color: var(--dim); background: var(--hover);
@@ -70,17 +78,26 @@ main { display: flex; flex-direction: column; justify-content: center; width: mi
 
 /* clock and greeting */
 .hello { margin: 0 0 28px; text-align: center; user-select: none; }
-.time { font-size: 72px; font-weight: 600; line-height: 1; letter-spacing: -0.05em;
+.time { display: inline-flex; align-items: baseline; justify-content: center;
+  font-size: 76px; font-weight: 640; line-height: 1; letter-spacing: -0.05em;
   font-variant-numeric: tabular-nums; font-feature-settings: "cv11", "tnum", "ss01"; }
-.time .ampm { margin-left: 6px; font-size: 22px; letter-spacing: 0; color: var(--dim); }
+.time .ampm { margin-left: 8px; font-size: 22px; letter-spacing: 0; color: var(--dim); }
+/* a digit: when it changes the old one rises out and the new one rises in */
+.time .d { position: relative; display: inline-block; overflow: hidden; height: 1.08em; padding: 0 .01em; line-height: 1.08; }
+.time .d > span { display: inline-block; }
+.time .d.roll > span { animation: dIn .62s var(--out) both; }
+.time .d.roll::before { content: attr(data-old); position: absolute; inset: 0 .01em; animation: dOut .62s var(--out) both; }
+@keyframes dIn { from { transform: translateY(100%); filter: blur(2px); } }
+@keyframes dOut { to { transform: translateY(-100%); filter: blur(2px); opacity: .4; } }
 .greet { margin-top: 12px; font-size: 15px; font-weight: 500; color: var(--dim); }
 .greet b { font-weight: 600; color: var(--fg); }
 .greet .dot { margin: 0 8px; color: var(--faint); }
 
 /* the field */
-.bar { position: relative; display: flex; align-items: center; height: 52px;
+.bar { position: relative; display: flex; align-items: center; height: 54px;
   background: var(--well); border: 1px solid var(--rule); border-radius: var(--r);
-  transition: border-color .12s, box-shadow .12s; }
+  transition: border-color .12s, box-shadow .3s var(--out), transform .4s var(--spring); }
+.bar.sent { transform: scale(.985); transition-duration: .08s; }
 .bar:hover { border-color: var(--rulestrong); }
 .bar:focus-within { border-color: var(--accenttext); box-shadow: 0 0 0 3px var(--accentsoft); }
 .engine { display: flex; align-items: center; gap: 8px; height: 36px; margin-left: 8px; padding: 0 8px 0 7px;
@@ -93,8 +110,11 @@ main { display: flex; flex-direction: column; justify-content: center; width: mi
 #q { flex: 1; min-width: 0; height: 100%; padding: 0 12px 0 10px; font-size: 15px; background: transparent; border: 0; }
 #q::placeholder { color: var(--faint); }
 .enter { display: flex; align-items: center; gap: 8px; margin-right: 12px; font-size: 12px; color: var(--dim);
-  white-space: nowrap; opacity: 0; transition: opacity .12s; pointer-events: none; }
-.bar.typed .enter { opacity: 1; }
+  white-space: nowrap; opacity: 0; transform: translateX(8px); transition: opacity .14s, transform .4s var(--spring); pointer-events: none; }
+.bar.typed .enter { opacity: 1; transform: none; }
+#does { display: inline-block; }
+#does.swap { animation: swap .32s var(--out); }
+@keyframes swap { from { opacity: 0; transform: translateY(6px); } }
 
 /* an engine's badge: its icon, or its letters on its colour */
 .badge { position: relative; overflow: hidden; display: inline-grid; place-items: center; flex: none;
@@ -106,9 +126,11 @@ main { display: flex; flex-direction: column; justify-content: center; width: mi
 
 /* the engine list */
 .menu { position: absolute; top: calc(100% + 8px); left: 0; z-index: 5; width: 360px; max-height: 430px;
-  overflow-y: auto; padding: 4px; scrollbar-width: thin;
-  opacity: 0; transform: translateY(-4px); pointer-events: none; transition: opacity .16s, transform .16s; }
-.menu.open { opacity: 1; transform: none; pointer-events: auto; }
+  overflow-y: auto; padding: 4px; scrollbar-width: thin; transform-origin: 24px 0;
+  opacity: 0; transform: scale(.95); pointer-events: none; transition: opacity .14s, transform .14s var(--ease); }
+.menu.open { opacity: 1; transform: none; pointer-events: auto; transition: opacity .16s, transform .42s var(--spring); }
+.menu.open > * { animation: rowIn .34s var(--out) calc(min(sibling-index(), 14) * 14ms) both; }
+@keyframes rowIn { from { opacity: 0; transform: translateY(-6px); } }
 .group-h { padding: 10px 10px 4px; font-size: 11px; font-weight: 600; color: var(--dim); }
 .item { display: flex; align-items: center; gap: 12px; padding: 6px 10px; border-radius: var(--r-sm); cursor: pointer; }
 .item .badge { width: 24px; height: 24px; font-size: 11px; }
@@ -142,17 +164,25 @@ section { margin-top: 40px; }
 /* Recent pages: small cards, as on the board: a label above, the page
    below with a hairline and a low shadow. */
 .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; }
-.pc { position: relative; display: block; min-width: 0; cursor: pointer; }
+.pc { position: relative; display: block; min-width: 0; cursor: pointer; perspective: 700px; --rx: 0deg; --ry: 0deg; --lx: 0px; --ly: 0px; }
 .pc .lab { display: flex; align-items: center; gap: 6px; height: 22px; margin-bottom: 6px; padding: 0 2px; color: var(--dim); }
 .pc .lab .t { flex: 1; min-width: 0; font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pc:hover .lab, .pc:focus-visible .lab { color: var(--fg); }
 .pc .shot { position: relative; display: block; aspect-ratio: 16 / 9; overflow: hidden; border-radius: var(--r);
-  background: var(--card); border: 1px solid var(--rule); box-shadow: var(--lift);
-  transition: border-color .12s, transform .16s var(--ease); }
+  background: var(--card); border: 1px solid var(--rule);
+  /* one light above: as the card leans, its shadow slides the other way */
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--shade) 28%, transparent),
+    calc(var(--lx) * -1) calc(6px - var(--ly)) 18px color-mix(in srgb, var(--shade) 22%, transparent);
+  transform: rotateX(var(--rx)) rotateY(var(--ry)); transform-style: preserve-3d;
+  transition: border-color .12s, transform .6s var(--spring), box-shadow .6s var(--out); }
+.pc.lean .shot { transition: border-color .12s, transform .12s linear, box-shadow .12s linear; }
+.pc .shot img { transition: transform .6s var(--out); }
+.pc:hover .shot img { transform: scale(1.035); }
 .pc .shot img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: left top; }
 .pc .shot .none { position: absolute; inset: 0; display: grid; place-items: center; background: var(--mb); }
 .pc .shot .none span { font-size: 28px; font-weight: 600; color: var(--mc); text-transform: uppercase; }
-.pc:hover .shot { border-color: var(--rulestrong); transform: translateY(-2px); }
+.pc:hover .shot { border-color: var(--rulestrong); }
+.pc:active .shot { transform: rotateX(var(--rx)) rotateY(var(--ry)) scale(.97); }
 .pc:focus-visible { outline: none; }
 .pc:focus-visible .shot { outline: 2px solid var(--accenttext); outline-offset: 2px; }
 .pc .host { display: block; margin-top: 6px; padding: 0 2px; font-size: 12px; color: var(--faint);
@@ -176,7 +206,9 @@ section { margin-top: 40px; }
 .grp:hover .grp-b { border-color: var(--rulestrong); }
 .grp-b.over { border-color: var(--accenttext); }
 .ln { position: relative; display: flex; align-items: center; gap: 10px; width: 100%; height: 32px; padding: 0 8px; border: 0;
-  border-radius: var(--r-sm); background: transparent; text-align: left; cursor: pointer; }
+  border-radius: var(--r-sm); background: transparent; text-align: left; cursor: pointer; transition: background .12s; }
+.ln .mark { transition: transform .45s var(--spring); }
+.ln:hover .mark { transform: scale(1.14); }
 .ln:hover, .ln:focus-visible, .ln.menu-on { background: var(--hover); outline: none; }
 .ln .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ln kbd { display: none; min-width: 18px; height: 18px; font-size: 10px; }
@@ -234,7 +266,9 @@ body.alt .ln kbd { display: inline-grid; }
 .switch { position: relative; width: 36px; height: 20px; flex: none; border-radius: min(10px, var(--radius));
   background: var(--rulestrong); transition: background .15s; }
 .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
-  border-radius: min(8px, var(--radius)); background: var(--fg); transition: transform .15s var(--ease); }
+  border-radius: min(8px, var(--radius)); background: var(--fg); transition: transform .45s var(--spring), width .2s var(--out), background .15s; }
+.opt:active > .switch::after { width: 20px; }
+.on:active > .switch::after { transform: translateX(12px); }
 .on > .switch { background: var(--accent); }
 .on > .switch::after { transform: translateX(16px); background: var(--accentfg); }
 
@@ -243,7 +277,9 @@ body.alt .ln kbd { display: inline-grid; }
   background: color-mix(in srgb, var(--shade) 45%, transparent); opacity: 0; pointer-events: none; transition: opacity .16s; }
 :root.light .scrim { background: color-mix(in srgb, var(--shade) 22%, transparent); }
 .scrim.open { opacity: 1; pointer-events: auto; }
-.editor { width: min(400px, calc(100vw - 32px)); padding: 20px; transform: translateY(6px) scale(.985); transition: transform .16s var(--ease); }
+.editor { width: min(400px, calc(100vw - 32px)); padding: 20px; transform: scale(.9); opacity: 0;
+  transform-origin: var(--ox, 50%) var(--oy, 50%); transition: transform .16s var(--ease), opacity .12s; }
+.scrim.open .editor { opacity: 1; transition: transform .48s var(--spring), opacity .18s; }
 .scrim.open .editor { transform: none; }
 .editor .head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
 .editor h3 { margin: 0; font-size: 15px; font-weight: 600; }
@@ -270,11 +306,45 @@ select.field { appearance: none; padding-right: 32px; cursor: pointer;
 .btn.main { border-color: transparent; background: var(--accent); color: var(--accentfg); }
 .btn.main:hover { background: color-mix(in srgb, var(--accent) 88%, var(--fg)); }
 
+/* ---- arriving: once, from the field outward ---- */
+body.intro .hello, body.intro #f, body.intro .sec-h, body.intro .pc, body.intro .grp, body.intro .newgrp, body.intro .empty, body.intro .corner {
+  transition: opacity .5s var(--out), transform .7s var(--out), filter .5s var(--out); }
+body.intro #f { transition-delay: 0s; }
+body.intro .hello { transition-delay: .05s; }
+body.intro #recent .sec-h { transition-delay: .12s; }
+body.intro .pc { transition-delay: calc(.1s + sibling-index() * 55ms); transform-origin: 50% 0; }
+body.intro .grp, body.intro .newgrp, body.intro .empty { transition-delay: calc(.22s + sibling-index() * 45ms); }
+body.intro .corner { transition-delay: .3s; }
+@starting-style {
+  body.intro #f { opacity: 0; transform: scaleX(.94); }
+  body.intro .hello { opacity: 0; transform: translateY(18px); filter: blur(6px); }
+  body.intro .sec-h, body.intro .corner { opacity: 0; }
+  body.intro .pc { opacity: 0; transform: translateY(-14px) scale(.94); }
+  body.intro .grp, body.intro .newgrp, body.intro .empty { opacity: 0; transform: translateY(16px); }
+}
+
+/* ---- scrolling: the greeting steps back and the field docks at the top ---- */
+@supports ((animation-timeline: scroll()) and (animation-range: 0% 100%)) {
+  /* over the page's own scroll room (`--room`, set by the script), at most 240 px */
+  .hello { animation: recede linear both; animation-timeline: scroll(root); animation-range: 0px var(--room, 240px); transform-origin: 50% 100%; }
+}
+#f { position: sticky; top: 12px; z-index: 6; container-type: scroll-state; }
+.bar::before { content: ""; position: absolute; inset: -13px -9999px -15px; z-index: -1; pointer-events: none;
+  background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--rule); opacity: 0; transition: opacity .25s var(--out); }
+@container scroll-state(stuck: top) { .bar::before { opacity: 1; } }
+@supports ((animation-timeline: scroll()) and (animation-range: 0% 100%)) {
+  .grp, #recent .cards { animation: rise linear both; animation-timeline: view(); animation-range: entry 0% entry 55%; }
+}
+@keyframes recede { to { opacity: 0; transform: translateY(-34px) scale(.86); filter: blur(4px); } }
+@keyframes rise { from { opacity: 0; transform: translateY(28px); } }
+
 @media (max-width: 760px) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-height: 560px) { section { display: none; } }
 @media (max-height: 380px) { .hello { display: none; } }
 @media (max-width: 460px) { #en, .sep { display: none; } .enter span { display: none; } }
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
+:root.still *, :root.still *::before, :root.still *::after { transition: none !important; animation: none !important; }
 </style>
 </head>
 <body>
@@ -379,6 +449,7 @@ const RECENT = __RECENT__;
 let S = JSON.parse(__STATE__);
 const MAX_GROUPS = 8, MAX_PER_GROUP = 12, FIRST_GROUP = "Pinned";
 const $ = (id) => document.getElementById(id);
+const root = document.documentElement;
 const byId = (id) => D.engines.find((e) => e.id === id) || D.engines[0];
 function act(msg) { console.log(PREFIX + msg); }
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -470,7 +541,7 @@ function save() {
 
 // ---- clock and greeting -------------------------------------------------
 
-let tick = 0;
+let tick = 0, lastTime = "";
 function greeting(h) {
   return h >= 5 && h < 12 ? "Good morning" : h >= 12 && h < 18 ? "Good afternoon" : h >= 18 && h < 23 ? "Good evening" : "Good night";
 }
@@ -479,7 +550,15 @@ function clock() {
   const now = new Date(), st = S.start;
   // The hour and minutes large, a day period (AM/PM) small beside them.
   const parts = new Intl.DateTimeFormat([], { hour: st.hour24 ? "2-digit" : "numeric", minute: "2-digit", hourCycle: st.hour24 ? "h23" : "h12" }).formatToParts(now);
-  $("time").innerHTML = parts.map((p) => p.type === "dayPeriod" ? `<span class="ampm">${esc(p.value)}</span>` : p.type === "literal" && /^\s+$/.test(p.value) ? "" : esc(p.value)).join("");
+  const text = parts.filter((p) => p.type !== "dayPeriod" && !(p.type === "literal" && /^\s+$/.test(p.value))).map((p) => p.value).join("");
+  const ampm = parts.find((p) => p.type === "dayPeriod");
+  // Each character in its own box, so a changed one can turn over.
+  const was = lastTime;
+  lastTime = text;
+  $("time").innerHTML = [...text].map((ch, i) => {
+    const old = was && was.length === text.length ? was[i] : ch;
+    return `<span class="d${old !== ch ? " roll" : ""}" data-old="${esc(old)}"><span>${esc(ch)}</span></span>`;
+  }).join("") + (ampm ? `<span class="ampm">${esc(ampm.value)}</span>` : "");
   const date = now.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
   const hi = st.name ? `${greeting(now.getHours())}, <b>${esc(st.name)}</b>` : greeting(now.getHours());
   $("greet").innerHTML = `${hi}<span class="dot">·</span>${esc(date)}`;
@@ -561,6 +640,24 @@ $("cards").addEventListener("click", (e) => {
   else if (!pinUrl(url, pin.dataset.title)) return;
   save();
   document.querySelector(`.pc[data-url="${CSS.escape(url)}"] .pin`)?.focus();
+});
+// A card leans a little toward the pointer, and springs back when it leaves.
+$("cards").addEventListener("pointermove", (e) => {
+  const c = e.target.closest(".pc");
+  if (!c || root.classList.contains("still")) return;
+  const r = c.querySelector(".shot").getBoundingClientRect();
+  const nx = (e.clientX - r.left) / r.width - 0.5, ny = (e.clientY - r.top) / r.height - 0.5;
+  c.classList.add("lean");
+  c.style.setProperty("--ry", (nx * 9).toFixed(2) + "deg");
+  c.style.setProperty("--rx", (-ny * 9).toFixed(2) + "deg");
+  c.style.setProperty("--lx", (nx * 8).toFixed(1) + "px");
+  c.style.setProperty("--ly", (ny * 6).toFixed(1) + "px");
+});
+$("cards").addEventListener("pointerout", (e) => {
+  const c = e.target.closest(".pc");
+  if (!c || c.contains(e.relatedTarget)) return;
+  c.classList.remove("lean");
+  for (const k of ["--rx", "--ry", "--lx", "--ly"]) c.style.removeProperty(k);
 });
 $("cards").addEventListener("auxclick", (e) => {
   const c = e.target.closest(".pc");
@@ -678,8 +775,13 @@ function place(pop, at) {
     x = r.right - w; y = r.bottom + 6;
     if (x < 8) x = r.left;
   } else ({ x, y } = at);
-  pop.style.left = Math.max(8, Math.min(x, innerWidth - w - 8)) + "px";
-  pop.style.top = Math.max(8, Math.min(y, innerHeight - h - 8)) + "px";
+  const left = Math.max(8, Math.min(x, innerWidth - w - 8)), top = Math.max(8, Math.min(y, innerHeight - h - 8));
+  pop.style.left = left + "px";
+  pop.style.top = top + "px";
+  // It grows out of what opened it.
+  const from = at instanceof Element ? at.getBoundingClientRect() : { left: at.x, right: at.x, top: at.y, bottom: at.y };
+  pop.style.setProperty("--ox", Math.max(0, Math.min(w, (from.left + from.right) / 2 - left)) + "px");
+  pop.style.setProperty("--oy", Math.max(0, Math.min(h, from.top - top)) + "px");
 }
 function openLinkMenu(ln, at) {
   closePops();
@@ -783,7 +885,9 @@ function closePops(refocus) {
   } else if (refocus && was) $("customise").focus();
   menuAt = null;
 }
+let lastDown = { x: innerWidth / 2, y: innerHeight / 2 };
 document.addEventListener("mousedown", (e) => {
+  lastDown = { x: e.clientX, y: e.clientY };
   if (!e.target.closest(".pop, #customise, .more, .gmore")) closePops();
   if (isOpen() && !$("bar").contains(e.target)) openMenu(false);
 });
@@ -799,6 +903,10 @@ function showDialog(kind, title, saveLabel) {
   $("esave").textContent = saveLabel;
   $("eerr").textContent = "";
   $("eurl").classList.remove("bad");
+  // It grows out of where it was asked for.
+  const ed = $("editor");
+  ed.style.setProperty("--ox", lastDown.x - (innerWidth - ed.offsetWidth) / 2 + "px");
+  ed.style.setProperty("--oy", lastDown.y - (innerHeight - ed.offsetHeight) / 2 + "px");
   $("scrim").classList.add("open");
 }
 // Add (p < 0) or edit site p of group g; `into` is the group offered first.
@@ -939,13 +1047,22 @@ const looksLikeAddress = (t) =>
 $("q").addEventListener("input", () => {
   const t = $("q").value.trim();
   $("bar").classList.toggle("typed", t !== "");
-  if (t) $("does").textContent = looksLikeAddress(t) ? "Go to address" : "Search " + byId(D.current).name;
+  const does = looksLikeAddress(t) ? "Go to address" : "Search " + byId(D.current).name;
+  if (t && $("does").textContent !== does) {
+    $("does").textContent = does;
+    $("does").classList.remove("swap");
+    void $("does").offsetWidth;
+    $("does").classList.add("swap");
+  }
 });
 $("f").addEventListener("submit", (e) => {
   e.preventDefault();
   if (isOpen()) return;
   const q = $("q").value.trim();
-  if (q) act("go:" + q);
+  if (!q) return;
+  $("bar").classList.add("sent");
+  setTimeout(() => $("bar").classList.remove("sent"), 90);
+  act("go:" + q);
 });
 
 // ---- keys ---------------------------------------------------------------
@@ -1015,13 +1132,26 @@ window.addEventListener("blur", () => document.body.classList.remove("alt"));
 
 // The app sets the theme's colours, now and whenever the theme changes.
 window.tbTheme = function (t) {
-  for (const k in t) if (k !== "light") document.documentElement.style.setProperty("--" + k, t[k]);
-  document.documentElement.classList.toggle("light", !!t.light);
+  for (const k in t) if (k !== "light" && k !== "still") root.style.setProperty("--" + k, t[k]);
+  root.classList.toggle("light", !!t.light);
+  root.classList.toggle("still", !!t.still);
 };
 window.tbTheme(__THEME__);
 window.tbEngine(D.current);
+// The greeting steps back over the scroll the page has, so it is gone by
+// the time the field reaches the top (or the page can scroll no further).
+function room() {
+  const max = document.documentElement.scrollHeight - innerHeight;
+  root.style.setProperty("--room", Math.max(1, Math.min(240, max)) + "px");
+}
+addEventListener("resize", room);
+new ResizeObserver(room).observe(document.body);
+
+// The first drawing arrives; later ones (a pin, a group) just change.
+document.body.classList.add("intro");
 render();
 $("q").focus();
+setTimeout(() => document.body.classList.remove("intro"), 1400);
 </script>
 </body>
 </html>

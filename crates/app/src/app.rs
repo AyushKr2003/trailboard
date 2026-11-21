@@ -1026,7 +1026,9 @@ impl App {
                 if let Some(k) = std::env::var("TRAILBOARD_SLOW_MOTION").ok().and_then(|v| v.parse::<f32>().ok()) {
                     motion::set_slow(k);
                 }
-                crate::desktop::reduced_motion()
+                let still = crate::desktop::reduced_motion();
+                crate::welcome::set_still(still);
+                still
             },
             glides: motion::Glides::default(),
             ghosts: Vec::new(),

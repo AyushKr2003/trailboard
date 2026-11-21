@@ -28,6 +28,15 @@ pub fn action(name: &str) -> Option<Action> {
     })
 }
 
+/// The desktop asks for less motion (`desktop::reduced_motion`), told to app
+/// pages as `still` with their colours: they then show each state at once.
+static STILL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Sets whether app pages are drawn without motion (asked once at start).
+pub fn set_still(still: bool) {
+    STILL.store(still, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// The colour of the theme's shadows, opaque (pages add their own transparency).
 pub(crate) fn shade(th: &Theme) -> Rgb {
     let c = th.shadow(1.0);
@@ -35,7 +44,7 @@ pub(crate) fn shade(th: &Theme) -> Rgb {
 }
 
 /// The theme as the page's CSS variables (colours and `radius`, the corner
-/// radius in use) and a `light` flag, a JSON object.
+/// radius in use), a `light` flag and a `still` flag (no motion), a JSON object.
 pub(crate) fn colors(th: &Theme) -> String {
     // An app page is a card: its ground is the card level, the boxes on it
     // the panel level, its text the same three strengths as the chrome.
@@ -73,10 +82,11 @@ pub(crate) fn colors(th: &Theme) -> String {
         .collect();
     // The corner radius in use (the *Corners* setting), so app pages match the chrome.
     format!(
-        "{{{},\"radius\":\"{}px\",\"light\":{}}}",
+        "{{{},\"radius\":\"{}px\",\"light\":{},\"still\":{}}}",
         body.join(","),
         th.rounding.max(0.0),
-        th.light()
+        th.light(),
+        STILL.load(std::sync::atomic::Ordering::Relaxed)
     )
 }
 
@@ -111,7 +121,7 @@ mod tests {
     fn the_page_gets_the_theme_and_the_prefix() {
         let th = Theme::default();
         let c = colors(&th);
-        assert!(c.starts_with("{\"bg\":\"#") && c.contains("\"light\":"), "{c}");
+        assert!(c.starts_with("{\"bg\":\"#") && c.contains("\"light\":") && c.ends_with(",\"still\":false}"), "{c}");
         let url = page_url(&th);
         assert!(url.starts_with("data:text/html;charset=utf-8,"));
         assert!(!url.contains("__THEME__") && !url.contains("__PREFIX__"));

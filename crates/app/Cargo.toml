@@ -8,15 +8,15 @@ license.workspace = true
 base64 = "0.22.1"
 arboard = { version = "3.7.0", default-features = false, features = ["wayland-data-control"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
-compositor = { version = "0.2.0", path = "../compositor" }
+compositor = { version = "0.3.0", path = "../compositor" }
 env_logger = "0.11.11"
 log = "0.4.35"
 notify = "8.2.0"
 pollster = "1.0.1"
-scene = { version = "0.2.0", path = "../scene" }
+scene = { version = "0.3.0", path = "../scene" }
 serde_json = "1.0.154"
-storage = { version = "0.2.0", path = "../storage" }
-web = { version = "0.2.0", path = "../web" }
+storage = { version = "0.3.0", path = "../storage" }
+web = { version = "0.3.0", path = "../web" }
 winit = "0.30"
 
 [dev-dependencies]

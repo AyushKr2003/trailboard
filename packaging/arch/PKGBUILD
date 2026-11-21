@@ -16,7 +16,7 @@
 # repository (and a .SRCINFO); see docs/PLAN.md, M9.
 
 pkgname=trailboard
-pkgver=0.2.0
+pkgver=0.3.0
 pkgrel=1
 pkgdesc='A canvas browser: web pages as live cards on an infinite board'
 arch=('x86_64')

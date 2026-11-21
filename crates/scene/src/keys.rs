@@ -492,6 +492,8 @@ pub enum Action {
     OuterSection,
     /// The palette as a command line (`:`), on the board and in a page.
     CommandLine,
+    /// The last command line again (`.`); a count replaces its count.
+    RepeatLine,
     // Cards from a page (M12 step 7); in Page mode the keys stay with the
     // page of the card moved to.
     /// The next / previous card in reading order (`J` / `K`), going round.
@@ -678,6 +680,7 @@ pub const NAMED: &[(&str, Action, &str)] = &[
     ("close-others", Ac::CloseOthers, "Close the other cards (asks first)"),
     ("clone", Ac::Clone, "Open this page again beside it"),
     ("command-line", Ac::CommandLine, "Command line"),
+    ("repeat-line", Ac::RepeatLine, "The last command line again"),
     ("pan-left", Ac::Pan(Dir::Left), "Pan left"),
     ("pan-down", Ac::Pan(Dir::Down), "Pan down"),
     ("pan-up", Ac::Pan(Dir::Up), "Pan up"),
@@ -852,6 +855,7 @@ pub fn board() -> Bindings<Action> {
         ("<C-y>", Redo),
         ("<C-S-y>", Redo),
         (":", CommandLine),
+        (".", RepeatLine),
         ("<F11>", Fullscreen),
     ];
     for (seq, a) in table {
@@ -1001,6 +1005,7 @@ pub fn page() -> Bindings<Action> {
         ("[s", PrevSection),
         ("S", OuterSection),
         (":", CommandLine),
+        (".", RepeatLine),
         // Cards, as tabs are elsewhere.
         ("J", NextCard),
         ("K", PrevCard),

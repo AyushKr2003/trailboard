@@ -101,6 +101,20 @@ All notable changes to Trailboard. The format follows
   runs it, and a line that isn't a command says why. Lines you ran come
   back under *Recent* (kept in `commands.json`, not in private spaces;
   Shift+Delete forgets one).
+  - **Changed:** Up / Down in the command line now bring back earlier
+    lines that start with what is typed, and Tab / Shift+Tab walk the
+    list, the field showing each row's line (Enter on a command still
+    missing its value fills it in). Ctrl+Enter runs the line and keeps
+    it open; Ctrl+Delete forgets a line, as Shift+Delete does.
+  - Readline keys in the command line and the other fields: Ctrl+W,
+    Alt+Backspace, Alt+D, Ctrl+U delete; Ctrl+Y puts it back; Alt+B,
+    Alt+F, Ctrl+Left/Right move a word; Ctrl+E the end. In the command
+    line Ctrl+A is the start and Ctrl+K deletes to the end.
+  - `.` runs the last command line again. A count before `:` or a
+    command counts (`3:` opens `:3 `, `:3 back`, `2.`); a command that
+    takes no count runs that many times. `:repeat 3 reload` runs a
+    command up to 100 times, `:later 2000 reload` after a wait in
+    milliseconds (up to a day).
 - **Scroll areas from the keyboard.** Pages with several scrolling parts (a
   sidebar, the main pane, a list inside it, a wide table, a carousel, a
   frame, an open dialog) now scroll the right one: j/k/h/l, d/u, gg/G and

@@ -433,9 +433,24 @@ pub fn command_rows(
     values: &command::Values,
 ) -> Vec<Row> {
     let row = |item, label: String, detail: String, positions, history: Option<String>| Row { item, label, detail, positions, dot: None, history };
+    // A count first (`:3 back`): the rows for the rest, each with the count.
+    if let (Some(n), rest) = command::split_count(text) {
+        let counted = |l: &String| format!("{n} {l}");
+        return command_rows(&format!(":{rest}"), recent, aliases, values)
+            .into_iter()
+            .map(|r| match r.item {
+                Item::Run(l) => row(Item::Run(counted(&l)), format!(":{}", counted(&l)), format!("{} · {n} times", r.detail), r.positions, None),
+                Item::Recent(l) => row(Item::Recent(counted(&l)), format!(":{}", counted(&l)), r.detail, r.positions, None),
+                Item::Complete(l) => row(Item::Complete(counted(&l)), r.label, r.detail, r.positions, None),
+                _ => r,
+            })
+            .collect();
+    }
     let mut out = Vec::new();
     let typed = text.trim_start_matches(':').trim();
-    let run = command::parse(text).ok();
+    // `later` and `repeat` are checked further (what they hold) by `steps`.
+    let held = |p: &command::Parsed| matches!(p.spec.cmd, command::Cmd::Later | command::Cmd::Repeat);
+    let run = command::parse(text).ok().filter(|p| !held(p) || userkeys::steps(typed, aliases).is_ok());
     if let Some(p) = &run {
         out.push(row(Item::Run(typed.to_string()), format!(":{typed}"), p.spec.about.to_string(), Vec::new(), None));
     } else if let Some(about) = chain_about(typed, aliases) {
@@ -1341,6 +1356,26 @@ mod tests {
         // An address finds it too when its letters lie together.
         let r = download_rows("files.ex", &l, |_| false, 10 * day, |ms| ms);
         assert_eq!(r.first().map(|r| &r.item), Some(&Item::Download(a)));
+    }
+
+    #[test]
+    fn command_rows_with_counts_and_held_lines() {
+        let recent = command::Recent::from_lines(vec!["back".into()]);
+        let aliases = userkeys::Aliases::default();
+        let none = |_: command::Kind, _: &str| Vec::new();
+        let rows = command_rows(":3 b", &recent, &aliases, &none);
+        assert_eq!(rows[0].item, Item::Recent("3 back".into()));
+        assert_eq!(rows[0].label, ":3 back");
+        assert!(rows.iter().any(|r| r.item == Item::Complete("3 back ".into())));
+        let rows = command_rows(":3 back", &recent, &aliases, &none);
+        assert_eq!(rows[0].item, Item::Run("3 back".into()));
+        assert!(rows[0].detail.ends_with("· 3 times"), "{}", rows[0].detail);
+        // `3:` opens `:3 `: every command, counted.
+        assert_eq!(command_rows(":3 ", &recent, &aliases, &none).len(), command::COMMANDS.len() + 1);
+        // A repeat holding a repeat isn't offered to run; the empty list says why.
+        assert!(command_rows(":repeat 3 repeat 2 tidy", &recent, &aliases, &none).is_empty());
+        assert!(command_empty(":repeat 3 repeat 2 tidy", &aliases).contains("another repeat"));
+        assert_eq!(command_rows(":repeat 3 tidy", &recent, &aliases, &none)[0].item, Item::Run("repeat 3 tidy".into()));
     }
 
     #[test]

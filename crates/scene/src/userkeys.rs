@@ -164,7 +164,16 @@ fn expand(chain: &str, aliases: &Aliases, depth: usize, out: &mut Vec<Step>) -> 
         if part.is_empty() {
             return Err(format!("an empty command in “{}”", chain.trim()));
         }
-        let line = part.trim_start_matches(':').trim();
+        let (count, line) = command::split_count(&part);
+        if let Some(n) = count {
+            // A count before a command: its count when it takes one and has
+            // none (`3 back` → `back 3`), else it runs that many times.
+            let takes = command::parse(line).is_ok_and(|p| p.arg.is_none() && p.spec.arg.kind() == Some(command::Kind::Count));
+            let line = if takes { format!("{line} {n}") } else { format!("repeat {n} {}", line.replace('|', r"\|")) };
+            expand(&line, aliases, depth + 1, out)?;
+            continue;
+        }
+        let line = line.trim_start_matches(':').trim();
         let (name, rest) = line.split_once(char::is_whitespace).map_or((line, ""), |(n, r)| (n, r.trim()));
         if rest.is_empty()
             && let Some(a) = Action::named(name)
@@ -175,6 +184,10 @@ fn expand(chain: &str, aliases: &Aliases, depth: usize, out: &mut Vec<Step>) -> 
             expand(&joined, aliases, depth + 1, out)?;
         } else {
             match command::parse(line) {
+                Ok(p) if matches!(p.spec.cmd, command::Cmd::Later | command::Cmd::Repeat) => {
+                    check_held(&p, aliases, depth)?;
+                    out.push(Step::Line(line.to_string()));
+                }
                 Ok(_) => out.push(Step::Line(line.to_string())),
                 // A placeholder stands for what a number or choice will be.
                 Err(command::Error::BadArgument(..)) if PLACEHOLDERS.iter().any(|p| line.contains(&format!("{{{p}}}"))) => out.push(Step::Line(line.to_string())),
@@ -183,6 +196,37 @@ fn expand(chain: &str, aliases: &Aliases, depth: usize, out: &mut Vec<Step>) -> 
         }
     }
     Ok(())
+}
+
+/// `:later` and `:repeat`: a number in range, then a chain that reads.
+/// A repeat can't hold another (a count before a command is one), so a
+/// line never runs more than [`command::MAX_TIMES`] times over.
+fn check_held(p: &command::Parsed, aliases: &Aliases, depth: usize) -> Result<(), String> {
+    let repeat = p.spec.cmd == command::Cmd::Repeat;
+    let name = p.spec.name;
+    let (n, inner) = command::split_times(p.arg.as_deref().unwrap_or(""), if repeat { "times" } else { "milliseconds" })
+        .map_err(|e| format!("{name}: {e}"))?;
+    if repeat && !(1..=command::MAX_TIMES as u64).contains(&n) {
+        return Err(format!("repeat: 1 to {} times", command::MAX_TIMES));
+    }
+    if !repeat && n > command::MAX_LATER_MS {
+        return Err(format!("later: at most {} ms (a day)", command::MAX_LATER_MS));
+    }
+    let mut held = Vec::new();
+    expand(&inner, aliases, depth + 1, &mut held).map_err(|e| format!("{name}: {e}"))?;
+    let repeats = |s: &Step| matches!(s, Step::Line(l) if command::parse(l).is_ok_and(|p| p.spec.cmd == command::Cmd::Repeat));
+    if repeat && held.iter().any(repeats) {
+        return Err("repeat: can't hold another repeat or a count".into());
+    }
+    Ok(())
+}
+
+/// What `:later` or `:repeat` runs, read: the number and the chain's
+/// steps (checked when the line was read, so an error here is rare).
+pub fn held(line: &str, aliases: &Aliases) -> Result<(u64, Vec<Step>), String> {
+    let p = command::parse(line).map_err(|e| e.to_string())?;
+    let (n, inner) = command::split_times(p.arg.as_deref().unwrap_or(""), "times").map_err(|e| format!("{}: {e}", p.spec.name))?;
+    Ok((n, steps(&inner, aliases)?))
 }
 
 /// The placeholders a line may hold.
@@ -634,6 +678,35 @@ mod tests {
         assert!(steps("close |", &a).unwrap_err().contains("empty"));
         // An action name with words after it is a command line.
         assert_eq!(steps("back 2", &a).unwrap(), vec![Step::Line("back 2".into())]);
+    }
+
+    #[test]
+    fn counts_later_and_repeat() {
+        let mut a = Aliases::default();
+        a.set("twice", "card-next | card-next").unwrap();
+        // A count gives a command its count, else repeats it.
+        assert_eq!(steps("3 back", &a).unwrap(), vec![Step::Line("back 3".into())]);
+        assert_eq!(steps(":2card-next", &a).unwrap(), vec![Step::Line("card-next 2".into())]);
+        assert_eq!(steps("3 tidy", &a).unwrap(), vec![Step::Line("repeat 3 tidy".into())]);
+        assert_eq!(steps("3 back 2", &a).unwrap(), vec![Step::Line("repeat 3 back 2".into())]);
+        assert_eq!(steps("2 twice | close", &a).unwrap(), vec![Step::Line("repeat 2 twice".into()), Step::Action(Action::Close)]);
+        assert_eq!(steps("2 scroll-down", &a).unwrap(), vec![Step::Line("repeat 2 scroll-down".into())]);
+        // What later and repeat hold is checked when the line is read.
+        assert!(steps("later 500 reload", &a).is_ok());
+        assert!(steps(r"repeat 2 back \| tidy", &a).is_ok());
+        assert_eq!(steps("later soon reload", &a).unwrap_err(), "later: “soon” isn't a number of milliseconds");
+        assert_eq!(steps("repeat 3", &a).unwrap_err(), "repeat: a command goes after the times");
+        assert_eq!(steps("repeat 0 tidy", &a).unwrap_err(), "repeat: 1 to 100 times");
+        assert!(steps("repeat 3 nonsense", &a).unwrap_err().starts_with("repeat: No command"));
+        assert!(steps("later 99999999999 tidy", &a).unwrap_err().contains("a day"));
+        assert!(steps("repeat 3 repeat 3 tidy", &a).unwrap_err().contains("another repeat"));
+        assert!(steps("repeat 3 3 tidy", &a).unwrap_err().contains("another repeat"));
+        assert!(steps("100 back", &a).is_ok(), "a count a command takes isn't a repeat");
+        assert!(steps("repeat 5 later 1000 reload", &a).is_ok());
+        // A bar that was `\|` reaches the step as a plain bar.
+        assert_eq!(steps(r"repeat 2 back \| tidy", &a).unwrap(), vec![Step::Line("repeat 2 back | tidy".into())]);
+        let (n, held) = super::held("repeat 2 back | tidy", &a).unwrap();
+        assert_eq!((n, held), (2, vec![Step::Action(Action::Back), Step::Action(Action::Tidy)]));
     }
 
     #[test]

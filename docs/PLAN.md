@@ -55,7 +55,7 @@ app (trailboard)  winit window · input · omnibox · chrome UI · main loop
 | ✅ | M9 Packaging | Bundle script, `--version`, crash reports, PKGBUILD, Chromium sandbox, first-run welcome |
 | ⬜ | M10 Optional extras | See below; most items on hold |
 | ✅ | M11 Premium look | Corners setting, cards as sheets, board backgrounds, sidebar, command bar, motion, empty board, review pass |
-| 🟡 | **M12 Keyboard first** | Vim-like modes, page keys, scroll sections, command line, cards from a page, search keywords, jumps and marks, user keys, settings, navigation extras, then (steps 13–17) command line, caret mode, dialogs (below) |
+| 🟡 | **M12 Keyboard first** | Vim-like modes, page keys, scroll sections, command line, cards from a page, search keywords, jumps and marks, user keys, settings, navigation extras, command line power, then (steps 14–17) caret mode, dialogs (below) |
 | ⬜ | **M13 Full media support** | Our own CEF build with H.264/AAC (and HEVC, Widevine if they work), built off this machine, opt-in (below) |
 
 ### Owner decisions that still bind
@@ -782,12 +782,53 @@ marked **Ask** are the owner's call and get asked when their step starts
     selection from a shell; the g / y panels (`g_panel.png`,
     `y_panel.png`). Not verified: a real keyboard, `yY`/`;Y` reaching
     another app (see above), X11 sessions, the light theme.
-- ⬜ 13. **Command line power.** Readline keys in the field (`Ctrl+w`,
+- ✅ 13. **Command line power.** Readline keys in the field (`Ctrl+w`,
   `Ctrl+u`, `Ctrl+a`, `Ctrl+e`, `Ctrl+k`, `Alt+b`, `Alt+f`); Up / Down
   walk earlier lines starting with what is typed while Tab / Shift+Tab
   walk the list; `Ctrl+Enter` runs and keeps the line open; `.` repeats
   the last command; a count before `:` or a command (`3:back`); `:later
   ms cmd`, `:repeat n cmd`; Ctrl+Delete removes a list row.
+  - Decided: the readline keys work in every field (address, find,
+    names), not only the command line, except Ctrl+A (select all) and
+    Ctrl+K (closes Ctrl+K's palette), which are readline's only in the
+    command line. Ctrl+W deletes to the last space (a whole address),
+    Alt+Backspace / Ctrl+Backspace / Alt+D a word of letters and digits;
+    Ctrl+Y puts back the last delete; Ctrl+U keeps the line's `:`. Ctrl+N
+    / Ctrl+P still move in the list.
+  - Tab walks the list the way a shell's menu does: the list stays the
+    one for what was typed (`Omnibox::list_for`) while the field shows
+    the row's line; Tab first fills the highlighted row, then moves on,
+    going round; typing starts afresh. Enter on a command missing its
+    value fills it (as before), so Tab no longer does that job alone.
+  - Up / Down: `scene::command::Walk`, lines from *Recent* starting with
+    what was typed (the line itself skipped); past the newest the typed
+    text comes back. Not kept in a private space, like *Recent*.
+  - Counts are part of the chain grammar (`userkeys::steps`): `N cmd`
+    becomes `cmd N` when the command takes a count and has none, else
+    `repeat N cmd`. `3:` opens `:3 ` (a number and a space lists every
+    command, counted). `.` repeats `App::last_line` (this session, private
+    spaces included), else the newest *Recent* line; a count replaces the
+    line's own.
+  - `:repeat` (1–100) and `:later` (ms, up to a day) are checked when
+    the line is read, what they hold included; a repeat can't hold
+    another (or a count), so nothing runs more than 100 times. They keep
+    their placeholders raw and fill them when the held line runs, so a
+    title with a bar can't split it. To repeat a chain, escape its bars
+    (`repeat 2 back \| tidy`). `:later` toasts when the wait is a second
+    or more, and its lines are lost on quit.
+  - Verified e2e (`~/.cache/trailboard-e2e-m12`, `site12/` on :8765,
+    `run13.sh script39 data39`): Ctrl+W took the address, Ctrl+Y put it
+    back, Alt+B / Alt+F / Ctrl+A / Ctrl+K / Ctrl+E / Ctrl+Backspace moved
+    and deleted as above (caret logged); `2:` opened `:2 `, `back` from
+    p/3 went to p/1 (`c_count.png`); `:forward` then `.` reached p/3; Up
+    twice walked the two `open` lines, Down twice came back to `:o`; Tab,
+    Tab, Shift+Tab gave `space `, `space-new `, `space ` over a fixed
+    list (`c_tab.png`); Ctrl+Enter on `zoom in` zoomed to 110% and kept
+    the line; `:repeat 2 back` p/3 → p/1; `:later 1500 forward` toasted
+    and ran (`c_later.png`); `:2 forward` → p/3; Ctrl+Delete forgot
+    `zoom in`; `:repeat 3 repeat 2 tidy` offered nothing and said why
+    (`c_nested.png`). Not verified: a real keyboard (Alt keys on this
+    compositor), X11, the light theme.
 - ⬜ 14. **Visual and caret mode** (was step 9). `v` caret, `V` line
   selection, `h j k l w b e 0 $ gg G { }` move, `o` swap ends, `y` / Enter
   copy, `Y` to the primary selection; starts at a `/` match or the top of
@@ -924,19 +965,20 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-21 (thirtieth). Finished M12 step 12, page
-navigation extras: `]]`/`[[` next/previous page, `gu`/`gU`, Ctrl+a/Ctrl+x
-on the address's last number, `go`/`gO`/`xo`, Ctrl+s stop, `gh`, `gf`,
-`gd`, F11, yanks of the site and the clean address, the primary selection
-(Shift yanks, `pp`/`PP`), and the hint kinds `;o ;h ;f ;I ;Y`. `wi` (the
-inspector) was dropped for now; see step 12.
-**Repo state:** on `master`; M12 steps 1–12 done and committed; M12
-steps 13–17 and M13 planned.
-**Next up:** M12 step 13, command line power (readline keys, history
-walk, Ctrl+Enter, `.` repeat, counts before `:`, `:later`, `:repeat`).
-Steps 14–17 follow in order. M13 (full media support, our own CEF build)
-runs beside M12; its builds need a cloud machine. Also retake the README
-screenshots (`docs/images/`) in the new look.
+**Last session:** 2026-11-21 (thirty-first). Finished M12 step 13,
+command line power: readline keys in every field, Up / Down through
+earlier lines, Tab / Shift+Tab walking the list, Ctrl+Enter, `.`, counts
+before `:` and in the line, `:repeat`, `:later`, Ctrl+Delete; a *Command
+line* section on the `?` sheet.
+**Repo state:** on `master`; M12 steps 1–12 committed, step 13 done but
+not yet committed; M12 steps 14–17 and M13 planned.
+**Next up:** M12 step 14, visual and caret mode. Steps 15–17 follow in
+order. M13 (full media support, our own CEF build) runs beside M12; its
+builds need a cloud machine. Also retake the README screenshots
+(`docs/images/`) in the new look.
+**Notes:** `:later` lines aren't saved across quits, and there is no
+way to list or cancel waiting ones yet (`:messages`, step 16, could show
+them).
 
 **Small follow-ups (backlog):** the page inspector in a card (`wi`, step
 12); the primary selection set from our window on Hyprland (step 12);

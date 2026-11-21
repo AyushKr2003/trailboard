@@ -74,6 +74,21 @@ const FIXED: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "Command line (:)",
+        &[
+            ("↑ · ↓", "Earlier lines starting with what is typed"),
+            ("Tab · Shift+Tab", "Walk the list"),
+            ("Ctrl+Enter", "Run and keep the line open"),
+            ("Ctrl+W · Alt+D", "Delete the word before / after"),
+            ("Ctrl+U · Ctrl+K", "Delete to the start / end"),
+            ("Ctrl+Y", "Put back what was deleted"),
+            ("Ctrl+A · Ctrl+E", "Start / end of the line"),
+            ("Alt+B · Alt+F", "A word back / forward"),
+            ("Ctrl+Delete", "Forget the highlighted line"),
+            ("Number, then :", "A count for the command (3:back)"),
+        ],
+    ),
+    (
         "Cards",
         &[
             ("Click", "Focus a page"),

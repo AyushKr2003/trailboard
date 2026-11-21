@@ -397,6 +397,11 @@ pub struct App {
     omnibox: Option<Omnibox>,
     /// Lines run on the `:` command line, newest first (`storage::commands`).
     recent_commands: scene::command::Recent,
+    /// The last line run on the command line this session (private spaces
+    /// too), for `.`.
+    last_line: Option<String>,
+    /// `:later` lines waiting: when, the chain, the hint's link it had.
+    later: Vec<(Instant, String, Option<String>)>,
     /// Every space's jump list and marks (`scene::jump`, `storage::jumps`).
     places: jump::Places,
     places_dirty: bool,
@@ -762,6 +767,8 @@ impl App {
             forwarded: HashSet::new(),
             omnibox: None,
             recent_commands,
+            last_line: None,
+            later: Vec::new(),
             places,
             places_dirty: false,
             jumping: false,
@@ -2241,7 +2248,8 @@ impl App {
             KeyAction::StackNext if idle => self.peek_stack(1),
             KeyAction::Undo => self.undo(false),
             KeyAction::Redo => self.undo(true),
-            KeyAction::CommandLine => self.open_command_line(),
+            KeyAction::CommandLine => self.open_command_line(count),
+            KeyAction::RepeatLine => self.repeat_line(count),
             KeyAction::Fullscreen => self.toggle_fullscreen(),
             _ if idle && self.card_key(action, count) => {}
             // A page key from a user line on the board: it acts on the
@@ -2289,7 +2297,7 @@ impl App {
                 }
             }
             KeyAction::PickCard => {
-                self.open_command_line();
+                self.open_command_line(None);
                 if let Some(ob) = self.omnibox.as_mut() {
                     ob.insert("card ");
                 }
@@ -2519,7 +2527,7 @@ impl App {
             self.toast("No saved pages yet · :save-page saves the current one");
             return;
         }
-        self.open_command_line();
+        self.open_command_line(None);
         if let Some(ob) = self.omnibox.as_mut() {
             ob.insert(if beside { "saved-beside " } else { "saved " });
         }
@@ -2764,7 +2772,8 @@ impl App {
                 }
             }
             KeyAction::FindNext | KeyAction::FindPrev => self.open_find(),
-            KeyAction::CommandLine => self.open_command_line(),
+            KeyAction::CommandLine => self.open_command_line(count),
+            KeyAction::RepeatLine => self.repeat_line(count),
             KeyAction::Close => self.close_from_page(id),
             KeyAction::Line(n) => self.run_user_line(n, count),
             // Cards from the page (`card_key`); board actions don't come
@@ -3613,12 +3622,43 @@ impl App {
     }
 
     /// `:`: the palette as a command line (`scene::command`).
-    fn open_command_line(&mut self) {
+    /// `:` (a count before it starts the line: `3:` → `:3 `).
+    fn open_command_line(&mut self, count: Option<u32>) {
         self.open_palette();
-        let mut ob = Omnibox::new(":", Target::Palette);
-        ob.select_all = false;
+        let mut ob = Omnibox::new("", Target::Palette);
+        ob.set(&count.map_or_else(|| ":".to_string(), |n| format!(":{n} ")));
         self.omnibox = Some(ob);
         log::info!("command line open");
+    }
+
+    /// `.`: the last command line again; a count replaces the one it had.
+    fn repeat_line(&mut self, count: Option<u32>) {
+        let Some(line) = self.last_line.clone().or_else(|| self.recent_commands.lines().first().cloned()) else {
+            return self.toast("No command line run yet");
+        };
+        let line = match count {
+            Some(n) => format!("{n} {}", scene::command::split_count(&line).1),
+            None => line,
+        };
+        log::info!("command line: repeat {line:?}");
+        self.run_line(&line);
+    }
+
+    /// `:later` lines whose time has come.
+    fn run_due_later(&mut self) {
+        let now = Instant::now();
+        if !self.later.iter().any(|(at, ..)| *at <= now) {
+            return;
+        }
+        let (due, wait): (Vec<_>, Vec<_>) = std::mem::take(&mut self.later).into_iter().partition(|(at, ..)| *at <= now);
+        self.later = wait;
+        for (_, line, hint_url) in due {
+            log::info!("command line: later {line:?}");
+            match userkeys::steps(&line, &self.keys.aliases) {
+                Ok(steps) => self.run_steps(&steps, hint_url.as_deref()),
+                Err(e) => self.toast(format!("later: {e}")),
+            }
+        }
     }
 
     /// The command line again, holding `line` (a completion to finish).
@@ -3681,8 +3721,10 @@ impl App {
                 return;
             }
         };
+        let line = line.trim().trim_start_matches(':').trim();
+        self.last_line = Some(line.to_string());
         if !self.is_private() {
-            self.recent_commands.push(line.trim().trim_start_matches(':').trim());
+            self.recent_commands.push(line);
             self.save_recent_commands();
         }
         self.run_steps(&steps, None);
@@ -3718,7 +3760,7 @@ impl App {
         let raw = |l: &str| {
             let name = l.trim().trim_start_matches(':').split_whitespace().next().unwrap_or("");
             scene::command::lookup(name).is_ok_and(|s| {
-                matches!(s.cmd, Cmd::Bind | Cmd::Unbind | Cmd::Alias | Cmd::Hint | Cmd::HintMany | Cmd::Run)
+                matches!(s.cmd, Cmd::Bind | Cmd::Unbind | Cmd::Alias | Cmd::Hint | Cmd::HintMany | Cmd::Run | Cmd::Later | Cmd::Repeat)
             })
         };
         let filled = if raw(line) {
@@ -3947,6 +3989,26 @@ impl App {
             Cmd::AdsAllowed => self.run_command(Command::AllowedSites),
             Cmd::ClearHistory => self.run_command(Command::ClearHistory),
             Cmd::ClearCookies => self.run_command(Command::ClearCookies),
+            // What these hold runs with its placeholders filled then (and
+            // its bars kept), so they stay raw above.
+            Cmd::Repeat => match userkeys::held(&filled, &self.keys.aliases) {
+                Ok((n, steps)) => {
+                    for _ in 0..n.min(u64::from(scene::command::MAX_TIMES)) {
+                        self.run_steps(&steps, hint_url);
+                    }
+                }
+                Err(e) => self.toast(e),
+            },
+            Cmd::Later => match scene::command::split_times(&arg, "milliseconds") {
+                Ok((ms, line)) => {
+                    let ms = ms.min(scene::command::MAX_LATER_MS);
+                    if ms >= 1000 {
+                        self.toast(format!("In {} s: {line}", (ms as f64 / 1000.0 * 10.0).round() / 10.0));
+                    }
+                    self.later.push((Instant::now() + Duration::from_millis(ms), line, hint_url.map(str::to_string)));
+                }
+                Err(e) => self.toast(format!("later: {e}")),
+            },
         }
     }
 
@@ -4695,8 +4757,8 @@ impl App {
             let visits = visits_for(&self.page_index, &self.visits_cache, &ob.text, true);
             return palette::history_rows(&ob.text, &self.scene, &visits, local_ms(now_ms()), local_ms);
         }
-        if palette::is_command(&ob.text) {
-            return palette::command_rows(&ob.text, &self.recent_commands, &self.keys.aliases, &|k, x| self.command_values(k, x));
+        if palette::is_command(ob.query()) {
+            return palette::command_rows(ob.query(), &self.recent_commands, &self.keys.aliases, &|k, x| self.command_values(k, x));
         }
         let visits = visits_for(&self.page_index, &self.visits_cache, &ob.text, false);
         let closed: Vec<&Node> = self.closed.iter().map(|(n, _)| n).collect();
@@ -4707,7 +4769,7 @@ impl App {
     /// the palette's rows sit in labelled sections.
     fn list_panel(&self, ob: &Omnibox, rows: &[palette::Row]) -> palette::Panel {
         match ob.target {
-            Target::Palette => palette::Panel::new(self.viewport(), self.ui(), palette::sections(rows, &ob.text)),
+            Target::Palette => palette::Panel::new(self.viewport(), self.ui(), palette::sections(rows, ob.query())),
             _ => palette::Panel::plain(self.viewport(), self.ui(), rows.len()),
         }
     }
@@ -7271,6 +7333,52 @@ impl App {
                 self.omnibox = None;
                 return;
             }
+            let command_line = ob.target == Target::Palette && palette::is_command(&ob.text);
+            // Command line: Up / Down walk the lines run before that start
+            // with what is typed (Ctrl+N / Ctrl+P still move in the list).
+            if command_line && !ctrl && !alt && matches!(ev.named, Some(NamedKey::ArrowUp | NamedKey::ArrowDown)) {
+                let walk = ob.walk.get_or_insert_with(|| scene::command::Walk::new(&ob.text));
+                if let Some(line) = walk.step(&self.recent_commands, ev.named == Some(NamedKey::ArrowUp)) {
+                    ob.set(&format!(":{line}"));
+                    ob.list_for = None;
+                    ob.sel = 0;
+                    ob.scroll = 0;
+                }
+                return;
+            }
+            // Tab / Shift+Tab walk the list, the field showing the row's
+            // line; the list stays the one for what was typed.
+            if command_line && !ctrl && !alt && ev.named == Some(NamedKey::Tab) {
+                let mut ob = self.omnibox.take().expect("command line open");
+                let rows = self.list_rows(&ob);
+                let line_of = |i: usize| match rows.get(i).map(|r| &r.item) {
+                    Some(Item::Run(l) | Item::Recent(l) | Item::Complete(l)) => Some(format!(":{l}")),
+                    _ => None,
+                };
+                let len = rows.len();
+                if len > 0 {
+                    let to = if shift {
+                        (ob.sel + len - 1) % len
+                    } else if line_of(ob.sel).as_deref() == Some(ob.text.as_str()) {
+                        (ob.sel + 1) % len
+                    } else {
+                        ob.sel
+                    };
+                    if ob.list_for.is_none() {
+                        ob.list_for = Some(ob.text.clone());
+                    }
+                    ob.sel = to;
+                    if let Some(panel) = &palette_len {
+                        ob.scroll = panel.keep_visible(to, ob.scroll);
+                    }
+                    if let Some(l) = line_of(to) {
+                        ob.set(&l);
+                    }
+                    ob.walk = None;
+                }
+                self.omnibox = Some(ob);
+                return;
+            }
             // Palette: Up/Down (Ctrl+K/J, Ctrl+P/N), PgUp/PgDn move the highlight.
             let step = palette_len.as_ref().and_then(|panel| match ev.named {
                 Some(NamedKey::ArrowDown) => Some(1),
@@ -7291,15 +7399,31 @@ impl App {
             }
             match ev.named {
                 Some(NamedKey::Escape) => self.omnibox = None,
-                // Command line: Tab puts the highlighted row's line in the field.
-                Some(NamedKey::Tab) if ob.target == Target::Palette && palette::is_command(&ob.text) => {
-                    let ob = self.omnibox.take().expect("palette open");
-                    let row = self.list_rows(&ob).into_iter().nth(ob.sel).map(|r| r.item);
-                    match row {
-                        Some(Item::Run(line) | Item::Recent(line) | Item::Complete(line)) => self.fill_command_line(&line),
-                        _ => self.omnibox = Some(ob),
+                // Readline keys, in every field. Ctrl+A and Ctrl+K are the
+                // line's start and end only in the command line: elsewhere
+                // Ctrl+A selects all, and Ctrl+K closes the palette.
+                _ if ctrl && !alt && code == Some(KeyCode::KeyW) => ob.kill_big_word_back(),
+                _ if ctrl && !alt && code == Some(KeyCode::KeyU) => ob.kill_to_start(),
+                _ if ctrl && !alt && code == Some(KeyCode::KeyE) => ob.end(),
+                _ if ctrl && !alt && code == Some(KeyCode::KeyY) => ob.yank(),
+                _ if ctrl && !alt && code == Some(KeyCode::KeyA) && command_line => ob.home(),
+                _ if ctrl && !alt && code == Some(KeyCode::KeyK) && (command_line || ob.target != Target::Palette) => ob.kill_to_end(),
+                _ if alt && !ctrl && code == Some(KeyCode::KeyB) => ob.word_left(),
+                _ if alt && !ctrl && code == Some(KeyCode::KeyF) => ob.word_right(),
+                _ if alt && !ctrl && code == Some(KeyCode::KeyD) => ob.kill_word_forward(),
+                Some(NamedKey::Backspace) if ctrl || alt => ob.kill_word_back(),
+                Some(NamedKey::ArrowLeft) if ctrl || alt => ob.word_left(),
+                Some(NamedKey::ArrowRight) if ctrl || alt => ob.word_right(),
+                // Ctrl+Delete removes a list's row (as Shift+Delete does),
+                // else the word after the caret.
+                Some(NamedKey::Delete) if ctrl && !shift && ob.target == Target::Downloads => self.drop_selected_download(),
+                Some(NamedKey::Delete) if ctrl && !shift && ob.target == Target::AllowedSites => {
+                    if let Some(Item::AllowedSite(site)) = &setting_sel {
+                        self.block_site_again(site);
                     }
                 }
+                Some(NamedKey::Delete) if ctrl && !shift && ob.target.is_list() => self.forget_selected(),
+                Some(NamedKey::Delete) if ctrl && !shift => ob.kill_word_forward(),
                 _ if ctrl && code == Some(KeyCode::KeyK) && ob.target == Target::Palette => self.omnibox = None,
                 _ if ctrl && code == Some(KeyCode::KeyF) && matches!(ob.target, Target::Find(_)) => ob.select_all = true,
                 Some(NamedKey::Enter) if matches!(ob.target, Target::Find(_)) => {
@@ -7329,6 +7453,21 @@ impl App {
                     let ob = self.omnibox.take().expect("downloads open");
                     if let Some(palette::Item::Download(key)) = self.list_rows(&ob).into_iter().nth(ob.sel).map(|r| r.item) {
                         self.show_download_folder(key);
+                    }
+                }
+                // Command line: Ctrl+Enter runs and keeps the line open.
+                Some(NamedKey::Enter) if ctrl && command_line => {
+                    let ob = self.omnibox.take().expect("command line open");
+                    if let Some(row) = self.list_rows(&ob).into_iter().nth(ob.sel) {
+                        let runs = match &row.item {
+                            Item::Run(_) | Item::Recent(_) => true,
+                            Item::Complete(l) => userkeys::steps(l, &self.keys.aliases).is_ok(),
+                            _ => false,
+                        };
+                        self.run_palette(row, false);
+                        if runs && self.omnibox.is_none() {
+                            self.fill_command_line(ob.text.trim_start_matches(':'));
+                        }
                     }
                 }
                 Some(NamedKey::Enter) if ob.target.is_list() => {
@@ -7413,13 +7552,16 @@ impl App {
                     c.page.find(&ob.text, true, false);
                 }
             }
-            // New text, new results: back to the best one.
+            // New text, new results: back to the best one, and the walks
+            // through earlier lines and the list start again.
             if let Some(ob) = self.omnibox.as_mut()
                 && ob.target.is_list()
                 && ob.text != before
             {
                 ob.sel = 0;
                 ob.scroll = 0;
+                ob.walk = None;
+                ob.list_for = None;
             }
             return;
         }
@@ -8426,7 +8568,7 @@ impl App {
                 Target::Palette if palette::is_command(&ob.text) => (
                     Icon::Search,
                     "",
-                    &[("↑", ""), ("↓", "Move"), ("Tab", "Complete"), ("Enter", "Run"), ("Esc", "Close")],
+                    &[("↑", ""), ("↓", "Earlier"), ("Tab", "Next"), ("Enter", "Run"), ("Ctrl+Enter", "Run, stay"), ("Esc", "Close")],
                 ),
                 Target::Palette => (
                     Icon::Search,
@@ -8507,7 +8649,7 @@ impl App {
                 fading.push(palette::field_layer(rd, r, &field, &th, ui));
             }
             if let Some((rows, panel, scroll)) = list {
-                let command_empty = palette::is_command(&ob.text).then(|| palette::command_empty(&ob.text, &self.keys.aliases));
+                let command_empty = palette::is_command(ob.query()).then(|| palette::command_empty(ob.query(), &self.keys.aliases));
                 let empty = match (&ob.target, ob.text.trim().is_empty(), &self.page_index) {
                     _ if command_empty.is_some() => command_empty.as_deref().unwrap_or_default(),
                     (Target::History, _, None) => "History is off. Turn it on in the settings.",
@@ -8838,6 +8980,7 @@ impl App {
             self.toast(msg);
         }
         self.read_due_texts();
+        self.run_due_later();
         // Nothing entered: the next card entered starts afresh.
         if !self.entered() && self.page_keys != PageKeys::Page {
             self.page_keys = PageKeys::Page;
@@ -9562,8 +9705,8 @@ impl App {
                         let panel = self.list_panel(ob, &rows);
                         let scroll = ob.scroll.min(panel.max_scroll());
                         log::info!(
-                            "script palette: query={:?} sel={} scroll={} shown={} rows={}",
-                            ob.text, ob.sel, scroll, panel.fits(scroll), rows.len()
+                            "script palette: query={:?} caret={} list_for={:?} sel={} scroll={} shown={} rows={}",
+                            ob.text, ob.caret, ob.list_for, ob.sel, scroll, panel.fits(scroll), rows.len()
                         );
                         for (i, row) in rows.iter().enumerate() {
                             let at = panel.row_rect(i, scroll).map(|r| r.center());

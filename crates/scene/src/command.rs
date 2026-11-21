@@ -95,6 +95,8 @@ pub enum Cmd {
     ViewSource,
     SaveFile,
     Fullscreen,
+    Later,
+    Repeat,
 }
 
 /// What a command's argument is: it decides what [`complete`] offers.
@@ -245,6 +247,8 @@ pub const COMMANDS: &[Spec] = &[
     s(Cmd::AdsAllowed, "ads-allowed", &[], No, "", "Sites with ads allowed"),
     s(Cmd::ClearHistory, "clear-history", &[], No, "", "Clear history"),
     s(Cmd::ClearCookies, "clear-cookies", &[], No, "", "Clear cookies"),
+    s(Cmd::Later, "later", &[], Req(Kind::Text), "<ms> <command>", "Run a command after a wait, in milliseconds"),
+    s(Cmd::Repeat, "repeat", &[], Req(Kind::Text), "<times> <command>", "Run a command several times"),
     s(Cmd::Exit, "exit", &["qa"], No, "", "Quit Trailboard"),
 ];
 
@@ -366,6 +370,39 @@ pub fn parse(line: &str) -> Result<Parsed, Error> {
         }),
     };
     Ok(Parsed { spec, arg })
+}
+
+/// The most a count, or `:repeat`, runs a command.
+pub const MAX_TIMES: u32 = 100;
+
+/// The longest `:later` waits: a day, in milliseconds.
+pub const MAX_LATER_MS: u64 = 24 * 60 * 60 * 1000;
+
+/// A count before a line (`3 back`, `3back`, `:3 back`): the count and
+/// the line after it. A number and a space is a count with the command
+/// still to come (`3:` opens the line so); a number alone keeps its digits.
+pub fn split_count(line: &str) -> (Option<u32>, &str) {
+    let bare = line.trim_start().strip_prefix(':').unwrap_or(line.trim_start()).trim_start();
+    let digits = bare.len() - bare.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+    let rest = bare[digits..].trim_start();
+    if digits == 0 || digits == bare.len() {
+        return (None, bare);
+    }
+    match bare[..digits].parse::<u32>() {
+        Ok(n) if n > 0 => (Some(n), rest),
+        _ => (None, bare),
+    }
+}
+
+/// `:later` and `:repeat`'s argument: a number, then the command to run.
+/// `what` names the number in the message (`milliseconds`, `times`).
+pub fn split_times(arg: &str, what: &str) -> Result<(u64, String), String> {
+    let (n, line) = arg.trim().split_once(char::is_whitespace).map_or((arg.trim(), ""), |(n, l)| (n, l.trim()));
+    let n: u64 = n.parse().map_err(|_| format!("“{n}” isn't a number of {what}"))?;
+    if line.is_empty() {
+        return Err(format!("a command goes after the {what}"));
+    }
+    Ok((n, line.to_string()))
 }
 
 /// Something the list offers for what is typed.
@@ -528,6 +565,35 @@ impl Recent {
     }
 }
 
+/// Up / Down in the command line: a walk through the lines run before
+/// that start with what was typed when it began, newest first. Step 0 is
+/// the typed text itself.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Walk {
+    typed: String,
+    at: usize,
+}
+
+impl Walk {
+    /// A walk from `typed` (with or without its `:`).
+    pub fn new(typed: &str) -> Walk {
+        Walk { typed: typed.trim_start().strip_prefix(':').unwrap_or(typed).to_string(), at: 0 }
+    }
+
+    /// One step older (`older`) or newer: the line to show (no `:`), or
+    /// `None` at the oldest match, where the field stays as it is.
+    pub fn step(&mut self, recent: &Recent, older: bool) -> Option<String> {
+        let typed = self.typed.trim();
+        let lines: Vec<&String> = recent.matching(&self.typed).filter(|l| !l.eq_ignore_ascii_case(typed)).collect();
+        let to = if older { self.at + 1 } else { self.at.checked_sub(1)? };
+        if to > lines.len() {
+            return None;
+        }
+        self.at = to;
+        Some(if to == 0 { self.typed.clone() } else { lines[to - 1].clone() })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -562,6 +628,10 @@ mod tests {
         assert_eq!(parse("space Work").unwrap().spec.cmd, Cmd::Space);
         assert_eq!(parse("ads").unwrap().spec.cmd, Cmd::Ads);
         assert_eq!(parse("t"), Err(Error::Ambiguous(vec!["to-mark", "tidy", "tint", "toggle"])));
+        // Step 13: later and repeat; `rep` is enough, `re` isn't.
+        assert_eq!(parse("rep 3 back").unwrap().spec.cmd, Cmd::Repeat);
+        assert_eq!(parse("later 500 reload").unwrap().arg.as_deref(), Some("500 reload"));
+        assert!(matches!(parse("re"), Err(Error::Ambiguous(_))));
         // Settings (step 11): `set` is exact, `sett` the settings page.
         assert_eq!(parse("set page-colours dark").unwrap().arg.as_deref(), Some("page-colours dark"));
         assert_eq!(parse("sett").unwrap().spec.cmd, Cmd::Settings);
@@ -702,5 +772,42 @@ mod tests {
         assert_eq!(r.lines()[0], "find 148");
         let back = Recent::from_lines(r.lines().to_vec());
         assert_eq!(back, r);
+    }
+
+    #[test]
+    fn counts_before_a_line() {
+        assert_eq!(split_count("3 back"), (Some(3), "back"));
+        assert_eq!(split_count(":3back"), (Some(3), "back"));
+        assert_eq!(split_count("  :12  card-next 2"), (Some(12), "card-next 2"));
+        assert_eq!(split_count(":back 3"), (None, "back 3"));
+        assert_eq!(split_count(":3"), (None, "3"), "a number alone isn't a count");
+        assert_eq!(split_count(":3 "), (Some(3), ""), "the command is still to come");
+        assert_eq!(split_count("0 back"), (None, "0 back"));
+        assert_eq!(split_count("99999999999 back"), (None, "99999999999 back"));
+        assert_eq!(split_count(""), (None, ""));
+    }
+
+    #[test]
+    fn times_then_a_command() {
+        assert_eq!(split_times("500 reload", "milliseconds"), Ok((500, "reload".to_string())));
+        assert_eq!(split_times(" 3  back | tidy ", "times"), Ok((3, "back | tidy".to_string())));
+        assert_eq!(split_times("soon reload", "milliseconds"), Err("“soon” isn't a number of milliseconds".into()));
+        assert_eq!(split_times("3", "times"), Err("a command goes after the times".into()));
+    }
+
+    #[test]
+    fn walking_earlier_lines() {
+        let r = Recent::from_lines(vec!["space Work".into(), "tidy".into(), "space Home".into(), "sp".into()]);
+        let mut w = Walk::new(":sp");
+        assert_eq!(w.step(&r, false), None, "already at the typed text");
+        assert_eq!(w.step(&r, true).as_deref(), Some("space Work"));
+        assert_eq!(w.step(&r, true).as_deref(), Some("space Home"), "tidy doesn't start with sp; sp itself is skipped");
+        assert_eq!(w.step(&r, true), None, "the oldest stays");
+        assert_eq!(w.step(&r, false).as_deref(), Some("space Work"));
+        assert_eq!(w.step(&r, false).as_deref(), Some("sp"), "back to what was typed");
+        let mut all = Walk::new(":");
+        assert_eq!(all.step(&r, true).as_deref(), Some("space Work"));
+        assert_eq!(all.step(&r, true).as_deref(), Some("tidy"));
+        assert_eq!(Walk::new("x").step(&r, true), None);
     }
 }

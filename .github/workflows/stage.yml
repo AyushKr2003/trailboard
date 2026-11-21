@@ -9,6 +9,14 @@ on:
       stage:
         type: number
         required: true
+      # Stage 1 only: resume from checkpoint-<resume_stage> of another run
+      # (blank = start from nothing).
+      resume_run:
+        type: string
+        default: ''
+      resume_stage:
+        type: string
+        default: ''
     outputs:
       done:
         value: ${{ jobs.build.outputs.done }}
@@ -16,6 +24,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read # download a checkpoint from another run
     # GitHub stops a hosted job at 6 h; the script stops compiling ~40 min
     # before this to pack the checkpoint.
     timeout-minutes: 355
@@ -33,25 +44,36 @@ jobs:
       - name: Free disk space
         run: scripts/free-disk.sh
 
+      # Into the runner's home: /mnt is root-owned, and the download runs
+      # as the runner user.
       - name: Get the previous checkpoint
         if: inputs.stage > 1
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: checkpoint-${{ steps.meta.outputs.prev }}
-          path: /mnt/ckpt-in
+          path: /home/runner/ckpt-in
+
+      - name: Get the checkpoint of an earlier run
+        if: inputs.stage == 1 && inputs.resume_run != ''
+        uses: actions/download-artifact@v7
+        with:
+          name: checkpoint-${{ inputs.resume_stage }}
+          run-id: ${{ inputs.resume_run }}
+          github-token: ${{ github.token }}
+          path: /home/runner/ckpt-in
 
       - name: Build
         id: build
         env:
           STAGE_DEADLINE: ${{ steps.meta.outputs.deadline }}
-          CKPT_IN: ${{ inputs.stage > 1 && '/mnt/ckpt-in/out.tar.zst' || '' }}
+          CKPT_IN: ${{ (inputs.stage > 1 || inputs.resume_run != '') && '/home/runner/ckpt-in/out.tar.zst' || '' }}
           CKPT_OUT: /home/runner/ckpt
           DIST_OUT: /home/runner/dist
         run: scripts/build-cef.sh
 
       - name: Hand on the checkpoint
         if: steps.build.outputs.done == 'false'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: checkpoint-${{ inputs.stage }}
           path: /home/runner/ckpt/out.tar.zst
@@ -61,7 +83,7 @@ jobs:
 
       - name: Keep the finished archive
         if: steps.build.outputs.done == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: cef-dist
           path: /home/runner/dist/

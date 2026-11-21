@@ -4,7 +4,11 @@
 # each resuming from the previous one's checkpoint. Stages after the one
 # that finishes are skipped.
 #
-# Starts on a push to this branch that changes the build files.
+# Starts on a push to this branch that changes the build files, or by hand.
+# By hand, it can resume from an earlier run's checkpoint (kept 2 days):
+#
+#   gh workflow run build.yml --ref cef-build \
+#       -f resume_run=<run id> -f resume_stage=<last stage that ran>
 name: Build CEF
 
 on:
@@ -15,6 +19,19 @@ on:
       - scripts/**
       - .github/workflows/**
   workflow_dispatch:
+    inputs:
+      resume_run:
+        description: Run ID to resume from (blank = start fresh)
+        required: false
+        default: ''
+      resume_stage:
+        description: Stage of that run whose checkpoint to use
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  actions: read
 
 concurrency:
   group: cef-build
@@ -23,7 +40,10 @@ concurrency:
 jobs:
   s1:
     uses: ./.github/workflows/stage.yml
-    with: { stage: 1 }
+    with:
+      stage: 1
+      resume_run: ${{ inputs.resume_run || '' }}
+      resume_stage: ${{ inputs.resume_stage || '' }}
   s2:
     needs: s1
     if: always() && needs.s1.result == 'success' && needs.s1.outputs.done != 'true'
@@ -68,7 +88,7 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: cef-dist
           path: dist

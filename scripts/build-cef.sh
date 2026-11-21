@@ -90,7 +90,10 @@ OUT="$SRC/out"
 # One fixed mtime for every source file, so outputs from an earlier stage
 # (newer) count as up to date.
 find "$SRC" -path "$SRC/out" -prune -o -exec touch -h -d '2000-01-01 00:00:00' {} + 2>/dev/null || true
-if [[ -n "$CKPT_IN" && -f "$CKPT_IN" ]]; then
+if [[ -n "$CKPT_IN" ]]; then
+    # Never fall back to a fresh build: that would spend a whole stage
+    # redoing finished work.
+    [[ -f "$CKPT_IN" ]] || { echo "checkpoint $CKPT_IN is missing" >&2; ls -la "$(dirname "$CKPT_IN")" >&2 || true; exit 1; }
     echo "Resuming from $CKPT_IN ($(du -h "$CKPT_IN" | cut -f1))"
     rm -rf "${OUT:?}/$OUTDIR_NAME"
     zstd -dc "$CKPT_IN" | tar -C "$OUT" -xf -

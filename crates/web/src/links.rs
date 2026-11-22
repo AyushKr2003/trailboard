@@ -141,7 +141,10 @@ const HELPER: &str = r#"
       const p = e.parentElement;
       return !p || getComputedStyle(p).cursor !== 'pointer';
     };
-    const seen = new Set();
+    // What's inside these is part of them; other containers (a focusable
+    // region, a block with a click handler) don't hide their targets.
+    const owners = links + ', button, summary, [role=button], [role=link]';
+    const seen = new Set(), els = new Map();
     let count = 0;
     for (const e of document.querySelectorAll(sel)) {
       if (count >= LIMIT) break;
@@ -179,13 +182,21 @@ const HELPER: &str = r#"
         const hit = document.elementFromPoint((x0 + x1) / 2, (y0 + y1) / 2);
         const label = tag === 'INPUT' && e.labels && [...e.labels].some(l => l === hit || l.contains(hit));
         if (!hit || !(e === hit || e.contains(hit) || label || (tag === 'AREA' && hit.tagName === 'IMG'))) continue;
-        out.push([x0, y0, x1 - x0, y1 - y0, kind, href]);
-        seen.add(e);
+        const t = [x0, y0, x1 - x0, y1 - y0, kind, href];
+        out.push(t);
+        els.set(t, e);
+        if (e.matches(owners)) seen.add(e);
         count++;
         break;
       }
     }
-    return out;
+    // A plain container drops out when a target sits inside it: its own
+    // label would cover theirs and click nothing useful.
+    const kept = [...els.values()];
+    return out.filter(t => {
+      const e = els.get(t);
+      return !e || e.matches(owners) || t[4] === 't' || !kept.some(o => o !== e && e.contains(o));
+    });
   };
   const token = () => {
     const a = new Uint32Array(4);

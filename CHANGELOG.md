@@ -67,6 +67,13 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
 
 ### Fixed
 
+- **Link hints reach controls inside a focusable region.** A page that
+  wraps its content in a block with `tabindex` (a repository page's file
+  list, branch picker, Code button) got one label in the middle of that
+  block and none for the links and buttons inside it. Now only links,
+  buttons and summaries keep the targets inside them to themselves; a
+  plain container with targets inside it gets no label of its own.
+
 - **Smooth j / k scrolling.** Holding j or k scrolled in lurches: each
   key repeat restarted an eased scroll from a standstill. Scrolls now
   glide by our own frame loop, which chases a target each press moves on,

@@ -478,6 +478,13 @@ across–along–across with turns of `Theme::card_corner` at the zoom; the
 sidebar's elbows use `small_radius`; the welcome stage draws SVG arcs of
 `--radius`. Verified: unit tests, a scripted e2e board with a branching
 trail, headless welcome previews with Rounded and square corners.
+Then a new mark (owner's ask, 2026-11-22): seven rounds of studies shown
+as local images, the owner chose the dark keycap ("K2"; DESIGN.md, "The
+mark"): `share/trailboard.svg`, `trailboard-symbolic.svg` and the welcome
+page's mark. Verified: rendered with rsvg at 512 to 16 px on dark and light
+grounds, the symbolic at 96 and 16, the welcome mark at 1× and 4×; welcome
+tests. Not verified: desktops that cache icons until their cache is
+refreshed.
 **Repo state:** on `master`, clean; everything above is committed.
 **Next up:** M14 step 1, the `config.toml` reader (asked by the owner on
 2026-11-21; format and decisions in M14). M13 step 1, the chained

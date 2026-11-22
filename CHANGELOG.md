@@ -51,6 +51,10 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
   (square corners, square turns). The sidebar's trails and the welcome
   page's drawn board turn the same way.
 
+- **A new mark.** The app icon, its one-colour version and the welcome
+  page's mark are now a dark keyboard key whose legend is a page, a trail
+  turning at rounded right angles, and the page it opened, glowing amber.
+
 ### Fixed
 
 - **Smooth j / k scrolling.** Holding j or k scrolled in lurches: each

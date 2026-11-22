@@ -92,6 +92,27 @@ exact pixel size they are shown at (1.5 px strokes at 16 px), white with
 coverage in alpha and tinted when drawn. Add one by adding its strokes; the
 tests check it stays inside its box at every size.
 
+## The mark
+
+A keyboard key, seen from a little above, in charcoal: its skirt shows most
+at the front, its top is dished. Its legend is what Trailboard does, drawn
+in the board's own geometry: a page, a trail that leaves its side and turns
+at rounded right angles, and the page it opened, in amber with a soft glow.
+A key, because Trailboard is driven from the keyboard; a trail between
+pages, because that is what it keeps.
+
+- App icon (`share/trailboard.svg`): the key and its legend, with a soft
+  contact shadow. The glow is a filter; a renderer without filters draws
+  the legend without it.
+- Symbolic (`trailboard-symbolic.svg`, 16 px, one colour): the key's
+  outline and the legend.
+- The welcome page's mark: the same key at 26 px, in its own colours (not
+  the theme's), so the mark looks the same everywhere.
+
+Chosen by the owner on 2026-11-22 after seven rounds of studies (flat
+marks of trails, letters and pages, then visual styles; the keycap and
+frosted glass styles were the ones liked, and the dark key, "K2", won).
+
 ## Motion
 
 Overlays ease out into place in 160 ms and leave at once. Loading is a line

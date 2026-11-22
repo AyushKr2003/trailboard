@@ -3,3 +3,4 @@ pkg/
 *.pkg.tar.*
 *.tar.bz2
 trailboard/
+*.zip

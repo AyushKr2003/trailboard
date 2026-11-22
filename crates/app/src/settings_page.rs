@@ -59,7 +59,7 @@ const SECTIONS: &[Section] = &[
     Section {
         id: "appearance",
         name: "Appearance",
-        keys: &[Key::Corners, Key::Backdrop, Key::PageColours, Key::DefaultZoom, Key::ScrollSpeed, Key::SpacePanel],
+        keys: &[Key::Corners, Key::Backdrop, Key::PageColours, Key::DefaultZoom, Key::ScrollSpeed, Key::SpacePanel, Key::ModeLabel],
         buttons: &[("Keyboard shortcuts", "shortcuts")],
     },
     Section {
@@ -136,6 +136,7 @@ fn help(key: Key) -> &'static str {
         Key::DownloadTo => "Where files you download are saved.",
         Key::LivePages => "Cards that keep a running page. The rest sleep and wake when you go to them; fewer saves memory.",
         Key::SpacePanel => "The sidebar button and the space's name at the board's top left. Off, Ctrl+B opens the sidebar and the palette (Ctrl+K) switches spaces.",
+        Key::ModeLabel => "Where an entered page says what its keys do (Page, Insert, Passthrough, Caret). Ring and title: the card's ring takes the mode's colour and the window title names it, so nothing covers the page; in Solo only the title does. Chip: also a label in the bottom-left corner.",
         Key::Backdrop => "Behind the cards: a soft gradient from the space's colour, a photo (the space's own from its menu, else your desktop wallpaper), or a plain colour.",
         Key::Corners => "How round cards, panels and menus are: Trailboard's own, your Hyprland windows', or a size you pick.",
         Key::Proxy => "How pages reach the internet: as the system says, directly, or through a server you give.",

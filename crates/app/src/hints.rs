@@ -87,6 +87,7 @@ const FIXED: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl+Shift+T", "Reopen closed card"),
             ("Ctrl+Q", "Quit"),
             ("F1 · ? on the board", "Show / hide these shortcuts (also :keys)"),
+            ("Ctrl+G after g, y, …", "In a page: list what can follow"),
             (":messages", "Messages shown lately, lines waiting to run"),
             (":keys-file", "Your own keys (then :reload-keys)"),
         ],

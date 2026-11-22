@@ -464,6 +464,11 @@ pub struct App {
     pending: keys::Pending,
     /// Where an entered card's keys go.
     page_keys: PageKeys,
+    /// Ctrl+G during a half-typed sequence: the time it began, so the list
+    /// of what can follow shows until it ends (`mode-label` Ring).
+    prefix_asked: Option<Instant>,
+    /// What the window title says now (`App::update_title`).
+    title_shown: String,
     /// The card Caret / Visual mode is in, and whether a copy was asked
     /// for (only then is a copy from the page taken).
     caret: Option<CaretCard>,
@@ -913,6 +918,8 @@ impl App {
             sheet_sections: Vec::new(),
             pending: keys::Pending::default(),
             page_keys: PageKeys::Page,
+            prefix_asked: None,
+            title_shown: "Trailboard".to_string(),
             caret: None,
             forwarded: HashSet::new(),
             omnibox: None,
@@ -2323,6 +2330,17 @@ impl App {
         match self.page_keys {
             PageKeys::Visual(m) if self.entered() => Some(m),
             _ => None,
+        }
+    }
+
+    /// The entered card's mode as its ring shows it (`Theme::keys_ring`).
+    fn ring_keys(&self) -> crate::theme::Keys {
+        use crate::theme::Keys;
+        match self.page_keys {
+            PageKeys::Page => Keys::Page,
+            PageKeys::Insert => Keys::Insert,
+            PageKeys::Passthrough => Keys::Passthrough,
+            PageKeys::Visual(_) => Keys::Caret,
         }
     }
 
@@ -4778,7 +4796,7 @@ impl App {
         log::info!("setting {key:?} = {}", self.settings.value(key));
         match key {
             prefs::Key::Search => self.engine_changed(),
-            prefs::Key::NewCard | prefs::Key::ScrollSpeed | prefs::Key::DownloadTo | prefs::Key::SpacePanel => {}
+            prefs::Key::NewCard | prefs::Key::ScrollSpeed | prefs::Key::DownloadTo | prefs::Key::SpacePanel | prefs::Key::ModeLabel => {}
             prefs::Key::Corners => self.set_theme(self.theme.clone()),
             prefs::Key::Backdrop => self.backdrop_changed(),
             prefs::Key::LivePages => {
@@ -8619,6 +8637,17 @@ impl App {
         // nothing; other keys (Enter, Tab, arrows, Space, shortcuts) go on to
         // the app's shortcuts and then to the page.
         let mut to_page = self.typing();
+        // Ctrl+G mid-sequence in a page: show what can follow (with the
+        // chip that shows by itself). Ctrl+G alone goes on to the page.
+        if pressed
+            && self.entered()
+            && (self.page_mode() || self.visual_mode().is_some())
+            && !self.pending.is_empty()
+            && ev.chord(self.mods) == Some(keys::Chord::new(keys::Key::Char('g'), true, false, false))
+        {
+            self.prefix_asked = self.pending.since();
+            return;
+        }
         // Caret / Visual mode: its keys; nothing goes to the page, and a
         // key that isn't one does nothing unless it is an app shortcut.
         if pressed
@@ -9262,7 +9291,9 @@ impl App {
             let ring_w = if !focused { 0.0 } else if typing || arranging { 2.5 * scale.max(1.0) } else { 1.5 * scale.max(1.0) };
             if focused {
                 let alpha = if typing || arranging { 1.0 } else { 0.8 };
-                crate::chrome::outline(&mut l, frame.inflate(ring_w), if radius > 0.0 { radius + ring_w } else { 0.0 }, ring_w, rgb(th.accent(), alpha));
+                // An entered card's ring says where its keys go.
+                let colour = if typing && !arranging { th.keys_ring(self.ring_keys()) } else { th.accent() };
+                crate::chrome::outline(&mut l, frame.inflate(ring_w), if radius > 0.0 { radius + ring_w } else { 0.0 }, ring_w, rgb(colour, alpha));
             }
             if selected {
                 let w = 2.0 * scale.max(1.0);
@@ -9856,38 +9887,26 @@ impl App {
                 layers.push(l);
             }
         }
-        // An entered card's mode, and what is half-typed in it, in the corner.
+        // An entered card's mode, and what is half-typed in it, in the
+        // corner, or (Ring, the default) nothing over the page: its ring and
+        // the window title say it (`App::title_text`).
+        let chip = self.settings.mode_label == prefs::ModeLabel::Chip;
         if self.entered() && self.omnibox.is_none() && self.link_hints.is_none() {
-            let typed = self.pending.display();
-            let mut text = self.page_keys.label().to_string();
-            if self.page_keys == PageKeys::Page
-                && let Some((id, section, note)) = self.scroll_note.as_ref().filter(|(n, ..)| Some(*n) == self.focused)
-            {
-                text = format!("{text} · {}", self.section_name(*id, *section));
-                if !note.is_empty() {
-                    text = format!("{text} · {note}");
-                }
+            if chip && let Some(text) = self.mode_text() {
+                let l = self.message(&text, 0.0, vp.y - 16.0 * ui, false);
+                layers.push(l);
             }
-            if !typed.is_empty() {
-                text = format!("{text} · {typed}");
-            }
-            let l = self.message(&text, 0.0, vp.y - 16.0 * ui, false);
-            layers.push(l);
-            let rows = self.prefix_rows();
+            // What can follow: by itself with the chip, else on Ctrl+G.
+            let asked = self.prefix_asked.is_some() && self.prefix_asked == self.pending.since();
+            let rows = if chip || asked { self.prefix_rows() } else { Vec::new() };
             if !rows.is_empty() {
-                let (l, _) = self.prefix_panel(&rows, Some(16.0 * ui), 0.0, vp.y - 64.0 * ui);
+                let bottom = if chip { vp.y - 64.0 * ui } else { vp.y - 16.0 * ui };
+                let (l, _) = self.prefix_panel(&rows, Some(16.0 * ui), 0.0, bottom);
                 layers.push(l);
             }
         }
         // `;` hints say what a label does, in the same corner.
-        if let Some(lh) = self.link_hints.as_ref().filter(|h| h.hints.is_some())
-            && let Some(kind) = lh.kind
-            && self.omnibox.is_none()
-        {
-            let mut text = format!("Hints · {}", kind.label());
-            if kind.keeps() {
-                text = format!("{text} · {} opened · Esc to stop", lh.chosen.len());
-            }
+        if chip && let Some(text) = self.hints_text() {
             let l = self.message(&text, 0.0, vp.y - 16.0 * ui, false);
             layers.push(l);
         }
@@ -10065,7 +10084,7 @@ impl App {
     /// waited [`PREFIX_PANEL_AFTER`]: the next keys and what they do.
     fn prefix_rows(&self) -> Vec<(String, String)> {
         let Some(at) = self.pending.since() else { return Vec::new() };
-        if at.elapsed() < PREFIX_PANEL_AFTER {
+        if at.elapsed() < PREFIX_PANEL_AFTER && self.prefix_asked != Some(at) {
             return Vec::new();
         }
         let table = if self.visual_mode().is_some() {
@@ -10118,6 +10137,65 @@ impl App {
         (l, r.h)
     }
 
+    /// An entered card's mode and what is half-typed in it (*Page · section
+    /// 2.1 · 40% · 5*), for the corner chip or the window title.
+    fn mode_text(&self) -> Option<String> {
+        if !self.entered() || self.link_hints.is_some() {
+            return None;
+        }
+        let typed = self.pending.display();
+        let mut text = self.page_keys.label().to_string();
+        if self.page_keys == PageKeys::Page
+            && let Some((id, section, note)) = self.scroll_note.as_ref().filter(|(n, ..)| Some(*n) == self.focused)
+        {
+            text = format!("{text} · {}", self.section_name(*id, *section));
+            if !note.is_empty() {
+                text = format!("{text} · {note}");
+            }
+        }
+        if !typed.is_empty() {
+            text = format!("{text} · {typed}");
+        }
+        Some(text)
+    }
+
+    /// What `;` hints' labels do (*Hints · copy a link*), while they are up.
+    fn hints_text(&self) -> Option<String> {
+        let lh = self.link_hints.as_ref().filter(|h| h.hints.is_some())?;
+        let kind = lh.kind?;
+        if self.omnibox.is_some() {
+            return None;
+        }
+        let mut text = format!("Hints · {}", kind.label());
+        if kind.keeps() {
+            text = format!("{text} · {} opened · Esc to stop", lh.chosen.len());
+        }
+        Some(text)
+    }
+
+    /// The window's title: the mode (or what hints do) and the entered
+    /// card's title, else just the app's name. With nothing drawn over the
+    /// page (`mode-label` Ring), this is where the mode is read, in Solo too.
+    fn title_text(&self) -> String {
+        let card = self.focused.filter(|_| self.entered()).and_then(|id| self.scene.node(id)).map(|n| n.title.trim()).filter(|t| !t.is_empty());
+        match (self.hints_text().or_else(|| self.mode_text()), card) {
+            (Some(m), Some(t)) => format!("{m} — {t}"),
+            (Some(m), None) => format!("{m} — Trailboard"),
+            (None, _) => "Trailboard".to_string(),
+        }
+    }
+
+    /// Sets the window title when it has changed (`App::title_text`).
+    fn update_title(&mut self) {
+        let want = self.title_text();
+        if want != self.title_shown
+            && let Some(w) = self.window()
+        {
+            w.set_title(&want);
+            self.title_shown = want;
+        }
+    }
+
     fn message(&mut self, text: &str, mid_x: f32, bottom: f32, warn: bool) -> Layer {
         let th = &self.theme;
         let ui = self.scale() * th.text_scale;
@@ -10152,6 +10230,8 @@ impl App {
     /// One iteration of app work outside winit callbacks.
     pub fn tick(&mut self, dt: f32) {
         self.run_script();
+        // In tick, not draw: a covered window still says its mode.
+        self.update_title();
         self.follow_desktop();
         self.handle_web_events();
         self.check_inspectors();

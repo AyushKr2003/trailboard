@@ -197,6 +197,38 @@ impl ScrollSpeed {
     }
 }
 
+/// How an entered card shows where its keys go (Page, Insert, …).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModeLabel {
+    /// The card's ring takes the mode's colour and the window title names
+    /// it; nothing is drawn over the page (Solo shows nothing).
+    Ring,
+    /// Also a chip naming it in the window's bottom-left corner.
+    Chip,
+}
+
+impl ModeLabel {
+    pub const ALL: [ModeLabel; 2] = [ModeLabel::Ring, ModeLabel::Chip];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            ModeLabel::Ring => "ring",
+            ModeLabel::Chip => "chip",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<ModeLabel> {
+        ModeLabel::ALL.into_iter().find(|c| c.id() == id)
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            ModeLabel::Ring => "Ring and title",
+            ModeLabel::Chip => "Chip in the corner",
+        }
+    }
+}
+
 /// What Ctrl+T (*New card*) opens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NewCard {
@@ -512,6 +544,8 @@ pub struct Settings {
     pub proxy_server: String,
     /// The panel at the board's top left (sidebar button, the space's name).
     pub space_panel: bool,
+    /// How an entered card's mode shows.
+    pub mode_label: ModeLabel,
     pub corners: Corners,
     pub backdrop: Backdrop,
     /// Radius in logical px for [`Corners::Custom`] (0 to [`MAX_CORNER_RADIUS`]).
@@ -545,6 +579,7 @@ impl Default for Settings {
             proxy: Proxy::System,
             proxy_server: String::new(),
             space_panel: true,
+            mode_label: ModeLabel::Ring,
             corners: Corners::Rounded,
             backdrop: Backdrop::Mood,
             corner_radius: ROUNDED_RADIUS as u8,
@@ -614,13 +649,14 @@ pub enum Key {
     DownloadTo,
     Proxy,
     SpacePanel,
+    ModeLabel,
     Corners,
     Backdrop,
 }
 
 impl Key {
     /// In the panel's order.
-    pub const ALL: [Key; 23] = [
+    pub const ALL: [Key; 24] = [
         Key::Search,
         Key::NewCard,
         Key::DefaultZoom,
@@ -640,6 +676,7 @@ impl Key {
         Key::DownloadTo,
         Key::Proxy,
         Key::SpacePanel,
+        Key::ModeLabel,
         Key::Corners,
         Key::Backdrop,
         Key::PageColours,
@@ -669,6 +706,7 @@ impl Key {
             Key::DownloadTo => "Save downloads to",
             Key::Proxy => "Proxy",
             Key::SpacePanel => "Show the space panel",
+            Key::ModeLabel => "Show the page's mode",
             Key::Corners => "Corners",
             Key::Backdrop => "Board background",
         }
@@ -696,6 +734,7 @@ impl Key {
             }
             Key::DownloadTo => ("downloads folder save location directory", DownloadTo::ALL.iter().map(|d| d.name()).collect()),
             Key::Proxy => ("proxy server network socks http", Proxy::ALL.iter().map(|p| p.name()).collect()),
+            Key::ModeLabel => ("mode page insert passthrough caret visual chip corner ring title keys", ModeLabel::ALL.iter().map(|c| c.name()).collect()),
             Key::SpacePanel => ("space name top left corner sidebar button chrome hide", vec!["on", "off"]),
             Key::Backdrop => ("board background wallpaper photo picture image gradient colour color mood grain plain", Backdrop::ALL.iter().map(|c| c.name()).collect()),
             Key::Corners => ("rounded round corner radius sharp square look hyprland", Corners::ALL.iter().map(|c| c.name()).collect()),
@@ -731,6 +770,7 @@ impl Settings {
             Key::Language => language_name(self.language).to_string(),
             Key::Spellcheck => on_off(self.spellcheck),
             Key::SpacePanel => on_off(self.space_panel),
+            Key::ModeLabel => self.mode_label.name().to_string(),
             Key::ThirdPartyCookies => on_off(self.block_third_party_cookies),
             Key::DoNotTrack => on_off(self.do_not_track),
             Key::JavaScript => on_off(self.javascript),
@@ -778,6 +818,7 @@ impl Settings {
             Key::DownloadTo => self.download_to = cycle(&DownloadTo::ALL, self.download_to, dir),
             Key::Proxy => self.proxy = cycle(&Proxy::ALL, self.proxy, dir),
             Key::Corners => self.corners = cycle(&Corners::ALL, self.corners, dir),
+            Key::ModeLabel => self.mode_label = cycle(&ModeLabel::ALL, self.mode_label, dir),
             Key::Backdrop => self.backdrop = cycle(&Backdrop::ALL, self.backdrop, dir),
             Key::Language => {
                 let ids: Vec<&'static str> = LANGUAGES.iter().map(|(i, _)| *i).collect();
@@ -836,6 +877,7 @@ impl Key {
             Key::DownloadTo => "download_to",
             Key::Proxy => "proxy",
             Key::SpacePanel => "space_panel",
+            Key::ModeLabel => "mode_label",
             Key::Corners => "corners",
             Key::Backdrop => "board_background",
         }
@@ -882,6 +924,7 @@ impl Settings {
             Key::DownloadTo => ids(&DownloadTo::ALL, DownloadTo::id, DownloadTo::name),
             Key::Proxy => ids(&Proxy::ALL, Proxy::id, Proxy::name),
             Key::Corners => ids(&Corners::ALL, Corners::id, Corners::name),
+            Key::ModeLabel => ids(&ModeLabel::ALL, ModeLabel::id, ModeLabel::name),
             Key::Backdrop => ids(&Backdrop::ALL, Backdrop::id, Backdrop::name),
             Key::Language => LANGUAGES.iter().map(|(i, n)| (i.to_string(), n.to_string())).collect(),
             Key::DefaultZoom => {
@@ -930,6 +973,7 @@ impl Settings {
             Key::Proxy => self.proxy.id().into(),
             Key::SpacePanel => on(self.space_panel),
             Key::Corners => self.corners.id().into(),
+            Key::ModeLabel => self.mode_label.id().into(),
             Key::Backdrop => self.backdrop.id().into(),
         }
     }
@@ -955,6 +999,7 @@ impl Settings {
             Key::DownloadTo => DownloadTo::from_id(id).into_iter().for_each(|v| self.download_to = v),
             Key::Proxy => Proxy::from_id(id).into_iter().for_each(|v| self.proxy = v),
             Key::Corners => Corners::from_id(id).into_iter().for_each(|v| self.corners = v),
+            Key::ModeLabel => ModeLabel::from_id(id).into_iter().for_each(|v| self.mode_label = v),
             Key::Backdrop => Backdrop::from_id(id).into_iter().for_each(|v| self.backdrop = v),
             Key::Language => language_from_id(id).into_iter().for_each(|v| self.language = v),
             Key::DefaultZoom => {

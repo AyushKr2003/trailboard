@@ -59,7 +59,7 @@ app (trailboard)  winit window · input · omnibox · chrome UI · main loop
 | ✅ | M9 Packaging | Bundle script, `--version`, crash reports, PKGBUILD, Chromium sandbox, first-run welcome |
 | ⬜ | M10 Optional extras | See §8; most items on hold |
 | ✅ | M11 Premium look | Corners setting, cards as sheets, board backgrounds, sidebar, command bar, motion, empty board, review pass |
-| ✅ | M12 Keyboard first | Vim-like modes, page keys, scroll sections, command line, cards as tabs, search keywords, jumps/marks/saved pages, user key file, settings and site toggles, navigation extras, caret/visual mode, dialogs and fields, find back, `:messages` |
+| ✅ | M12 Keyboard first | Vim-like modes, page keys, scroll sections, command line, cards as tabs, search keywords, jumps/marks/saved pages, user key file, settings and site toggles, navigation extras, caret/visual mode, dialogs and fields, find back, `:messages`, the mode shown by ring and window title |
 | 🟡 | **M13 Full media support** | H.264/AAC now via an interim third-party CEF (`install-cef.sh --codecs`, Arch default); next our own build (and HEVC, Widevine if they work) on GitHub Actions |
 | ⬜ | **M14 Config file** | One hand-editable `~/.config/trailboard/config.toml` for settings, key bindings and theme; the UI writes it without losing comments |
 
@@ -424,67 +424,30 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-21 (thirty-ninth). The owner asked for the
-welcome, start and settings pages to be redesigned around motion. The
-decision is recorded in DESIGN.md under "Motion on app pages": the pages
-move the way the board moves, and nothing loops. `welcome.html` is
-rewritten as a pinned stage where scrolling drives the board's camera
-through six chapters, followed by an interactive keys demo, a shortcut
-finder that lights up on keypress, self-drawing icons and a growing close.
-`start.html` and `settings.html` keep their logic and gain a motion layer.
-In settings, the app's echo of a change no longer redraws a page that
-already shows it, which would cut short what is moving. The desktop's
-less-motion switch reaches pages as `still` in the theme JSON
-(`welcome::set_still`, set in `App::new`). Verified: unit tests, clippy,
-scripted e2e with screenshots. The welcome stage was scrolled through all
-chapters in Solo; settings were scrolled (headings dock, bead moves) and
-*New card* clicked (thumb slides, "Saved"). The start page's field docks
-on scroll. Headless Chromium previews covered every chapter, the light
-theme and `still`. Not verified: the start page's recent cards and pins in
-the real app (a fresh profile has none), the lean and digit roll by eye
-over time, and the settings view transition while typing.
-Also this session: j / k scrolling glides by our own chasing frame loop
-(`web::scroll`, `TAU` 55 ms) instead of restarted smooth scrolls; measured
-on a held j (20 presses, 33 ms apart) with a page logging its scroll
-every frame: the biggest one-frame step went from 125 to 35 px and the
-largest change of step from 38 to 12 px.
-Then the shortcut sheet (`hints.rs`) was redesigned in the same
-language: a trail of section stops with a riding bead (`bead`, unit-tested;
-`Sheet::go_to_stop`, a clicked stop held lit with `aim`), a docked section
-heading, rows rising in on open and on filter changes (`rise`; none when
-`still`), filter matches in the accent (`runs`, unit-tested), the row under
-the pointer lifted, and keys clipped to the row. `layers` now takes the
-pointer. Verified with scripted e2e and screenshots: open mid-arrival,
-settled, wheel-scrolled (docked heading, bead between stops), filtered
-"card" (marks, counts), and a click on *Spaces* (glides there, stays lit).
-Not verified: the narrow-window column layout since the change (its code
-path is the old one).
-Then the trails sidebar (`sidebar.rs`): the icons became stops on drawn
-trails (`parents`, `on_path`, unit-tested; lines kept to the list, the
-way to the current card on top in the accent, marked trails in their
-colour), the current card's icon ringed, the raised tab gliding to a new
-current card (`Motion::tab`, unit-tested; 200 ms, none when `still`), and
-rows arriving staggered on open (`Motion::rise`, an open being a frame
-after a gap of 200 ms). `layer` takes `&mut Motion`, kept in
-`App::sidebar_motion`. Verified with scripted e2e and screenshots: the
-trail drawn with its branches, and the accent moving to the way to
-*Page c* after a click on its row. Not verified by eye: the glide and
-the arrival mid-motion (too quick for the screenshot loop; the glide is
-unit-tested).
-Then trails turn at right angles (owner's ask): `scene::route::elbow`
-(unit-tested: square turns at 0, arcs on their radius, mirrored, a tight
-gap shrinks the radius, level means straight) gives the board's edges
-across–along–across with turns of `Theme::card_corner` at the zoom; the
-sidebar's elbows use `small_radius`; the welcome stage draws SVG arcs of
-`--radius`. Verified: unit tests, a scripted e2e board with a branching
-trail, headless welcome previews with Rounded and square corners.
-Then a new mark (owner's ask, 2026-11-22): seven rounds of studies shown
-as local images, the owner chose the dark keycap ("K2"; DESIGN.md, "The
-mark"): `share/trailboard.svg`, `trailboard-symbolic.svg` and the welcome
-page's mark. Verified: rendered with rsvg at 512 to 16 px on dark and light
-grounds, the symbolic at 96 and 16, the welcome mark at 1× and 4×; welcome
-tests. Not verified: desktops that cache icons until their cache is
-refreshed.
+**Last session:** 2026-11-22 (fortieth). The owner asked that nothing
+cover a page to say its mode: the corner chip (*Page*, *Insert*…) hid a
+video's play button. Decided with the owner: the entered card's ring takes
+the mode's colour (`Theme::keys_ring`: Page the accent, Insert green,
+Passthrough red, Caret / Visual magenta, each stepping aside to the next
+of its kind when too near one taken; unit-tested on four palettes); the
+window title names the mode, half-typed keys, the scroll area and what `;`
+hints do (`App::title_text`, set from `tick` so a covered window updates
+too); Solo draws nothing at all (owner's choice; the title still says it);
+the prefix list no longer pops up over a page, Ctrl+G mid-sequence shows
+it (`App::prefix_asked`; on the `?` sheet). New setting *Show the page's
+mode* (`mode_label`: `ring` default, `chip` = the old chip as well); a
+missing field loads as the default, so no version bump. Verified: unit
+tests, clippy, scripted e2e with screenshots: Page and Insert rings on the
+board with no chip, the title following (*Page*, *Insert*, *Page · g*,
+*Passthrough · Shift+Esc to leave*), Ctrl+G after g showing the list, Solo
+with nothing drawn, `:set mode-label chip` saved. Not verified: the Caret
+(magenta) and board Passthrough (red) rings by eye (the owner was using the
+screen during the second run), the chip choice's look since the change
+(the same code path as before), and the title after moving its update to
+`tick`.
+The previous sessions' notes (thirty-ninth: welcome/start/settings motion,
+glide j / k, the shortcut sheet and sidebar redesigns, square-turn trails,
+the new mark) are in git: `git log -p docs/PLAN.md`.
 **Repo state:** on `master`, clean; everything above is committed.
 **Next up:** M14 step 1, the `config.toml` reader (asked by the owner on
 2026-11-21; format and decisions in M14). M13 step 1, the chained

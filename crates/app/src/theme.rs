@@ -15,6 +15,19 @@ use compositor::Rgba;
 pub type Rgb = [u8; 3];
 
 /// Without Omarchy: a dark surface and Omarchy's fallback yellow.
+/// Where an entered card's keys go, as its ring shows it (`Theme::keys_ring`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Keys {
+    Page,
+    Insert,
+    Passthrough,
+    /// Caret or Visual.
+    Caret,
+}
+
+/// How far apart (Oklab distance) two mode rings must be to tell apart.
+const RING_APART: f32 = 0.12;
+
 const FALLBACK: &[(&str, Rgb)] = &[
     ("accent", [0xFF, 0xD6, 0x0A]),
     ("background", [0x0e, 0x0e, 0x10]),
@@ -509,6 +522,32 @@ impl Theme {
         self.color("red")
     }
 
+    /// The entered card's ring for where its keys go, so the mode shows
+    /// without anything over the page: Page the accent, Insert green,
+    /// Passthrough red, Caret / Visual magenta. A colour too near one
+    /// already taken (an accent that is green, say) gives way to the next
+    /// of its kind, so the four always tell apart.
+    pub fn keys_ring(&self, keys: Keys) -> Rgb {
+        let page = self.accent();
+        let insert = self.unlike(&["green", "cyan", "blue"], &[page]);
+        let pass = self.unlike(&["red", "orange", "yellow"], &[page, insert]);
+        match keys {
+            Keys::Page => page,
+            Keys::Insert => insert,
+            Keys::Passthrough => pass,
+            Keys::Caret => self.unlike(&["magenta", "blue", "cyan", "orange"], &[page, insert, pass]),
+        }
+    }
+
+    /// The first of the colours `names` not too near any of `taken`, else the first.
+    fn unlike(&self, names: &[&str], taken: &[Rgb]) -> Rgb {
+        let near = |a: Rgb, b: Rgb| {
+            let (a, b) = (to_oklab(a), to_oklab(b));
+            ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt() < RING_APART
+        };
+        names.iter().map(|n| self.color(n)).find(|&c| !taken.iter().any(|&t| near(c, t))).unwrap_or_else(|| self.color(names[0]))
+    }
+
     /// A shadow of `strength`: the board's own hue, much darker, never a
     /// grey film. Softer on light themes, where a black shadow looks dirty.
     pub fn shadow(&self, strength: f32) -> Rgba {
@@ -827,4 +866,31 @@ red = "#f7768e"
         std::fs::write(dir.path().join("light.mode"), "").unwrap();
         assert!(read_palette(dir.path()).light);
     }
+
+    #[test]
+    fn mode_rings_tell_apart() {
+        let far = |a: Rgb, b: Rgb| {
+            let (a, b) = (to_oklab(a), to_oklab(b));
+            ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt() >= RING_APART
+        };
+        let all = [Keys::Page, Keys::Insert, Keys::Passthrough, Keys::Caret];
+        let fallback = Theme::default();
+        assert_eq!(fallback.keys_ring(Keys::Page), fallback.accent());
+        assert_eq!(fallback.keys_ring(Keys::Insert), fallback.color("green"));
+        assert_eq!(fallback.keys_ring(Keys::Passthrough), fallback.color("red"));
+        assert_eq!(fallback.keys_ring(Keys::Caret), fallback.color("magenta"));
+        // An accent that is the theme's green or red: those step aside.
+        let green = Theme { palette: parse_palette("accent = \"#9ece6a\"\n", false), ..Theme::default() };
+        assert_eq!(green.keys_ring(Keys::Insert), green.color("cyan"));
+        let red = Theme { palette: parse_palette("accent = \"#f7768e\"\n", false), ..Theme::default() };
+        assert_eq!(red.keys_ring(Keys::Passthrough), red.color("orange"));
+        for t in [fallback, green, red, Theme { palette: parse_palette(TOKYO, false), ..Theme::default() }] {
+            for (i, &a) in all.iter().enumerate() {
+                for &b in &all[i + 1..] {
+                    assert!(far(t.keys_ring(a), t.keys_ring(b)), "{a:?} and {b:?} too alike");
+                }
+            }
+        }
+    }
+
 }

@@ -11,6 +11,16 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
 
 ### Changed
 
+- **Nothing covers a page to say its mode.** The *Page* / *Insert* /
+  *Passthrough* / *Caret* chip in the bottom-left corner hid page
+  controls under it (a video's play button). Now the entered card's ring
+  takes the mode's colour (accent, green, red, magenta; `Theme::keys_ring`
+  keeps the four apart on any theme) and the window title names the mode,
+  what is half-typed, the scroll area and what `;` hints do. Solo draws
+  nothing; the title says it. The list of keys that can follow a prefix no
+  longer pops up over the page; Ctrl+G mid-sequence shows it. A new setting,
+  *Show the page's mode* (`mode-label`: `ring`, the default, or `chip`),
+  brings the old chip back.
 - **Welcome, start and settings pages redesigned around motion** that
   uses the board's own movements (docs/DESIGN.md, "Motion on app pages").
   The welcome page is a pinned stage where scrolling moves the board's

@@ -213,7 +213,14 @@ and embedding it would put a megabyte in every note), so they ask for
   stronger under the pointer), two-part shadow (wide ambient + tight
   contact) that keeps some size when zoomed out; the current card floats
   higher, the hovered one a touch. Current: 1.5 px accent ring at 80%;
-  with the keys: 2.5 px solid. Selected: a yellow ring outside that.
+  with the keys: 2.5 px solid in the mode's colour (`Theme::keys_ring`):
+  Page the accent, Insert green, Passthrough red, Caret / Visual magenta;
+  one too near a colour already taken gives way to the next of its kind.
+  Selected: a yellow ring outside that.
+- Nothing is drawn over a page to say its mode (the default `mode-label`
+  Ring): the ring says it, and the window title names it with what is
+  half-typed. Solo has no ring, so there only the title does. The corner
+  chip is the `Chip` choice.
 - An empty board shows a welcome straight on its colour mood, centred
   beside the sidebar a little above the middle: a dot of the space's
   tint and its name in spaced capitals (· PRIVATE for a private space),

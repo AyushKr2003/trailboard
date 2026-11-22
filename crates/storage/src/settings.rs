@@ -6,7 +6,7 @@
 //! "do_not_track": false, "javascript": true, "images": true, "camera": "ask",
 //! "microphone": "ask", "location": "ask", "notifications": "ask",
 //! "download_to": "downloads", "proxy": "system", "proxy_server": "",
-//! "space_panel": true, "corners": "rounded", "corner_radius": 10,
+//! "space_panel": true, "mode_label": "ring", "corners": "rounded", "corner_radius": 10,
 //! "board_background": "mood",
 //! "keywords": [{ "keyword": "gh", "name": "GitHub", "url": "https://github.com/search?q={}" }] }`.
 //!
@@ -24,7 +24,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use scene::search::{self, Keyword};
-use scene::settings::{self, Backdrop, Corners, DownloadTo, NewCard, PageColours, Permission, Proxy, ScrollSpeed, SearchEngine, Settings};
+use scene::settings::{self, Backdrop, Corners, DownloadTo, ModeLabel, NewCard, PageColours, Permission, Proxy, ScrollSpeed, SearchEngine, Settings};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -57,6 +57,7 @@ struct SettingsFile<'a> {
     proxy: &'a str,
     proxy_server: &'a str,
     space_panel: bool,
+    mode_label: &'a str,
     corners: &'a str,
     corner_radius: u8,
     board_background: &'a str,
@@ -153,6 +154,9 @@ pub fn load_settings(data_dir: &Path) -> Settings {
     if let Some(b) = text("board_background").and_then(Backdrop::from_id) {
         s.backdrop = b;
     }
+    if let Some(m) = text("mode_label").and_then(ModeLabel::from_id) {
+        s.mode_label = m;
+    }
     if let Some(c) = text("corners").and_then(Corners::from_id) {
         s.corners = c;
     }
@@ -207,6 +211,7 @@ pub fn save_settings(data_dir: &Path, s: &Settings) -> std::io::Result<()> {
         proxy: s.proxy.id(),
         proxy_server: &s.proxy_server,
         space_panel: s.space_panel,
+        mode_label: s.mode_label.id(),
         corners: s.corners.id(),
         corner_radius: s.corner_radius,
         board_background: s.backdrop.id(),
@@ -247,6 +252,7 @@ mod tests {
             proxy: Proxy::Custom,
             proxy_server: "socks5://127.0.0.1:9050".into(),
             space_panel: false,
+            mode_label: ModeLabel::Chip,
             corners: Corners::Custom,
             corner_radius: 6,
             backdrop: Backdrop::Photo,

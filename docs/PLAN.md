@@ -462,7 +462,7 @@ media in a cross-site frame, the 10-minute grace running out, and the
 sidebar, which shows no awake mark yet.
 The previous session's notes (fortieth: the mode ring and title in place
 of the chip) are in git: `git log -p docs/PLAN.md`.
-**Repo state:** on `master`; the awake work above is not committed yet (the owner commits when they ask).
+**Repo state:** on `master`; the awake work above is committed (000e96a) and installed on the owner's machine from the Arch package.
 **Next up:** M14 step 1, the `config.toml` reader (asked by the owner on
 2026-11-21; format and decisions in M14). M13 step 1, the chained
 GitHub Actions build, is written on the orphan branch `cef-build`

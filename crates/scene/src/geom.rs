@@ -115,6 +115,10 @@ impl Default for Camera {
     }
 }
 
+/// Screen margin (logical px) around what Shift+F fits in view and around the
+/// card z fills the view with, so one card looks the same after either.
+pub const FIT_MARGIN: f32 = 48.0;
+
 pub const MIN_ZOOM: f32 = 0.05;
 pub const MAX_ZOOM: f32 = 4.0;
 
@@ -162,6 +166,17 @@ impl Camera {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fit_leaves_the_margin_on_the_tighter_side() {
+        // A default card (with its label) on a 1920×1080 window, as z frames it.
+        let card = Rect::new(0.0, -30.0, 1024.0, 591.0);
+        let vp = Vec2::new(1920.0, 1080.0);
+        let cam = Camera::fit(card, vp, 1.0, FIT_MARGIN);
+        let r = cam.rect_to_screen(card, vp, 1.0);
+        assert!((r.y - FIT_MARGIN).abs() < 0.5 && (vp.y - r.bottom() - FIT_MARGIN).abs() < 0.5);
+        assert!(r.x >= FIT_MARGIN && vp.x - r.right() >= FIT_MARGIN);
+    }
 
     #[test]
     fn screen_world_round_trip() {

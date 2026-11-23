@@ -47,7 +47,7 @@ pub mod when;
 use std::collections::BTreeMap;
 
 pub use fold::{Folded, Member, Stack};
-pub use geom::{Camera, Rect, Vec2};
+pub use geom::{Camera, Rect, Vec2, FIT_MARGIN};
 pub use history::{Change, Edit, History};
 pub use mark::TrailMark;
 pub use selection::Selection;

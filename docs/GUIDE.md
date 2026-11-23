@@ -34,7 +34,7 @@ with *Welcome page* in Ctrl+K.
 | Move / resize a card | drag the label above it / its bottom-right corner |
 | Select cards | Shift+drag on the board, Shift+click labels, Ctrl+A (Esc clears) |
 | Move / close selected cards | drag a selected card's label / Delete |
-| Fill the view with a card | double-click its label |
+| Fill the view with a card (as z does) | double-click its label |
 | Solo (the card fills the window) | Tab (Tab or Esc to go back) |
 | Use a page from the keyboard (after Enter, or in Solo) | j/k scroll, h/l sideways, Ctrl+d/Ctrl+u half a section, gg/G top/bottom, 0/$ left/right edge, f follow a link here, F beside, H/L back/forward, r reload, / find, ? find backward (up the page), n/N the next match the way you searched / the other way, Esc clears the find's marks, yy copy the address, yt the title, ym a Markdown link, p/P open the copied address (or search for the copied text) here/beside, o address bar, O an address bar that opens beside; a number repeats (5j). The card's ring shows the mode (accent for *Page*) and the window title names it: nothing is drawn over the page. Mid-sequence (g, y…), Ctrl+G lists what can follow |
 | Move about by address (in a page) | ]] / [[ the page's next / previous page (its *next* link, else a link saying Next, Older, », ›…); gu up the address's path (3gu three steps), gU the site's root; Ctrl+a / Ctrl+x the last number in the address up / down (5 Ctrl+a: by five; `page/7` → `page/8`); go / gO edit the address, opening here / beside; xo an address bar that opens beside and keeps you here; Ctrl+s stops loading (when nothing loads it saves as Markdown, as before); gh a start page beside the card; gf the page's source beside; gd downloads the page; F11 full screen. By name: `:page-next`, `:up`, `:root`, `:increment`, `:stop`, `:home`, `:view-source`, `:save-file`, `:fullscreen` |
@@ -83,7 +83,7 @@ with *Welcome page* in Ctrl+K.
 | Back / forward / reload | Alt+← / Alt+→ / Ctrl+R |
 | Click a link, button, checkbox or field by keyboard | f, then type its label (links open beside; a field gets the keys) |
 | Select / deselect the current card | v (h/j/k/l keep the selection) |
-| Fill the view with the current card | z |
+| Fill the view with the current card (with the margin Shift+F leaves) | z |
 | Scroll the current page without entering it | Ctrl+d / Ctrl+u |
 | Page menu by keyboard | Menu key or Shift+F10; j/k or ↑/↓, Enter, Esc |
 | Command line: run a command by name, with what it needs (`:open rust docs`, `:space Work`, `:zoom out`, `:back 2`) | `:` on the board or in a page (or type `:` first in Ctrl+K). The list offers the commands, or the values a command takes (spaces, card titles, choices); Tab and Shift+Tab walk the list, putting each row's line in the field, Enter runs it (or, for a command still missing its value, fills it in), Ctrl+Enter runs it and keeps the line open. A unique start of a name is enough (`:tid`); `:q` closes the card, `:w` saves as Markdown, `:e` opens, `:exit` quits. Lines you ran come back under *Recent* (Shift+Delete or Ctrl+Delete forgets one; not kept in a private space), and Up / Down bring back earlier lines that start with what you typed |

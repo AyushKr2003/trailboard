@@ -11,6 +11,10 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
 
 ### Changed
 
+- **z frames a card as Shift+F does.** z (and a double-click on a card's
+  label) now leaves the same 48 px margin round the card as Shift+F leaves
+  round a lone card (`scene::FIT_MARGIN`), instead of 8 px, so the card
+  sits in the window with the board showing round it.
 - **Nothing covers a page to say its mode.** The *Page* / *Insert* /
   *Passthrough* / *Caret* chip in the bottom-left corner hid page
   controls under it (a video's play button). Now the entered card's ring

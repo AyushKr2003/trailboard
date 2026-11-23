@@ -6764,7 +6764,7 @@ impl App {
     fn fit_all(&mut self) {
         self.leave_read();
         if let Some(b) = self.scene.bounds() {
-            self.camera_goal = Some(Camera::fit(b, self.viewport(), self.scale(), 48.0 * self.scale()));
+            self.camera_goal = Some(Camera::fit(b, self.viewport(), self.scale(), scene::FIT_MARGIN * self.scale()));
         }
     }
 
@@ -6946,7 +6946,8 @@ impl App {
 
     fn fill_view(&mut self, id: NodeId) {
         if let Some(n) = self.scene.node(id) {
-            let mut goal = Camera::fit(n.frame(), self.viewport(), self.scale(), 8.0 * self.scale());
+            // The margin Shift+F leaves, so a lone card looks the same after either.
+            let mut goal = Camera::fit(n.frame(), self.viewport(), self.scale(), scene::FIT_MARGIN * self.scale());
             goal.zoom = goal.zoom.min(2.0);
             self.camera_goal = Some(goal);
         }

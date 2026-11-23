@@ -266,8 +266,16 @@ make ourselves (we own the workflow and can read every log).
 **Steps:**
 
 - 🟡 1. **Build script and workflow.** Written on `cef-build`
-  (2026-11-21), not yet run: the first run will show disk, time and
-  whether the GN arguments are accepted. The chained GitHub Actions workflow
+  (2026-11-21). First full run (44937270923, 2026-11-21→23): GN arguments
+  accepted, 0 failed compile steps, disk fine (74 GB free), ~73k steps at
+  ~2/s, ~14 min setup per stage; but all eight stages ran out of time with
+  no net progress and the release was skipped while the run showed green.
+  Cause: Siso's `.siso_fs_state` keeps nanosecond mtimes and GNU-format tar
+  rounded them to the second, so every resumed output looked changed.
+  Fixed 2026-11-23 (02c7861): pax checkpoints, a stage that leaves no fewer
+  steps than the last one fails, a `finished` job fails a run no stage
+  completed, required files and archive layout checked before release.
+  Rerun 45212313507 started 2026-11-23; expected 2–3 stages. The chained GitHub Actions workflow
   above, around `scripts/build-cef.sh`: on a fresh Linux machine,
   fetch CEF's build tooling for the branch matching `install-cef.sh`'s
   version, build the minimal distribution with
@@ -431,43 +439,29 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-23 (forty-first). Asked by the owner: a card
-playing a video should keep running while they research in other cards,
-and every card should get a button for how it stays awake. Decided with
-the owner: the live cap and its ranking stay as they were; a card playing
-media (any playing video, muted too, or audible audio, in any frame) and
-cards set to *Keep awake* or *Always active* sit **outside** the cap
-(`scene::liveness`: `Candidate::exempt`, `Awake`, `media_keeps`,
-`MEDIA_GRACE` 10 min after a pause), so Auto cards keep every slot. Media is
-told by a page script (`web::media`, one token per frame, `WebEvent::Media`);
-CEF's audio handler would take the sound away, so it isn't used. A card
-playing media or *Always active* is never hidden (Chromium would pause a
-hidden muted video); unseen media paints at 4 fps, *Always active* at 60
-and holds its focus (`Page::hold_focus`; two windowless browsers can both
-be focused, checked with `document.hasFocus()` and blur counts). *Keep
-awake* is hidden off screen like any page. The label's awake button
-(one circle: dim ring, coloured ring, solid green disc, chosen with the
-owner after four rounds of icon designs) cycles the mode, a speaker mutes (`set_audio_muted`);
-`:awake`, `:mute`, two Ctrl+K entries; the mode is saved on the node
-(`awake`, missing = auto, no version bump). Verified: unit tests (liveness,
-media frames, icons, board save), clippy, three scripted e2e runs with
-`TRAILBOARD_MAX_LIVE` 1–2 (`~/.cache/trailboard-e2e-awake/`: a canvas-stream
-video page and a page whose title reports its counter, focus and
-visibility): media off screen, folded and in Solo kept playing; Keep stayed
-live and hidden; Active stayed visible and focused; Auto cards still got
-the cap; the button cycled the three modes; screenshots of the label's
-speaker, moon and bolt. Not verified: audible `<audio>` (only a muted
-video was tested, to stay silent), a real site (YouTube, music services),
-media in a cross-site frame, the 10-minute grace running out, and the
-sidebar, which shows no awake mark yet.
-The previous session's notes (fortieth: the mode ring and title in place
-of the chip) are in git: `git log -p docs/PLAN.md`.
+**Last session:** 2026-11-23 (forty-second). Two things for the owner.
+(1) The CEF build (M13 step 1): the first full run made no progress
+(checkpoint mtimes; cause and fix under M13 step 1); the fix is pushed to
+`cef-build` (02c7861) and run 45212313507 is building. (2) z framed a card
+with an 8 px margin; it now leaves the 48 px Shift+F leaves round a lone
+card (`scene::FIT_MARGIN`, also the label double-click), asked by the
+owner from a screenshot of Shift+F on one card. Verified: unit test
+(`geom::fit_leaves_the_margin_on_the_tighter_side`), clippy, a scripted e2e
+run (`~/.cache/trailboard-e2e-fill/`: z and Shift+F screenshots of one card
+are pixel-identical). Also looked into: the owner's Google sign-in is lost
+on restart because their only space is **private** (`spaces.json`),
+whose cookies live in memory by design; told them Ctrl+Shift+P. Offered,
+not done (owner said "only z for now"): a maximum card size (the window
+less the fit margin at 100 % zoom) and a clearer private-space mark.
+The forty-first session's notes (cards that stay awake) are in git:
+`git log -p docs/PLAN.md`.
 **Repo state:** on `master`; the awake work above is committed (000e96a) and installed on the owner's machine from the Arch package.
 **Next up:** M14 step 1, the `config.toml` reader (asked by the owner on
 2026-11-21; format and decisions in M14). M13 step 1, the chained
-GitHub Actions build, is written on the orphan branch `cef-build`
-(worktree `../trailboard-cef-build`) and waits for its first push and
-run; fix what that run shows. Until our release exists the
+GitHub Actions build on the orphan branch `cef-build` (worktree
+`../trailboard-cef-build`): the first run made no progress (checkpoint
+mtimes, see M13 step 1); the fix is pushed and run 45212313507 is
+building. When it publishes `cef-156.0.26-media`, do M13 step 2. Until our release exists the
 karere codecs CEF is installed at `~/.local/share/cef` (M13 "Interim
 CEF"); bundle with `CEF_PATH=~/.local/share/cef-standard`. Also
 retake the README screenshots (`docs/images/`) in the new look.

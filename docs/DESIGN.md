@@ -119,7 +119,8 @@ Overlays ease out into place in 160 ms and leave at once. Loading is a line
 gliding along a card's top edge. Nothing bounces or loops for decoration.
 App pages have more motion of their own; see *Motion on app pages* below.
 
-The board moves with cubic ease-out (`scene::motion`), and only in what is
+The board moves with cubic ease-out (fold and unfold, which cross more of
+the view, ease in and out; `scene::motion`), and only in what is
 drawn: the model is already at its end, so clicks, saving and undo never
 see a card halfway.
 
@@ -130,6 +131,8 @@ see a card halfway.
 | A card opens beside another | grows out of the source's side, 85% → 100%, fading in | 220 ms |
 | A card opens elsewhere | grows from 92% in its own middle, fading in | 220 ms |
 | A card closes | shrinks to 92% and fades | 160 ms |
+| Fold | each of the trail's cards slides under the front onto its own sheet of the stack (the next card the nearest sheet), eased in and out; its page fades over the second half, so it lands as that blank sheet | 340 ms |
+| Unfold | the fold backwards: each sheet slides out to its card's place, the card's page showing on it on the way; trail lines follow | 340 ms |
 | Space switch | the tint cross-fades; the board slides 32 px in from the side the space is on and fades in | 240 ms |
 | Sidebar | slides in 150 ms; slides out the same way | 150 ms |
 | Sidebar rows | come in from the sheet's left edge, one after another, as it opens | 14 ms apart, 200 ms each |

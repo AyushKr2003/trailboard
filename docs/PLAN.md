@@ -439,7 +439,7 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-23 (forty-second). Two things for the owner.
+**Last session:** 2026-11-23 (forty-second). Three things for the owner.
 (1) The CEF build (M13 step 1): the first full run made no progress
 (checkpoint mtimes; cause and fix under M13 step 1); the fix is pushed to
 `cef-build` (02c7861) and run 45212313507 is building. (2) z framed a card
@@ -448,7 +448,16 @@ card (`scene::FIT_MARGIN`, also the label double-click), asked by the
 owner from a screenshot of Shift+F on one card. Verified: unit test
 (`geom::fit_leaves_the_margin_on_the_tighter_side`), clippy, a scripted e2e
 run (`~/.cache/trailboard-e2e-fill/`: z and Shift+F screenshots of one card
-are pixel-identical). Also looked into: the owner's Google sign-in is lost
+are pixel-identical). (3) Fold and unfold
+were instant; now each card slides onto its own sheet behind the front and
+lands as that blank sheet (`motion::folding`, `stack_slot`, drawn from
+`App::gathers`, which hide the sheet it is heading for), and unfold runs it
+backwards (`Glides::unfold`, a sheet drawn under the card while its page
+fades in), 340 ms eased in and out; designed with the owner; verified with
+unit tests and a slowed (×8) scripted run with screenshots mid-motion
+(`~/.cache/trailboard-e2e-fold/sheet.png`). Not animated yet: undo/redo of a
+fold, peeking ([ ]), and the trail lines during a fold (they go at once).
+Also looked into: the owner's Google sign-in is lost
 on restart because their only space is **private** (`spaces.json`),
 whose cookies live in memory by design; told them Ctrl+Shift+P. Offered,
 not done (owner said "only z for now"): a maximum card size (the window

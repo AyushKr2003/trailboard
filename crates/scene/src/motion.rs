@@ -1,6 +1,8 @@
 //! Quiet motion on the board: cards glide to new places (Tidy), new cards
-//! grow in from where they came from, closed cards shrink and fade, and a
-//! space switch slides the board in. Everything here is pure: where a card
+//! grow in from where they came from, closed cards shrink and fade, a
+//! trail's cards slide into their stack as it folds, each becoming one of
+//! the blank sheets drawn behind its front, and back out of those sheets as
+//! it unfolds, and a space switch slides the board in. Everything here is pure: where a card
 //! is drawn and how strongly, given when its motion started. The model
 //! keeps the card's real rect throughout; only the drawing moves.
 
@@ -12,6 +14,9 @@ use crate::{NodeId, Rect, Vec2};
 
 /// How long a card takes to glide or grow into place.
 pub const GLIDE: Duration = Duration::from_millis(220);
+/// How long a trail's cards take to slide into their stack (fold) or out
+/// to their places (unfold): longer than a glide, as they travel further.
+pub const FOLD: Duration = Duration::from_millis(340);
 /// How long a closed card takes to shrink away.
 pub const CLOSE: Duration = Duration::from_millis(160);
 /// How long a space switch takes: the tint cross-fades, the board slides in.
@@ -25,6 +30,13 @@ pub const SIDEBAR_OUT: Duration = Duration::from_millis(150);
 pub fn ease_out(t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
     1.0 - (1.0 - t).powi(3)
+}
+
+/// Cubic ease-in-out over 0..1, clamped: starts and ends gently, for
+/// motions that cross much of the view (fold, unfold).
+pub fn ease_in_out(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    if t < 0.5 { 4.0 * t * t * t } else { 1.0 - (-2.0 * t + 2.0).powi(3) / 2.0 }
 }
 
 /// Every motion lasts this many times longer (bits of an `f32`; 1.0 is
@@ -72,6 +84,36 @@ pub fn grow_from(card: Rect) -> Rect {
     scale_about(card, 0.92, 0.5, 0.5)
 }
 
+/// How many cards a stack shows behind its front, as blank sheets.
+pub const STACK_SHOWN: usize = 3;
+
+/// The sheet of the `j`-th card behind a stack's front (0: the next one):
+/// 1, 2 or 3; cards further back share the last.
+pub fn slot_behind(j: usize) -> usize {
+    (j + 1).min(STACK_SHOWN)
+}
+
+/// Where sheet `slot` of a stack is: the front's rect moved `step` down and
+/// right per slot (world units; the drawing keeps `step` a few px on screen).
+pub fn stack_slot(front: Rect, slot: usize, step: f32) -> Rect {
+    front.translate(Vec2::new(step * slot as f32, step * slot as f32))
+}
+
+/// How much of a page shows on a card `e` (eased, 0..1) of the way into its
+/// stack: all of it at first, then fading out over the second half, so the
+/// card arrives as a blank sheet.
+fn page_folding(e: f32) -> f32 {
+    1.0 - ease_out(((e - 0.4) / 0.6).clamp(0.0, 1.0))
+}
+
+/// A card folding into its stack `t` (0..1, raw) of the way: its rect,
+/// sliding from `from` (its place) to `slot` (its sheet behind the front,
+/// [`stack_slot`]), and how much of its page shows over the blank sheet.
+pub fn folding(from: Rect, slot: Rect, t: f32) -> (Rect, f32) {
+    let e = ease_in_out(t);
+    (lerp_rect(from, slot, e), page_folding(e))
+}
+
 /// A closed card `t` (0..1, raw) of the way out: its rect, shrinking
 /// toward its middle, and its strength, fading.
 pub fn closing(card: Rect, t: f32) -> (Rect, f32) {
@@ -85,6 +127,10 @@ struct Glide {
     start: Instant,
     /// Fades in as it moves (a new card), else stays solid (a moved one).
     fade: bool,
+    len: Duration,
+    /// Comes out of a stack's sheet (unfold): eased in and out, drawn over
+    /// a blank sheet while its page fades in; else eased out.
+    unfold: bool,
 }
 
 /// Cards on their way somewhere, by id.
@@ -97,16 +143,34 @@ impl Glides {
     /// Card `id` starts moving from `from` (world units) to wherever it is.
     /// A card already moving starts again from `from`.
     pub fn start(&mut self, id: NodeId, from: Rect, fade: bool, now: Instant) {
-        self.items.insert(id, Glide { from, start: now, fade });
+        self.items.insert(id, Glide { from, start: now, fade, len: GLIDE, unfold: false });
+    }
+
+    /// Card `id` slides out of its stack's sheet at `from` ([`stack_slot`])
+    /// to its place over [`FOLD`], eased in and out: a blank sheet whose
+    /// page fades in on the way (the reverse of [`folding`]).
+    pub fn unfold(&mut self, id: NodeId, from: Rect, now: Instant) {
+        self.items.insert(id, Glide { from, start: now, fade: true, len: FOLD, unfold: true });
+    }
+
+    /// Whether card `id` is coming out of a stack now: draw a blank sheet
+    /// under it (where [`Glides::at`] puts it) as its page fades in.
+    pub fn unfolding(&self, id: NodeId, now: Instant) -> bool {
+        self.items.get(&id).is_some_and(|g| g.unfold && progress(g.start, g.len, now) < 1.0)
     }
 
     /// Where card `id`, really at `to`, is drawn now and how strongly; `None`
     /// once it has arrived (draw it at `to`, solid).
     pub fn at(&self, id: NodeId, to: Rect, now: Instant) -> Option<(Rect, f32)> {
         let g = self.items.get(&id)?;
-        let t = progress(g.start, GLIDE, now);
+        let t = progress(g.start, g.len, now);
         if t >= 1.0 {
             return None;
+        }
+        if g.unfold {
+            // The fold run backwards: ease_in_out(1 - t) = 1 - ease_in_out(t).
+            let e = ease_in_out(t);
+            return Some((lerp_rect(g.from, to, e), page_folding(1.0 - e)));
         }
         let e = ease_out(t);
         Some((lerp_rect(g.from, to, e), if g.fade { e.max(0.0) } else { 1.0 }))
@@ -114,12 +178,17 @@ impl Glides {
 
     /// Some card is still moving: keep drawing frames.
     pub fn busy(&self, now: Instant) -> bool {
-        self.items.values().any(|g| progress(g.start, GLIDE, now) < 1.0)
+        self.items.values().any(|g| progress(g.start, g.len, now) < 1.0)
     }
 
     /// Forgets cards that have arrived.
     pub fn settle(&mut self, now: Instant) {
-        self.items.retain(|_, g| progress(g.start, GLIDE, now) < 1.0);
+        self.items.retain(|_, g| progress(g.start, g.len, now) < 1.0);
+    }
+
+    /// Card `id` stops wherever it was going (it is drawn where it is).
+    pub fn forget(&mut self, id: NodeId) {
+        self.items.remove(&id);
     }
 
     pub fn clear(&mut self) {
@@ -174,6 +243,55 @@ mod tests {
         let left = Rect::new(-450.0, 0.0, 400.0, 300.0);
         let f = open_from(src, left);
         assert!((f.right() - (left.right() + 48.0)).abs() < 1e-3, "{f:?}");
+    }
+
+    #[test]
+    fn ease_in_out_is_gentle_at_both_ends() {
+        assert_eq!((ease_in_out(0.0), ease_in_out(0.5), ease_in_out(1.0)), (0.0, 0.5, 1.0));
+        assert!(ease_in_out(0.1) < 0.1 && ease_in_out(0.9) > 0.9);
+        let mut last = 0.0;
+        for i in 1..=100 {
+            let v = ease_in_out(i as f32 / 100.0);
+            assert!(v >= last, "never goes back");
+            last = v;
+        }
+    }
+
+    #[test]
+    fn cards_behind_a_front_take_its_three_sheets() {
+        assert_eq!((0..6).map(slot_behind).collect::<Vec<_>>(), vec![1, 2, 3, 3, 3, 3]);
+        let front = Rect::new(10.0, 20.0, 100.0, 50.0);
+        assert_eq!(stack_slot(front, 2, 4.0), Rect::new(18.0, 28.0, 100.0, 50.0));
+    }
+
+    #[test]
+    fn a_folding_card_slides_onto_its_sheet_and_arrives_blank() {
+        let (place, sheet) = (Rect::new(300.0, 0.0, 100.0, 50.0), Rect::new(12.0, 12.0, 120.0, 60.0));
+        assert_eq!(folding(place, sheet, 0.0), (place, 1.0));
+        let (r, a) = folding(place, sheet, 0.3);
+        assert!(r.x < 300.0 && a == 1.0, "moving, page still all there: {r:?} {a}");
+        let (mid, a) = folding(place, sheet, 0.5);
+        assert!((mid.x - 156.0).abs() < 1e-3 && a > 0.3 && a < 1.0, "{mid:?} {a}");
+        assert_eq!(folding(place, sheet, 1.0), (sheet, 0.0));
+    }
+
+    #[test]
+    fn an_unfolding_card_is_the_fold_backwards() {
+        let t0 = Instant::now();
+        let mut g = Glides::default();
+        let (sheet, place) = (Rect::new(12.0, 12.0, 100.0, 50.0), Rect::new(300.0, 0.0, 100.0, 50.0));
+        g.unfold(NodeId(1), sheet, t0);
+        assert!(g.unfolding(NodeId(1), t0) && !g.unfolding(NodeId(2), t0));
+        assert_eq!(g.at(NodeId(1), place, t0), Some((sheet, 0.0)), "starts as the blank sheet");
+        for i in 1..10 {
+            let t = i as f32 / 10.0;
+            let (r, a) = g.at(NodeId(1), place, t0 + FOLD.mul_f32(t)).unwrap();
+            let (r2, a2) = folding(place, sheet, 1.0 - t);
+            assert!((r.x - r2.x).abs() < 0.5 && (a - a2).abs() < 0.02, "t={t}: {r:?} {a} vs {r2:?} {a2}");
+        }
+        assert!(g.at(NodeId(1), place, t0 + GLIDE).is_some(), "lasts longer than a glide");
+        assert_eq!(g.at(NodeId(1), place, t0 + FOLD), None);
+        assert!(!g.unfolding(NodeId(1), t0 + FOLD));
     }
 
     #[test]

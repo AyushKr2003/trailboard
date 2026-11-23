@@ -11,6 +11,13 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
 
 ### Changed
 
+- **Fold and unfold move.** Folding a trail (S) slid nothing: its cards
+  vanished at once and the stack's sheets appeared. Now each card slides
+  under the front onto its own sheet of the stack, its page fading on the
+  way, so it lands as that sheet; unfolding runs it backwards, each sheet
+  sliding out to its card's place as the page shows on it, the trail lines
+  following. 340 ms, eased in and out (`scene::motion::FOLD`, `folding`,
+  `stack_slot`, `Glides::unfold`); off with the desktop's reduced motion.
 - **z frames a card as Shift+F does.** z (and a double-click on a card's
   label) now leaves the same 48 px margin round the card as Shift+F leaves
   round a lone card (`scene::FIT_MARGIN`), instead of 8 px, so the card

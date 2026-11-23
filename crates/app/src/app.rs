@@ -412,6 +412,28 @@ struct Dock {
     cursor: web::Cursor,
 }
 
+/// A card of a trail being folded, on its way to its sheet behind the
+/// stack's front. The model has it in the stack (hidden) already; only the
+/// drawing moves.
+#[derive(Debug, Clone, Copy)]
+struct Gather {
+    id: NodeId,
+    /// The stack's front card.
+    front: NodeId,
+    /// Which sheet behind the front it becomes (`motion::slot_behind`).
+    slot: usize,
+    /// Its frame and content rect where it was (world units).
+    frame: Rect,
+    content: Rect,
+    start: Instant,
+}
+
+/// The gap between a stack's sheets on screen, px: it follows the zoom but
+/// stays a few px, so a stack still reads when zoomed far out.
+fn stack_step_px(k: f32, scale: f32) -> f32 {
+    (12.0 * k).max(5.0 * scale)
+}
+
 /// Appear animations of the overlays.
 #[derive(Default)]
 struct Anims {
@@ -719,6 +741,9 @@ pub struct App {
     /// Closed cards shrinking away: the card as it was, its page's texture
     /// (removed once it is gone), and since when.
     ghosts: Vec<(Node, u64, Instant)>,
+    /// Cards of a trail being folded, each sliding onto its sheet behind the
+    /// stack's front (`motion::folding`).
+    gathers: Vec<Gather>,
     /// A space switch under way: since when, the side the board slides in
     /// from (±1), and the backdrop colours of the space it left.
     space_in: Option<(Instant, f32, [f32; 4], [f32; 4])>,
@@ -1065,6 +1090,7 @@ impl App {
             },
             glides: motion::Glides::default(),
             ghosts: Vec::new(),
+            gathers: Vec::new(),
             space_in: None,
             sidebar_last: None,
             sidebar_out: None,
@@ -1284,6 +1310,7 @@ impl App {
         let mut keys: Vec<u64> = self.scene.all_nodes().map(|n| self.page_key(n.id)).collect();
         keys.extend(self.ghosts.drain(..).map(|g| g.1));
         self.glides.clear();
+        self.gathers.clear();
         if let Some(r) = self.renderer.as_mut() {
             for k in keys {
                 r.remove_page(k);
@@ -6812,8 +6839,24 @@ impl App {
         let Some(id) = read::pick(&self.scene, self.focused, self.camera.center) else { return };
         if self.scene.stack_of(id).is_some() {
             return self.unfold_stack(id);
-        } else if let Some(f) = self.scene.fold(id) {
+        }
+        // Where the trail's cards on screen are now, to slide them into the stack.
+        let places: HashMap<NodeId, (Rect, Rect)> = if self.still {
+            HashMap::new()
+        } else {
+            self.scene.trail_of(id).into_iter().filter(|&m| m != id && self.card_on_screen(m)).filter_map(|m| Some((m, self.scene.node(m).map(|n| (n.frame(), n.rect))?))).collect()
+        };
+        if let Some(f) = self.scene.fold(id) {
             log::info!("fold: {:?} in front of {}", f.members.iter().map(|m| m.0).collect::<Vec<_>>(), id.0);
+            // Each card becomes a sheet of the stack: the next one the
+            // sheet just behind the front, and so on (as [ ] go through them).
+            let now = Instant::now();
+            for (j, m) in self.stack_behind(id).into_iter().enumerate() {
+                let Some(&(frame, content)) = places.get(&m) else { continue };
+                self.glides.forget(m);
+                self.gathers.retain(|g| g.id != m);
+                self.gathers.push(Gather { id: m, front: id, slot: motion::slot_behind(j), frame, content, start: now });
+            }
             self.history.folded(&f);
             self.after_fold();
             self.toast(format!("Folded {} pages · S unfolds, [ ] peek", f.members.len()));
@@ -6827,6 +6870,24 @@ impl App {
     fn unfold_stack(&mut self, id: NodeId) {
         if let Some(stack) = self.scene.unfold(id) {
             log::info!("unfold: {} card(s) around {}", stack.members.len(), id.0);
+            // Each sheet behind the front slides out to its card's place,
+            // the card's page showing on it on the way.
+            if !self.still
+                && let Some(front) = self.scene.node(stack.front).map(|n| n.frame())
+            {
+                let now = Instant::now();
+                let step = self.stack_step();
+                let len = stack.members.len();
+                let behind = (1..len).map(|j| stack.members[(stack.front_index() + j) % len].id);
+                for (j, m) in behind.enumerate() {
+                    self.gathers.retain(|g| g.id != m);
+                    if let Some(n) = self.scene.node(m) {
+                        let sheet = motion::stack_slot(front, motion::slot_behind(j), step);
+                        let hh = n.header_h();
+                        self.glides.unfold(m, Rect::new(sheet.x, sheet.y + hh, sheet.w, (sheet.h - hh).max(1.0)), now);
+                    }
+                }
+            }
             self.history.unfolded(&stack);
             self.toast(format!("Unfolded {} pages", stack.members.len()));
             self.dirty = true;
@@ -6931,6 +6992,20 @@ impl App {
             Some(c) => format!("Trail colour: {c}"),
             None => "Trail colour: accent".to_string(),
         });
+    }
+
+    /// The cards behind stack front `front`, nearest first (as ] shows them).
+    fn stack_behind(&self, front: NodeId) -> Vec<NodeId> {
+        let Some(s) = self.scene.stack_of(front) else { return Vec::new() };
+        let len = s.members.len();
+        (1..len).map(|j| s.members[(s.front_index() + j) % len].id).collect()
+    }
+
+    /// The gap between a stack's sheets now, in world units.
+    fn stack_step(&self) -> f32 {
+        let scale = self.scale();
+        let k = self.camera.pixels_per_unit(scale);
+        stack_step_px(k, scale) / k.max(1e-6)
     }
 
     /// Cards folded away lose focus and selection; their pages sleep in `sync_liveness`.
@@ -9293,6 +9368,42 @@ impl App {
         let mut in_view = false;
         let now = Instant::now();
         let crowd = k / scale < LABELS_ALL_BELOW;
+        // A trail folding: each card slides onto its sheet behind the
+        // stack's front, under it, its page fading as it arrives, so it lands
+        // as that blank sheet. One unfolded again (or closed) since is drawn
+        // as usual instead.
+        self.gathers.retain(|g| {
+            motion::progress(g.start, motion::FOLD, now) < 1.0 && !board_hidden && self.scene.is_hidden(g.id) && self.scene.stack_of(g.front).is_some()
+        });
+        let step = stack_step_px(k, scale) / k.max(1e-6);
+        let mut gathers = self.gathers.clone();
+        gathers.sort_by_key(|g| std::cmp::Reverse(g.slot));
+        for g in &gathers {
+            let Some(front) = self.scene.node(g.front).map(|n| n.frame()) else { continue };
+            let sheet = motion::stack_slot(front, g.slot, step);
+            let t = motion::progress(g.start, motion::FOLD, now);
+            let (frame, _) = motion::folding(g.frame, sheet, t);
+            let (content, page) = motion::folding(g.content, sheet, t);
+            let (frame, content) = (self.to_screen_rect(frame), self.to_screen_rect(content));
+            if !frame.intersects(&screen) {
+                continue;
+            }
+            let radius = th.card_corner(k, scale, frame.w, frame.h);
+            let key = self.page_key(g.id);
+            let has_tex = self.renderer.as_ref().is_some_and(|rd| rd.has_page(key));
+            let mut l = Layer::default();
+            l.quads.push(Quad { shape: Shape::Shadow { rect: frame.translate(Vec2::new(0.0, 6.0 * k)), radius, blur: (20.0 * k).max(2.0) }, color: th.shadow(0.24), texture: None });
+            crate::chrome::fill(&mut l, frame, radius, rgb(th.card(false), 1.0));
+            crate::chrome::outline(&mut l, frame, radius, line, rgb(th.line_strong(), 1.0));
+            if page > 0.0 {
+                l.quads.push(Quad {
+                    shape: Shape::Rect { rect: content, radius },
+                    color: if has_tex { [1.0, 1.0, 1.0, page] } else { rgb(th.card(false), page) },
+                    texture: has_tex.then_some(key),
+                });
+            }
+            layers.push(l);
+        }
         for n in board_cards {
             // The card on its way to or from Solo is drawn by `read_morph_layer`.
             if morphing == Some(n.id) {
@@ -9324,21 +9435,33 @@ impl App {
             let card = self.cards.get(&n.id);
             let asleep = card.is_none();
             let sticky = n.sticky.as_deref().filter(|_| n.is_sticky());
+            // Coming out of a stack: a blank sheet, its page showing on it on the way.
+            if self.glides.unfolding(n.id, now) {
+                let mut sheet = Layer::default();
+                sheet.quads.push(Quad { shape: Shape::Shadow { rect: frame.translate(Vec2::new(0.0, 6.0 * k)), radius, blur: (20.0 * k).max(2.0) }, color: th.shadow(0.24), texture: None });
+                crate::chrome::fill(&mut sheet, frame, radius, rgb(th.card(false), 1.0));
+                crate::chrome::outline(&mut sheet, frame, radius, line, rgb(th.line_strong(), 1.0));
+                layers.push(sheet);
+            }
             let mut l = Layer::default();
 
             // A stack shows the edges of up to three cards behind its front, down and to the right.
             let stack = self.scene.stack_of(n.id).map(|s| (s.front_index() + 1, s.members.len()));
             if let Some((_, len)) = stack {
                 // At least a few px apart, so a stack still reads when zoomed far out.
-                let step = (12.0 * k).max(5.0 * scale);
-                let behind = len.min(4) - 1;
+                let step = stack_step_px(k, scale);
+                let behind = len.min(motion::STACK_SHOWN + 1) - 1;
+                // A sheet a folding card is still on its way to is that card (drawn above).
+                let arriving: HashSet<usize> = self.gathers.iter().filter(|g| g.front == n.id).map(|g| g.slot).collect();
                 let last = frame.translate(Vec2::new(step * behind as f32, step * behind as f32));
-                l.quads.push(Quad {
-                    shape: Shape::Shadow { rect: last.translate(Vec2::new(0.0, 6.0 * k)), radius, blur: (20.0 * k).max(2.0) },
-                    color: th.shadow(0.24),
-                    texture: None,
-                });
-                for i in (1..=behind).rev() {
+                if arriving.is_empty() {
+                    l.quads.push(Quad {
+                        shape: Shape::Shadow { rect: last.translate(Vec2::new(0.0, 6.0 * k)), radius, blur: (20.0 * k).max(2.0) },
+                        color: th.shadow(0.24),
+                        texture: None,
+                    });
+                }
+                for i in (1..=behind).rev().filter(|i| !arriving.contains(i)) {
                     let back = frame.translate(Vec2::new(step * i as f32, step * i as f32));
                     crate::chrome::fill(&mut l, back, radius, rgb(th.card(false), 1.0));
                     crate::chrome::outline(&mut l, back, radius, line, rgb(th.line_strong(), 1.0));

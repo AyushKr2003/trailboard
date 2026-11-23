@@ -539,6 +539,18 @@ impl Theme {
         }
     }
 
+    /// The colour of a card's awake mark: *Always active* the theme's green;
+    /// *Keep awake* its cyan, or blue or magenta where the cyan is too near
+    /// the green (as in themes with a mint cyan). *Auto* has none (it is
+    /// drawn dim, like the other buttons).
+    pub fn awake_keep(&self) -> Rgb {
+        self.unlike(&["cyan", "blue", "magenta"], &[self.awake_active()])
+    }
+
+    pub fn awake_active(&self) -> Rgb {
+        self.color("green")
+    }
+
     /// The first of the colours `names` not too near any of `taken`, else the first.
     fn unlike(&self, names: &[&str], taken: &[Rgb]) -> Rgb {
         let near = |a: Rgb, b: Rgb| {
@@ -865,6 +877,22 @@ red = "#f7768e"
         std::fs::write(dir.path().join("colors.toml"), "background = \"#202020\"\n").unwrap();
         std::fs::write(dir.path().join("light.mode"), "").unwrap();
         assert!(read_palette(dir.path()).light);
+    }
+
+    #[test]
+    fn awake_marks_tell_apart() {
+        let far = |a: Rgb, b: Rgb| {
+            let (a, b) = (to_oklab(a), to_oklab(b));
+            ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt() >= RING_APART
+        };
+        let fallback = Theme::default();
+        assert_eq!(fallback.awake_keep(), fallback.color("cyan"));
+        assert_eq!(fallback.awake_active(), fallback.color("green"));
+        // A mint cyan next to the green: Keep awake steps aside to blue.
+        let mint = Theme { palette: parse_palette("cyan = \"#94e2d5\"\ngreen = \"#a6e3a1\"\nblue = \"#89b4fa\"\n", false), ..Theme::default() };
+        assert_eq!(mint.awake_active(), mint.color("green"));
+        assert_eq!(mint.awake_keep(), mint.color("blue"));
+        assert!(far(mint.awake_keep(), mint.awake_active()));
     }
 
     #[test]

@@ -305,6 +305,26 @@ mod tests {
     }
 
     #[test]
+    fn awake_modes_are_saved_and_missing_ones_load_as_auto() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = board_path(dir.path());
+        let mut scene = Scene::new();
+        let a = scene.add_page(Rect::new(0.0, 0.0, 10.0, 10.0), "a");
+        let b = scene.add_page(Rect::new(0.0, 50.0, 10.0, 10.0), "b");
+        let c = scene.add_page(Rect::new(0.0, 90.0, 10.0, 10.0), "c");
+        scene.node_mut(a).unwrap().awake = scene::liveness::Awake::Keep;
+        scene.node_mut(b).unwrap().awake = scene::liveness::Awake::Active;
+        save_board(&path, &Board::new(scene, Camera::default())).unwrap();
+        let json = fs::read_to_string(&path).unwrap();
+        assert!(json.contains("\"awake\": \"keep\"") && json.contains("\"awake\": \"active\""));
+        assert_eq!(json.matches("\"awake\"").count(), 2, "auto isn't written");
+        let back = load_board(&path).unwrap().scene;
+        assert_eq!(back.node(a).unwrap().awake, scene::liveness::Awake::Keep);
+        assert_eq!(back.node(b).unwrap().awake, scene::liveness::Awake::Active);
+        assert_eq!(back.node(c).unwrap().awake, scene::liveness::Awake::Auto);
+    }
+
+    #[test]
     fn stacks_are_saved() {
         let dir = tempfile::tempdir().unwrap();
         let path = board_path(dir.path());

@@ -105,6 +105,7 @@ use scene::pagezoom::{self, SiteZooms};
 use scene::scrolltarget;
 use scene::userkeys::{self, Mode as KeyMode, Step};
 use scene::settings::{self as prefs, Settings};
+use scene::liveness::Awake;
 use scene::{liveness, motion, placement, read, selection, tidy, Camera, Change, Edge, History, Node, NodeId, Rect, Scene, Selection, TrailStep, Vec2};
 use storage::spaces::{self, SpaceId, SpaceIndex};
 use web::{MouseButton as WebButton, Page, SpawnBeside, WebEvent};
@@ -371,7 +372,26 @@ struct Card {
     hidden: bool,
     /// Cursor the page asked for, shown while the pointer is over its content.
     cursor: web::Cursor,
+    /// Frames a second last asked of the page (`sync_pages`).
+    fps: i32,
+    /// The page holds its focus (an *Always active* card).
+    held: bool,
 }
+
+/// What a card's page last said about its media (`WebEvent::Media`).
+#[derive(Debug, Clone, Copy)]
+struct Media {
+    playing: bool,
+    /// When it last stopped playing; `None` while playing.
+    stopped: Option<Instant>,
+}
+
+/// Frames a second for a page that keeps running off screen without being
+/// seen (media in an *Auto* or *Keep awake* card): enough to keep it going,
+/// little to pay for.
+const UNSEEN_FPS: i32 = 4;
+/// Frames a second for a page in view, or an *Always active* one.
+const FULL_FPS: i32 = 60;
 
 /// A docked card's parts on screen: the page and the inspector (screen
 /// rect, CSS size each) and the divider between them.
@@ -443,6 +463,8 @@ pub struct App {
     live_from_env: bool,
     /// Recency of use per card (larger is more recent), for choosing which cards sleep.
     used: HashMap<NodeId, u64>,
+    /// What each live card's page says about its media, for keeping it awake.
+    media: HashMap<NodeId, Media>,
     use_clock: u64,
     focused: Option<NodeId>,
     /// The card current before `focused`, for Ctrl+^ (this space's).
@@ -906,6 +928,7 @@ impl App {
             settings,
             live_from_env: live_env.is_some(),
             used: HashMap::new(),
+            media: HashMap::new(),
             use_clock: 0,
             focused: None,
             alt_card: None,
@@ -1717,7 +1740,7 @@ impl App {
         let jar = self.jar.as_ref();
         match Page::new(self.page_key(id), &url, kind, (css.x as i32, css.y as i32), self.page_scale, &self.spawn_beside, jar) {
             Some(page) => {
-                self.cards.insert(id, Card { page, loading: true, can_back: false, can_forward: false, hidden: false, cursor: web::Cursor::Default });
+                self.cards.insert(id, Card { page, loading: true, can_back: false, can_forward: false, hidden: false, cursor: web::Cursor::Default, fps: FULL_FPS, held: false });
             }
             None => log::error!("failed to create browser for card {}", id.0),
         }
@@ -2172,6 +2195,7 @@ impl App {
     /// Put a card to sleep: close its browser but keep its last frame on screen.
     fn sleep_page(&mut self, id: NodeId) {
         self.close_dock(id);
+        self.media.remove(&id);
         if let Some(card) = self.cards.remove(&id) {
             self.release(card.page);
             log::info!("sleeping card {} ({} live)", id.0, self.cards.len());
@@ -2186,6 +2210,7 @@ impl App {
             self.release(card.page);
         }
         self.used.remove(&id);
+        self.media.remove(&id);
         self.selection.remove(id);
         let key = self.page_key(id);
         self.thumb_tried.remove(&key);
@@ -4340,6 +4365,14 @@ impl App {
             }
             Cmd::CardOnly => self.ask_close_others(),
             Cmd::Clone => self.clone_card(),
+            Cmd::Awake => match self.current() {
+                Some(id) => self.set_awake(id, parsed.arg.as_deref().and_then(Awake::parse)),
+                None => self.toast("No card"),
+            },
+            Cmd::Mute => match self.current() {
+                Some(id) => self.toggle_mute(id),
+                None => self.toast("No card"),
+            },
             Cmd::Saved => match self.saved_url(&arg) {
                 Some(u) if self.focused_page().is_some() => self.load_here(&u),
                 Some(u) if self.new_card_at_center(&u).is_some() => self.give_keys(PageKeys::Page),
@@ -6060,6 +6093,11 @@ impl App {
                 Some(p) => p.reload(),
                 None => self.toast("No page to reload"),
             },
+            Command::CycleAwake | Command::MuteCard => match self.current() {
+                Some(id) if c == Command::CycleAwake => self.set_awake(id, None),
+                Some(id) => self.toggle_mute(id),
+                None => self.toast("No card"),
+            },
             Command::FindInPage => self.open_find(false),
             Command::MarkCard => self.toggle_mark(),
             Command::FillView => self.fill_current(),
@@ -7049,11 +7087,9 @@ impl App {
                 }
                 None => (size, None),
             };
+            let (run, focused) = (self.keeps_running(id), self.focused == Some(id));
             if let Some(card) = self.cards.get_mut(&id) {
-                if card.hidden == visible {
-                    card.hidden = !visible;
-                    card.page.set_hidden(!visible);
-                }
+                Self::show_card(id, card, visible, run, focused);
                 card.page.resize(size, page_scale);
             }
             if let (Some(d), Some(insp)) = (self.docks.get_mut(&id), insp) {
@@ -7064,6 +7100,119 @@ impl App {
                 d.page.resize(insp, page_scale);
             }
         }
+        // Cards folded in a stack that stay awake are never on screen.
+        let folded: Vec<NodeId> = self.cards.keys().copied().filter(|id| self.scene.is_hidden(*id)).collect();
+        for id in folded {
+            let (run, focused) = (self.keeps_running(id), self.focused == Some(id));
+            if let Some(card) = self.cards.get_mut(&id) {
+                Self::show_card(id, card, false, run, focused);
+            }
+        }
+    }
+
+    /// Tells card `id`'s page whether it is hidden, how fast to paint and
+    /// whether it holds its focus. A page off screen is hidden (it stops
+    /// painting and Chromium slows it) unless it keeps running (`run`: see
+    /// [`App::keeps_running`]); then it paints slowly, or at full speed if
+    /// the card is *Always active*.
+    fn show_card(id: NodeId, card: &mut Card, visible: bool, run: Option<Awake>, focused: bool) {
+        let hidden = !visible && run.is_none();
+        if card.hidden != hidden {
+            card.hidden = hidden;
+            card.page.set_hidden(hidden);
+            if !visible && !hidden {
+                log::info!("card {} keeps running off screen ({})", id.0, run.map_or("", Awake::name));
+            }
+        }
+        // A hidden page doesn't paint; only one running unseen paints slowly.
+        let fps = if hidden || visible || run == Some(Awake::Active) { FULL_FPS } else { UNSEEN_FPS };
+        if card.fps != fps {
+            card.fps = fps;
+            card.page.set_frame_rate(fps);
+        }
+        let held = run == Some(Awake::Active);
+        if card.held != held {
+            card.held = held;
+            card.page.hold_focus(held);
+            if !held && !focused {
+                card.page.set_focus(false);
+            }
+            log::info!("card {} {} its focus", id.0, if held { "holds" } else { "no longer holds" });
+        }
+    }
+
+    /// Whether card `id` keeps running off screen, and why: *Always active*,
+    /// or media playing now (`Auto` / `Keep`). `None`: it may be hidden.
+    fn keeps_running(&self, id: NodeId) -> Option<Awake> {
+        let awake = self.scene.node(id).map_or(Awake::Auto, |n| n.awake);
+        if awake == Awake::Active {
+            return Some(Awake::Active);
+        }
+        self.media.get(&id).filter(|m| m.playing).map(|_| awake)
+    }
+
+    /// Whether card `id` sits outside the live cap: kept awake by its mode,
+    /// or by media playing (or paused a short while ago).
+    fn exempt(&self, id: NodeId) -> bool {
+        if self.scene.node(id).is_some_and(|n| !n.awake.is_auto()) {
+            return true;
+        }
+        self.media.get(&id).is_some_and(|m| liveness::media_keeps(m.playing, m.stopped.map(|t| t.elapsed())))
+    }
+
+    /// Takes a page's report that it started or stopped playing media.
+    fn got_media(&mut self, id: NodeId, playing: bool) {
+        if !self.cards.contains_key(&id) {
+            return;
+        }
+        let stopped = if playing { None } else { Some(Instant::now()) };
+        self.media.insert(id, Media { playing, stopped });
+        log::info!("card {} {} media", id.0, if playing { "plays" } else { "stopped its" });
+    }
+
+    /// The icon of an awake mode: a ring for *Auto* and *Keep awake*, a
+    /// solid disc for *Always active* (docs/DESIGN.md, "Awake mark").
+    fn awake_icon(mode: Awake) -> crate::icons::Icon {
+        match mode {
+            Awake::Auto | Awake::Keep => crate::icons::Icon::AwakeRing,
+            Awake::Active => crate::icons::Icon::AwakeDisc,
+        }
+    }
+
+    /// The colour of an awake mode's mark; `None` for *Auto*, drawn like the
+    /// other buttons.
+    fn awake_colour(th: &crate::theme::Theme, mode: Awake) -> Option<crate::theme::Rgb> {
+        match mode {
+            Awake::Auto => None,
+            Awake::Keep => Some(th.awake_keep()),
+            Awake::Active => Some(th.awake_active()),
+        }
+    }
+
+    /// Mutes card `id`'s sound, or turns it back on.
+    fn toggle_mute(&mut self, id: NodeId) {
+        let Some(c) = self.cards.get(&id) else { return };
+        let muted = !c.page.muted();
+        c.page.set_muted(muted);
+        log::info!("card {} {}", id.0, if muted { "muted" } else { "unmuted" });
+        self.toast(if muted { "Muted" } else { "Sound on" });
+    }
+
+    /// Sets card `id`'s awake mode (`None`: the next one, as the button cycles).
+    fn set_awake(&mut self, id: NodeId, mode: Option<Awake>) {
+        let Some(n) = self.scene.node_mut(id) else { return };
+        let mode = mode.unwrap_or(n.awake.next());
+        if n.awake == mode {
+            return;
+        }
+        n.awake = mode;
+        self.dirty = true;
+        log::info!("card {} awake: {}", id.0, mode.name());
+        self.toast(match mode {
+            Awake::Auto => "Auto: this card sleeps when the live limit needs room",
+            Awake::Keep => "Keep awake: this card never sleeps",
+            Awake::Active => "Always active: this card never sleeps and runs as if in view",
+        });
     }
 
     /// The raster scale for pages once the camera rests: the zoom's
@@ -7092,8 +7241,9 @@ impl App {
     /// Keep at most `max_live` live browsers. Sleeping cards on screen wake only
     /// when `allow_wake` (the camera has settled), so panning doesn't start pages.
     fn sync_liveness(&mut self, allow_wake: bool) {
-        // Cards folded away in a stack never keep a live browser.
-        let folded: Vec<NodeId> = self.cards.keys().copied().filter(|id| self.scene.is_hidden(*id)).collect();
+        // Cards folded away in a stack don't keep a live browser, unless
+        // they are kept awake (by their mode or by media).
+        let folded: Vec<NodeId> = self.cards.keys().copied().filter(|id| self.scene.is_hidden(*id) && !self.exempt(*id)).collect();
         for id in folded {
             log::info!("sleeping card {} (folded)", id.0);
             self.sleep_page(id);
@@ -7104,17 +7254,18 @@ impl App {
         let paired = |id: NodeId| self.inspectors.contains_key(&id) || self.inspectors.values().any(|&s| s == id) || self.docks.contains_key(&id);
         let candidates: Vec<liveness::Candidate> = self
             .scene
-            .nodes()
-            .filter(|n| !paired(n.id))
+            .all_nodes()
+            .filter(|n| !paired(n.id) && (!self.scene.is_hidden(n.id) || self.exempt(n.id)))
             .map(|n| liveness::Candidate {
                 id: n.id,
                 live: self.cards.contains_key(&n.id),
                 visible: match self.read {
                     Some(r) => r == n.id,
-                    None => self.to_screen_rect(n.frame()).intersects(&screen),
+                    None => !self.scene.is_hidden(n.id) && self.to_screen_rect(n.frame()).intersects(&screen),
                 },
                 focused: self.focused == Some(n.id),
                 last_used: self.used.get(&n.id).copied().unwrap_or(0),
+                exempt: self.exempt(n.id),
             })
             .collect();
         let plan = liveness::plan(&candidates, self.max_live, allow_wake);
@@ -7122,7 +7273,12 @@ impl App {
             self.sleep_page(id);
         }
         for id in plan.wake {
-            log::info!("waking card {} (on screen)", id.0);
+            let why = match self.scene.node(id).map(|n| n.awake) {
+                Some(Awake::Keep) => "kept awake",
+                Some(Awake::Active) => "always active",
+                _ => "on screen",
+            };
+            log::info!("waking card {} ({why})", id.0);
             let used = self.used.get(&id).copied();
             self.create_page(id);
             // Coming into view isn't use; keep its old recency.
@@ -7245,6 +7401,11 @@ impl App {
                 WebEvent::Focus { page, report } => {
                     if let Some(id) = self.node_of(page) {
                         self.page_focus(id, report);
+                    }
+                }
+                WebEvent::Media { page, playing } => {
+                    if let Some(id) = self.node_of(page) {
+                        self.got_media(id, playing);
                     }
                 }
                 WebEvent::Scroll { page, report } => {
@@ -7795,6 +7956,16 @@ impl App {
                     self.open_shield_menu(id);
                     self.menu_pressed = true;
                 }
+                Hit::Awake(id) => {
+                    self.keys_in_page = false;
+                    self.set_awake(id, None);
+                    self.menu_pressed = true;
+                }
+                Hit::Mute(id) => {
+                    self.keys_in_page = false;
+                    self.toggle_mute(id);
+                    self.menu_pressed = true;
+                }
                 Hit::Tag(id) => {
                     self.keys_in_page = false;
                     self.ask_trail_name_of(id);
@@ -8045,7 +8216,7 @@ impl App {
                 let cursor = match hit {
                     Hit::Header(_) => web::Cursor::Grab,
                     Hit::Grip(_) => web::Cursor::ResizeSE,
-                    Hit::Close(_) | Hit::Back(_) | Hit::Forward(_) | Hit::Reload(_) | Hit::Badge(_) | Hit::Shield(_) | Hit::Tag(_) => web::Cursor::Pointer,
+                    Hit::Close(_) | Hit::Back(_) | Hit::Forward(_) | Hit::Reload(_) | Hit::Badge(_) | Hit::Shield(_) | Hit::Tag(_) | Hit::Awake(_) | Hit::Mute(_) => web::Cursor::Pointer,
                     Hit::DockSide(_) | Hit::Undock(_) | Hit::Redock(_) => web::Cursor::Pointer,
                     Hit::Content(id) => self.cards.get(&id).map_or(web::Cursor::Default, |c| c.cursor),
                     Hit::Inspector(id) => self.docks.get(&id).map_or(web::Cursor::Default, |d| d.cursor),
@@ -9361,6 +9532,17 @@ impl App {
                         buttons.push((Hit::Forward(n.id), crate::icons::Icon::Forward, c.can_forward));
                         buttons.push((Hit::Back(n.id), crate::icons::Icon::Back, c.can_back));
                     }
+                    // The card's awake mode, a button that cycles it, and
+                    // while it plays media a speaker that mutes it.
+                    // Web pages only: notes and the inspector cost little.
+                    let awake_button = !n.is_note() && !n.is_inspector() && !self.inspectors.contains_key(&n.id);
+                    if awake_button && frame.w >= BAR_NAV_MIN * ui {
+                        buttons.push((Hit::Awake(n.id), Self::awake_icon(n.awake), true));
+                        if let Some(c) = card.filter(|c| self.media.get(&n.id).is_some_and(|m| m.playing) || c.page.muted()) {
+                            let icon = if c.page.muted() { crate::icons::Icon::SpeakerOff } else { crate::icons::Icon::Speaker };
+                            buttons.push((Hit::Mute(n.id), icon, true));
+                        }
+                    }
                     // A docked inspector: to the other side, or to a card
                     // of its own; an inspector card: back into its page's.
                     if self.docks.contains_key(&n.id) && frame.w >= BAR_NAV_MIN * ui {
@@ -9382,6 +9564,11 @@ impl App {
                             (false, _) => rgb(th.text3(), 0.55),
                             (true, true) => rgb(th.text(), 1.0),
                             (true, false) => rgb(th.text2(), 1.0),
+                        };
+                        // A card kept awake says so in the accent.
+                        let ink = match Self::awake_colour(&th, n.awake).filter(|_| hit == Hit::Awake(n.id)) {
+                            Some(c) => rgb(c, 1.0),
+                            None => ink,
                         };
                         if enabled {
                             self.bar_buttons.push((hit, cell));
@@ -9419,12 +9606,30 @@ impl App {
                             right = cell.x - 4.0 * ui;
                         }
                     }
-                } else if asleep && frame.w - lead >= 72.0 * ui {
-                    // A sleeping card says so with a moon at the end of its label.
-                    if let Some(r) = self.renderer.as_mut() {
-                        crate::icons::draw(&mut l, r, crate::icons::Icon::Moon, right - 8.0 * ui, mid, 13.0 * ui, rgb(th.text3(), 1.0));
+                } else if frame.w - lead >= 72.0 * ui {
+                    // At the end of the label: a card kept awake shows its
+                    // mode in the accent, one playing media a speaker, and a
+                    // sleeping card a moon.
+                    let mut marks = Vec::new();
+                    if let Some(c) = card.filter(|c| self.media.get(&n.id).is_some_and(|m| m.playing) || c.page.muted()) {
+                        let icon = if c.page.muted() { crate::icons::Icon::SpeakerOff } else { crate::icons::Icon::Speaker };
+                        marks.push((icon, rgb(th.text2(), 1.0)));
                     }
-                    right -= 22.0 * ui;
+                    if !n.awake.is_auto() {
+                        let c = Self::awake_colour(&th, n.awake).unwrap_or_else(|| th.text2());
+                        marks.push((Self::awake_icon(n.awake), rgb(c, 1.0)));
+                    } else if asleep {
+                        marks.push((crate::icons::Icon::Moon, rgb(th.text3(), 1.0)));
+                    }
+                    for (icon, ink) in marks {
+                        if let Some(r) = self.renderer.as_mut() {
+                            crate::icons::draw(&mut l, r, icon, right - 8.0 * ui, mid, 13.0 * ui, ink);
+                        }
+                        right -= 20.0 * ui;
+                    }
+                    if right < bar.right() {
+                        right -= 2.0 * ui;
+                    }
                 }
                 let mut x = frame.x + lead;
                 let label_x0 = x;
@@ -10803,7 +11008,7 @@ impl App {
             return;
         };
         log::info!("inspector {} for card {}", id.0, src.0);
-        self.cards.insert(id, Card { page, loading: true, can_back: false, can_forward: false, hidden: false, cursor: web::Cursor::Default });
+        self.cards.insert(id, Card { page, loading: true, can_back: false, can_forward: false, hidden: false, cursor: web::Cursor::Default, fps: FULL_FPS, held: false });
         self.inspectors.insert(id, src);
         self.touch(id);
         self.dirty = true;
@@ -11093,6 +11298,14 @@ impl App {
                     }
                     None => log::warn!("script: card {id} shows no shield"),
                 },
+                Cmd::AwakeClick(id) => match self.bar_buttons.iter().find(|(h, _)| *h == Hit::Awake(NodeId(id))).map(|(_, r)| *r) {
+                    Some(r) => {
+                        self.cursor_moved(r.center());
+                        self.mouse_input(ElementState::Pressed, MouseButton::Left);
+                        self.mouse_input(ElementState::Released, MouseButton::Left);
+                    }
+                    None => log::warn!("script: card {id} shows no awake button (hover it first)"),
+                },
                 Cmd::TagClick(id) => match self.tags.iter().find(|(t, _)| t.0 == id).map(|(_, r)| *r) {
                     Some(r) => {
                         self.cursor_moved(r.center());
@@ -11137,8 +11350,12 @@ impl App {
                     for n in self.scene.all_nodes() {
                         let (r, f) = (n.rect, self.to_screen_rect(n.frame()));
                         log::info!(
-                            "script card {}: world ({:.0},{:.0} {:.0}x{:.0}) screen ({:.0},{:.0} {:.0}x{:.0}) live={} sel={} hidden={} blocked={} elements_hidden={} title={:?} {}",
+                            "script card {}: world ({:.0},{:.0} {:.0}x{:.0}) screen ({:.0},{:.0} {:.0}x{:.0}) live={} awake={} media={} page_hidden={} fps={} sel={} hidden={} blocked={} elements_hidden={} title={:?} {}",
                             n.id.0, r.x, r.y, r.w, r.h, f.x, f.y, f.w, f.h, self.cards.contains_key(&n.id),
+                            n.awake.name(),
+                            self.media.get(&n.id).map_or("-", |m| if m.playing { "playing" } else { "stopped" }),
+                            self.cards.get(&n.id).is_some_and(|c| c.hidden),
+                            self.cards.get(&n.id).map_or(0, |c| c.fps),
                             self.selection.contains(n.id), self.scene.is_hidden(n.id),
                             self.cards.get(&n.id).map_or(0, |c| c.page.blocked()),
                             self.cards.get(&n.id).map_or(0, |c| c.page.hidden()), n.title, n.url
@@ -11399,6 +11616,10 @@ enum Hit {
     Badge(NodeId),
     /// The blocked-request count on a card's title bar.
     Shield(NodeId),
+    /// The title bar's awake button (cycles the card's mode) and its
+    /// speaker (mutes the card's sound).
+    Awake(NodeId),
+    Mute(NodeId),
     /// A trail's tag above its first card on the board.
     Tag(NodeId),
 }
@@ -11408,7 +11629,7 @@ impl Hit {
         match *self {
             Hit::Board => None,
             Hit::Header(id) | Hit::Close(id) | Hit::Back(id) | Hit::Forward(id) | Hit::Reload(id) | Hit::Grip(id) | Hit::Content(id) | Hit::ReadBar(id) | Hit::Badge(id) | Hit::Shield(id) | Hit::Tag(id) => Some(id),
-            Hit::Inspector(id) | Hit::Divider(id) | Hit::DockSide(id) | Hit::Undock(id) | Hit::Redock(id) => Some(id),
+            Hit::Inspector(id) | Hit::Divider(id) | Hit::DockSide(id) | Hit::Undock(id) | Hit::Redock(id) | Hit::Awake(id) | Hit::Mute(id) => Some(id),
         }
     }
 }

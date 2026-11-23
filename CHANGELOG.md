@@ -83,6 +83,19 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
 
 ### Added
 
+- **Cards that stay awake.** A card playing media (a video, muted or not,
+  or audible sound) is never put to sleep: it sits outside the live-page
+  cap, keeps playing off screen and folded in a stack (painting at 4 frames
+  a second while unseen), and stays awake 10 minutes after a pause. Each
+  card's label has an awake button, one circle, that cycles *Auto* (dim
+  ring: the cap decides), *Keep awake* (cyan ring, blue where the theme's
+  cyan is near its green: never sleeps, hidden off screen so it costs
+  little) and *Always active* (solid green disc: never sleeps, never
+  hidden, keeps its focus and full frame rate). Kept cards don't count toward the cap, so the
+  other cards keep every slot. The mode is saved with the board (`awake`,
+  missing means Auto). A speaker on a card playing media mutes it. By name:
+  `:awake [auto|keep|active]`, `:mute`; in Ctrl+K *Keep card awake* and
+  *Mute or unmute card*.
 - **Page inspector.** F12, Ctrl+Shift+I or `:inspect` opens Chromium's
   inspector (elements, styles, console, sources, network) docked in the
   page's own card, on the right or at the bottom, with a divider to drag;

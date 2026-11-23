@@ -234,8 +234,16 @@ and embedding it would put a megabyte in every note), so they ask for
   centred, in place of its page.
 - Label above a card (26 px high, 6 px above, shown by principle 2): stack
   count, trail tag, site icon, title; on hover or when current also the
-  host, shield count and buttons. Its place is the card's handle whether
-  it shows or not.
+  host, shield count and buttons (the awake mark, and a speaker while
+  media plays). Otherwise its end shows a speaker for media, the awake
+  mark of a card kept awake, or a moon for a sleeping one. Its place is
+  the card's handle whether it shows or not.
+- Awake mark (`Icon::AwakeRing`, `Icon::AwakeDisc`): one circle, as large
+  as the other title-bar icons, whose colour says the mode and whose fill
+  backs it up for colour-blind eyes. *Auto*: a ring, dim like the other
+  buttons. *Keep awake*: a ring in `Theme::awake_keep` (the theme's cyan,
+  or blue / magenta where the cyan is too near the green). *Always active*:
+  a solid disc in `Theme::awake_active` (the theme's green).
 - Trails leave and arrive near the top of a card with a dot at each end.
   Between, a trail runs straight across out of the source's side, straight
   up or down halfway between the cards, and straight across into the

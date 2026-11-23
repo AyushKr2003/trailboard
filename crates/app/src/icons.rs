@@ -50,6 +50,14 @@ pub enum Icon {
     Link,
     Redo,
     Code,
+    /// A card's awake mode: a ring (Auto, Keep awake) or a solid disc
+    /// (Always active); its colour says which.
+    AwakeRing,
+    AwakeDisc,
+    /// A card playing media.
+    Speaker,
+    /// A card whose sound is muted.
+    SpeakerOff,
 }
 
 enum Prim {
@@ -288,6 +296,20 @@ fn strokes(icon: Icon) -> Vec<Prim> {
         Icon::Code => {
             p.poly(&[(8.0, 7.0), (3.5, 12.0), (8.0, 17.0)]).poly(&[(16.0, 7.0), (20.5, 12.0), (16.0, 17.0)]).line(13.5, 5.0, 10.5, 19.0);
         }
+        Icon::AwakeRing => {
+            p.circle(12.0, 12.0, 7.2);
+        }
+        Icon::AwakeDisc => {
+            p.dot(12.0, 12.0, 8.2);
+        }
+        Icon::Speaker | Icon::SpeakerOff => {
+            p.poly(&[(3.5, 9.5), (7.0, 9.5), (11.5, 5.5), (11.5, 18.5), (7.0, 14.5), (3.5, 14.5), (3.5, 9.5)]);
+            if icon == Icon::Speaker {
+                p.arc(11.5, 12.0, 4.0, 305.0, 415.0).arc(11.5, 12.0, 7.8, 310.0, 410.0);
+            } else {
+                p.line(15.0, 9.5, 20.0, 14.5).line(20.0, 9.5, 15.0, 14.5);
+            }
+        }
     }
     p.0
 }
@@ -384,6 +406,7 @@ mod tests {
         Icon::History, Icon::Download, Icon::Shield, Icon::ChevronRight, Icon::ChevronDown, Icon::Lock, Icon::Expand,
         Icon::Keyboard, Icon::Trail, Icon::Undo, Icon::Moon, Icon::Help, Icon::Check, Icon::Board, Icon::Grip,
         Icon::Find, Icon::Picture, Icon::Copy, Icon::Cut, Icon::Paste, Icon::Link, Icon::Redo, Icon::Code,
+        Icon::AwakeRing, Icon::AwakeDisc, Icon::Speaker, Icon::SpeakerOff,
     ];
 
     fn alpha(px: &[u8], size: u32, x: u32, y: u32) -> u8 {

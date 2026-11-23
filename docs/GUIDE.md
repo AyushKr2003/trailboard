@@ -120,8 +120,10 @@ same size on screen at any zoom: the site's icon (kept per site under
 `icons/` in the data folder, so sleeping cards and restored boards keep
 theirs) and the title. On the card under the pointer and on the current card
 the label also shows the site's address, a shield with what the blocker
-stopped, and back, forward, reload and close. A line glides along the card's
-top edge while the page loads, and a sleeping card's label ends in a moon.
+stopped, and back, forward, reload and close, with the card's awake button
+before them (see below) and a speaker while it plays media. A line glides
+along the card's top edge while the page loads, and a sleeping card's label
+ends in a moon.
 When no card is in view, a line at the foot of the window offers *Fit
 everything*; an empty board shows a short welcome on the space's colour,
 with *Open a page* (Ctrl+T), *Search everything* (Ctrl+K) and *All keys* (?).
@@ -243,6 +245,28 @@ Only the 6 most relevant cards keep a live browser (focused first, then on scree
 then most recently used). The rest sleep and show their last frame, dimmed, until
 you click them or bring them into view. Change the cap with *Pages kept awake*
 in the settings (Ctrl+,), or for one run with `TRAILBOARD_MAX_LIVE=N`.
+
+Some cards stay awake outside that cap, so they never take a slot from the
+others:
+
+- **A card playing media** (a video, muted or not, or audible sound) is
+  never put to sleep, and keeps playing off screen or folded in a stack
+  (it paints slowly while you can't see it). It stays awake for 10 minutes
+  after you pause, then follows the cap again.
+- **The awake button** on a card's label, a circle, cycles its mode: a dim
+  ring is *Auto* (the cap decides), a coloured ring (cyan, or blue in
+  themes whose cyan is close to their green) is *Keep awake* (never sleeps;
+  off screen it is hidden like any page, so it costs little and its timers
+  slow down) and a solid green disc is *Always active* (never sleeps, is
+  never hidden and keeps its focus: it runs as if it were the card in
+  front of you). A card kept awake shows its ring or disc at the end of
+  its label. The mode is
+  saved with the board. By name: `:awake`, `:awake auto`, `:awake keep`,
+  `:awake active`.
+- **The speaker** on a card playing media mutes it, and shows crossed out
+  while it is muted. By name: `:mute`.
+
+Every card kept awake is a whole browser, so keep an eye on how many you keep.
 
 Cards glide when Tidy moves them, grow in when they open and shrink away
 when they close; a space switch slides its board in. These follow your

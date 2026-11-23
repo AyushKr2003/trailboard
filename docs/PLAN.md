@@ -39,7 +39,8 @@ app (trailboard)  winit window · input · omnibox · chrome UI · main loop
 - CEF runs on the main thread (`external_message_pump`), `Rc`/`RefCell`;
   CEF → app only through `web::drain_events()`.
 - Each card owns a windowless Chromium; frames are uploaded only when the
-  paint serial changes; off-screen cards are hidden, beyond the live cap asleep.
+  paint serial changes; off-screen cards are hidden, beyond the live cap asleep
+  (cards playing media or kept awake sit outside the cap).
 - Page scripts talk back through console messages with a private prefix
   (`web::links`, `web::text`, `web::scroll`, `web::focus`…); the app only
   trusts the answer from the card it asked.
@@ -290,8 +291,14 @@ make ourselves (we own the workflow and can read every log).
   question: whether DRM video draws in off-screen rendering (how cards
   are drawn). If it works, a *Protected video* setting (off by default,
   as it downloads Google's module); if not, record the reason and drop it.
-- ⬜ 5. **Media behaviour.** With the formats in place: a card's media
-  shows on its label (playing / muted), `:mute` / `:media` keys and
+- ✅ 4a. **Cards that stay awake** (asked by the owner on 2026-11-23).
+  Media playing keeps a card outside the live cap (10 min grace after a
+  pause), and each card's awake button cycles *Auto*, *Keep awake* and
+  *Always active*; see the Handoff of that day. Later: an awake mark on
+  sidebar rows, a *Now playing* entry in Ctrl+K.
+- 🟡 5. **Media behaviour.** Done: a card's media shows on its label
+  (speaker / crossed-out speaker) and `:mute`. Still to do:
+  `:media` keys and
   commands (play/pause, seek, speed, mute) that work on any site (not the
   site's own keys), a Solo-friendly full window, and a clear message when
   a video still can't play (format or DRM), instead of a blank player.
@@ -424,31 +431,38 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-22 (fortieth). The owner asked that nothing
-cover a page to say its mode: the corner chip (*Page*, *Insert*…) hid a
-video's play button. Decided with the owner: the entered card's ring takes
-the mode's colour (`Theme::keys_ring`: Page the accent, Insert green,
-Passthrough red, Caret / Visual magenta, each stepping aside to the next
-of its kind when too near one taken; unit-tested on four palettes); the
-window title names the mode, half-typed keys, the scroll area and what `;`
-hints do (`App::title_text`, set from `tick` so a covered window updates
-too); Solo draws nothing at all (owner's choice; the title still says it);
-the prefix list no longer pops up over a page, Ctrl+G mid-sequence shows
-it (`App::prefix_asked`; on the `?` sheet). New setting *Show the page's
-mode* (`mode_label`: `ring` default, `chip` = the old chip as well); a
-missing field loads as the default, so no version bump. Verified: unit
-tests, clippy, scripted e2e with screenshots: Page and Insert rings on the
-board with no chip, the title following (*Page*, *Insert*, *Page · g*,
-*Passthrough · Shift+Esc to leave*), Ctrl+G after g showing the list, Solo
-with nothing drawn, `:set mode-label chip` saved. Not verified: the Caret
-(magenta) and board Passthrough (red) rings by eye (the owner was using the
-screen during the second run), the chip choice's look since the change
-(the same code path as before), and the title after moving its update to
-`tick`.
-The previous sessions' notes (thirty-ninth: welcome/start/settings motion,
-glide j / k, the shortcut sheet and sidebar redesigns, square-turn trails,
-the new mark) are in git: `git log -p docs/PLAN.md`.
-**Repo state:** on `master`, clean; everything above is committed.
+**Last session:** 2026-11-23 (forty-first). Asked by the owner: a card
+playing a video should keep running while they research in other cards,
+and every card should get a button for how it stays awake. Decided with
+the owner: the live cap and its ranking stay as they were; a card playing
+media (any playing video, muted too, or audible audio, in any frame) and
+cards set to *Keep awake* or *Always active* sit **outside** the cap
+(`scene::liveness`: `Candidate::exempt`, `Awake`, `media_keeps`,
+`MEDIA_GRACE` 10 min after a pause), so Auto cards keep every slot. Media is
+told by a page script (`web::media`, one token per frame, `WebEvent::Media`);
+CEF's audio handler would take the sound away, so it isn't used. A card
+playing media or *Always active* is never hidden (Chromium would pause a
+hidden muted video); unseen media paints at 4 fps, *Always active* at 60
+and holds its focus (`Page::hold_focus`; two windowless browsers can both
+be focused, checked with `document.hasFocus()` and blur counts). *Keep
+awake* is hidden off screen like any page. The label's awake button
+(one circle: dim ring, coloured ring, solid green disc, chosen with the
+owner after four rounds of icon designs) cycles the mode, a speaker mutes (`set_audio_muted`);
+`:awake`, `:mute`, two Ctrl+K entries; the mode is saved on the node
+(`awake`, missing = auto, no version bump). Verified: unit tests (liveness,
+media frames, icons, board save), clippy, three scripted e2e runs with
+`TRAILBOARD_MAX_LIVE` 1–2 (`~/.cache/trailboard-e2e-awake/`: a canvas-stream
+video page and a page whose title reports its counter, focus and
+visibility): media off screen, folded and in Solo kept playing; Keep stayed
+live and hidden; Active stayed visible and focused; Auto cards still got
+the cap; the button cycled the three modes; screenshots of the label's
+speaker, moon and bolt. Not verified: audible `<audio>` (only a muted
+video was tested, to stay silent), a real site (YouTube, music services),
+media in a cross-site frame, the 10-minute grace running out, and the
+sidebar, which shows no awake mark yet.
+The previous session's notes (fortieth: the mode ring and title in place
+of the chip) are in git: `git log -p docs/PLAN.md`.
+**Repo state:** on `master`; the awake work above is not committed yet (the owner commits when they ask).
 **Next up:** M14 step 1, the `config.toml` reader (asked by the owner on
 2026-11-21; format and decisions in M14). M13 step 1, the chained
 GitHub Actions build, is written on the orphan branch `cef-build`

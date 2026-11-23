@@ -26,6 +26,8 @@ pub enum Cmd {
     Exit,
     Save,
     Reload,
+    Awake,
+    Mute,
     Back,
     Forward,
     Find,
@@ -163,6 +165,7 @@ const ZOOM: &[&str] = &["in", "out", "reset"];
 const COPY: &[&str] = &["address", "title", "markdown", "site", "clean"];
 const MESSAGES: &[&str] = &["clear"];
 const RELOAD: &[&str] = &["fresh"];
+const AWAKE: &[&str] = &["auto", "keep", "active"];
 const INSPECT: &[&str] = &["right", "bottom", "beside"];
 
 const fn s(cmd: Cmd, name: &'static str, aliases: &'static [&'static str], arg: Arg, arg_hint: &'static str, about: &'static str) -> Spec {
@@ -197,6 +200,8 @@ pub const COMMANDS: &[Spec] = &[
     s(Cmd::Back, "back", &[], Opt(Kind::Count), "[times]", "Go back in the card's page"),
     s(Cmd::Forward, "forward", &[], Opt(Kind::Count), "[times]", "Go forward in the card's page"),
     s(Cmd::Reload, "reload", &[], Opt(Kind::Choice(RELOAD)), "[fresh]", "Reload the page (fresh: skip the cache)"),
+    s(Cmd::Awake, "awake", &[], Opt(Kind::Choice(AWAKE)), "[auto|keep|active]", "Keep the card awake: auto, keep (never sleeps), active (runs as if in view); alone, the next"),
+    s(Cmd::Mute, "mute", &[], No, "", "Mute the card's sound, or turn it back on"),
     s(Cmd::Find, "find", &[], Opt(Kind::Text), "[words]", "Find in the page"),
     s(Cmd::Copy, "copy", &[], Opt(Kind::Choice(COPY)), "[address|title|markdown|site|clean]", "Copy the page's address, title, a Markdown link, its site, or the address without tracking"),
     s(Cmd::PageNext, "page-next", &[], No, "", "The page's next page (its next link)"),

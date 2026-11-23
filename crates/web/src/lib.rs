@@ -14,6 +14,7 @@ pub mod focus;
 pub mod inspector;
 pub mod keys;
 pub mod links;
+pub mod media;
 pub mod menu;
 pub mod pager;
 pub mod permission;
@@ -110,6 +111,10 @@ pub enum WebEvent {
     /// An answer from Caret / Visual mode in page `page` (see [`caret`]).
     /// Any page can send this; only take a copy after asking for one.
     Caret { page: u64, report: caret::Report },
+    /// Web page `page` started or stopped playing media (see [`media`]):
+    /// a video, muted or not, or audible audio, in any of its frames. A page
+    /// can claim this about itself only.
+    Media { page: u64, playing: bool },
 }
 
 /// Largest favicon side asked of Chromium, px (title bars draw 16 px icons, sharp at 2×).
@@ -567,6 +572,10 @@ struct Shared {
     /// A frame clicked a cookie banner's reject button ([`consent`]) since
     /// the main frame last started loading.
     banner_rejected: std::cell::Cell<bool>,
+    /// What each frame says about its media ([`media`]).
+    media: RefCell<media::Frames>,
+    /// The page keeps its focus whatever the app asks ([`Page::hold_focus`]).
+    hold_focus: std::cell::Cell<bool>,
     /// JavaScript is off in this page (last sent with [`Shared::apply_javascript`]).
     script_off: std::cell::Cell<bool>,
     /// An inspector page's line to the page it inspects.
@@ -1045,6 +1054,15 @@ wrap_display_handler! {
                 log::info!("youtube: {what} on {}", url.chars().take(100).collect::<String>());
                 return 1;
             }
+            if let Some(body) = message.strip_prefix(media::PREFIX) {
+                if self.shared.kind == PageKind::Web
+                    && let Some((token, playing)) = media::parse(body)
+                    && let Some(playing) = self.shared.media.borrow_mut().report(token, playing)
+                {
+                    emit(WebEvent::Media { page: self.shared.key, playing });
+                }
+                return 1;
+            }
             if let Some(body) = message.strip_prefix(focus::PREFIX) {
                 if let Some(report) = focus::parse(body) {
                     emit(WebEvent::Focus { page: self.shared.key, report });
@@ -1180,6 +1198,10 @@ wrap_load_handler! {
             if frame.is_main() != 0 {
                 self.shared.committed.set(true);
                 self.shared.banner_rejected.set(false);
+                let cleared = self.shared.media.borrow_mut().clear();
+                if let Some(playing) = cleared {
+                    emit(WebEvent::Media { page: self.shared.key, playing });
+                }
                 // Chromium drops a zoom set before the page commits. Web pages
                 // get it again when their address changes; app pages (the
                 // start page) would otherwise wait until they finish loading,
@@ -1192,6 +1214,10 @@ wrap_load_handler! {
             // or use (notes take their keys another way).
             if self.shared.kind != PageKind::Note {
                 frame.execute_java_script(Some(&CefString::from(focus::script().as_str())), None, 0);
+            }
+            // Media reports, so a card playing something stays awake.
+            if self.shared.kind == PageKind::Web {
+                frame.execute_java_script(Some(&CefString::from(media::script().as_str())), None, 0);
             }
             // Link hints inside frames: an idle listener in each frame below
             // the main one answers the main frame's hint script.
@@ -1471,6 +1497,8 @@ impl Page {
             hide: Default::default(),
             early: Default::default(),
             banner_rejected: std::cell::Cell::new(false),
+            media: Default::default(),
+            hold_focus: std::cell::Cell::new(false),
             script_off: std::cell::Cell::new(false),
             bridge: RefCell::new(None),
         });
@@ -1706,10 +1734,46 @@ impl Page {
         }
     }
 
+    /// Gives the page its focus or takes it away. While the page holds its
+    /// focus ([`Page::hold_focus`]) taking it away does nothing.
     pub fn set_focus(&self, focus: bool) {
+        if !focus && self.shared.hold_focus.get() {
+            return;
+        }
         if let Some(h) = self.host() {
             h.set_focus(focus as _);
         }
+    }
+
+    /// Keeps the page focused (`on`) whichever card has the keys, as an
+    /// *Always active* card does. Turning it off leaves the focus as it is.
+    pub fn hold_focus(&self, on: bool) {
+        self.shared.hold_focus.set(on);
+        if on && let Some(h) = self.host() {
+            h.set_focus(1);
+        }
+    }
+
+    /// How often the page paints, frames a second (60 normally).
+    pub fn set_frame_rate(&self, fps: i32) {
+        if let Some(h) = self.host() {
+            h.set_windowless_frame_rate(fps.clamp(1, 60));
+        }
+    }
+
+    /// Whether any of the page's frames plays media ([`WebEvent::Media`]).
+    pub fn playing(&self) -> bool {
+        self.shared.media.borrow().playing()
+    }
+
+    pub fn set_muted(&self, muted: bool) {
+        if let Some(h) = self.host() {
+            h.set_audio_muted(muted as _);
+        }
+    }
+
+    pub fn muted(&self) -> bool {
+        self.host().is_some_and(|h| h.is_audio_muted() != 0)
     }
 
     pub fn load(&self, url: &str) {

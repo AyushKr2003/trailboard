@@ -24,6 +24,7 @@
 //! ime-preedit 你好       # IME composition text (empty cancels it)
 //! ime-commit 你好        # IME final text
 //! menuclick Copy       # click the open context menu's item with this label
+//! awakeclick 3        # click the awake button on card 3's title bar (shown while it is hovered or current)
 //! badgeclick 3         # click the count badge of the stack card 3 fronts (opens its outline)
 //! fit                  # same as Shift+F (fit everything)
 //! undo                 # same as Ctrl+Z on the board
@@ -73,6 +74,8 @@ pub enum Cmd {
     ShieldClick(u64),
     /// Click the trail tag drawn above card `id`.
     TagClick(u64),
+    /// Click the awake button on card `id`'s title bar.
+    AwakeClick(u64),
     /// Log the history index, and a search of it for these words.
     History(String),
     Fit,
@@ -154,6 +157,7 @@ fn parse(line: &str) -> Option<Cmd> {
         "badgeclick" => Cmd::BadgeClick(num(0) as u64),
         "shieldclick" => Cmd::ShieldClick(num(0) as u64),
         "tagclick" => Cmd::TagClick(num(0) as u64),
+        "awakeclick" => Cmd::AwakeClick(num(0) as u64),
         "fit" => Cmd::Fit,
         "undo" => Cmd::Undo,
         "redo" => Cmd::Redo,

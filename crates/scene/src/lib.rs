@@ -93,6 +93,9 @@ pub struct Node {
     /// A note shown as a sticky note: the name of its theme colour (`note`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sticky: Option<String>,
+    /// Whether the card stays awake outside the live cap (`liveness::Awake`).
+    #[serde(default, skip_serializing_if = "liveness::Awake::is_auto")]
+    pub awake: liveness::Awake,
 }
 
 impl Node {
@@ -143,7 +146,7 @@ impl Scene {
         let url = url.into();
         self.nodes.insert(
             id,
-            Node { id, rect, title: url.clone(), url, z: self.next_z, note: None, trail: TrailMark::default(), sticky: None },
+            Node { id, rect, title: url.clone(), url, z: self.next_z, note: None, trail: TrailMark::default(), sticky: None, awake: liveness::Awake::Auto },
         );
         id
     }

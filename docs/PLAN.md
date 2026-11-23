@@ -63,6 +63,7 @@ app (trailboard)  winit window · input · omnibox · chrome UI · main loop
 | ✅ | M12 Keyboard first | Vim-like modes, page keys, scroll sections, command line, cards as tabs, search keywords, jumps/marks/saved pages, user key file, settings and site toggles, navigation extras, caret/visual mode, dialogs and fields, find back, `:messages`, the mode shown by ring and window title |
 | 🟡 | **M13 Full media support** | H.264/AAC now via an interim third-party CEF (`install-cef.sh --codecs`, Arch default); next our own build (and HEVC, Widevine if they work) on GitHub Actions |
 | ⬜ | **M14 Config file** | One hand-editable `~/.config/trailboard/config.toml` for settings, key bindings and theme; the UI writes it without losing comments |
+| ⬜ | **M15 Custom trails** | Join any card to any trail and cut one out, so a named, coloured trail can be a group of any cards (our tab groups) |
 
 ### Owner decisions that still bind
 
@@ -411,6 +412,53 @@ version = 1
 (`sitesettings.rs`) belong in the config too (lean: no, they're state
 set from the page); whether to accept `config.d/*.toml` drop-ins (lean:
 not now).
+
+---
+
+### M15: Custom trails ⬜
+
+Asked by the owner on 2026-11-23, as our answer to tab groups ("I like
+the coloured custom trail part"). Today only opening a link makes a trail
+edge (`Scene::spawn_beside`; undo puts back a closed card's edges): an
+existing card, lone or in a trail of its own, can't join another trail
+or leave its own except by closing. Trails already have what groups need
+otherwise: a name (R), a colour (C), Fold into a stack (S), and a place
+in the sidebar (pin, reorder). So rather than a second grouping concept,
+any cards can be made a trail.
+
+**Steps:**
+
+- ⬜ 1. **Design note.** Settle the open questions below; record the
+  decisions here.
+- ⬜ 2. **Join and leave in `scene`.** `Scene::join(card, target)`: the
+  card gets an edge from `target`, as if opened from it, bringing its own
+  trail along under it. `Scene::leave(card)`: its edge from the card it
+  came from is cut, so it starts a trail of its own (its children stay
+  with it). Each one undo step (`History`). Unit tests: a lone card, a
+  card with its own trail, refusing a cycle (joining a card to its own
+  descendant), stacks, undo/redo. Edges keep their format (no version
+  bump).
+- ⬜ 3. **Ways in.** Drag a card's label with a modifier (Alt?) onto
+  another card (the target is highlighted while hovering); `:join <card>`
+  with card titles offered; a key that picks the target with letter hints;
+  `:leave` and an entry in the card's menu. Ctrl+K entries for both.
+- ⬜ 4. **Show it.** The joined card glides (`motion::Glides`) to its new
+  place beside the target (or stays put, per the design note); the trail
+  line draws in; the sidebar moves its row under the target; a toast names
+  the trail it joined.
+- ⬜ 5. **Docs and checks.** GUIDE rows, the `?` sheet (`keys::NAMED`),
+  CHANGELOG; a scripted e2e run (join, leave, undo) with screenshots.
+
+**Open (decide in step 1):**
+
+- Joining a card that is in a stack, or onto one: unfold first, as `fold`
+  does.
+- Where the joined card goes: stays put (the line just reaches it) or
+  glides beside the target like a newly opened link.
+- When two named or coloured trails join, which name and colour win
+  (lean: the target's).
+- Whether several selected cards can join in one go (lean: yes, one undo
+  step).
 
 ---
 

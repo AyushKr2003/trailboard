@@ -111,3 +111,19 @@ jobs:
             gh release create "$tag" ./* --title "CEF ${CEF_SHORT} with media codecs" \
               --notes "$notes" --target "$GITHUB_SHA"
           fi
+
+  # Every stage exits cleanly when it runs out of time, so without this a
+  # chain that never finished would still show as a success.
+  finished:
+    needs: [s1, s2, s3, s4, s5, s6, s7, s8]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check that a stage finished the build
+        env:
+          FINISHED: ${{ contains(needs.*.outputs.done, 'true') }}
+        run: |
+          if [[ "$FINISHED" != true ]]; then
+            echo "::error::No stage finished the build; resume from the last checkpoint (see the header of build.yml)."
+            exit 1
+          fi

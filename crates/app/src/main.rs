@@ -62,7 +62,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match launch::command(&args) {
         launch::Command::Version => {
-            println!("{}", launch::version_line());
+            println!("{}", launch::version_line(&cef_dir()));
             return ExitCode::SUCCESS;
         }
         launch::Command::Help => {
@@ -71,7 +71,7 @@ fn main() -> ExitCode {
         }
         launch::Command::Run => {}
     }
-    crash::install(data_dir());
+    crash::install(data_dir(), &cef_dir());
     // CEF helper subprocesses re-run this binary; handle them before anything else.
     // The languages pages ask for: Chromium's network stack reads them only at start.
     let languages = || {
@@ -94,7 +94,7 @@ fn main() -> ExitCode {
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,wgpu_core=warn,wgpu_hal=warn,naga=warn"))
         .init();
-    log::info!("{}", launch::version_line());
+    log::info!("{}", launch::version_line(&cef_dir()));
     if engine.sandbox().is_on() {
         log::info!("{}", engine.sandbox().describe());
     } else {

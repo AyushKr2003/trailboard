@@ -41,7 +41,7 @@ install -m 755 target/release/trailboard "$OUT/trailboard"
 # where user namespaces are off, and only once made setuid root (see docs/GUIDE.md).
 for f in "$CEF"/*; do
     case "$(basename "$f")" in
-        include | cmake | libcef_dll | CMakeLists.txt | archive.json) ;;
+        include | cmake | libcef_dll | CMakeLists.txt) ;; # archive.json stays: it names the build
         *) cp -a "$f" "$OUT/" ;;
     esac
 done

@@ -61,7 +61,7 @@ app (trailboard)  winit window · input · omnibox · chrome UI · main loop
 | ⬜ | M10 Optional extras | See §8; most items on hold |
 | ✅ | M11 Premium look | Corners setting, cards as sheets, board backgrounds, sidebar, command bar, motion, empty board, review pass |
 | ✅ | M12 Keyboard first | Vim-like modes, page keys, scroll sections, command line, cards as tabs, search keywords, jumps/marks/saved pages, user key file, settings and site toggles, navigation extras, caret/visual mode, dialogs and fields, find back, `:messages`, the mode shown by ring and window title |
-| 🟡 | **M13 Full media support** | H.264/AAC now via an interim third-party CEF (`install-cef.sh --codecs`, Arch default); next our own build (and HEVC, Widevine if they work) on GitHub Actions |
+| 🟡 | **M13 Full media support** | Our own media CEF (GitHub Actions, release `cef-156.0.26-media`) installed by `install-cef.sh --codecs` and the Arch package: H.264, AAC and HEVC play; next HEVC checks, Widevine, media keys |
 | ⬜ | **M14 Config file** | One hand-editable `~/.config/trailboard/config.toml` for settings, key bindings and theme; the UI writes it without losing comments |
 | ⬜ | **M15 Custom trails** | Join any card to any trail and cut one out, so a named, coloured trail can be a group of any cards (our tab groups) |
 
@@ -166,7 +166,7 @@ Hyprland 0.57.
 
 ---
 
-### M13: Full media support ⬜
+### M13: Full media support 🟡
 
 Asked by the owner on 2026-11-20: play the videos and music other
 Chromium browsers play. Checked that day (`site/codecs.html` in
@@ -201,9 +201,10 @@ a local H.264/AAC `.mp4` plays in a card (640×360, frames advancing). So a
 codecs build works with our off-screen cards unchanged. Real sites were not
 tried.
 
-**Interim CEF** (owner's decisions, 2026-11-21): use the karere build until
-our own build (step 1) exists, then point the same pins at ours. Anyone can
-install it:
+**Interim CEF** (owner's decisions, 2026-11-21; **replaced 2026-11-24** by
+our own build, step 2: the pins below now point at release
+`cef-156.0.26-media`, and the karere build is no longer used or kept).
+What still holds for the media build:
 
 - `scripts/install-cef.sh --codecs` installs it; `--standard` (the default)
   installs CEF's own download. Both are pinned by name and SHA-256 in the
@@ -216,7 +217,7 @@ install it:
   `TRAILBOARD_CODECS=0 makepkg` gives the standard one.
 - `archive.json` keeps the fields the `cef` crate's build script reads
   (`name`, `sha1`; `sha1` is empty for the codecs build, whose release
-  gives only a SHA-256) and marks it `"codecs": true`. `scripts/bundle.sh`
+  gives only a SHA-256; ours has both) and marks it `"codecs": true`. `scripts/bundle.sh`
   refuses such a CEF unless `ALLOW_CODECS=1`, so the portable archive
   never carries it.
 - The pins live in two places that must move together with the `cef`
@@ -224,7 +225,7 @@ install it:
 - On the owner's machine: codecs at `~/.local/share/cef`, the standard one
   at `~/.local/share/cef-standard` (for bundles).
 - Before AUR: the owner should confirm shipping a PKGBUILD that downloads a
-  patent-licensed third-party engine by default is acceptable there.
+  patent-licensed engine (now our own release) by default is acceptable there.
 
 **Approach: build on GitHub Actions** (owner's choice, 2026-11-21). Instead
 of a rented cloud machine, CEF is built on GitHub's hosted runners, in the
@@ -266,7 +267,7 @@ make ourselves (we own the workflow and can read every log).
 
 **Steps:**
 
-- 🟡 1. **Build script and workflow.** Written on `cef-build`
+- ✅ 1. **Build script and workflow.** Written on `cef-build`
   (2026-11-21). First full run (44937270923, 2026-11-21→23): GN arguments
   accepted, 0 failed compile steps, disk fine (74 GB free), ~73k steps at
   ~2/s, ~14 min setup per stage; but all eight stages ran out of time with
@@ -276,7 +277,11 @@ make ourselves (we own the workflow and can read every log).
   Fixed 2026-11-23 (02c7861): pax checkpoints, a stage that leaves no fewer
   steps than the last one fails, a `finished` job fails a run no stage
   completed, required files and archive layout checked before release.
-  Rerun 45212313507 started 2026-11-23; expected 2–3 stages. The chained GitHub Actions workflow
+  Rerun 45212313507 (2026-11-23→24) finished in two stages (5 h 10 min:
+  44,114 of ~70k steps, 908 MB checkpoint; then 4 h 10 min: 15,157 steps,
+  the checkpoint reused) and published release `cef-156.0.26-media`
+  (167 MB minimal tar.bz2, `.sha256`, `.sha1`, `BUILD-INFO.txt`). README:
+  "Building the media engine". The chained GitHub Actions workflow
   above, around `scripts/build-cef.sh`: on a fresh Linux machine,
   fetch CEF's build tooling for the branch matching `install-cef.sh`'s
   version, build the minimal distribution with
@@ -286,16 +291,37 @@ make ourselves (we own the workflow and can read every log).
   workflow job (resuming from the checkpoint) or in one go on a big
   machine. Documented in the README: how to start a build, how long it
   takes, and how to fetch the release.
-- ⬜ 2. **Install and check.** `install-cef.sh --from <tarball>` installs a
-  local build into `~/.local/share/cef` (the standard download stays the
-  default). Trailboard logs at start which build it runs (standard or
-  codecs) and the About / `--version` line says so. Verified with
-  `site/codecs.html` (H.264, AAC → yes) and real H.264 sites in a card.
-- ⬜ 3. **HEVC through the GPU.** Chromium plays HEVC only via the hardware
+- ✅ 2. **Install and check** (2026-11-24). `install-cef.sh --codecs` and
+  the PKGBUILD default now fetch our release (pinned SHA-256 and SHA-1);
+  `--from <tarball>` installs a local build (checked against
+  `<tarball>.sha256` if present; the name must match the pinned version).
+  The script compares the installed `archive.json`'s `sha256`, so another
+  build of the same version is replaced, not skipped. `--version`, the
+  start log and crash reports end in `standard build` / `media build`
+  (`launch::EngineBuild`, from `archive.json` beside the engine; the
+  package and `bundle.sh` now keep that file). There is no About page, so
+  `--version` is the place. Verified (`~/.cache/trailboard-e2e-media/`,
+  `site/codecs.html`): H.264, AAC, HEVC, MP3, VP9, AV1, Opus →
+  "probably" and MSE yes; local H.264 and HEVC files play in a card at
+  640×360 and 1080p (`codecs.png`), AAC audio plays after a click
+  (Chromium's autoplay rule blocks it before); a plain `.mp4` link
+  (w3schools `mov_bbb.mp4`) shows its frame; a 1080p H.264 HLS stream
+  through hls.js/MSE plays and draws (`hls.html`, `hlsc.png`).
+  Vimeo: the owner played videos on vimeo.com in a card by hand (fine).
+  Only the bare player link (`player.vimeo.com/video/76979871?autoplay=1`)
+  in a scripted run, with no click on the page, stayed white at 00:00;
+  the standard CEF shows Vimeo's "Player error" there.
+- 🟡 3. **HEVC through the GPU.** First check (2026-11-24, with step 2):
+  HEVC `hvc1` 8-bit files at 640×360 and 1080p play in a card on the
+  Intel iGPU with no extra switches. Still to check: that it really goes
+  through VA-API (`chrome://media-internals`), 10-bit/HDR, and that other
+  video is unaffected. Chromium plays HEVC only via the hardware
   decoder (VA-API on Intel). Try the build flags and the VA-API switches
   in CEF's command line; keep them if HEVC plays without breaking other
   video, else record why not.
-- ⬜ 4. **Widevine (trial).** Build with `enable_widevine` and the library
+- ⬜ 4. **Widevine (trial).** 2026-11-24: in the media build
+  `requestMediaKeySystemAccess('com.widevine.alpha')` fails with
+  NotSupportedError (the CDM isn't fetched or registered yet). Build with `enable_widevine` and the library
   CDM, let CEF fetch Google's CDM, and test a DRM page in a card. Open
   question: whether DRM video draws in off-screen rendering (how cards
   are drawn). If it works, a *Protected video* setting (off by default,
@@ -487,41 +513,36 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-23 (forty-second). Three things for the owner.
-(1) The CEF build (M13 step 1): the first full run made no progress
-(checkpoint mtimes; cause and fix under M13 step 1); the fix is pushed to
-`cef-build` (02c7861) and run 45212313507 is building. (2) z framed a card
-with an 8 px margin; it now leaves the 48 px Shift+F leaves round a lone
-card (`scene::FIT_MARGIN`, also the label double-click), asked by the
-owner from a screenshot of Shift+F on one card. Verified: unit test
-(`geom::fit_leaves_the_margin_on_the_tighter_side`), clippy, a scripted e2e
-run (`~/.cache/trailboard-e2e-fill/`: z and Shift+F screenshots of one card
-are pixel-identical). (3) Fold and unfold
-were instant; now each card slides onto its own sheet behind the front and
-lands as that blank sheet (`motion::folding`, `stack_slot`, drawn from
-`App::gathers`, which hide the sheet it is heading for), and unfold runs it
-backwards (`Glides::unfold`, a sheet drawn under the card while its page
-fades in), 340 ms eased in and out; designed with the owner; verified with
-unit tests and a slowed (×8) scripted run with screenshots mid-motion
-(`~/.cache/trailboard-e2e-fold/sheet.png`). Not animated yet: undo/redo of a
-fold, peeking ([ ]), and the trail lines during a fold (they go at once).
-Also looked into: the owner's Google sign-in is lost
-on restart because their only space is **private** (`spaces.json`),
-whose cookies live in memory by design; told them Ctrl+Shift+P. Offered,
-not done (owner said "only z for now"): a maximum card size (the window
-less the fit margin at 100 % zoom) and a clearer private-space mark.
-The forty-first session's notes (cards that stay awake) are in git:
-`git log -p docs/PLAN.md`.
-**Repo state:** on `master`; the awake work above is committed (000e96a) and installed on the owner's machine from the Arch package.
+**Last session:** 2026-11-24 (forty-third). M13 steps 1 and 2. The CEF
+build run 45212313507 finished in two stages and published release
+`cef-156.0.26-media` (build details under M13 step 1). Step 2: `install-cef.sh
+--codecs` and the PKGBUILD default now use that release instead of the
+third-party karere build; `install-cef.sh --from <tarball>` installs a
+local build; builds are told apart by SHA-256; `--version`, the start
+log and crash reports name the build (`standard build` / `media build`,
+`launch::EngineBuild` reading the engine's `archive.json`, now kept by the
+package and `bundle.sh`). README: the engine table and a new "Building the
+media engine". Verified: unit test
+(`launch::tests::engine_build_from_archive_json`), clippy, `install-cef.sh`
+run for real (media build now at `~/.local/share/cef`; a second run skips
+it; `--from` into a scratch dir with the `.sha256` check; bad arguments
+refused), and scripted e2e runs in `~/.cache/trailboard-e2e-media/`
+(results under M13 step 2: H.264, AAC, HEVC play in cards, up to 1080p,
+and an H.264 HLS stream; Widevine NotSupportedError). The PKGBUILD's new
+source passes `makepkg --verifysource`. Not verified: a full `makepkg`
+build and `bundle.sh` with the changes. The owner checked vimeo.com by
+hand: it plays. The karere build is
+gone from the owner's machine (it was in `~/.local/share/cef`; no other
+copy was left). The forty-second session's notes (z margin, fold motion,
+the first CEF build fix) are in git: `git log -p docs/PLAN.md`.
+**Repo state:** on `master`, uncommitted: `scripts/install-cef.sh`,
+`packaging/arch/PKGBUILD`, `scripts/bundle.sh`, `crates/app/src/{launch,main,crash}.rs`,
+README, CHANGELOG, this plan. The Arch package installed on the owner's
+machine still has the karere engine until it is rebuilt (`makepkg -si`).
 **Next up:** M14 step 1, the `config.toml` reader (asked by the owner on
-2026-11-21; format and decisions in M14). M13 step 1, the chained
-GitHub Actions build on the orphan branch `cef-build` (worktree
-`../trailboard-cef-build`): the first run made no progress (checkpoint
-mtimes, see M13 step 1); the fix is pushed and run 45212313507 is
-building. When it publishes `cef-156.0.26-media`, do M13 step 2. Until our release exists the
-karere codecs CEF is installed at `~/.local/share/cef` (M13 "Interim
-CEF"); bundle with `CEF_PATH=~/.local/share/cef-standard`. Also
-retake the README screenshots (`docs/images/`) in the new look.
+2026-11-21; format and decisions in M14). For M13: step 3 (confirm HEVC goes through VA-API) and step 4 (Widevine).
+Bundle with `CEF_PATH=~/.local/share/cef-standard`. Also retake the
+README screenshots (`docs/images/`) in the new look.
 
 **Backlog:** `:later` lines aren't saved across quits; the messages log is
 this session's only; after Esc clears a find, n starts again from the view;

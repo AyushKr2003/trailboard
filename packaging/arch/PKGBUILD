@@ -5,9 +5,10 @@
 #   cd packaging/arch && makepkg -si
 #   TRAILBOARD_CODECS=0 makepkg -si     # the standard CEF instead
 #
-# By default it uses a CEF build with H.264 and AAC (most video outside
+# By default it uses a CEF build with H.264, AAC and HEVC (most video outside
 # YouTube needs them): the same CEF version with the patent-licensed codecs
-# turned on, from the karere project's release (pinned by SHA-256). With
+# turned on, built by this repo's `cef-build` branch on GitHub Actions and
+# published as its `cef-156.0.26-media` release (pinned by SHA-256). With
 # TRAILBOARD_CODECS=0 it uses CEF's own standard download, which can't play
 # those formats.
 #
@@ -28,9 +29,12 @@ _cefname="cef_binary_${_cef}_linux64_minimal"
 _cefsha1=cacfbb7d7261fea682fb67c108de7e4347519ff7  # from CEF's build index
 _codecs="${TRAILBOARD_CODECS:-1}"
 if [[ $_codecs == 1 ]]; then
-  _cefarchive="${_cefname}.zip"
-  _cefurl="https://github.com/tobagin/karere/releases/download/cef-156.0.26-proprietary-codecs/${_cefname//+/%2B}.zip"
-  _cefsha256=f22f8074728792d93607f4c6b201f8ad07e3ffc1c433a45a19bc5399ade823ee
+  # Same file name as the standard one upstream: a different local name
+  # keeps the two apart in makepkg's download cache.
+  _cefarchive="media-${_cefname}.tar.bz2"
+  _cefurl="https://github.com/AyushKr2003/trailboard/releases/download/cef-156.0.26-media/${_cefname//+/%2B}.tar.bz2"
+  _cefsha1=0cc2812cde0dbd539fa93509ad583f2f93cc9a88
+  _cefsha256=64577aa57bbbf3025354ba65c9ad94ca4fd9c3cd5e18ae9954354639c45f821a
 else
   _cefarchive="${_cefname}.tar.bz2"
   _cefurl="https://cef-builds.spotifycdn.com/${_cefname//+/%2B}.tar.bz2"
@@ -70,11 +74,12 @@ prepare() {
   mkdir cef
   cp -al "$_cefname"/Release/. "$_cefname"/Resources/. cef/
   cp -a "$_cefname"/{CMakeLists.txt,cmake,include,libcef_dll,CREDITS.html} cef/
-  # cef-dll-sys reads `name` (for the version) and needs a `sha1` field.
+  # cef-dll-sys reads `name` (for the version) and needs a `sha1` field;
+  # Trailboard reads `codecs` to name the build in its version line.
   if [[ $_codecs == 1 ]]; then
-    printf '{"type": "minimal", "name": "%s", "sha1": "", "codecs": true}\n' "$_cefarchive" > cef/archive.json
+    printf '{"type": "minimal", "name": "%s", "sha1": "%s", "sha256": "%s", "codecs": true}\n' "$_cefname.tar.bz2" "$_cefsha1" "$_cefsha256" > cef/archive.json
   else
-    printf '{"type": "minimal", "name": "%s", "sha1": "%s"}\n' "$_cefarchive" "$_cefsha1" > cef/archive.json
+    printf '{"type": "minimal", "name": "%s", "sha1": "%s", "sha256": "%s"}\n' "$_cefname.tar.bz2" "$_cefsha1" "$_cefsha256" > cef/archive.json
   fi
 
   cd trailboard
@@ -113,7 +118,7 @@ package() {
   local f
   for f in cef/*; do
     case ${f##*/} in
-      include | cmake | libcef_dll | CMakeLists.txt | archive.json | CREDITS.html) ;;
+      include | cmake | libcef_dll | CMakeLists.txt | CREDITS.html) ;;
       *) cp -r --no-preserve=ownership "$f" "$lib/" ;;
     esac
   done

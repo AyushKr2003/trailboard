@@ -91,7 +91,7 @@ Each trail as a tree. Walk it with `j`/`k`, pin it, rename it.
 
 ## Install
 
-**Arch / Omarchy**: builds from source, fetches its own Chromium engine (with H.264/AAC video, see below), adds a launcher entry.
+**Arch / Omarchy**: builds from source, fetches its own Chromium engine (with H.264, AAC and HEVC video, see below), adds a launcher entry.
 
 ```sh
 git clone https://github.com/AyushKr2003/trailboard && cd trailboard/packaging/arch
@@ -116,7 +116,8 @@ cargo run --release -p trailboard -- https://en.wikipedia.org/wiki/Turbofan
 
 `install-cef.sh` also writes the local `.cargo/config.toml` (CEF's path and
 rpath) if you don't have one. Run it again with `--standard` or `--codecs`
-to switch engines; `--help` lists the options.
+to switch engines; `--help` lists the options. `trailboard --version` says
+which one is installed (`standard build` or `media build`).
 
 `cargo test` and `cargo clippy` must pass before a change goes in.
 
@@ -138,15 +139,40 @@ CEF's standard download can't play H.264 or AAC, the formats most video outside
 YouTube uses (Twitch, X, Reddit, plain `.mp4` links), because they are
 patent-licensed. Two engines are on offer:
 
-| | Standard | Codecs (`--codecs`, Arch package default) |
+| | Standard | Media (`--codecs`, Arch package default) |
 |---|---|---|
-| Source | CEF's own download | The same CEF version built with H.264/AAC, from the [karere project's release](https://github.com/tobagin/karere/releases/tag/cef-156.0.26-proprietary-codecs) |
-| Plays | VP9, AV1, Opus, MP3 | Those, plus H.264 and AAC |
+| Source | CEF's own download | The same CEF version built by this repo with the codecs on ([release](https://github.com/AyushKr2003/trailboard/releases/tag/cef-156.0.26-media)) |
+| Plays | VP9, AV1, Opus, MP3 | Those, plus H.264, AAC and HEVC (HEVC through the GPU, VA-API) |
 | Use | Anything, including redistribution | Your own machine; `scripts/bundle.sh` won't package it |
 
-Both are pinned and checked by SHA-256. The codecs build is a third-party binary
-we use until Trailboard has its own (see [the plan](docs/PLAN.md), M13). HEVC and
-DRM video (Widevine) play in neither.
+Both are pinned and checked by SHA-256. DRM video (Widevine: Netflix-style
+sites) plays in neither yet.
+
+</details>
+
+<details>
+<summary><b>Building the media engine</b></summary>
+
+The media engine is built on GitHub Actions from the orphan branch
+[`cef-build`](https://github.com/AyushKr2003/trailboard/tree/cef-build):
+`cef.conf` pins the CEF version and build flags, `scripts/build-cef.sh` does
+the work. A hosted runner stops a job after 6 hours, so the compile runs as
+a chain of up to eight jobs, each resuming from the last one's checkpoint.
+
+- **Start a build:** push a change to `cef.conf`, `scripts/` or the
+  workflows on `cef-build`, or run it by hand:
+  `gh workflow run build.yml --ref cef-build`.
+- **How long:** about 9–10 hours, in two jobs (the 156.0.26 build took
+  5 h 10 min + 4 h 10 min). A stopped run can resume from its last
+  checkpoint (kept 2 days): see the top of `.github/workflows/build.yml`.
+- **The result:** a release tagged `cef-<version>-media` with the minimal
+  distribution, its `.sha256` and `.sha1`, and `BUILD-INFO.txt` (flags,
+  commit, run). Fetch it with `gh release download cef-<version>-media`.
+- **Install it:** `scripts/install-cef.sh --codecs` for the pinned release,
+  or `scripts/install-cef.sh --from cef_binary_…_linux64_minimal.tar.bz2`
+  for one you built (checked against the `.sha256` beside it). For a new
+  CEF version, update the pins in `scripts/install-cef.sh` and
+  `packaging/arch/PKGBUILD` with the `cef` crate.
 
 </details>
 

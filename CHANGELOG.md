@@ -11,6 +11,18 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
 
 ### Changed
 
+- **Our own media engine.** `scripts/install-cef.sh --codecs` and the Arch
+  package (by default) now install the CEF this repo builds on GitHub
+  Actions (`cef-build` branch, release `cef-156.0.26-media`: H.264, AAC,
+  HEVC through VA-API), in place of the third-party codecs build. New
+  `install-cef.sh --from FILE` installs a media build from a local
+  tarball (checked against `FILE.sha256` when it's there). The script
+  now tells builds apart by their SHA-256, so it replaces another build of
+  the same version. `trailboard --version`, the start log and crash
+  reports say `standard build` or `media build` (read from the engine's
+  `archive.json`, which the package and `scripts/bundle.sh` now keep).
+  Checked in a card: H.264, AAC and HEVC files up to 1080p and a 1080p
+  H.264 HLS stream play; Widevine isn't available yet.
 - **Fold and unfold move.** Folding a trail (S) slid nothing: its cards
   vanished at once and the stack's sheets appeared. Now each card slides
   under the front onto its own sheet of the stack, its page fading on the

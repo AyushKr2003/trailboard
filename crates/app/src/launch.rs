@@ -57,9 +57,54 @@ pub fn command<S: AsRef<str>>(args: &[S]) -> Command {
     Command::Run
 }
 
-/// `trailboard 0.3.0 (CEF …)`, for `--version` and crash reports.
-pub fn version_line() -> String {
-    format!("trailboard {} (CEF {})", env!("CARGO_PKG_VERSION"), web::engine_version())
+/// `trailboard 0.3.0 (CEF …, media build)`, for `--version`, the start log
+/// and crash reports. `cef_dir` is where the engine was loaded from.
+pub fn version_line(cef_dir: &Path) -> String {
+    let build = std::fs::read_to_string(cef_dir.join("archive.json"))
+        .map(|j| EngineBuild::from_archive_json(&j))
+        .unwrap_or(EngineBuild::Unknown);
+    let mut line = format!("trailboard {} (CEF {}", env!("CARGO_PKG_VERSION"), web::engine_version());
+    if let Some(name) = build.name() {
+        line.push_str(", ");
+        line.push_str(name);
+    }
+    line.push(')');
+    line
+}
+
+/// Which CEF build is installed: CEF's standard download, or a media build
+/// with the patent-licensed codecs (H.264, AAC, HEVC). Read from the
+/// `archive.json` that `scripts/install-cef.sh` and the packages write
+/// beside the engine (`"codecs": true` marks a media build).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EngineBuild {
+    Standard,
+    Media,
+    /// No readable `archive.json` (a hand-made install).
+    Unknown,
+}
+
+impl EngineBuild {
+    pub fn from_archive_json(json: &str) -> Self {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+            return Self::Unknown;
+        };
+        if !v.is_object() {
+            return Self::Unknown;
+        }
+        match v.get("codecs") {
+            Some(serde_json::Value::Bool(true)) => Self::Media,
+            _ => Self::Standard,
+        }
+    }
+
+    pub fn name(self) -> Option<&'static str> {
+        match self {
+            Self::Standard => Some("standard build"),
+            Self::Media => Some("media build"),
+            Self::Unknown => None,
+        }
+    }
 }
 
 pub const USAGE: &str = "\
@@ -105,7 +150,9 @@ mod tests {
         assert_eq!(command(&["--help", "--version"]), Command::Help);
         assert_eq!(command(&["--", "--version"]), Command::Run);
         assert_eq!(command(&["--type=renderer", "--lang=en-US"]), Command::Run);
-        assert!(version_line().starts_with(&format!("trailboard {} (CEF ", env!("CARGO_PKG_VERSION"))));
+        let none = Path::new("/nonexistent");
+        assert!(version_line(none).starts_with(&format!("trailboard {} (CEF ", env!("CARGO_PKG_VERSION"))));
+        assert!(!version_line(none).contains("build)"));
     }
 
     #[test]
@@ -135,5 +182,18 @@ mod tests {
         assert_eq!(target("sub", &root, &Settings::default()), Some(format!("{base}/sub")));
         // A missing file that looks like a host is a host, as typed.
         assert_eq!(target("missing.html", &root, &Settings::default()).as_deref(), Some("https://missing.html"));
+    }
+
+    #[test]
+    fn engine_build_from_archive_json() {
+        let media = r#"{"type": "minimal", "name": "cef_binary_x.tar.bz2", "sha1": "", "codecs": true}"#;
+        let standard = r#"{"type": "minimal", "name": "cef_binary_x.tar.bz2", "sha1": "ab"}"#;
+        assert_eq!(EngineBuild::from_archive_json(media), EngineBuild::Media);
+        assert_eq!(EngineBuild::from_archive_json(standard), EngineBuild::Standard);
+        assert_eq!(EngineBuild::from_archive_json(r#"{"codecs": false}"#), EngineBuild::Standard);
+        assert_eq!(EngineBuild::from_archive_json("not json"), EngineBuild::Unknown);
+        assert_eq!(EngineBuild::from_archive_json("[]"), EngineBuild::Unknown);
+        assert_eq!(EngineBuild::Media.name(), Some("media build"));
+        assert_eq!(EngineBuild::Unknown.name(), None);
     }
 }

@@ -36,6 +36,7 @@ with *Welcome page* in Ctrl+K.
 | Move / close selected cards | drag a selected card's label / Delete |
 | Fill the view with a card (as z does) | double-click its label |
 | Solo (the card fills the window) | Tab (Tab or Esc to go back) |
+| Control the current card's video or audio, on any site | , then a key, on the board or in a page: , or Space play / pause, h / l 10 s back / on (3,l: 30 s), H / L a minute, 0 from the start, j / k slower / faster, = normal speed, m mute, r loop, f full window. A toast says what happened (*Paused · 1:23 / 4:56*). By name: `:media play`, `:media seek 1:30` (or `50%`, `+10`), `:media speed 1.5`, `:media back 30`… |
 | Use a page from the keyboard (after Enter, or in Solo) | j/k scroll, h/l sideways, Ctrl+d/Ctrl+u half a section, gg/G top/bottom, 0/$ left/right edge, f follow a link here, F beside, H/L back/forward, r reload, / find, ? find backward (up the page), n/N the next match the way you searched / the other way, Esc clears the find's marks, yy copy the address, yt the title, ym a Markdown link, p/P open the copied address (or search for the copied text) here/beside, o address bar, O an address bar that opens beside; a number repeats (5j). The card's ring shows the mode (accent for *Page*) and the window title names it: nothing is drawn over the page. Mid-sequence (g, y…), Ctrl+G lists what can follow |
 | Move about by address (in a page) | ]] / [[ the page's next / previous page (its *next* link, else a link saying Next, Older, », ›…); gu up the address's path (3gu three steps), gU the site's root; Ctrl+a / Ctrl+x the last number in the address up / down (5 Ctrl+a: by five; `page/7` → `page/8`); go / gO edit the address, opening here / beside; xo an address bar that opens beside and keeps you here; Ctrl+s stops loading (when nothing loads it saves as Markdown, as before); gh a start page beside the card; gf the page's source beside; gd downloads the page; F11 full screen. By name: `:page-next`, `:up`, `:root`, `:increment`, `:stop`, `:home`, `:view-source`, `:save-file`, `:fullscreen` |
 | Inspect a page (its elements, styles, console, network…) | F12 or Ctrl+Shift+I opens the page inspector inside the current card, on the right of the page (the page lays out narrower, as in a browser tab); the same key closes it (from the inspector too). Right-click → *Inspect* opens it on the element you clicked. Drag the divider between them to share the card differently. The buttons above the card move it to the bottom and back, or to a card of its own beside the page (whose button puts it back in). Clicking the inspector gives it every key (Passthrough: Shift+Esc gives our keys back, Esc is the inspector's console); clicking the page gives them back to the page. It closes with its page, is never put to sleep and isn't saved with the board. By name: `:inspect`, `:inspect right`, `:inspect bottom`, `:inspect beside` |
@@ -265,6 +266,15 @@ others:
   `:awake active`.
 - **The speaker** on a card playing media mutes it, and shows crossed out
   while it is muted. By name: `:mute`.
+
+**Media controls.** `,` then a key (or `:media`) acts on the current card's
+video or audio, whatever the site: the one playing, else the largest one
+in view, in the page or an embedded player. When a page goes full screen
+(its player's full screen button, or `,f`), the card goes Solo and the video
+fills the window; Esc brings both back. If a video can't play, a message
+says why: its format isn't one the engine plays, or it's protected (DRM),
+which Trailboard doesn't support yet. There is no outside player to hand
+it to.
 
 Every card kept awake is a whole browser, so keep an eye on how many you keep.
 

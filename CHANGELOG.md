@@ -9,7 +9,31 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
 
 ## [Unreleased]
 
+### Added
+
+- **Media controls on any site.** `,` then a key, on the board or in a
+  page, acts on the current card's video or audio: `,` or Space play /
+  pause, h / l 10 s back / on (a count goes further), H / L a minute, 0
+  the start, j / k slower / faster, = normal speed, m mute, r loop, f full
+  window. By name: `:media play`, `:media seek 1:30` (or `50%`, `+10`),
+  `:media speed 1.5`, `:media back 30`…; in the key file `media-toggle`
+  and the like; in Ctrl+K *Play or pause media* and *Video full window*.
+  A toast says what happened (*Paused · 1:23 / 4:56*). It reaches the
+  media playing, else the largest in view, in the page or an embedded
+  player from another site, and plays with sound without a click on the
+  page first.
+- **Full screen video fills the window.** When a page goes full screen
+  (its player's button, or `,f`), its card goes Solo; Esc brings back
+  the page and the board as they were.
+- **A message when a video can't play**: its format isn't one the engine
+  plays, or it's protected (DRM), which isn't supported yet, instead of a
+  player stuck at 0:00 with no word why.
+
 ### Changed
+
+- **HEVC checked on the GPU.** HEVC 8- and 10-bit (HDR10 too, shown in
+  SDR), H.264, VP9 and AV1 all decode through VA-API on the Intel iGPU in
+  the media build, with no extra switches.
 
 - **Our own media engine.** `scripts/install-cef.sh --codecs` and the Arch
   package (by default) now install the CEF this repo builds on GitHub

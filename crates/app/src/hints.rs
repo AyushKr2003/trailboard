@@ -894,7 +894,7 @@ mod tests {
         assert_eq!(joined, "Go to the card above");
         assert_eq!(runs("Zoom", "").len(), 1);
         assert!(runs("Zoom page / actual size", "ZOOM")[0].1, "case aside");
-        assert_eq!(runs("Ünïcödé", "ï").iter().map(|(r, _)| r.end).last(), Some("Ünïcödé".len()));
+        assert_eq!(runs("Ünïcödé", "ï").iter().map(|(r, _)| r.end).next_back(), Some("Ünïcödé".len()));
     }
 
     #[test]

@@ -61,7 +61,7 @@ app (trailboard)  winit window · input · omnibox · chrome UI · main loop
 | ⬜ | M10 Optional extras | See §8; most items on hold |
 | ✅ | M11 Premium look | Corners setting, cards as sheets, board backgrounds, sidebar, command bar, motion, empty board, review pass |
 | ✅ | M12 Keyboard first | Vim-like modes, page keys, scroll sections, command line, cards as tabs, search keywords, jumps/marks/saved pages, user key file, settings and site toggles, navigation extras, caret/visual mode, dialogs and fields, find back, `:messages`, the mode shown by ring and window title |
-| 🟡 | **M13 Full media support** | Our own media CEF (GitHub Actions, release `cef-156.0.26-media`) installed by `install-cef.sh --codecs` and the Arch package: H.264, AAC and HEVC play; next HEVC checks, Widevine, media keys |
+| 🟡 | **M13 Full media support** | Our own media CEF (GitHub Actions, release `cef-156.0.26-media`) installed by `install-cef.sh --codecs` and the Arch package: H.264, AAC and HEVC play (all through VA-API); media controls (`,` keys, `:media`), page full screen as Solo, "can't play" messages; next Widevine, keeping current |
 | ⬜ | **M14 Config file** | One hand-editable `~/.config/trailboard/config.toml` for settings, key bindings and theme; the UI writes it without losing comments |
 | ⬜ | **M15 Custom trails** | Join any card to any trail and cut one out, so a named, coloured trail can be a group of any cards (our tab groups) |
 | ⬜ | **M16 Lighter and quieter** | Cut memory and idle CPU: a measured baseline, then the main process, the main loop, sleeping cards and renderer count |
@@ -312,14 +312,20 @@ make ourselves (we own the workflow and can read every log).
   Only the bare player link (`player.vimeo.com/video/76979871?autoplay=1`)
   in a scripted run, with no click on the page, stayed white at 00:00;
   the standard CEF shows Vimeo's "Player error" there.
-- 🟡 3. **HEVC through the GPU.** First check (2026-11-24, with step 2):
-  HEVC `hvc1` 8-bit files at 640×360 and 1080p play in a card on the
-  Intel iGPU with no extra switches. Still to check: that it really goes
-  through VA-API (`chrome://media-internals`), 10-bit/HDR, and that other
-  video is unaffected. Chromium plays HEVC only via the hardware
-  decoder (VA-API on Intel). Try the build flags and the VA-API switches
-  in CEF's command line; keep them if HEVC plays without breaking other
-  video, else record why not.
+- ✅ 3. **HEVC through the GPU** (2026-11-24). No build flags or switches
+  needed beyond the build's own (`enable_platform_hevc use_vaapi`): with
+  `--enable-logging=stderr --vmodule=*vaapi*=2,*video_decoder_pipeline*=2`
+  (Chromium switches pass through Trailboard's command line) the GPU
+  process logs `VaapiVideoDecoder` for HEVC main and **main 10**, and also
+  for H.264, VP9 and AV1, so the Intel iGPU decodes all of them; the GPU
+  process maps `libva` and `iHD_drv_video.so`. Checked in one card
+  (`~/.cache/trailboard-e2e-m13/site/formats.html`, `formats.png`): H.264
+  1080p, HEVC 8-bit 1080p, HEVC 10-bit 720p, HEVC 10-bit HDR10 (BT.2020,
+  PQ, mastering metadata) 720p, VP9 and AV1 all play together and draw.
+  HDR is tone-mapped to SDR: cards are 8-bit sRGB textures, so there's no
+  HDR output (not planned). `chrome://media-internals` opens in a card for
+  a closer look. On a machine without VA-API, HEVC won't play (Chromium
+  has no software HEVC decoder) and the others fall back to software.
 - ⬜ 4. **Widevine (trial).** 2026-11-24: in the media build
   `requestMediaKeySystemAccess('com.widevine.alpha')` fails with
   NotSupportedError (the CDM isn't fetched or registered yet). Build with `enable_widevine` and the library
@@ -332,13 +338,57 @@ make ourselves (we own the workflow and can read every log).
   pause), and each card's awake button cycles *Auto*, *Keep awake* and
   *Always active*; see the Handoff of that day. Later: an awake mark on
   sidebar rows, a *Now playing* entry in Ctrl+K.
-- 🟡 5. **Media behaviour.** Done: a card's media shows on its label
-  (speaker / crossed-out speaker) and `:mute`. Still to do:
-  `:media` keys and
-  commands (play/pause, seek, speed, mute) that work on any site (not the
-  site's own keys), a Solo-friendly full window, and a clear message when
-  a video still can't play (format or DRM), instead of a blank player.
-  Whether that message offers an outside player is decided here.
+- ✅ 5. **Media behaviour** (done 2026-11-24). A card's media shows on its
+  label (speaker / crossed-out speaker) and `:mute` (earlier). Now:
+  - **Controls on any site:** `,` then a key, on the board and in a page
+    (`,` was free in both): `,,` / `,Space` play / pause, `,h` / `,l` 10 s
+    back / on (a count goes further: `3,l`), `,H` / `,L` a minute, `,0` the
+    start, `,j` / `,k` slower / faster (0.25× to 4× in steps), `,=` normal
+    speed, `,m` mute (the card's, as `:mute`), `,r` loop, `,f` full window.
+    By name `:media <toggle|play|pause|forward [s]|back [s]|seek <time|%|±s>|faster|slower|speed [rate]|mute|loop|full>`
+    (`scene::media`), key-file names `media-toggle`… and two palette rows.
+    A toast answers: *Paused · 1:23 / 4:56*, *Speed 1.5×*, *Loop on*.
+  - **Which media:** each frame's script reports none / present / playing
+    (`web::media::Frames`); the op goes to the frame that started playing
+    last, else the one whose media changed last, and that frame picks the
+    playing element, else the largest one in view. The main frame gets the
+    op through DevTools `Runtime.evaluate` with `userGesture`, so play
+    with sound and full screen work without a click; other frames by
+    plain script. A cross-site embed that's refused play retries once
+    after 150 ms, when the top page has had the click and lends it on
+    (checked: an `allow="autoplay"` iframe on another port plays with
+    sound); a frame refused full screen asks the top page, which puts
+    the whole iframe in full screen.
+  - **Full window:** a page going full screen (its player's button, or
+    `,f`) puts the card in Solo, so the video fills the window
+    (`on_fullscreen_mode_change` → `WebEvent::Fullscreen`); leaving it
+    puts back what was there (the board, or the card Solo showed). Esc
+    takes the page out of full screen first; leaving Solo does too. The
+    window itself stays as it is (F11 for the screen). `,f` puts the
+    bare `<video>` in full screen with `object-fit: contain` forced while
+    it lasts (YouTube's own `cover` cropped it to the window).
+  - **Can't play:** a wanted video (autoplay, controls, play() called, or
+    ≥120 px wide) failing with a decode / unsupported-source error says
+    *its format isn't one Trailboard plays*; encrypted media with no keys
+    after 3 s, or a video stuck 5 s after a refused
+    `requestMediaKeySystemAccess` (not Clear Key), says *it's protected
+    (DRM)*. Once per card, kind and address, as a 6 s toast. The script
+    also runs first in each document (`Page.addScriptToEvaluateOnNewDocument`)
+    so it sees a DRM request made at once. A site that gives up after the
+    refused request without playing shows its own error, not ours.
+  - **Outside player: no** (decided here, as in §2): the message names the
+    reason; anyone can still bind a player with `:run`.
+  - Verified (`~/.cache/trailboard-e2e-m13/`, runs 5–9): every op above in
+    a scripted run with the page's own state in its title, full window and
+    Esc, a cross-site iframe (play with sound, full window), the format and
+    DRM messages, a bad `:media speed 99`; screenshots `iframefull.png`,
+    `toast.png`. On YouTube (run 12, Big Buck Bunny watch page, from the
+    board without a click): play with sound, pause, `:media forward 30`,
+    faster, `,f` full window in Solo (`yt.png`, letterboxed) and Esc back.
+    Not checked: other real sites (Twitch, Vimeo, news embeds), a real
+    DRM site's message, and hardware media keys (XF86AudioPlay, MPRIS):
+    those go to the desktop, and Chromium's MPRIS service isn't wired up
+    in CEF; later.
 - ⬜ 6. **Keeping current.** A short checklist in the README for each CEF
   update: rebuild, re-run the codec page, smoke-test video; the start log
   warns when the installed build is older than the version
@@ -578,35 +628,26 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-24 (forty-third). M13 steps 1 and 2. The CEF
-build run 45212313507 finished in two stages and published release
-`cef-156.0.26-media` (build details under M13 step 1). Step 2: `install-cef.sh
---codecs` and the PKGBUILD default now use that release instead of the
-third-party karere build; `install-cef.sh --from <tarball>` installs a
-local build; builds are told apart by SHA-256; `--version`, the start
-log and crash reports name the build (`standard build` / `media build`,
-`launch::EngineBuild` reading the engine's `archive.json`, now kept by the
-package and `bundle.sh`). README: the engine table and a new "Building the
-media engine". Verified: unit test
-(`launch::tests::engine_build_from_archive_json`), clippy, `install-cef.sh`
-run for real (media build now at `~/.local/share/cef`; a second run skips
-it; `--from` into a scratch dir with the `.sha256` check; bad arguments
-refused), and scripted e2e runs in `~/.cache/trailboard-e2e-media/`
-(results under M13 step 2: H.264, AAC, HEVC play in cards, up to 1080p,
-and an H.264 HLS stream; Widevine NotSupportedError). The PKGBUILD's new
-source passes `makepkg --verifysource`. Not verified: a full `makepkg`
-build and `bundle.sh` with the changes. The owner checked vimeo.com by
-hand: it plays. The karere build is
-gone from the owner's machine (it was in `~/.local/share/cef`; no other
-copy was left). The forty-second session's notes (z margin, fold motion,
-the first CEF build fix) are in git: `git log -p docs/PLAN.md`.
-**Repo state:** on `master`, committed (f0f754e). The Arch package is
-rebuilt from it and installed on the owner's machine (2026-11-24, 403.84
-MiB): `trailboard --version` ends in `media build`.
+**Last session:** 2026-11-24 (forty-fourth). M13 steps 3 and 5 (asked by
+the owner). Step 3: HEVC (8- and 10-bit, HDR10) and also H.264, VP9 and
+AV1 decode through VA-API with no new switches (Chromium's own logs);
+HDR is tone-mapped to SDR. Step 5: media controls on any site (`,` keys,
+`:media`, `scene::media`; `web::media` picks the frame and element; the
+main frame gets ops through DevTools with a user gesture; embeds borrow
+the top page's click for sound and full screen), a page's full screen
+puts its card in Solo (Esc leaves both), and a message when a video can't
+play (format, or DRM). No outside player. Details and limits under M13
+steps 3 and 5. Also fixed a clippy `--all-targets` warning in
+`hints.rs`'s tests. Verified: unit tests (`scene::media`, `web::media`,
+media keys), clippy, scripted runs in `~/.cache/trailboard-e2e-m13/`
+(local pages, a cross-port iframe, YouTube) with screenshots. Not
+verified: other real sites, a real DRM site, hardware media keys.
+**Repo state:** on `master`, committed (M13 steps 3 and 5).
 **Next up:** M14 step 1, the `config.toml` reader (asked by the owner on
-2026-11-21; format and decisions in M14). For M13: step 3 (confirm HEVC goes through VA-API) and step 4 (Widevine).
-Bundle with `CEF_PATH=~/.local/share/cef-standard`. Also retake the
-README screenshots (`docs/images/`) in the new look.
+2026-11-21; format and decisions in M14). For M13: step 4 (Widevine
+trial), then step 6 (keeping current). Bundle with
+`CEF_PATH=~/.local/share/cef-standard`. Also retake the README
+screenshots (`docs/images/`) in the new look.
 
 **Backlog:** `:later` lines aren't saved across quits; the messages log is
 this session's only; after Esc clears a find, n starts again from the view;

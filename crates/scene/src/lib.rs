@@ -19,6 +19,7 @@ pub mod liveness;
 pub mod messages;
 pub mod jump;
 pub mod mark;
+pub mod media;
 pub mod motion;
 pub mod nav;
 pub mod note;

@@ -654,6 +654,10 @@ pub enum Action {
     EditInEditor,
     /// Paste the primary selection into the field (`Shift+Insert`).
     PastePrimary,
+    // Media (M13 step 5).
+    /// Do this to the card's video or audio (`,` then a key; a count
+    /// makes a jump longer).
+    Media(media::Op),
 }
 
 /// What a copy key copies.
@@ -671,6 +675,7 @@ pub enum Yank {
 
 use Action as Ac;
 use crate::caret::{self, Motion as Mo};
+use crate::media::{self, At, Op as MOp};
 use crate::setcmd::{self, SiteSwitch as SW};
 use crate::sitesettings::Content;
 
@@ -822,6 +827,18 @@ pub const NAMED: &[(&str, Action, &str)] = &[
     ("session-cookies", Ac::SiteToggle(SW::Content(Content::Cookies), true), "Cookies for this site, until you quit"),
     ("session-ads", Ac::SiteToggle(SW::Ads, true), "Ads on this site, until you quit"),
     ("site-passthrough", Ac::SiteToggle(SW::Content(Content::Passthrough), false), "This site starts in Passthrough"),
+    ("media-toggle", Ac::Media(MOp::Toggle), "Play or pause the card's video or audio"),
+    ("media-forward", Ac::Media(MOp::Seek(media::STEP)), "Media 10 s on (a count: further)"),
+    ("media-back", Ac::Media(MOp::Seek(-media::STEP)), "Media 10 s back (a count: further)"),
+    ("media-forward-minute", Ac::Media(MOp::Seek(60)), "Media a minute on"),
+    ("media-back-minute", Ac::Media(MOp::Seek(-60)), "Media a minute back"),
+    ("media-restart", Ac::Media(MOp::SeekTo(At::Seconds(0))), "Media from the start"),
+    ("media-faster", Ac::Media(MOp::Faster), "Media faster"),
+    ("media-slower", Ac::Media(MOp::Slower), "Media slower"),
+    ("media-normal-speed", Ac::Media(MOp::Speed(100)), "Media at normal speed"),
+    ("media-mute", Ac::Media(MOp::Mute), "Mute or unmute the card"),
+    ("media-loop", Ac::Media(MOp::Loop), "Media loops or not"),
+    ("media-full", Ac::Media(MOp::Full), "The video full window, or back"),
     ("undo", Ac::Undo, "Undo"),
     ("redo", Ac::Redo, "Redo"),
     ("quit", Ac::Quit, "Quit Trailboard"),
@@ -979,7 +996,34 @@ pub fn board() -> Bindings<Action> {
     bind_marks(&mut b, "M");
     bind_jumps(&mut b);
     bind_toggles(&mut b);
+    bind_media(&mut b);
     b
+}
+
+/// `,` then a key, on the board and in a page: the current card's video or
+/// audio. `,` or Space play / pause; h / l 10 s back / on (a count goes
+/// further), H / L a minute; 0 from the start; j / k slower / faster,
+/// = normal speed; m mute; r loop; f full window.
+fn bind_media(b: &mut Bindings<Action>) {
+    for (k, op) in [
+        (",", MOp::Toggle),
+        ("<Space>", MOp::Toggle),
+        ("h", MOp::Seek(-media::STEP)),
+        ("l", MOp::Seek(media::STEP)),
+        ("<Left>", MOp::Seek(-media::STEP)),
+        ("<Right>", MOp::Seek(media::STEP)),
+        ("H", MOp::Seek(-60)),
+        ("L", MOp::Seek(60)),
+        ("0", MOp::SeekTo(At::Seconds(0))),
+        ("j", MOp::Slower),
+        ("k", MOp::Faster),
+        ("=", MOp::Speed(100)),
+        ("m", MOp::Mute),
+        ("r", MOp::Loop),
+        ("f", MOp::Full),
+    ] {
+        b.bind(&format!(",{k}"), Action::Media(op)).expect("media keys parse");
+    }
 }
 
 /// `t` then a letter, on the board and in a page: d dark pages, h the
@@ -1174,6 +1218,7 @@ pub fn page() -> Bindings<Action> {
     bind_marks(&mut b, "m");
     bind_jumps(&mut b);
     bind_toggles(&mut b);
+    bind_media(&mut b);
     b
 }
 
@@ -1429,9 +1474,9 @@ mod tests {
         assert_eq!(get("<C-u>"), Some(Action::ScrollUp));
         assert_eq!(get("<A-3>"), Some(Action::NthCard(3)));
         assert_eq!(get("<C-S-6>"), Some(Action::OtherCard));
-        // Only the hint kinds, marks, toggles and Ctrl+w keys wait for another key; m stays Arrange.
+        // Only the hint kinds, marks, toggles, media and Ctrl+w keys wait for another key; m stays Arrange.
         assert!(b.iter().all(|(seq, a)| seq.len() == 1
-            || matches!(a, Action::Hint(_) | Action::SetMark(_) | Action::GoMark(_))
+            || matches!(a, Action::Hint(_) | Action::SetMark(_) | Action::GoMark(_) | Action::Media(_))
             || seq[0] == ch('t')
             || seq[0] == parse("<C-w>").unwrap()[0]));
         // Owner (2026-11-20): t starts toggles everywhere, Tidy is T.
@@ -1443,6 +1488,12 @@ mod tests {
         assert_eq!(page().lookup(&parse("tc").unwrap()), Lookup::Exact(Action::SiteToggle(SW::Content(Content::Cookies), false)));
         assert_eq!(page().lookup(&parse("ts").unwrap()), Lookup::Exact(Action::Sidebar));
         assert_eq!(get("m"), Some(Action::Arrange));
+        // , starts the media keys on the board and in a page (M13 step 5).
+        assert_eq!(get(",,"), Some(Action::Media(MOp::Toggle)));
+        assert_eq!(get(",l"), Some(Action::Media(MOp::Seek(10))));
+        assert_eq!(page().lookup(&parse(",f").unwrap()), Lookup::Exact(Action::Media(MOp::Full)));
+        assert_eq!(page().lookup(&parse(",<Space>").unwrap()), Lookup::Exact(Action::Media(MOp::Toggle)));
+        assert_eq!(Action::named("media-toggle"), Some(Action::Media(MOp::Toggle)));
         assert_eq!(get("Ma"), Some(Action::SetMark('a')));
         assert_eq!(get("'B"), Some(Action::GoMark('B')));
         assert_eq!(get("''"), Some(Action::GoMark('\'')));

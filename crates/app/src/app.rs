@@ -487,6 +487,14 @@ pub struct App {
     used: HashMap<NodeId, u64>,
     /// What each live card's page says about its media, for keeping it awake.
     media: HashMap<NodeId, Media>,
+    /// The card a media control was last sent to, and when: only its
+    /// answer, soon after, becomes a toast.
+    media_asked: Option<(NodeId, Instant)>,
+    /// "Can't play" messages shown: card, kind, page address (once each).
+    media_told: HashSet<(NodeId, scene::media::Trouble, String)>,
+    /// The card whose page is in full screen, shown in Solo, and the card
+    /// Solo had before (`None`: the board), to go back to after.
+    page_full: Option<(NodeId, Option<NodeId>)>,
     use_clock: u64,
     focused: Option<NodeId>,
     /// The card current before `focused`, for Ctrl+^ (this space's).
@@ -954,6 +962,9 @@ impl App {
             live_from_env: live_env.is_some(),
             used: HashMap::new(),
             media: HashMap::new(),
+            media_asked: None,
+            media_told: HashSet::new(),
+            page_full: None,
             use_clock: 0,
             focused: None,
             alt_card: None,
@@ -2589,6 +2600,7 @@ impl App {
             KeyAction::RepeatLine => self.repeat_line(count),
             KeyAction::Fullscreen => self.toggle_fullscreen(),
             KeyAction::Inspect => self.toggle_inspector(None),
+            KeyAction::Media(op) => self.media_op(op.times(count.unwrap_or(1))),
             _ if idle && self.card_key(action, count) => {}
             // A page key from a user line on the board: it acts on the
             // current card's page.
@@ -3104,6 +3116,7 @@ impl App {
             }
             KeyAction::Fullscreen => self.toggle_fullscreen(),
             KeyAction::Inspect => self.toggle_inspector(None),
+            KeyAction::Media(op) => self.media_op(op.times(count.unwrap_or(1))),
             KeyAction::Find => self.open_find(false),
             KeyAction::FindBack => self.open_find(true),
             KeyAction::FindNext | KeyAction::FindPrev if !self.last_find.is_empty() => {
@@ -4399,6 +4412,10 @@ impl App {
             Cmd::Mute => match self.current() {
                 Some(id) => self.toggle_mute(id),
                 None => self.toast("No card"),
+            },
+            Cmd::Media => match scene::media::parse(&arg) {
+                Ok(op) => self.media_op(op),
+                Err(e) => self.toast(e),
             },
             Cmd::Saved => match self.saved_url(&arg) {
                 Some(u) if self.focused_page().is_some() => self.load_here(&u),
@@ -6125,6 +6142,8 @@ impl App {
                 Some(id) => self.toggle_mute(id),
                 None => self.toast("No card"),
             },
+            Command::MediaToggle => self.media_op(scene::media::Op::Toggle),
+            Command::MediaFull => self.media_op(scene::media::Op::Full),
             Command::FindInPage => self.open_find(false),
             Command::MarkCard => self.toggle_mark(),
             Command::FillView => self.fill_current(),
@@ -7065,6 +7084,13 @@ impl App {
     fn leave_read(&mut self) {
         let Some(id) = self.read.take() else { return };
         log::info!("solo: back to the board");
+        // A page in full screen comes out of it with Solo.
+        if self.page_full.take_if(|(full, _)| *full == id).is_some()
+            && let Some(c) = self.cards.get(&id)
+            && c.page.fullscreen()
+        {
+            c.page.exit_fullscreen();
+        }
         self.menu = None;
         self.keys_in_page = false;
         self.camera_moved();
@@ -7272,6 +7298,70 @@ impl App {
         c.page.set_muted(muted);
         log::info!("card {} {}", id.0, if muted { "muted" } else { "unmuted" });
         self.toast(if muted { "Muted" } else { "Sound on" });
+    }
+
+    /// `:media` and the `,` keys: `op` on the current card's video or audio.
+    fn media_op(&mut self, op: scene::media::Op) {
+        let Some(id) = self.current() else { return self.toast("No card") };
+        if op == scene::media::Op::Mute {
+            return self.toggle_mute(id);
+        }
+        let Some(c) = self.cards.get(&id) else { return self.toast("The card is asleep") };
+        if c.page.kind() != web::PageKind::Web {
+            return self.toast(scene::media::Status::None.describe());
+        }
+        let (name, value) = op.wire();
+        log::info!("media {name} {value} in card {}", id.0);
+        if c.page.media_control(name, value, scene::media::RATES) {
+            self.media_asked = Some((id, Instant::now()));
+        } else {
+            self.toast(scene::media::Status::None.describe());
+        }
+    }
+
+    /// A page's answer to [`App::media_op`]: a toast, if it was asked of
+    /// that card lately.
+    fn media_done(&mut self, id: NodeId, answer: &str) {
+        let asked = self.media_asked.is_some_and(|(at, when)| at == id && when.elapsed() < Duration::from_secs(5));
+        if !asked {
+            return;
+        }
+        let Some(status) = scene::media::Status::parse(answer) else { return };
+        log::info!("media answer in card {}: {answer}", id.0);
+        self.toast(status.describe());
+    }
+
+    /// A video in card `id` can't play: say why, once per page and kind.
+    fn media_trouble(&mut self, id: NodeId, kind: &str) {
+        let Some(kind) = scene::media::Trouble::parse(kind) else { return };
+        let url = self.scene.node(id).map(|n| n.url.clone()).unwrap_or_default();
+        if !self.media_told.insert((id, kind, url.clone())) {
+            return;
+        }
+        let site = scene::address::site(&url).unwrap_or_default().to_string();
+        log::info!("media trouble in card {}: {kind:?} on {url}", id.0);
+        self.toast_for(kind.describe(&site), Duration::from_secs(6));
+    }
+
+    /// Page `id` went into full screen, or out: the card goes Solo (it
+    /// fills the window), and back to where it was after.
+    fn page_fullscreen(&mut self, id: NodeId, on: bool) {
+        log::info!("card {} page full screen {}", id.0, if on { "on" } else { "off" });
+        if on {
+            if self.page_full.is_none_or(|(full, _)| full != id) {
+                self.page_full = Some((id, self.read));
+            }
+            if self.read != Some(id) {
+                self.read_card(id);
+            }
+        } else if let Some((full, before)) = self.page_full.take_if(|(full, _)| *full == id) {
+            match before {
+                Some(b) if b != full && self.scene.node(b).is_some() => self.read_card(b),
+                Some(_) => {}
+                None if self.read == Some(full) => self.leave_read(),
+                None => {}
+            }
+        }
     }
 
     /// Sets card `id`'s awake mode (`None`: the next one, as the button cycles).
@@ -7482,6 +7572,21 @@ impl App {
                 WebEvent::Media { page, playing } => {
                     if let Some(id) = self.node_of(page) {
                         self.got_media(id, playing);
+                    }
+                }
+                WebEvent::MediaDone { page, answer } => {
+                    if let Some(id) = self.node_of(page) {
+                        self.media_done(id, &answer);
+                    }
+                }
+                WebEvent::MediaTrouble { page, kind } => {
+                    if let Some(id) = self.node_of(page) {
+                        self.media_trouble(id, &kind);
+                    }
+                }
+                WebEvent::Fullscreen { page, on } => {
+                    if let Some(id) = self.node_of(page) {
+                        self.page_fullscreen(id, on);
                     }
                 }
                 WebEvent::Scroll { page, report } => {
@@ -9118,6 +9223,13 @@ impl App {
                     true
                 }
                 Some(KeyCode::Escape) if self.typing() && self.page_keys == PageKeys::Passthrough => false,
+                // A page in full screen comes out of it (and Solo with it).
+                Some(KeyCode::Escape) if self.focused_page().is_some_and(|p| p.fullscreen()) && self.drag_is_idle() => {
+                    if let Some(p) = self.focused_page() {
+                        p.exit_fullscreen();
+                    }
+                    true
+                }
                 // Insert: the page sees Esc (closes its menus), the field lets
                 // go of the caret, and our page keys are back.
                 Some(KeyCode::Escape) if self.typing() && self.drag_is_idle() => {

@@ -28,6 +28,8 @@ pub enum Cmd {
     Reload,
     Awake,
     Mute,
+    /// The card's video or audio: play, pause, seek, speed… (`scene::media`).
+    Media,
     Back,
     Forward,
     Find,
@@ -120,6 +122,9 @@ pub enum Kind {
     Count,
     /// One of these words (a unique start of one is enough).
     Choice(&'static [&'static str]),
+    /// One of these words, then maybe a value; the app reads the whole
+    /// argument (`media forward 30`). Completion offers the words.
+    Lead(&'static [&'static str]),
     /// A setting's name, then values for it (`page-colours dark`); the
     /// app gives both (`values(Kind::Setting, "")` the names,
     /// `values(Kind::Setting, name)` its values).
@@ -202,6 +207,7 @@ pub const COMMANDS: &[Spec] = &[
     s(Cmd::Reload, "reload", &[], Opt(Kind::Choice(RELOAD)), "[fresh]", "Reload the page (fresh: skip the cache)"),
     s(Cmd::Awake, "awake", &[], Opt(Kind::Choice(AWAKE)), "[auto|keep|active]", "Keep the card awake: auto, keep (never sleeps), active (runs as if in view); alone, the next"),
     s(Cmd::Mute, "mute", &[], No, "", "Mute the card's sound, or turn it back on"),
+    s(Cmd::Media, "media", &[], Req(Kind::Lead(crate::media::WORDS)), crate::media::HINT, "The card's video or audio: play, pause, seek, speed, mute, loop, full window"),
     s(Cmd::Find, "find", &[], Opt(Kind::Text), "[words]", "Find in the page"),
     s(Cmd::Copy, "copy", &[], Opt(Kind::Choice(COPY)), "[address|title|markdown|site|clean]", "Copy the page's address, title, a Markdown link, its site, or the address without tracking"),
     s(Cmd::PageNext, "page-next", &[], No, "", "The page's next page (its next link)"),
@@ -471,6 +477,7 @@ pub fn complete(line: &str, values: &Values) -> Vec<Completion> {
     let words = |w: &[&str]| w.iter().map(|s| (s.to_string(), String::new())).collect::<Vec<_>>();
     let offered: Vec<(String, String)> = match kind {
         Kind::Choice(c) => words(c),
+        Kind::Lead(c) if !rest.contains(char::is_whitespace) => words(c),
         Kind::Space | Kind::Card | Kind::Saved => values(kind, ""),
         Kind::SettingName if fixed.is_empty() => values(Kind::Setting, ""),
         Kind::Setting => values(Kind::Setting, fixed.split_whitespace().next().unwrap_or("")),

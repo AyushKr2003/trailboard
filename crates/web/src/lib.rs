@@ -115,6 +115,16 @@ pub enum WebEvent {
     /// a video, muted or not, or audible audio, in any of its frames. A page
     /// can claim this about itself only.
     Media { page: u64, playing: bool },
+    /// Web page `page`'s answer to [`Page::media_control`]: a line
+    /// `scene::media::Status` reads. Only expect it after asking.
+    MediaDone { page: u64, answer: String },
+    /// A video in web page `page` can't play: `format` or `drm` (see
+    /// [`media`]). The page could claim this falsely; it only shows a message.
+    MediaTrouble { page: u64, kind: String },
+    /// Page `page` went into full screen (a video's full screen button, or
+    /// `media full`) or out of it. The page fills its view either way; the
+    /// app decides how big that is.
+    Fullscreen { page: u64, on: bool },
 }
 
 /// Largest favicon side asked of Chromium, px (title bars draw 16 px icons, sharp at 2×).
@@ -574,6 +584,8 @@ struct Shared {
     banner_rejected: std::cell::Cell<bool>,
     /// What each frame says about its media ([`media`]).
     media: RefCell<media::Frames>,
+    /// The page is in full screen (`on_fullscreen_mode_change`).
+    fullscreen: std::cell::Cell<bool>,
     /// The page keeps its focus whatever the app asks ([`Page::hold_focus`]).
     hold_focus: std::cell::Cell<bool>,
     /// JavaScript is off in this page (last sent with [`Shared::apply_javascript`]).
@@ -1011,6 +1023,12 @@ wrap_display_handler! {
             host.download_image(Some(&CefString::from(first.as_str())), 1, ICON_SIZE, 0, Some(&mut done));
         }
 
+        fn on_fullscreen_mode_change(&self, _browser: Option<&mut Browser>, fullscreen: ::std::os::raw::c_int) {
+            let on = fullscreen != 0;
+            self.shared.fullscreen.set(on);
+            emit(WebEvent::Fullscreen { page: self.shared.key, on });
+        }
+
         fn on_title_change(&self, _browser: Option<&mut Browser>, title: Option<&CefString>) {
             if self.shared.kind == PageKind::Web
                 && let Some(title) = title {
@@ -1056,10 +1074,22 @@ wrap_display_handler! {
             }
             if let Some(body) = message.strip_prefix(media::PREFIX) {
                 if self.shared.kind == PageKind::Web
-                    && let Some((token, playing)) = media::parse(body)
-                    && let Some(playing) = self.shared.media.borrow_mut().report(token, playing)
+                    && let Some((token, state)) = media::parse(body)
+                    && let Some(playing) = self.shared.media.borrow_mut().report(token, state)
                 {
                     emit(WebEvent::Media { page: self.shared.key, playing });
+                }
+                return 1;
+            }
+            if let Some(body) = message.strip_prefix(media::DONE) {
+                if self.shared.kind == PageKind::Web && body.len() <= 120 {
+                    emit(WebEvent::MediaDone { page: self.shared.key, answer: body.to_string() });
+                }
+                return 1;
+            }
+            if let Some(body) = message.strip_prefix(media::TROUBLE) {
+                if self.shared.kind == PageKind::Web && matches!(body, "format" | "drm") {
+                    emit(WebEvent::MediaTrouble { page: self.shared.key, kind: body.to_string() });
                 }
                 return 1;
             }
@@ -1498,6 +1528,7 @@ impl Page {
             early: Default::default(),
             banner_rejected: std::cell::Cell::new(false),
             media: Default::default(),
+            fullscreen: Default::default(),
             hold_focus: std::cell::Cell::new(false),
             script_off: std::cell::Cell::new(false),
             bridge: RefCell::new(None),
@@ -1553,6 +1584,12 @@ impl Page {
             shared.apply_javascript(&h, url);
             if kind == PageKind::Web {
                 shared.early.watch(&h);
+                // The media script also runs before each document's own
+                // scripts (in the main frame and frames in its process), so
+                // it sees a DRM request made at once. Load start still
+                // installs it in other frames; it installs once.
+                let params = serde_json::json!({ "source": media::script() }).to_string();
+                send_dev_tools(&h, "Page.addScriptToEvaluateOnNewDocument", &params);
             }
         }
         let page = Page { browser, shared, blocked };
@@ -1774,6 +1811,45 @@ impl Page {
 
     pub fn muted(&self) -> bool {
         self.host().is_some_and(|h| h.is_audio_muted() != 0)
+    }
+
+    /// Runs a media control (`op` with its number, see [`media::control`])
+    /// in the frame whose media played or showed last. False when no frame
+    /// has media. The answer comes as [`WebEvent::MediaDone`].
+    ///
+    /// The main frame gets it through the DevTools protocol as if from a
+    /// click, so playing with sound and full screen are allowed there;
+    /// other frames through plain script (a page may refuse those).
+    pub fn media_control(&self, op: &str, value: f64, rates: &[u16]) -> bool {
+        let Some(target) = self.shared.media.borrow().target().map(str::to_string) else { return false };
+        let Some(script) = media::control(&target, op, value, rates) else { return false };
+        let Some(host) = self.host() else { return false };
+        let params = format!(r#"{{"expression":{},"userGesture":true}}"#, js_string(&script));
+        let main_sent = send_dev_tools(&host, "Runtime.evaluate", &params);
+        let main_id = self.browser.main_frame().map(|f| CefString::from(&f.identifier()).to_string());
+        let mut ids = CefStringList::new();
+        self.browser.frame_identifiers(Some(&mut ids));
+        for id in ids.into_iter() {
+            if Some(&id) == main_id.as_ref() && main_sent {
+                continue;
+            }
+            if let Some(f) = self.browser.frame_by_identifier(Some(&CefString::from(id.as_str()))) {
+                f.execute_java_script(Some(&CefString::from(script.as_str())), None, 0);
+            }
+        }
+        true
+    }
+
+    /// The page is in full screen.
+    pub fn fullscreen(&self) -> bool {
+        self.shared.fullscreen.get()
+    }
+
+    /// Takes the page out of full screen.
+    pub fn exit_fullscreen(&self) {
+        if let Some(h) = self.host() {
+            h.exit_fullscreen(1);
+        }
     }
 
     pub fn load(&self, url: &str) {

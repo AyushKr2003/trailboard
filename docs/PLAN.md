@@ -64,6 +64,7 @@ app (trailboard)  winit window · input · omnibox · chrome UI · main loop
 | 🟡 | **M13 Full media support** | Our own media CEF (GitHub Actions, release `cef-156.0.26-media`) installed by `install-cef.sh --codecs` and the Arch package: H.264, AAC and HEVC play; next HEVC checks, Widevine, media keys |
 | ⬜ | **M14 Config file** | One hand-editable `~/.config/trailboard/config.toml` for settings, key bindings and theme; the UI writes it without losing comments |
 | ⬜ | **M15 Custom trails** | Join any card to any trail and cut one out, so a named, coloured trail can be a group of any cards (our tab groups) |
+| ⬜ | **M16 Lighter and quieter** | Cut memory and idle CPU: a measured baseline, then the main process, the main loop, sleeping cards and renderer count |
 
 ### Owner decisions that still bind
 
@@ -485,6 +486,70 @@ any cards can be made a trail.
   (lean: the target's).
 - Whether several selected cards can join in one go (lean: yes, one undo
   step).
+
+### M16: Lighter and quieter ⬜
+
+Asked by the owner on 2026-11-24, after a side-by-side measurement on
+their machine: make Trailboard use less memory and CPU than it does now,
+and at least no more than a plain Chromium with the same pages.
+
+**Baseline** (2026-11-24, `~/.cache/browser-bench/`: `bench.py`,
+`results.jsonl`, screenshots). Each browser alone on workspace 9, a fresh
+profile, the same six sites (Wikipedia article, a GitHub repo, BBC News,
+YouTube home, MDN JavaScript, a subreddit), 45 s to load, then 60 s
+measured. Memory is PSS summed over every process of the run, counted
+through a systemd scope (the engine moves its main process into its own
+`app-org.chromium.Chromium-<pid>.scope`; that is counted too). CPU is
+percent of one core (16 threads here). Live sites vary run to run, so
+these are ranges of two runs, good to ±20–30 %.
+
+| | Memory | Peak loading | CPU after load | Processes | Start |
+|---|---|---|---|---|---|
+| Chromium (stock) | 868–944 MB | 1.1–1.2 GB | 8–12 % | 20 | 0.45–0.61 s |
+| A Gecko-based browser | 1.75 GB | 3.1 GB | 11 % | 22 | 1.04 s |
+| Trailboard, 6 pages live, no ad blocking | 1.34–1.67 GB | 1.5–1.8 GB | 13–17 % | 22–35 | 0.61–0.72 s |
+| Trailboard, defaults (4 live, ad blocking) | 1.28–1.43 GB | 1.4–1.5 GB | 7–24 % | 16–17 | 0.55–0.61 s |
+
+Idle with no sites: Chromium 478 MB, 0.8 % CPU. A short Trailboard run
+with only its start card used ~16 % CPU (one run, to be confirmed). Not
+measured yet (the run was stopped): idle for the other two, and CPU while
+playing a 1080p H.264 video (`site/video.html`). All three load the
+VA-API driver (`iHD_drv_video.so`).
+
+**What it points at**
+
+- Trailboard's main process holds ~300 MB of PSS (window, wgpu, board,
+  page textures and thumbnails, history database, blocking rules), on
+  top of the pages; the stock browser's whole run is ~400–700 MB less.
+- The main loop runs with `ControlFlow::Poll` (`crates/app/src/main.rs`),
+  pumping CEF and redrawing without waiting: the likely cause of idle CPU.
+- The live cap (4) saved only ~100–250 MB against all six live.
+- Process count jumps between runs (22 vs 35 for the same pages).
+
+**Steps:**
+
+- ⬜ 1. **Repeatable benchmark.** Move the bench into `scripts/` (our own,
+  no other browser named; it compares against whatever command is given),
+  finish the idle and video cases, three runs each, and record medians.
+  Prefer local copies of pages where possible so runs agree.
+- ⬜ 2. **Idle CPU.** Wait for events instead of polling: sleep until the
+  next input, a CEF paint or `OnScheduleMessagePumpWork`'s delay, an
+  animation frame or a timer; redraw only when something changed. Goal:
+  under 1 % of a core with a still board.
+- ⬜ 3. **Main process memory.** Measure what the ~300 MB is (heap
+  profile, wgpu buffers and textures, thumbnail cache, `page-text.db`
+  cache, the filter engine) and cut the largest parts; free a sleeping
+  card's texture.
+- ⬜ 4. **Sleeping cards and renderers.** Check that a sleeping card's
+  renderer really exits; see why the process count varies; consider a
+  lower default live cap or sleeping off-screen cards sooner, and CEF
+  switches that limit spare and per-frame renderers, without breaking
+  site isolation.
+- ⬜ 5. **Video.** CPU while playing 1080p H.264 and HEVC in a card, against
+  Chromium; confirm hardware decode is used and frames aren't copied
+  more than needed (dmabuf later, see §5).
+- ⬜ 6. **Report.** Rerun the baseline after each step and keep the table
+  here up to date.
 
 ---
 

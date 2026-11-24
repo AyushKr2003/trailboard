@@ -535,10 +535,9 @@ hand: it plays. The karere build is
 gone from the owner's machine (it was in `~/.local/share/cef`; no other
 copy was left). The forty-second session's notes (z margin, fold motion,
 the first CEF build fix) are in git: `git log -p docs/PLAN.md`.
-**Repo state:** on `master`, uncommitted: `scripts/install-cef.sh`,
-`packaging/arch/PKGBUILD`, `scripts/bundle.sh`, `crates/app/src/{launch,main,crash}.rs`,
-README, CHANGELOG, this plan. The Arch package installed on the owner's
-machine still has the karere engine until it is rebuilt (`makepkg -si`).
+**Repo state:** on `master`, committed (f0f754e). The Arch package is
+rebuilt from it and installed on the owner's machine (2026-11-24, 403.84
+MiB): `trailboard --version` ends in `media build`.
 **Next up:** M14 step 1, the `config.toml` reader (asked by the owner on
 2026-11-21; format and decisions in M14). For M13: step 3 (confirm HEVC goes through VA-API) and step 4 (Widevine).
 Bundle with `CEF_PATH=~/.local/share/cef-standard`. Also retake the

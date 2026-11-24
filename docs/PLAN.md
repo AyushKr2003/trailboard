@@ -61,7 +61,7 @@ app (trailboard)  winit window · input · omnibox · chrome UI · main loop
 | ⬜ | M10 Optional extras | See §8; most items on hold |
 | ✅ | M11 Premium look | Corners setting, cards as sheets, board backgrounds, sidebar, command bar, motion, empty board, review pass |
 | ✅ | M12 Keyboard first | Vim-like modes, page keys, scroll sections, command line, cards as tabs, search keywords, jumps/marks/saved pages, user key file, settings and site toggles, navigation extras, caret/visual mode, dialogs and fields, find back, `:messages`, the mode shown by ring and window title |
-| 🟡 | **M13 Full media support** | Our own media CEF (GitHub Actions, release `cef-156.0.26-media`) installed by `install-cef.sh --codecs` and the Arch package: H.264, AAC and HEVC play (all through VA-API); media controls (`,` keys, `:media`), page full screen as Solo, "can't play" messages; next Widevine, keeping current |
+| ✅ | **M13 Full media support** | Our own media CEF (GitHub Actions, release `cef-156.0.26-media`) installed by `install-cef.sh --codecs` and the Arch package: H.264, AAC and HEVC play (all through VA-API); media controls (`,` keys, `:media`), page full screen as Solo, "can't play" messages; Widevine (software level, fetched by Chromium); README update checklist, engine-version warning, `scripts/media-check.html` |
 | ⬜ | **M14 Config file** | One hand-editable `~/.config/trailboard/config.toml` for settings, key bindings and theme; the UI writes it without losing comments |
 | ⬜ | **M15 Custom trails** | Join any card to any trail and cut one out, so a named, coloured trail can be a group of any cards (our tab groups) |
 | ⬜ | **M16 Lighter and quieter** | Cut memory and idle CPU: a measured baseline, then the main process, the main loop, sleeping cards and renderer count |
@@ -167,7 +167,7 @@ Hyprland 0.57.
 
 ---
 
-### M13: Full media support 🟡
+### M13: Full media support ✅
 
 Asked by the owner on 2026-11-20: play the videos and music other
 Chromium browsers play. Checked that day (`site/codecs.html` in
@@ -326,13 +326,29 @@ make ourselves (we own the workflow and can read every log).
   HDR output (not planned). `chrome://media-internals` opens in a card for
   a closer look. On a machine without VA-API, HEVC won't play (Chromium
   has no software HEVC decoder) and the others fall back to software.
-- ⬜ 4. **Widevine (trial).** 2026-11-24: in the media build
-  `requestMediaKeySystemAccess('com.widevine.alpha')` fails with
-  NotSupportedError (the CDM isn't fetched or registered yet). Build with `enable_widevine` and the library
-  CDM, let CEF fetch Google's CDM, and test a DRM page in a card. Open
-  question: whether DRM video draws in off-screen rendering (how cards
-  are drawn). If it works, a *Protected video* setting (off by default,
-  as it downloads Google's module); if not, record the reason and drop it.
+- ✅ 4. **Widevine (trial)** (done 2026-11-24). **It works in the media
+  build as it is; no rebuild.** The build already has `enable_widevine`,
+  and Chromium's component updater fetches Google's CDM by itself into
+  `<profile>/browser/WidevineCdm/<version>/` (4.10.3112.0 on the owner's
+  real profile) and writes the hint file
+  `WidevineCdm/latest-component-updated-widevine-cdm`. On Linux the CDM is
+  registered only at startup, from that hint, so it works from the start
+  *after* the download. The earlier NotSupportedError came from short-lived
+  e2e profiles that never finished the download. Checked
+  (`~/.cache/trailboard-e2e-widevine/`, the CDM copied into the isolated
+  profile, `site/wv.html` served from localhost): `com.widevine.alpha` is
+  granted, Shaka's public Widevine stream (`angel-one-widevine`, no-auth
+  licence proxy) gets its licence and plays (frames advancing, 320×240
+  stepping up to 768×576), and **the decrypted video draws in the
+  off-screen card** (`wv.png`): Linux Widevine is the software level (L3),
+  so there's no hardware path that OSR would miss. Turning it off was also
+  checked: with the hint file moved aside and `--disable-component-update`,
+  the CDM on disk isn't loaded (NotSupportedError). Owner's decision
+  (2026-11-24): **no *Protected video* setting**; leave Chromium's default
+  (fetched and used). Limits: L3 only, so services that need hardware DRM
+  for HD (Netflix-style) cap quality or refuse; real DRM sites weren't
+  tried. The "can't play: protected (DRM)" message (`scene::media`) still
+  shows when a site refuses, e.g. before the CDM has been fetched.
 - ✅ 4a. **Cards that stay awake** (asked by the owner on 2026-11-23).
   Media playing keeps a card outside the live cap (10 min grace after a
   pause), and each card's awake button cycles *Auto*, *Keep awake* and
@@ -389,14 +405,55 @@ make ourselves (we own the workflow and can read every log).
     DRM site's message, and hardware media keys (XF86AudioPlay, MPRIS):
     those go to the desktop, and Chromium's MPRIS service isn't wired up
     in CEF; later.
-- ⬜ 6. **Keeping current.** A short checklist in the README for each CEF
-  update: rebuild, re-run the codec page, smoke-test video; the start log
-  warns when the installed build is older than the version
-  `install-cef.sh` pins.
+- ✅ 6. **Keeping current** (done 2026-11-24).
+  - **README, "Updating CEF":** the nine steps for each engine update
+    (bump the crate; standard pins; the media build on `cef-build` and its
+    pins; `cargo test`; install; `--version` and the start log; the media
+    check; a YouTube smoke test; the changelog).
+  - **Start-log warning** (`launch::engine_mismatch`): the version of the
+    `libcef.so` actually loaded (`web::loaded_engine_version`, CEF's
+    exported `cef_version_info`, which the crate doesn't wrap) against the
+    one compiled in (`web::built_engine_version`, which is what
+    `install-cef.sh` pins): "the installed CEF X is older/newer than the Y
+    this Trailboard was built for; install the matching one with
+    scripts/install-cef.sh". Compared as numbers. Asking the library, not
+    `archive.json`, catches a hand-swapped engine too.
+  - **Pins can't drift** (`launch::tests::engine_pins_agree`): the `cef`
+    crate's version, `install-cef.sh`'s `CEF_VERSION` and `COD_TAG`, and
+    the PKGBUILD's `_cef`, media release URL and all four checksums must
+    agree (checked: a changed PKGBUILD checksum fails it). `cef.conf` lives
+    on `cef-build`, so it isn't covered; the README step names it.
+  - **`scripts/media-check.html`:** one page, no media files: each codec
+    (canPlayType "probably" and MSE), Widevine available, and a clear
+    H.264/AAC stream and a Widevine stream (Shaka's public test assets,
+    player loaded from jsdelivr) must advance frames; the title ends
+    `media check: pass` or `FAIL <check (detail)>`, so a scripted run reads
+    it from `cards`. It must be served from localhost: on `file://` the
+    Widevine CDM can't be created (Shaka 6002; an opaque origin). HEVC is
+    asked again for up to 15 s, as Chromium learns the GPU's decoders
+    after it starts.
+  - **Found while checking, fixed:** on this laptop NVIDIA's driver (GTX
+    1650, `nvidia`) now holds `renderD128` and the iGPU is `renderD129`;
+    Chromium's VA-API skips NVIDIA's node and gives up, so HEVC stopped
+    playing (err4, "no supported streams") and the rest fell back to
+    software. `web::render_node` reads `/sys/class/drm/renderD*/device/driver`
+    and, when the first node is `nvidia` and a later one isn't, adds
+    `--render-node-override=<that node>` for the browser process (the GPU
+    process inherits it) unless the command line has one; the start log
+    says so. Nouveau isn't skipped (Mesa has VA-API).
+  - Verified (`~/.cache/trailboard-e2e-widevine/`): the media check passes
+    (run 10, with the override chosen by itself); step 3's `formats.html`
+    plays H.264 1080p and HEVC 8-bit, 10-bit and HDR10 again
+    (`formats-nvidia.png`), and VP9 and AV1 each decode on VA-API alone
+    (346 frames, none dropped). No mismatch warning with the pinned engine.
+    Not verified: the warning with a really older engine (none at hand;
+    unit-tested), a machine where NVIDIA's node isn't first. Limit: with
+    the override, step 3's six-HD-videos page stalls VP9 and AV1 at 0 s
+    while the four H.264/HEVC ones play (one at a time they're fine).
 
 **Risks:** the build may fail on the cloud machine's distro (pin the
-image); Widevine may not draw under off-screen rendering; HEVC depends on
-the iGPU and driver; rebuild cost and effort every few weeks; a codec
+image); HEVC depends on the iGPU and driver (and on the render node: see
+step 6); rebuild cost and effort every few weeks; a codec
 build must never be published by mistake (the bundle script refuses it
 unless asked).
 
@@ -628,24 +685,24 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-24 (forty-fourth). M13 steps 3 and 5 (asked by
-the owner). Step 3: HEVC (8- and 10-bit, HDR10) and also H.264, VP9 and
-AV1 decode through VA-API with no new switches (Chromium's own logs);
-HDR is tone-mapped to SDR. Step 5: media controls on any site (`,` keys,
-`:media`, `scene::media`; `web::media` picks the frame and element; the
-main frame gets ops through DevTools with a user gesture; embeds borrow
-the top page's click for sound and full screen), a page's full screen
-puts its card in Solo (Esc leaves both), and a message when a video can't
-play (format, or DRM). No outside player. Details and limits under M13
-steps 3 and 5. Also fixed a clippy `--all-targets` warning in
-`hints.rs`'s tests. Verified: unit tests (`scene::media`, `web::media`,
-media keys), clippy, scripted runs in `~/.cache/trailboard-e2e-m13/`
-(local pages, a cross-port iframe, YouTube) with screenshots. Not
-verified: other real sites, a real DRM site, hardware media keys.
-**Repo state:** on `master`, committed (M13 steps 3 and 5).
+**Last session:** 2026-11-24 (forty-fifth). **M13 finished** (asked by
+the owner): step 4, Widevine works in the media build as built (the
+decrypted video draws in an off-screen card; owner: no setting), and step
+6, keeping current: the README's "Updating CEF" checklist, a start-log
+warning when the loaded `libcef.so` isn't the CEF this was built for
+(`launch::engine_mismatch`, `web::loaded_engine_version`), a test that
+the crate, `install-cef.sh` and the PKGBUILD pin the same engine
+(`engine_pins_agree`), and `scripts/media-check.html`. Checking found HEVC
+broken on this laptop when NVIDIA's driver takes the first render node;
+fixed with `web::render_node` (`--render-node-override` to the iGPU). The
+DRM message, GUIDE and CHANGELOG now say protected video works. Details
+under M13 steps 4 and 6. Verified: unit tests, clippy, scripted runs in
+`~/.cache/trailboard-e2e-widevine/` (media check passes; HEVC 8/10-bit
+and HDR play again; screenshots). Not verified: the warning against a
+really different engine, a real DRM service.
+**Repo state:** on `master`, committed (M13 steps 4 and 6).
 **Next up:** M14 step 1, the `config.toml` reader (asked by the owner on
-2026-11-21; format and decisions in M14). For M13: step 4 (Widevine
-trial), then step 6 (keeping current). Bundle with
+2026-11-21; format and decisions in M14). Bundle with
 `CEF_PATH=~/.local/share/cef-standard`. Also retake the README
 screenshots (`docs/images/`) in the new look.
 

@@ -14,3 +14,4 @@ serde_json = "1.0.154"
 
 [dev-dependencies]
 regex = "1.13.1"
+tempfile = "3.27.0"

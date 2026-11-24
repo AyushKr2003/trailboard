@@ -20,6 +20,7 @@ pub mod pager;
 pub mod permission;
 pub mod popup;
 pub mod prefs;
+pub mod render_node;
 pub(crate) mod resources;
 pub mod sandbox;
 pub mod scroll;
@@ -361,10 +362,21 @@ wrap_app! {
     impl App {
         fn on_before_command_line_processing(
             &self,
-            _process_type: Option<&CefStringUtf16>,
+            process_type: Option<&CefStringUtf16>,
             command_line: Option<&mut CommandLine>,
         ) {
             let Some(cl) = command_line else { return };
+            let browser = process_type.is_none_or(|t| t.to_string().is_empty());
+            // Video decoding on the iGPU when NVIDIA's driver holds the first
+            // render node (`render_node`); the GPU process inherits it.
+            let node_switch = CefString::from("render-node-override");
+            if browser && cl.has_switch(Some(&node_switch)) != 1 {
+                let nodes = render_node::render_nodes(Path::new("/sys/class/drm"));
+                if let Some(node) = render_node::override_for(&nodes) {
+                    cl.append_switch_with_value(Some(&node_switch), Some(&CefString::from(node.as_str())));
+                    let _ = RENDER_NODE.set(node);
+                }
+            }
             cl.append_switch(Some(&"no-startup-window".into()));
             cl.append_switch(Some(&"noerrdialogs".into()));
             cl.append_switch(Some(&"hide-crash-restore-bubble".into()));
@@ -423,6 +435,36 @@ pub enum Startup {
 /// `156.0.26+g8ea0c73+chromium-156.0.8078.88`. Needs no running CEF.
 pub fn engine_version() -> &'static str {
     std::ffi::CStr::from_bytes_with_nul(sys::CEF_VERSION).ok().and_then(|c| c.to_str().ok()).unwrap_or("unknown")
+}
+
+static RENDER_NODE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// The render node Trailboard pointed Chromium's video decoding at, when it
+/// did (see `render_node`); for the start log.
+pub fn render_node_override() -> Option<&'static str> {
+    RENDER_NODE.get().map(String::as_str)
+}
+
+/// A CEF version as (major, minor, patch), e.g. (156, 0, 26).
+pub type EngineVersion = (i32, i32, i32);
+
+/// The CEF version this was compiled against (the one `install-cef.sh` pins).
+pub fn built_engine_version() -> EngineVersion {
+    (sys::CEF_VERSION_MAJOR, sys::CEF_VERSION_MINOR, sys::CEF_VERSION_PATCH)
+}
+
+// `libcef.so` exports this; the `cef` crate doesn't wrap it.
+unsafe extern "C" {
+    fn cef_version_info(entry: std::os::raw::c_int) -> std::os::raw::c_int;
+}
+
+/// The version of the `libcef.so` actually loaded, which can differ from
+/// [`built_engine_version`] when the installed engine wasn't updated with
+/// the binary. Asks the library itself, so it needs no running CEF.
+pub fn loaded_engine_version() -> EngineVersion {
+    // SAFETY: a plain query of constants compiled into libcef; entries 0–2
+    // are the CEF major, minor and patch numbers.
+    unsafe { (cef_version_info(0), cef_version_info(1), cef_version_info(2)) }
 }
 
 /// Must run first in `main`. Handles CEF helper subprocesses (which re-execute
@@ -2128,6 +2170,14 @@ pub mod flags {
 
 #[cfg(test)]
 mod tests {
+    /// The engine the tests load is the one at `CEF_PATH`, which the build
+    /// already checked is this version (`cef-dll-sys` reads its archive.json).
+    #[test]
+    fn the_loaded_engine_reports_its_version() {
+        assert_eq!(super::loaded_engine_version(), super::built_engine_version());
+        assert!(super::built_engine_version().0 > 100);
+    }
+
     #[test]
     fn a_paint_is_matched_to_the_view_size_it_was_laid_out_at() {
         use super::paint_css;

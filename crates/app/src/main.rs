@@ -95,6 +95,12 @@ fn main() -> ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,wgpu_core=warn,wgpu_hal=warn,naga=warn"))
         .init();
     log::info!("{}", launch::version_line(&cef_dir()));
+    if let Some(warning) = launch::engine_mismatch(web::built_engine_version(), web::loaded_engine_version()) {
+        log::warn!("{warning}");
+    }
+    if let Some(node) = web::render_node_override() {
+        log::info!("video decoding on {node}: the first render node is NVIDIA's, which has no VA-API");
+    }
     if engine.sandbox().is_on() {
         log::info!("{}", engine.sandbox().describe());
     } else {

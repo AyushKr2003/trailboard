@@ -1,0 +1,140 @@
+<!doctype html>
+<!--
+  Media check for a new engine build (README: "Updating CEF").
+  Open it in a card: trailboard scripts/media-check.html
+  It checks that each codec is supported (canPlayType and Media Source), that
+  Widevine is available, and that a clear H.264/AAC stream and a Widevine
+  stream play. The page title ends as "media check: pass" or
+  "media check: FAIL <what>", so a scripted run can read it from `cards`.
+  Needs the network (the player library and the test streams). Widevine needs
+  Google's module, which Chromium fetches by itself a few minutes after the
+  first start and loads from the start after that.
+-->
+<meta charset=utf-8>
+<title>media check: running</title>
+<style>
+  :root { color-scheme: light dark; --ok: #2e8b57; --bad: #c0392b; --dim: #888; }
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 16px; }
+  table { border-collapse: collapse; margin-bottom: 12px; }
+  td, th { padding: 3px 10px; text-align: left; }
+  th { color: var(--dim); font-weight: 500; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .wait { color: var(--dim); }
+  .players { display: flex; gap: 12px; flex-wrap: wrap; }
+  .players figure { margin: 0; } video { width: 360px; background: #000; }
+  figcaption { font-size: 13px; color: var(--dim); }
+</style>
+<h1>Media check</h1>
+<table id=checks><tr><th>Check<th>Result</table>
+<div class=players>
+  <figure><video id=clear muted playsinline></video><figcaption>H.264 / AAC (clear)</figcaption></figure>
+  <figure><video id=drm muted playsinline></video><figcaption>Widevine (encrypted)</figcaption></figure>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/shaka-player@4.12.0/dist/shaka-player.compiled.js"></script>
+<script>
+'use strict';
+// Public test streams (Shaka's demo assets) and its no-auth licence proxy.
+const CLEAR = 'https://storage.googleapis.com/shaka-demo-assets/angel-one/dash.mpd';
+const WIDEVINE = 'https://storage.googleapis.com/shaka-demo-assets/angel-one-widevine/dash.mpd';
+const LICENCE = 'https://cwip-shaka-proxy.appspot.com/no_auth';
+
+const CODECS = {
+  'H.264': 'video/mp4; codecs="avc1.42E01E"',
+  'AAC': 'audio/mp4; codecs="mp4a.40.2"',
+  'HEVC': 'video/mp4; codecs="hvc1.1.6.L93.B0"',
+  'VP9': 'video/webm; codecs="vp9"',
+  'AV1': 'video/mp4; codecs="av01.0.05M.08"',
+  'Opus': 'audio/webm; codecs="opus"',
+  'MP3': 'audio/mpeg',
+};
+
+const results = new Map(); // name → true / false / undefined (running)
+const details = new Map();
+const rows = new Map();
+function set(name, ok, detail) {
+  results.set(name, ok);
+  details.set(name, detail || '');
+  let row = rows.get(name);
+  if (!row) {
+    row = document.getElementById('checks').insertRow();
+    row.insertCell().textContent = name;
+    row.insertCell();
+    rows.set(name, row);
+  }
+  const cell = row.cells[1];
+  cell.className = ok === undefined ? 'wait' : ok ? 'ok' : 'bad';
+  cell.textContent = (ok === undefined ? '… ' : ok ? '✓ ' : '✗ ') + (detail || '');
+  summarise();
+}
+function summarise() {
+  const all = [...results.values()];
+  if (all.includes(undefined)) return;
+  const failed = [...results].filter(([, ok]) => !ok).map(([n]) => `${n} (${details.get(n)})`);
+  document.title = failed.length ? 'media check: FAIL ' + failed.join('; ') : 'media check: pass';
+}
+
+// Codecs: both the plain <video> answer and Media Source (what streaming sites
+// use). HEVC is answered from the GPU's decoders, which Chromium learns a few
+// seconds after it starts, so a "no" is asked again for up to 15 s.
+const probe = document.createElement('video');
+for (const [name, type] of Object.entries(CODECS)) {
+  const audioOnly = type.startsWith('audio/mpeg'); // MSE doesn't take raw MP3 everywhere
+  const ask = tries => {
+    const can = probe.canPlayType(type);
+    const mse = window.MediaSource ? MediaSource.isTypeSupported(type) : false;
+    const ok = can === 'probably' && (mse || audioOnly);
+    const detail = `canPlayType ${can || 'no'} · MSE ${mse ? 'yes' : 'no'}`;
+    if (ok || tries === 0) return set(name, ok, detail);
+    set(name, undefined, detail + ', asking again');
+    setTimeout(() => ask(tries - 1), 1000);
+  };
+  ask(15);
+}
+
+// Plays: frames must advance for a few seconds.
+function watch(name, video, run) {
+  set(name, undefined, 'loading');
+  const fail = why => set(name, false, why);
+  const timeout = setTimeout(() => fail('no frames after 30 s'), 30000);
+  run().then(() => {
+    video.play().catch(e => fail('play: ' + e.name));
+    const start = performance.now();
+    const tick = setInterval(() => {
+      const frames = video.getVideoPlaybackQuality().totalVideoFrames;
+      if (video.currentTime > 3 && frames > 30) {
+        clearInterval(tick); clearTimeout(timeout);
+        set(name, true, `${frames} frames, ${video.videoWidth}×${video.videoHeight}`);
+      } else if (performance.now() - start > 25000) {
+        clearInterval(tick);
+      } else {
+        set(name, undefined, `${video.currentTime.toFixed(1)} s`);
+      }
+    }, 500);
+  }, e => { clearTimeout(timeout); fail('load: ' + (e.code || e.message || e)); });
+}
+
+function player(video) {
+  const p = new shaka.Player();
+  return p.attach(video).then(() => p);
+}
+
+if (!window.shaka) {
+  set('Player library', false, 'could not load (no network?)');
+} else {
+  shaka.polyfill.installAll();
+  const clear = document.getElementById('clear');
+  watch('Plays H.264/AAC stream', clear, () => player(clear).then(p => p.load(CLEAR)));
+
+  set('Widevine available', undefined);
+  navigator.requestMediaKeySystemAccess('com.widevine.alpha', [{
+    initDataTypes: ['cenc'],
+    videoCapabilities: [{ contentType: CODECS['H.264'] }],
+  }]).then(() => {
+    set('Widevine available', true, 'com.widevine.alpha');
+    const drm = document.getElementById('drm');
+    watch('Plays Widevine stream', drm, () => player(drm).then(p => {
+      p.configure({ drm: { servers: { 'com.widevine.alpha': LICENCE } } });
+      return p.load(WIDEVINE);
+    }));
+  }, e => set('Widevine available', false, e.name + ' (module not fetched yet? start again in a few minutes)'));
+}
+</script>

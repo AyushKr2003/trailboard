@@ -176,6 +176,44 @@ a chain of up to eight jobs, each resuming from the last one's checkpoint.
 
 </details>
 
+<details>
+<summary><b>Updating CEF</b></summary>
+
+Chromium ships security fixes every few weeks; an engine left behind
+misses them. For each new CEF release that the `cef` crate supports:
+
+1. **Bump the crate** in `crates/web/Cargo.toml`.
+2. **Standard pins.** In `scripts/install-cef.sh` set `CEF_VERSION`,
+   `STD_SHA1` and `STD_SHA256` (from CEF's build index), and in
+   `packaging/arch/PKGBUILD` `_cef`, the top `_cefsha1` and the standard
+   `_cefsha256`.
+3. **Media build.** On `cef-build`, set `CEF_BRANCH`, `CEF_COMMIT` and
+   `CEF_SHORT` in `cef.conf` and push; wait for the release
+   `cef-<version>-media` (about 10 hours). Put its tag, `.sha1` and
+   `.sha256` in `install-cef.sh` (`COD_TAG`, `COD_SHA1`, `COD_SHA256`) and
+   the PKGBUILD's media branch.
+4. **`cargo test`.** `engine_pins_agree` fails if the crate, the script
+   and the PKGBUILD disagree on the version, the release tag or a checksum.
+5. **Install** with `scripts/install-cef.sh --codecs --force` (and
+   `--standard` into `~/.local/share/cef-standard` for bundles), then
+   `cargo build`.
+6. **Check it starts right.** `trailboard --version` names the new CEF and
+   `media build`; the start log has no "installed CEF is older/newer"
+   warning.
+7. **Media check.** Serve the page from localhost (Widevine needs a real
+   origin, not `file://`) and open it in a card:
+   `python3 -m http.server -d scripts 8000` and
+   `trailboard http://localhost:8000/media-check.html`. The card's title
+   should end `media check: pass`: H.264, AAC, HEVC, VP9, AV1, Opus and MP3
+   supported, a clear stream and a Widevine stream play. Widevine fails on
+   a new profile's first start (Chromium fetches the module a few minutes
+   in; it loads from the next start).
+8. **Smoke test** a real site: a YouTube video with sound, `,,` to pause,
+   `,f` full window.
+9. Note the new engine in `CHANGELOG.md`.
+
+</details>
+
 ## Keys you need
 
 | Key | Does |

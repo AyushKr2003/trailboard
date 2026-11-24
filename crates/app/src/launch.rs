@@ -72,6 +72,24 @@ pub fn version_line(cef_dir: &Path) -> String {
     line
 }
 
+/// What the start log warns when the loaded engine isn't the CEF version
+/// this binary was built for (the one `scripts/install-cef.sh` pins):
+/// usually an engine left behind by an update. `None` when they match.
+pub fn engine_mismatch(built: web::EngineVersion, loaded: web::EngineVersion) -> Option<String> {
+    let v = |(a, b, c): web::EngineVersion| format!("{a}.{b}.{c}");
+    let how = match loaded.cmp(&built) {
+        std::cmp::Ordering::Equal => return None,
+        std::cmp::Ordering::Less => "older than",
+        std::cmp::Ordering::Greater => "newer than",
+    };
+    Some(format!(
+        "the installed CEF {} is {how} the {} this Trailboard was built for; \
+         install the matching one with scripts/install-cef.sh (--codecs for the media build)",
+        v(loaded),
+        v(built),
+    ))
+}
+
 /// Which CEF build is installed: CEF's standard download, or a media build
 /// with the patent-licensed codecs (H.264, AAC, HEVC). Read from the
 /// `archive.json` that `scripts/install-cef.sh` and the packages write
@@ -182,6 +200,58 @@ mod tests {
         assert_eq!(target("sub", &root, &Settings::default()), Some(format!("{base}/sub")));
         // A missing file that looks like a host is a host, as typed.
         assert_eq!(target("missing.html", &root, &Settings::default()).as_deref(), Some("https://missing.html"));
+    }
+
+    #[test]
+    fn engine_mismatch_names_both_versions() {
+        assert_eq!(engine_mismatch((156, 0, 26), (156, 0, 26)), None);
+        let old = engine_mismatch((156, 0, 26), (156, 0, 20)).unwrap();
+        assert!(old.contains("CEF 156.0.20 is older than the 156.0.26"), "{old}");
+        assert!(old.contains("scripts/install-cef.sh"));
+        let new = engine_mismatch((156, 0, 26), (157, 0, 1)).unwrap();
+        assert!(new.contains("157.0.1 is newer than"), "{new}");
+        // Compared as numbers, not text: 156.0.9 is older than 156.0.26.
+        assert!(engine_mismatch((156, 0, 26), (156, 0, 9)).unwrap().contains("older"));
+    }
+
+    /// The value of `name=…` (quotes and a trailing `# comment` dropped) in a
+    /// shell file, from its first such line.
+    fn shell_var<'a>(file: &'a str, name: &str) -> &'a str {
+        let prefix = format!("{name}=");
+        let line = file.lines().map(str::trim).find(|l| l.starts_with(&prefix)).unwrap_or_else(|| panic!("no {name}="));
+        let value = line[prefix.len()..].split(" #").next().unwrap().trim();
+        value.trim_matches('"')
+    }
+
+    /// The engine pins live in three places that must move together (see
+    /// "Updating CEF" in the README): the `cef` crate this is built with,
+    /// `scripts/install-cef.sh` and the Arch PKGBUILD.
+    #[test]
+    fn engine_pins_agree() {
+        let script = include_str!("../../../scripts/install-cef.sh");
+        let pkgbuild = include_str!("../../../packaging/arch/PKGBUILD");
+        let built = web::engine_version();
+        let (major, minor, patch) = web::built_engine_version();
+        let tag = format!("cef-{major}.{minor}.{patch}-media");
+
+        assert_eq!(shell_var(script, "CEF_VERSION"), built, "install-cef.sh pins another CEF than the cef crate");
+        assert_eq!(shell_var(pkgbuild, "_cef"), built, "the PKGBUILD pins another CEF than the cef crate");
+        assert_eq!(shell_var(script, "COD_TAG"), tag, "install-cef.sh's media release isn't this version's");
+        assert!(pkgbuild.contains(&format!("/releases/download/{tag}/")), "the PKGBUILD's media release isn't {tag}");
+
+        // Same checksums in both. The PKGBUILD sets the standard SHA-1 at
+        // the top and the media pins in its first branch, the standard
+        // SHA-256 in its second.
+        let all = |v: &str| -> Vec<&str> {
+            pkgbuild
+                .lines()
+                .map(str::trim)
+                .filter_map(|l| l.strip_prefix(&format!("{v}=")))
+                .map(|x| x.split(" #").next().unwrap().trim().trim_matches('"'))
+                .collect()
+        };
+        assert_eq!(all("_cefsha1"), [shell_var(script, "STD_SHA1"), shell_var(script, "COD_SHA1")]);
+        assert_eq!(all("_cefsha256"), [shell_var(script, "COD_SHA256"), shell_var(script, "STD_SHA256")]);
     }
 
     #[test]

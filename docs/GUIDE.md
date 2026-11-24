@@ -272,9 +272,13 @@ video or audio, whatever the site: the one playing, else the largest one
 in view, in the page or an embedded player. When a page goes full screen
 (its player's full screen button, or `,f`), the card goes Solo and the video
 fills the window; Esc brings both back. If a video can't play, a message
-says why: its format isn't one the engine plays, or it's protected (DRM),
-which Trailboard doesn't support yet. There is no outside player to hand
-it to.
+says why: its format isn't one the engine plays, or it's protected (DRM)
+and wasn't unlocked. There is no outside player to hand it to.
+
+**Protected video** (Widevine) plays with the media build. Chromium fetches
+Google's module by itself a few minutes after a profile's first start, and
+loads it from the start after that. Linux gets Widevine's software level,
+so some services cap such video below HD or refuse it.
 
 Every card kept awake is a whole browser, so keep an eye on how many you keep.
 

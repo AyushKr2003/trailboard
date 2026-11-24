@@ -26,8 +26,18 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
   (its player's button, or `,f`), its card goes Solo; Esc brings back
   the page and the board as they were.
 - **A message when a video can't play**: its format isn't one the engine
-  plays, or it's protected (DRM), which isn't supported yet, instead of a
+  plays, or it's protected (DRM) and wasn't unlocked, instead of a
   player stuck at 0:00 with no word why.
+- **Protected video (Widevine) plays** in the media build, at the
+  software level Linux gets (HD on some services needs more). Chromium
+  fetches Google's module by itself a few minutes after the first start;
+  it works from the start after that.
+- **Engine checks.** The start log warns when the installed CEF is older
+  or newer than the one this Trailboard was built for, and says how to
+  install the right one. `scripts/media-check.html` checks a new engine's
+  codecs, Widevine and playback in one card; the README's *Updating CEF*
+  lists the steps for each engine update, and a test fails when the pins
+  in the install script and the Arch package disagree.
 
 ### Changed
 
@@ -113,6 +123,13 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
   turning at rounded right angles, and the page it opened, glowing amber.
 
 ### Fixed
+
+- **HEVC on laptops with an NVIDIA GPU.** When NVIDIA's driver held the
+  first render node, Chromium found no hardware video decoder: HEVC didn't
+  play at all and H.264, VP9 and AV1 fell back to the processor.
+  Trailboard now points video decoding at the Intel or AMD GPU in that
+  case (the start log says so); `--render-node-override=` on the command
+  line still wins.
 
 - **Link hints reach controls inside a focusable region.** A page that
   wraps its content in a block with `tabindex` (a repository page's file

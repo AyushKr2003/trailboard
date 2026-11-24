@@ -315,7 +315,10 @@ pub fn clock(seconds: f64) -> String {
 pub enum Trouble {
     /// The format isn't one this engine decodes.
     Format,
-    /// It needs a DRM module (Widevine), which isn't there.
+    /// It's protected (DRM) and wasn't unlocked: Widevine isn't loaded yet
+    /// (Chromium fetches it a few minutes after a profile's first start and
+    /// loads it from the next start), or the site wants more than the
+    /// software level Linux has.
     Drm,
 }
 
@@ -333,7 +336,7 @@ impl Trouble {
         let on = if site.is_empty() { String::new() } else { format!(" on {site}") };
         match self {
             Trouble::Format => format!("A video{on} can't play: its format isn't one Trailboard plays"),
-            Trouble::Drm => format!("A video{on} can't play: it's protected (DRM), which Trailboard doesn't support yet"),
+            Trouble::Drm => format!("A video{on} can't play: it's protected (DRM) and wasn't unlocked. On a new profile, restart Trailboard in a few minutes"),
         }
     }
 }

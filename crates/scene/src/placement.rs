@@ -6,8 +6,22 @@ use std::collections::BTreeSet;
 
 use crate::{Node, NodeId, Rect, Scene, Vec2, HEADER_H};
 
-/// Horizontal and vertical gap between cards, in world units.
+/// Gap between cards side by side, in world units.
 pub const GAP: f32 = 60.0;
+
+/// Gap between cards one above the other, in world units: room for the
+/// card's label, which sits above it at a fixed size on screen (32 px with
+/// its gap), so it doesn't cover the card above down to a zoom of about
+/// 0.27, below where every card shows its label (owner, 2026-11-25).
+pub const GAP_Y: f32 = 120.0;
+
+/// The room `n` keeps clear around it: half a gap each side, so two cards
+/// whose rooms don't meet are at least a gap apart (less a unit for rounding).
+fn room(n: &Node) -> Rect {
+    let f = n.frame();
+    let (mx, my) = (GAP / 2.0 - 1.0, GAP_Y / 2.0 - 1.0);
+    Rect::new(f.x - mx, f.y - my, f.w + 2.0 * mx, f.h + 2.0 * my)
+}
 
 /// Width and height ratios a card may take from the screen: from a tall
 /// portrait screen (9:21) to a very wide one (32:9). Anything outside is
@@ -55,10 +69,10 @@ pub fn beside_skipping(scene: &Scene, src: &Node, w: f32, h: f32, skip: &BTreeSe
     for _ in 0..256 {
         let candidate = Rect::new(x, y, size.0, size.1);
         let frame = Rect::new(candidate.x, candidate.y - HEADER_H, candidate.w, candidate.h + HEADER_H);
-        let blocking = scene.nodes().filter(|n| !skip.contains(&n.id) && n.frame().inflate(GAP / 2.0 - 1.0).intersects(&frame));
+        let blocking = scene.nodes().filter(|n| !skip.contains(&n.id) && room(n).intersects(&frame));
         match blocking.map(|n| n.rect.bottom()).reduce(f32::max) {
             None => return candidate,
-            Some(blocking_bottom) => y = blocking_bottom + GAP + HEADER_H,
+            Some(blocking_bottom) => y = blocking_bottom + GAP_Y + HEADER_H,
         }
     }
     Rect::new(x, y, size.0, size.1)
@@ -69,7 +83,7 @@ pub fn free_near(scene: &Scene, center: crate::Vec2, w: f32, h: f32) -> Rect {
     let mut r = Rect::new(center.x - w / 2.0, center.y - h / 2.0, w, h);
     for _ in 0..256 {
         let frame = Rect::new(r.x, r.y - HEADER_H, r.w, r.h + HEADER_H);
-        match scene.nodes().find(|n| n.frame().inflate(GAP / 2.0 - 1.0).intersects(&frame)) {
+        match scene.nodes().find(|n| room(n).intersects(&frame)) {
             None => return r,
             Some(n) => r.x = n.rect.right() + GAP,
         }
@@ -82,7 +96,7 @@ pub fn free_near(scene: &Scene, center: crate::Vec2, w: f32, h: f32) -> Rect {
 pub fn left_of(scene: &Scene, src: &Node, w: f32, h: f32) -> Rect {
     let r = Rect::new(src.rect.x - GAP - w, src.rect.y, w, h);
     let frame = Rect::new(r.x, r.y - HEADER_H, r.w, r.h + HEADER_H);
-    if scene.nodes().any(|n| n.frame().inflate(GAP / 2.0 - 1.0).intersects(&frame)) {
+    if scene.nodes().any(|n| room(n).intersects(&frame)) {
         free_near(scene, src.rect.center(), w, h)
     } else {
         r
@@ -92,6 +106,19 @@ pub fn left_of(scene: &Scene, src: &Node, w: f32, h: f32) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cards_one_above_the_other_leave_room_for_a_label() {
+        let mut s = Scene::new();
+        let a = s.add_page(Rect::new(0.0, 0.0, 400.0, 300.0), "a");
+        let b = s.spawn_beside(a, "b").unwrap();
+        let c = s.spawn_beside(a, "c").unwrap();
+        let (rb, rc) = (s.node(b).unwrap().rect, s.node(c).unwrap().rect);
+        assert_eq!(rc.x, rb.x);
+        assert_eq!(rc.y, rb.bottom() + GAP_Y);
+        // Side by side, the narrower gap.
+        assert_eq!(rb.x, 400.0 + GAP);
+    }
 
     #[test]
     fn cards_take_the_shape_of_a_full_window_then_the_screen_then_16_9() {

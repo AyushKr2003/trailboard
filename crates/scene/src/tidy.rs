@@ -15,10 +15,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::placement::GAP;
+use crate::placement::{GAP, GAP_Y};
 use crate::{Node, NodeId, Rect, Scene, Vec2};
 
-/// Extra space between two trails, on top of [`GAP`].
+/// Extra space between two trails, on top of [`GAP_Y`].
 pub const TRAIL_GAP: f32 = GAP;
 
 /// New content rects for every card, in id order. Cards that already sit where
@@ -37,7 +37,7 @@ pub fn tidy(scene: &Scene) -> Vec<(NodeId, Rect)> {
     for tree in &trails {
         let (w, h) = layout_tree(tree, &nodes, &parent, Vec2::new(origin.x, y), &mut out);
         widest = widest.max(w);
-        y += h + GAP + TRAIL_GAP;
+        y += h + GAP_Y + TRAIL_GAP;
     }
 
     // Lone cards in rows.
@@ -51,7 +51,7 @@ pub fn tidy(scene: &Scene) -> Vec<(NodeId, Rect)> {
             let f = n.frame();
             if x > origin.x && x - origin.x + f.w > limit + 0.5 {
                 x = origin.x;
-                y += row_h + GAP;
+                y += row_h + GAP_Y;
                 row_h = 0.0;
             }
             out.insert(n.id, Rect::new(x, y + n.header_h(), n.rect.w, n.rect.h));
@@ -166,7 +166,7 @@ fn layout_tree(
     }
     let mut band: BTreeMap<NodeId, f32> = BTreeMap::new();
     for &id in tree.iter().rev() {
-        let below = kids.get(&id).map_or(0.0, |k| k.iter().map(|c| band[c]).sum::<f32>() + GAP * (k.len() - 1) as f32);
+        let below = kids.get(&id).map_or(0.0, |k| k.iter().map(|c| band[c]).sum::<f32>() + GAP_Y * (k.len() - 1) as f32);
         band.insert(id, nodes[&id].frame().h.max(below));
     }
 
@@ -179,7 +179,7 @@ fn layout_tree(
         let mut cy = y;
         for c in kids.get(&id).into_iter().flatten() {
             top.insert(*c, cy);
-            cy += band[c] + GAP;
+            cy += band[c] + GAP_Y;
         }
     }
     (width, band[&tree[0]])
@@ -269,6 +269,21 @@ mod tests {
         assert_eq!(n(d).y, n(c).y);
         // Sizes unchanged.
         assert_eq!((n(b).w, n(b).h), (1000.0, 400.0));
+    }
+
+    #[test]
+    fn siblings_and_trails_leave_room_for_labels() {
+        let mut s = Scene::new();
+        let a = s.add_page(Rect::new(0.0, 0.0, 400.0, 300.0), "a");
+        let b = s.spawn_beside(a, "b").unwrap();
+        let c = s.spawn_beside(a, "c").unwrap();
+        let x = s.add_page(Rect::new(0.0, 5000.0, 400.0, 300.0), "x");
+        s.spawn_beside(x, "y").unwrap();
+        let t = tidy(&s);
+        apply(&mut s, &t);
+        let r = |id| s.node(id).unwrap().rect;
+        assert_eq!(r(c).y, r(b).bottom() + GAP_Y);
+        assert_eq!(r(x).y, r(c).bottom() + GAP_Y + TRAIL_GAP);
     }
 
     #[test]

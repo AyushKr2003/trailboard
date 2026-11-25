@@ -78,6 +78,11 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
 
 ### Changed
 
+- **Cards one above the other leave room for the title.** New cards and
+  Tidy put more space between cards stacked in a column (120 units
+  instead of 60; side by side is unchanged), so a card's title no longer
+  covers the card above it, down to well past the zoom where every card
+  shows its title. Press T to space out a board made before.
 - **HEVC checked on the GPU.** HEVC 8- and 10-bit (HDR10 too, shown in
   SDR), H.264, VP9 and AV1 all decode through VA-API on the Intel iGPU in
   the media build, with no extra switches.

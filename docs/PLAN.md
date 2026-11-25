@@ -754,6 +754,14 @@ any cards can be made a trail.
   yet clickable. Save as Markdown: a `See also:` item under the card.
   **Board format 8**, so an older build refuses a board with links
   rather than dropping them. Checked by `run13.sh` (`s13-*`).
+- **Room for labels between stacked cards** (owner, 2026-11-25: a card's
+  title covered the card above). A label is a fixed 32 px on screen, so
+  no board gap fits it at every zoom; of the choices (label moves onto
+  its own card, label shrinks into the gap, wider gaps) the owner chose
+  wider gaps: `placement::GAP_Y` = 120 between cards one above the other
+  (new cards and Tidy; side by side stays `GAP` = 60). Labels fit down to
+  a zoom of about 0.27. Older boards keep their places until T.
+  Checked by `run14.sh` (`s14-gapbefore/gapafter.png`).
 
 ### M16: Lighter and quieter ⬜
 
@@ -899,7 +907,9 @@ the owner's board shape (`run13.sh`: link by letters, fold the top
 trail, cut the link with Shift+A, Ctrl+Alt+drag and undo) with
 screenshots `s13-linkletters/linked/linkfold/linkside.png` checked. Not
 verified: Ctrl+Alt+drag by hand, the sidebar link icon isn't clickable
-yet.
+yet. Then: **room for labels between stacked cards** (`GAP_Y`, see the
+M15 decisions): unit tests for placement and Tidy, and `run14.sh` before
+and after T with screenshots.
 
 **Next up:** M14 step 1, the `config.toml` reader (asked by the owner on
 2026-11-21; format and decisions in M14). Bundle with

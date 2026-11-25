@@ -1,0 +1,227 @@
+name: Bench
+
+# Trailboard against other browsers, on one runner. The same file is on
+# master and on bench: a push to master measures that commit; a push to bench
+# (the tools) measures master. Tools and results live on the bench branch
+# (results/, and the GitHub Pages chart); see its README.md.
+
+on:
+  push:
+    branches: [master, bench]
+    paths-ignore: ["results/**", "README.md", "docs/**", "CHANGELOG.md"]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Trailboard commit, branch or tag"
+        default: master
+      cases:
+        description: "Cases, comma-separated (idle,still,video-vp9,video-av1,video-h264,pan)"
+        default: all
+      only:
+        description: "Programs to run, comma-separated (empty: every browser)"
+        default: ""
+      runs:
+        description: "Runs per program"
+        default: "3"
+      settle:
+        description: "Seconds to load before measuring"
+        default: "25"
+      sample:
+        description: "Seconds measured"
+        default: "30"
+      save:
+        description: "Save the results and update the chart"
+        type: boolean
+        default: true
+
+concurrency:
+  group: bench
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+env:
+  REF: ${{ github.ref_name == 'master' && github.sha || inputs.ref || 'master' }}
+  CASES: ${{ inputs.cases || 'all' }}
+  ONLY: ${{ inputs.only || '' }}
+  RUNS: ${{ inputs.runs || '3' }}
+  SETTLE: ${{ inputs.settle || '25' }}
+  SAMPLE: ${{ inputs.sample || '30' }}
+  SAVE: ${{ github.event_name != 'workflow_dispatch' || inputs.save }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    outputs:
+      sha: ${{ steps.meta.outputs.sha }}
+      version: ${{ steps.meta.outputs.version }}
+      date: ${{ steps.meta.outputs.date }}
+      cases: ${{ steps.meta.outputs.cases }}
+      cef_key: ${{ steps.cefkey.outputs.key }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: bench, path: bench }
+      - uses: actions/checkout@v4
+        with: { repository: "${{ github.repository }}", ref: "${{ env.REF }}", path: tb }
+      - name: Build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake ninja-build pkg-config libxkbcommon-dev libwayland-dev \
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev libvulkan-dev ffmpeg
+      - uses: dtolnay/rust-toolchain@stable
+      - id: cefkey
+        run: echo "key=cef-media-${{ hashFiles('tb/scripts/install-cef.sh') }}" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.local/share/cef
+          key: ${{ steps.cefkey.outputs.key }}
+      - name: CEF (media build)
+        run: |
+          [ -f ~/.local/share/cef/libcef.so ] || tb/scripts/install-cef.sh --codecs
+          mkdir -p tb/.cargo
+          cat > tb/.cargo/config.toml <<EOF
+          [env]
+          CEF_PATH = "$HOME/.local/share/cef"
+          [target.x86_64-unknown-linux-gnu]
+          rustflags = ["-C", "link-arg=-Wl,-rpath,$HOME/.local/share/cef"]
+          EOF
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: tb }
+      - name: Build Trailboard
+        run: cd tb && cargo build --release -p trailboard
+      - id: meta
+        run: |
+          echo "sha=$(git -C tb rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "version=$(tb/target/release/trailboard --version 2>/dev/null | head -1)" >> "$GITHUB_OUTPUT"
+          echo "date=$(date -u +%Y%m%d-%H%M)" >> "$GITHUB_OUTPUT"
+          if [ "$CASES" = all ]; then c='["idle","still","video-vp9","video-av1","video-h264","pan"]'
+          else c=$(python3 -c 'import json,os; print(json.dumps(os.environ["CASES"].split(",")))'); fi
+          echo "cases=$c" >> "$GITHUB_OUTPUT"
+      - name: Test site
+        run: python3 bench/make_site.py site
+      - uses: actions/upload-artifact@v4
+        with: { name: trailboard, path: tb/target/release/trailboard, retention-days: 3 }
+      - uses: actions/upload-artifact@v4
+        with: { name: site, path: site, retention-days: 3 }
+
+  bench:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        case: ${{ fromJSON(needs.build.outputs.cases) }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: bench, path: bench }
+      - uses: actions/download-artifact@v4
+        with: { name: trailboard, path: tbbin }
+      - uses: actions/download-artifact@v4
+        with: { name: site, path: site }
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/.local/share/cef
+          key: ${{ needs.build.outputs.cef_key }}
+          fail-on-cache-miss: true
+      - name: Display and libraries
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y xvfb xdotool ffmpeg dbus-x11 mesa-vulkan-drivers libvulkan1 libgl1-mesa-dri \
+            libnss3 libgbm1 libasound2t64 libatk-bridge2.0-0t64 libcups2t64 libxcomposite1 libxdamage1 \
+            libxrandr2 libpango-1.0-0 libxkbcommon0 libxkbcommon-x11-0 libdrm2 fonts-dejavu fonts-liberation \
+            fonts-noto-color-emoji unzip gnupg
+          # Every browser's own sandbox (user namespaces), as on a desktop.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          chmod +x tbbin/trailboard
+      - name: Browsers
+        if: matrix.case != 'pan'
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          names=""
+          [ -n "$ONLY" ] && names=$(echo "$ONLY" | tr , ' ' | sed 's/\btrailboard\b//')
+          [ -n "$ONLY" ] && [ -z "${names// }" ] && { echo '{}' > installed.json; exit 0; }
+          sudo -E python3 bench/install.py $names --out installed.json
+      - name: Measure
+        run: |
+          Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &
+          export DISPLAY=:99
+          sleep 2
+          meta=$(python3 - <<EOF
+          import json
+          print(json.dumps({"date": "${{ needs.build.outputs.date }}", "trailboard_sha": "${{ needs.build.outputs.sha }}",
+            "run_id": "${{ github.run_id }}", "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "repo": "${{ github.repository }}", "runs": int("$RUNS"),
+            "runner": "$(nproc) × $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs), $(free -g | awk '/Mem/{print $2}') GB"}))
+          EOF
+          )
+          dbus-run-session -- python3 bench/run.py --case "${{ matrix.case }}" \
+            --trailboard tbbin/trailboard --trailboard-version "${{ needs.build.outputs.version }}" \
+            --installed installed.json --site site --runs "$RUNS" --settle "$SETTLE" --sample "$SAMPLE" \
+            --only "$ONLY" --out "rows-${{ matrix.case }}.jsonl" --shots "shots/${{ matrix.case }}" --meta "$meta"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: "rows-${{ matrix.case }}", path: "rows-${{ matrix.case }}.jsonl", retention-days: 14 }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: "shots-${{ matrix.case }}", path: shots, retention-days: 14 }
+
+  report:
+    needs: [build, bench]
+    if: always() && needs.build.result == 'success'
+    runs-on: ubuntu-24.04
+    outputs:
+      regressed: ${{ steps.report.outputs.regressed }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: bench, path: bench }
+      - uses: actions/download-artifact@v4
+        with: { pattern: "rows-*", path: rows, merge-multiple: true }
+      - id: report
+        run: |
+          cat rows/*.jsonl > new.jsonl
+          set +e
+          python3 bench/report.py new.jsonl --results bench/results --pages pages-out
+          echo "regressed=$([ $? -eq 1 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - name: Save the results
+        if: env.SAVE == 'true'
+        run: |
+          cd bench
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add results
+          git commit -m "results: trailboard ${{ needs.build.outputs.sha }} (run ${{ github.run_id }})" || exit 0
+          for i in 1 2 3; do git pull --rebase -q origin bench && git push -q origin HEAD:bench && break; sleep 5; done
+      - uses: actions/upload-pages-artifact@v3
+        if: env.SAVE == 'true'
+        with: { path: pages-out }
+
+  pages:
+    needs: report
+    if: always() && needs.report.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.save)
+    runs-on: ubuntu-24.04
+    # Pages must be set to "GitHub Actions" in the repository settings; until
+    # then (or if the branch may not deploy) the results are still saved.
+    continue-on-error: true
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+  verdict:
+    needs: [report, pages]
+    if: always() && needs.report.result == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Regression check
+        run: |
+          if [ "${{ needs.report.outputs.regressed }}" = true ]; then
+            echo "::error::Trailboard got more than 20 % worse than the last run; see the summary."
+            exit 1
+          fi

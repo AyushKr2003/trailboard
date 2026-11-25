@@ -1,0 +1,6 @@
+site/
+pages-out/
+__pycache__/
+installed.json
+rows/
+shots/

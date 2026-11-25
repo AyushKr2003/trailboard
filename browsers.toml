@@ -1,0 +1,170 @@
+# The browsers Trailboard is measured against. Each runs in a private
+# window with a throwaway profile (made and deleted per run by run.py).
+#
+#   family   how run.py starts it: chromium | gecko | epiphany | falkon | qutebrowser
+#   bin      the program (a glob is resolved after installing)
+#   private  chromium family only: the private-window switch (default --incognito)
+#   install  bash, run as root by install.py; helpers there: gh_get, apt_repo
+#   engine   shown in the results
+#
+# A browser whose install fails is left out of that run (and says so in the
+# summary); it never fails the workflow.
+
+[chrome]
+engine = "Blink"
+family = "chromium"
+bin = "google-chrome"
+install = """
+command -v google-chrome || {
+  curl -fsSLo /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+  apt-get install -y /tmp/chrome.deb
+}
+"""
+
+[chromium]
+engine = "Blink"
+family = "chromium"
+bin = "/opt/chromium/chrome-linux/chrome"
+install = """
+rev=$(curl -fsSL https://storage.googleapis.com/chromium-browser-snapshots/Linux_x64/LAST_CHANGE)
+curl -fsSLo /tmp/chromium.zip "https://storage.googleapis.com/chromium-browser-snapshots/Linux_x64/$rev/chrome-linux.zip"
+rm -rf /opt/chromium && unzip -q /tmp/chromium.zip -d /opt/chromium
+"""
+
+[edge]
+engine = "Blink"
+family = "chromium"
+bin = "microsoft-edge"
+private = "--inprivate"
+install = """
+command -v microsoft-edge || {
+  apt_repo microsoft-edge https://packages.microsoft.com/keys/microsoft.asc \
+    "https://packages.microsoft.com/repos/edge stable main"
+  apt-get install -y microsoft-edge-stable
+}
+"""
+
+[brave]
+engine = "Blink"
+family = "chromium"
+bin = "brave-browser"
+install = """
+apt_repo brave https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg \
+  "https://brave-browser-apt-release.s3.brave.com/ stable main"
+apt-get install -y brave-browser
+"""
+
+[vivaldi]
+engine = "Blink"
+family = "chromium"
+bin = "vivaldi-stable"
+install = """
+apt_repo vivaldi https://repo.vivaldi.com/archive/linux_signing_key.pub \
+  "https://repo.vivaldi.com/archive/deb/ stable main"
+apt-get install -y vivaldi-stable
+"""
+
+[opera]
+engine = "Blink"
+family = "chromium"
+bin = "opera"
+private = "--private"
+install = """
+echo "opera-stable opera-stable/add-deb-source boolean false" | debconf-set-selections
+apt_repo opera https://deb.opera.com/archive.key "https://deb.opera.com/opera-stable/ stable non-free"
+apt-get install -y opera-stable
+"""
+
+[thorium]
+engine = "Blink"
+family = "chromium"
+bin = "thorium-browser"
+install = """
+gh_get Alex313031/thorium '_AVX2\\.deb$' /tmp/thorium.deb
+apt-get install -y /tmp/thorium.deb
+"""
+
+[ungoogled-chromium]
+engine = "Blink"
+family = "chromium"
+bin = "/opt/ungoogled/*/chrome"
+install = """
+gh_get ungoogled-software/ungoogled-chromium-portablelinux 'x86_64_linux\\.tar\\.xz$' /tmp/ungoogled.tar.xz
+rm -rf /opt/ungoogled && mkdir -p /opt/ungoogled && tar -xf /tmp/ungoogled.tar.xz -C /opt/ungoogled
+"""
+
+[firefox]
+engine = "Gecko"
+family = "gecko"
+bin = "firefox"
+install = """
+command -v firefox || {
+  apt_repo mozilla https://packages.mozilla.org/apt/repo-signing-key.gpg "https://packages.mozilla.org/apt mozilla main"
+  apt-get install -y firefox
+}
+"""
+
+[zen]
+engine = "Gecko"
+family = "gecko"
+bin = "/opt/zen/zen/zen"
+install = """
+curl -fsSLo /tmp/zen.tar.xz https://github.com/zen-browser/desktop/releases/latest/download/zen.linux-x86_64.tar.xz
+rm -rf /opt/zen && mkdir -p /opt/zen && tar -xf /tmp/zen.tar.xz -C /opt/zen
+"""
+
+[librewolf]
+engine = "Gecko"
+family = "gecko"
+bin = "librewolf"
+install = """
+apt-get install -y extrepo
+extrepo enable librewolf
+apt-get update -qq
+apt-get install -y librewolf
+"""
+
+[floorp]
+engine = "Gecko"
+family = "gecko"
+bin = "/opt/floorp/*/floorp"
+install = """
+gh_get floorp-projects/floorp 'linux-(x86_64|amd64)\\.tar\\.(xz|bz2)$' /tmp/floorp.tar
+rm -rf /opt/floorp && mkdir -p /opt/floorp && tar -xf /tmp/floorp.tar -C /opt/floorp
+"""
+
+[waterfox]
+engine = "Gecko"
+family = "gecko"
+bin = "/opt/waterfox/*/waterfox"
+install = """
+gh_get BrowserWorks/waterfox '[Ll]inux.*\\.tar\\.(bz2|xz)$' /tmp/waterfox.tar
+rm -rf /opt/waterfox && mkdir -p /opt/waterfox && tar -xf /tmp/waterfox.tar -C /opt/waterfox
+"""
+
+[palemoon]
+engine = "Goanna"
+family = "gecko"
+bin = "/opt/palemoon/palemoon/palemoon"
+install = """
+curl -fsSLo /tmp/palemoon.tar.xz "https://www.palemoon.org/download.php?mirror=us&bits=64&type=linuxgtk3"
+rm -rf /opt/palemoon && mkdir -p /opt/palemoon && tar -xf /tmp/palemoon.tar.xz -C /opt/palemoon
+"""
+
+[gnome-web]
+engine = "WebKit"
+family = "epiphany"
+bin = "epiphany-browser"
+install = "apt-get install -y epiphany-browser"
+
+[falkon]
+engine = "Blink (Qt WebEngine)"
+family = "falkon"
+bin = "falkon"
+install = "apt-get install -y falkon"
+
+[qutebrowser]
+engine = "Blink (Qt WebEngine)"
+family = "qutebrowser"
+bin = "qutebrowser"
+install = "apt-get install -y qutebrowser"

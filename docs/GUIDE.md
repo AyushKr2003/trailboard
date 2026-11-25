@@ -66,7 +66,7 @@ with *Welcome page* in Ctrl+K.
 | Start page: a search box and the pages you opened last (none in a private space) | *New start page* in Ctrl+K, or *New card opens: Start page* in the settings for Ctrl+T; ↓ from the box walks the pages, Enter opens one in the card |
 | Pin a site to the start page | the pin on a *Jump back in* card, or *Add a site* in a group; a site's ⋯ or right-click edits, moves or unpins it; drag to reorder or move between groups |
 | Open a start page link beside it (with a trail) | Ctrl+click or middle-click; Alt+1–9 opens the first nine pinned sites |
-| Choose what the start page shows (clock and 12/24-hour time, greeting and name, recent cards, groups) | *Customise*, top right of the start page |
+| Choose what the start page shows (clock, 12/24-hour time and seconds, greeting and name, recent cards, groups) | *Customise*, top right of the start page |
 | Settings search | `/` in the settings page, Enter goes to the first match |
 | Palette: find a card (folded ones too, or by words in its page), a card you closed, a page from history, another space or a command | Ctrl+K, type a few letters, ↑/↓ (or Ctrl+N/P) and Enter, or click a row; the last row searches the web or opens what you typed. Shift+Enter (or Shift+click) opens a page from history or the last row beside the current card, joined to it like a link |
 | New note (Markdown) | N (while no page has the keys); click a note to edit, Esc or click away to see it rendered |

@@ -11,6 +11,8 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
 
 ### Added
 
+- **Seconds on the start page clock.** *Customise* → *Show seconds*, under
+  the time format; the clock then ticks each second. Off by default.
 - **Media controls on any site.** `,` then a key, on the board or in a
   page, acts on the current card's video or audio: `,` or Space play /
   pause, h / l 10 s back / on (a count goes further), H / L a minute, 0

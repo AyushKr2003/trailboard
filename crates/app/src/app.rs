@@ -1903,12 +1903,13 @@ impl App {
             return;
         }
         log::info!(
-            "start page: groups {:?}, greeting {} {:?}, clock {} (24h {}), pins {}, recent {}",
+            "start page: groups {:?}, greeting {} {:?}, clock {} (24h {}, seconds {}), pins {}, recent {}",
             start.groups.iter().map(|g| (g.name.as_str(), g.pins.len())).collect::<Vec<_>>(),
             start.show_greeting,
             start.name,
             start.show_clock,
             start.hour24,
+            start.show_seconds,
             start.show_pins,
             start.show_recent
         );

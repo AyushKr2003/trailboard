@@ -1,8 +1,9 @@
 //! The start page's groups and parts (`scene::startpage`), shared by every
 //! space: `$DATA/start.json` =
 //! `{ "version": 2, "groups": [{ "name": "Work", "pins": [{ "title": "", "url": "https://…" }] }],
-//! "show_greeting": true, "name": "", "show_clock": true, "hour24": false, "show_pins": true,
-//! "show_recent": true }`. (`hour24` was added within version 2; files without it read as false.)
+//! "show_greeting": true, "name": "", "show_clock": true, "hour24": false, "show_seconds": false,
+//! "show_pins": true, "show_recent": true }`. (`hour24` and `show_seconds` were added within
+//! version 2; files without them read as false.)
 //!
 //! Version 1 had one flat `pins` list (no groups, no greeting); it is read
 //! as a single group, "Pinned". The start page sends the version 2 shape
@@ -40,6 +41,7 @@ struct StartFile<'a> {
     name: &'a str,
     show_clock: bool,
     hour24: bool,
+    show_seconds: bool,
     show_pins: bool,
     show_recent: bool,
 }
@@ -70,6 +72,7 @@ pub fn from_json(text: &str) -> Option<StartPage> {
         ("show_greeting", &mut s.show_greeting),
         ("show_clock", &mut s.show_clock),
         ("hour24", &mut s.hour24),
+        ("show_seconds", &mut s.show_seconds),
         ("show_pins", &mut s.show_pins),
         ("show_recent", &mut s.show_recent),
     ] {
@@ -109,6 +112,7 @@ pub fn to_json(s: &StartPage) -> String {
         name: &s.name,
         show_clock: s.show_clock,
         hour24: s.hour24,
+        show_seconds: s.show_seconds,
         show_pins: s.show_pins,
         show_recent: s.show_recent,
     };
@@ -146,7 +150,7 @@ mod tests {
     fn round_trip_and_bad_files() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(load_start(dir.path()), StartPage::default());
-        let mut s = StartPage { show_clock: false, hour24: true, name: "Sam".into(), ..StartPage::default() };
+        let mut s = StartPage { show_clock: false, hour24: true, show_seconds: true, name: "Sam".into(), ..StartPage::default() };
         s.pin("https://a.org/", "A \"quoted\" <title>");
         s.pin("https://b.org/", "");
         s.groups.push(Group { name: "Empty".into(), pins: vec![] });
@@ -168,7 +172,7 @@ mod tests {
         )
         .unwrap();
         let s = load_start(dir.path());
-        assert!(!s.show_clock && s.show_greeting && !s.hour24);
+        assert!(!s.show_clock && s.show_greeting && !s.hour24 && !s.show_seconds);
         assert_eq!(s.groups.len(), 1);
         assert_eq!(s.groups[0].name, FIRST_GROUP);
         assert_eq!(s.groups[0].pins.iter().map(|p| p.url.as_str()).collect::<Vec<_>>(), ["https://a.org/", "https://b.org/"]);

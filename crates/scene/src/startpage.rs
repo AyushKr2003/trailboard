@@ -38,6 +38,8 @@ pub struct StartPage {
     pub show_clock: bool,
     /// The clock counts 0–23 instead of 1–12 with AM/PM.
     pub hour24: bool,
+    /// The clock shows seconds too, and ticks each second.
+    pub show_seconds: bool,
     /// The pinned groups.
     pub show_pins: bool,
     /// The last pages opened, as small cards.
@@ -52,6 +54,7 @@ impl Default for StartPage {
             name: String::new(),
             show_clock: true,
             hour24: false,
+            show_seconds: false,
             show_pins: true,
             show_recent: true,
         }

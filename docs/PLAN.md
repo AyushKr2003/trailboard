@@ -24,7 +24,8 @@ feature's behaviour:
   (board, history, search on disk, no account); private by default (ads,
   trackers, cookie banners blocked); fully usable from the keyboard.
 - **Non-goals:** another app's look, branding, server or paid features; sync,
-  accounts, payments, telemetry; macOS/Windows for now.
+  accounts, payments, telemetry; macOS for now. Windows is planned as M17
+  (owner, 2026-11-25), after Linux; Linux stays the first platform.
 
 ## 2. Architecture
 
@@ -65,6 +66,7 @@ app (trailboard)  winit window · input · omnibox · chrome UI · main loop
 | ⬜ | **M14 Config file** | One hand-editable `~/.config/trailboard/config.toml` for settings, key bindings and theme; the UI writes it without losing comments |
 | ✅ | **M15 Custom trails** | Join any card to any trail and cut one out, so a named, coloured trail can be a group of any cards (our tab groups) |
 | ⬜ | **M16 Lighter and quieter** | Cut memory and idle CPU: a measured baseline, then the main process, the main loop, sleeping cards and renderer count |
+| ⬜ | **M17 Windows** | Trailboard on Windows 10 and 11 (x64): the Linux-only parts behind platform seams, CEF for Windows, a Windows CI build, a portable zip; Linux unchanged |
 
 ### Owner decisions that still bind
 
@@ -829,6 +831,94 @@ VA-API driver (`iHD_drv_video.so`).
 
 ---
 
+### M17: Windows ⬜
+
+Asked by the owner on 2026-11-25: run Trailboard on Windows too. Linux
+stays the first platform: every step keeps the Linux build, its tests and
+its behaviour as they are, and nothing on Linux waits for Windows.
+
+**Where things stand.** The building blocks are cross-platform (winit,
+wgpu, CEF, and the pure `scene` and `storage` logic), but the code has no
+`cfg(target_os)` anywhere: it assumes Linux. The Linux-only parts:
+
+- `web::sandbox` (namespaces, setuid `chrome-sandbox`) and
+  `web::render_node` (VA-API's `/dev/dri` nodes).
+- `app::desktop`: the Omarchy theme through inotify, Hyprland's rounding
+  and window size through `hyprctl` and its Unix socket.
+- `app::clipboard` (the Wayland/X11 selections, the primary selection),
+  `app::editor` (`xdg-terminal-exec`, `$EDITOR`), opening files and
+  folders with `xdg-open`.
+- Paths from `XDG_*` variables (`main.rs`, `backdrop.rs`,
+  `storage::downloads`).
+- Install and packaging: `scripts/install-cef.sh` and the PKGBUILD fetch
+  the `linux64` CEF; our media CEF (`cef-build` branch) is built for
+  Linux only; `scripts/bundle.sh` makes a Linux archive.
+
+**Decisions** (taken as defaults; the owner can change them):
+
+- **Windows 10 and 11, x64.** ARM64 later, if asked.
+- **The standard CEF first.** It can't play H.264, AAC or HEVC (as on
+  Linux with `TRAILBOARD_CODECS=0`); a Windows media CEF is step 6.
+  Widevine on Windows needs a signed (VMP) build, which we can't make, so
+  protected video is not promised there.
+- **A portable zip first** (unpack, run `trailboard.exe`). An installer
+  and code signing (without it SmartScreen warns on first run) are the
+  owner's call, at step 7.
+- **Theme:** the fallback theme, light or dark following Windows' own
+  setting, with Windows' accent colour. Corners: *Rounded*; *Follow
+  Hyprland* is hidden.
+- **Data** in `%LOCALAPPDATA%\Trailboard` (board, profile, history),
+  downloads to the user's Downloads folder; `XDG_DATA_HOME` still wins
+  when set, so the e2e runs keep working.
+
+**Open questions for the owner:** a Windows machine or VM to test on
+(this laptop can't check a Windows build; CI only builds and runs unit
+tests); whether to sign the app; an installer or the zip only.
+
+**Steps:**
+
+- ⬜ 1. **Platform seams.** Put each Linux-only part behind a small
+  module with a Linux and a Windows side (`cfg(target_os)`), Windows
+  first as stubs that do nothing harmful: sandbox and render node (none),
+  desktop watching (Windows' light/dark and accent instead of Omarchy,
+  no Hyprland), clipboard (the Windows clipboard; no primary selection),
+  open file/folder (the shell), the editor (`$EDITOR` or Notepad), data
+  and download paths. Linux code moves, it doesn't change: tests and an
+  e2e run show the same behaviour.
+- ⬜ 2. **CEF on Windows.** Fetch the pinned `windows64` minimal build
+  (an `install-cef.ps1`, or a Rust `xtask` that both systems share) and
+  the `.cargo/config.toml` it writes; `libcef.dll` and resources beside
+  the exe; the same exe as CEF's sub-process; `external_message_pump` on
+  the main thread as on Linux. CEF's own sandbox on Windows links
+  `cef_sandbox.lib` into the exe: start without it, then turn it on
+  before the first release. The engine-pin test covers the new script.
+- ⬜ 3. **Window, GPU and input.** wgpu on D3D12 (Vulkan as fallback);
+  high-DPI and per-monitor scale; IME (TSF) through winit; key mapping
+  checked on Windows layouts. **Ctrl+Alt is AltGr** on many keyboards:
+  Ctrl+Alt+drag (link) and any Ctrl+Alt key need another modifier there,
+  decided after a test. The Windows key is the system's, so nothing
+  binds it.
+- ⬜ 4. **CI.** A GitHub Actions `windows-latest` job: `cargo build`,
+  `cargo test`, `cargo clippy` (warning-free), with CEF cached. The Linux
+  job stays as it is.
+- ⬜ 5. **Run it for real.** On a Windows machine: the welcome, opening
+  links beside their source, trails, Fold, Tidy, Solo, downloads, the
+  sidebar, Ctrl+K, find, history and search, ad blocking, saving and
+  reopening a board, a board copied over from Linux (same format). The
+  script runner works there too (`TRAILBOARD_SCRIPT`); screenshots with
+  the system's own tool. Fix what breaks; record what is Windows-only in
+  §7.
+- ⬜ 6. **Media on Windows.** Build our media CEF for Windows in the
+  `cef-build` workflow (a much larger build than Linux; may need bigger
+  runners) and pin it as on Linux; hardware decode through D3D11.
+- ⬜ 7. **Package and docs.** `bundle` for Windows: a zip with the exe,
+  CEF and licences; then the installer and signing if the owner wants
+  them. README: a Windows install section and the badge; GUIDE: Windows
+  differences (keys, paths, what isn't there: Omarchy, Hyprland, primary
+  selection).
+
+---
+
 ## 4. Testing
 
 | Layer | How |
@@ -914,7 +1004,8 @@ and after T with screenshots.
 **Next up:** M14 step 1, the `config.toml` reader (asked by the owner on
 2026-11-21; format and decisions in M14). Bundle with
 `CEF_PATH=~/.local/share/cef-standard`. Also retake the README
-screenshots (`docs/images/`) in the new look, and try Alt+drag by hand.
+screenshots (`docs/images/`) in the new look, and try Alt+drag by hand. Planned since (owner, 2026-11-25): M17 Windows, after M14 and
+M16 (its step 1 changes nothing on Linux, so it could go earlier).
 
 **Backlog:** `:later` lines aren't saved across quits; the messages log is
 this session's only; after Esc clears a find, n starts again from the view;

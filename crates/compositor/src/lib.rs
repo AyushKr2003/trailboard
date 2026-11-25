@@ -157,6 +157,14 @@ pub struct Renderer {
     atlas: TextAtlas,
     text_layers: Vec<TextRenderer>,
     text_cache: HashMap<TextKey, Buffer>,
+    /// Fingerprint of the last frame presented ([`frame_key`]); `None` forces
+    /// the next one.
+    last_frame: Option<u64>,
+    /// Present every frame, changed or not (`TRAILBOARD_REDRAW=always`).
+    pub always_present: bool,
+    /// Frames presented and frames skipped as unchanged, since the start.
+    pub presented: u64,
+    pub skipped: u64,
 }
 
 impl Renderer {
@@ -364,6 +372,10 @@ impl Renderer {
             atlas,
             text_layers: Vec::new(),
             text_cache: HashMap::new(),
+            last_frame: None,
+            always_present: false,
+            presented: 0,
+            skipped: 0,
         })
     }
 
@@ -377,6 +389,13 @@ impl Renderer {
             self.config.height = height;
             self.surface.configure(&self.device, &self.config);
         }
+        self.last_frame = None;
+    }
+
+    /// Present the next frame even if it looks the same (the window was
+    /// exposed, say).
+    pub fn invalidate(&mut self) {
+        self.last_frame = None;
     }
 
     pub fn viewport(&self) -> (f32, f32) {
@@ -425,6 +444,13 @@ impl Renderer {
         self.pages.contains_key(&key)
     }
 
+    /// Textures held by key (pages, and thumbnails and icons drawn as pages) and
+    /// their size in bytes (RGBA, 4 bytes a pixel).
+    pub fn page_texture_bytes(&self) -> (usize, u64) {
+        let bytes = self.pages.values().map(|p| p.size.0 as u64 * p.size.1 as u64 * 4).sum();
+        (self.pages.len(), bytes)
+    }
+
     pub fn remove_page(&mut self, key: u64) {
         self.pages.remove(&key);
     }
@@ -470,7 +496,15 @@ impl Renderer {
         key
     }
 
-    pub fn render(&mut self, bg: Background, layers: &[Layer]) {
+    /// Draw and present a frame. A frame the same as the last one presented
+    /// (same layers, background, size and page pixels) is skipped; returns
+    /// whether it was presented.
+    pub fn render(&mut self, bg: Background, layers: &[Layer]) -> bool {
+        let key = frame_key(self.viewport(), &bg, layers, |k| self.pages.get(&k).map(|p| p.serial));
+        if !self.always_present && self.last_frame == Some(key) {
+            self.skipped += 1;
+            return false;
+        }
         // Trim the shaped-text cache between frames only: clearing it while a
         // frame's texts are being shaped dropped buffers that frame still needed.
         if self.text_cache.len() > 1024 {
@@ -619,9 +653,13 @@ impl Renderer {
             }
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface.configure(&self.device, &self.config);
-                return;
+                self.last_frame = None;
+                return false;
             }
-            _ => return,
+            _ => {
+                self.last_frame = None;
+                return false;
+            }
         };
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("board") });
@@ -661,8 +699,71 @@ impl Renderer {
         self.queue.submit(Some(enc.finish()));
         self.window.pre_present_notify();
         self.queue.present(frame);
+        self.last_frame = Some(key);
+        self.presented += 1;
         self.atlas.trim();
+        true
     }
+}
+
+/// A fingerprint of everything a frame shows: the viewport, the background,
+/// every quad and text in order, and the pixels' serial of each page drawn.
+fn frame_key(viewport: (f32, f32), bg: &Background, layers: &[Layer], serial: impl Fn(u64) -> Option<u64>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    let f = |h: &mut std::collections::hash_map::DefaultHasher, xs: &[f32]| {
+        for x in xs {
+            x.to_bits().hash(h);
+        }
+    };
+    f(&mut h, &[viewport.0, viewport.1, bg.grain, bg.grid_spacing, bg.dot_radius, bg.fine]);
+    f(&mut h, &bg.color);
+    f(&mut h, &bg.color2);
+    f(&mut h, &bg.dot);
+    f(&mut h, &bg.grid_origin);
+    for layer in layers {
+        layer.quads.len().hash(&mut h);
+        for q in &layer.quads {
+            match q.shape {
+                Shape::Rect { rect, radius } => {
+                    0u8.hash(&mut h);
+                    f(&mut h, &[rect.x, rect.y, rect.w, rect.h, radius]);
+                }
+                Shape::RoundBottom { rect, radius } => {
+                    1u8.hash(&mut h);
+                    f(&mut h, &[rect.x, rect.y, rect.w, rect.h, radius]);
+                }
+                Shape::Shadow { rect, radius, blur } => {
+                    2u8.hash(&mut h);
+                    f(&mut h, &[rect.x, rect.y, rect.w, rect.h, radius, blur]);
+                }
+                Shape::Ring { rect, radius, width } => {
+                    3u8.hash(&mut h);
+                    f(&mut h, &[rect.x, rect.y, rect.w, rect.h, radius, width]);
+                }
+                Shape::Segment { from, to, width } => {
+                    4u8.hash(&mut h);
+                    f(&mut h, &[from[0], from[1], to[0], to[1], width]);
+                }
+                Shape::Page { rect, radius, square, extent } => {
+                    5u8.hash(&mut h);
+                    square.hash(&mut h);
+                    f(&mut h, &[rect.x, rect.y, rect.w, rect.h, radius, extent[0], extent[1]]);
+                }
+            }
+            f(&mut h, &q.color);
+            q.texture.hash(&mut h);
+            q.texture.map(&serial).hash(&mut h);
+        }
+        layer.texts.len().hash(&mut h);
+        for t in &layer.texts {
+            t.text.hash(&mut h);
+            t.bold.hash(&mut h);
+            f(&mut h, &[t.pos[0], t.pos[1], t.size, t.clip.x, t.clip.y, t.clip.w, t.clip.h]);
+            f(&mut h, &t.color);
+        }
+    }
+    h.finish()
 }
 
 fn make_tex_bind_group(
@@ -680,4 +781,47 @@ fn make_tex_bind_group(
             wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
         ],
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bg() -> Background {
+        Background {
+            color: [0.1, 0.1, 0.1, 1.0],
+            color2: [0.1, 0.1, 0.1, 1.0],
+            grain: 0.0,
+            dot: [0.5, 0.5, 0.5, 1.0],
+            grid_origin: [0.0, 0.0],
+            grid_spacing: 24.0,
+            dot_radius: 1.0,
+            fine: 0.0,
+        }
+    }
+
+    fn layer(x: f32, texture: Option<u64>, text: &str) -> Layer {
+        let rect = Rect { x, y: 10.0, w: 100.0, h: 50.0 };
+        Layer {
+            quads: vec![Quad { shape: Shape::Page { rect, radius: 8.0, square: 0, extent: [1.0, 1.0] }, color: [1.0; 4], texture }],
+            texts: vec![Text { text: text.into(), pos: [x, 0.0], size: 13.0, color: [1.0; 4], clip: rect, bold: false }],
+        }
+    }
+
+    #[test]
+    fn frame_key_changes_with_what_is_shown() {
+        let serial = |s: u64| move |_k: u64| Some(s);
+        let key = |x: f32, text: &str, s: u64| frame_key((800.0, 600.0), &bg(), &[layer(x, Some(7), text)], serial(s));
+        let same = key(10.0, "a", 1);
+        assert_eq!(same, key(10.0, "a", 1), "the same frame twice");
+        assert_ne!(same, key(10.5, "a", 1), "a quad moved half a pixel");
+        assert_ne!(same, key(10.0, "b", 1), "a label changed");
+        assert_ne!(same, key(10.0, "a", 2), "the page painted");
+        assert_ne!(same, frame_key((801.0, 600.0), &bg(), &[layer(10.0, Some(7), "a")], serial(1)), "the window resized");
+        let mut dark = bg();
+        dark.color = [0.0, 0.0, 0.0, 1.0];
+        assert_ne!(same, frame_key((800.0, 600.0), &dark, &[layer(10.0, Some(7), "a")], serial(1)), "the theme changed");
+        let two = frame_key((800.0, 600.0), &bg(), &[layer(10.0, Some(7), "a"), Layer::default()], serial(1));
+        assert_ne!(same, two, "an empty layer counts");
+    }
 }

@@ -32,6 +32,7 @@ use cef::{args::Args, *};
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc as StdRc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use popup::IRect;
 
@@ -274,6 +275,62 @@ thread_local! {
 
 fn emit(e: WebEvent) {
     EVENTS.with_borrow_mut(|q| q.push(e));
+    note_activity();
+}
+
+// ---------------------------------------------------------------------------
+// When to pump
+// ---------------------------------------------------------------------------
+
+/// The longest CEF goes unpumped even when it asked for nothing (CEF's own
+/// external-pump sample does the same: some work is never scheduled).
+pub const MAX_PUMP_DELAY: std::time::Duration = std::time::Duration::from_millis(33);
+
+/// When CEF next wants [`Engine::pump`], in nanoseconds since [`epoch`];
+/// `u64::MAX` when it asked for nothing. Written from any thread.
+static PUMP_DUE: AtomicU64 = AtomicU64::new(0);
+/// Bumped by every event and every paint, so the app can tell a pump that
+/// changed something from one that didn't.
+static ACTIVITY: AtomicU64 = AtomicU64::new(0);
+static WAKER: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
+
+fn epoch() -> std::time::Instant {
+    static EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    *EPOCH.get_or_init(std::time::Instant::now)
+}
+
+fn nanos_at(t: std::time::Instant) -> u64 {
+    t.saturating_duration_since(epoch()).as_nanos().min(u64::MAX as u128 - 1) as u64
+}
+
+/// Gives `web` a way to wake the app's event loop from any thread (CEF asks
+/// for pump work from its own threads). Set once, before CEF starts.
+pub fn set_waker(wake: Box<dyn Fn() + Send + Sync>) {
+    let _ = WAKER.set(wake);
+}
+
+/// Wakes the app's event loop (from any thread): call after handing the
+/// main thread something through a channel.
+pub fn wake() {
+    if let Some(w) = WAKER.get() {
+        w();
+    }
+}
+
+/// CEF wants pumping in `delay_ms` (0 or less: now). Any thread.
+fn schedule_pump(delay_ms: i64) {
+    let due = std::time::Instant::now() + std::time::Duration::from_millis(delay_ms.max(0) as u64);
+    PUMP_DUE.fetch_min(nanos_at(due), Ordering::AcqRel);
+    wake();
+}
+
+fn note_activity() {
+    ACTIVITY.fetch_add(1, Ordering::Relaxed);
+}
+
+/// A count that grows whenever CEF sent an event or a page painted.
+pub fn activity() -> u64 {
+    ACTIVITY.load(Ordering::Relaxed)
 }
 
 pub fn drain_events() -> Vec<WebEvent> {
@@ -402,6 +459,10 @@ wrap_browser_process_handler! {
         fn on_context_initialized(&self) {
             log::info!("chromium context ready");
             prefs::context_ready();
+        }
+
+        fn on_schedule_message_pump_work(&self, delay_ms: i64) {
+            schedule_pump(delay_ms);
         }
 
         fn on_already_running_app_relaunch(
@@ -539,9 +600,18 @@ impl Engine {
         &self.sandbox
     }
 
-    /// Run pending CEF work. Call often (every loop iteration).
+    /// Run pending CEF work. Call when [`Engine::next_due`] has come, and
+    /// after input was sent to a page.
     pub fn pump(&self) {
+        // Work done now may ask for more (it lowers this again); otherwise
+        // the next pump is the fallback one.
+        PUMP_DUE.store(nanos_at(std::time::Instant::now() + MAX_PUMP_DELAY), Ordering::Release);
         do_message_loop_work();
+    }
+
+    /// When CEF next wants [`Engine::pump`] (in the past: now).
+    pub fn next_due(&self) -> std::time::Instant {
+        epoch() + std::time::Duration::from_nanos(PUMP_DUE.load(Ordering::Acquire))
     }
 
     pub fn shutdown(self) {
@@ -746,6 +816,7 @@ impl Shared {
             popup::blit(&mut f.pixels, (view.width, view.height), &p.pixels, (p.width, p.height), (dev.x, dev.y));
         }
         f.serial += 1;
+        note_activity();
     }
 }
 
@@ -825,6 +896,7 @@ wrap_render_handler! {
                     f.css = view.css;
                     f.pixels = view.pixels;
                     f.serial += 1;
+                    note_activity();
                 }
             }
         }
@@ -864,6 +936,7 @@ wrap_render_handler! {
                 f.pixels.clear();
                 f.pixels.extend_from_slice(src);
                 f.serial += 1;
+                note_activity();
             };
             if type_ == PaintElementType::POPUP {
                 let mut p = sh.popup.borrow_mut();

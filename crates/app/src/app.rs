@@ -134,6 +134,8 @@ const MIN_CARD: f32 = 240.0;
 /// How long a half-typed sequence waits before the panel of what can
 /// follow it shows (typed quickly, `gg` never shows it).
 const PREFIX_PANEL_AFTER: Duration = Duration::from_millis(400);
+/// The longest the event loop sleeps with nothing scheduled (see `App::next_deadline`).
+pub const IDLE_TICK: Duration = Duration::from_millis(250);
 /// How long after a page loads (or retitles itself) its text is read for history.
 const TEXT_SETTLE: Duration = Duration::from_millis(1200);
 /// How long the outline around a newly chosen scroll section shows.
@@ -657,6 +659,13 @@ pub struct App {
     started: Instant,
     script: Option<Script>,
     pub quit: bool,
+    /// The last draw presented a new frame: something may still be moving,
+    /// so the loop draws again at the display's rate.
+    frame_changed: bool,
+    /// A window event came since the loop last asked ([`App::take_event`]).
+    event_seen: bool,
+    /// Present every frame, as before frames were compared (`TRAILBOARD_REDRAW=always`).
+    pub always_redraw: bool,
     data_dir: std::path::PathBuf,
     spaces: SpaceIndex,
     /// False when the space index could not be read safely; nothing is saved then.
@@ -1067,6 +1076,9 @@ impl App {
             started: Instant::now(),
             script: Script::from_env(),
             quit: false,
+            frame_changed: true,
+            event_seen: false,
+            always_redraw: false,
             data_dir,
             spaces: SpaceIndex::default(),
             persist: true,
@@ -10969,7 +10981,8 @@ impl App {
         }
 
         if let Some(r) = self.renderer.as_mut() {
-            r.render(bg, &layers);
+            r.always_present = self.always_redraw;
+            self.frame_changed = r.render(bg, &layers);
         }
     }
 
@@ -11292,9 +11305,47 @@ impl App {
         }
         self.sync_pages();
         self.sync_ime();
+    }
+
+    /// Whether the last frame drawn was new (something is moving).
+    pub fn animating(&self) -> bool {
+        self.frame_changed
+    }
+
+    /// Whether a window event (input, resize, focus…) came since last asked.
+    pub fn take_event(&mut self) -> bool {
+        std::mem::take(&mut self.event_seen)
+    }
+
+    pub fn request_redraw(&self) {
         if let Some(w) = self.window() {
             w.request_redraw();
         }
+    }
+
+    /// The next time something changes without input or a page painting: a
+    /// timer that shows or hides something, or one [`App::tick`] polls. The
+    /// loop sleeps until then at most, and never longer than [`IDLE_TICK`],
+    /// which keeps the rarer polled timers (dialogs, blocking-list refresh,
+    /// media going quiet) running.
+    pub fn next_deadline(&self, now: Instant) -> Instant {
+        let saving = (self.dirty || self.places_dirty).then(|| self.last_save + Duration::from_secs(3) + Duration::from_millis(1));
+        let candidates = [
+            self.toast.as_ref().map(|(_, at)| *at),
+            self.hud_hover.map(|(_, since)| since + crate::hud::TIP_DWELL),
+            self.pending.deadline(),
+            self.pending.since().map(|at| at + PREFIX_PANEL_AFTER),
+            self.peek.deadline(),
+            self.desktop.as_ref().and_then(Desktop::deadline),
+            self.script.as_ref().and_then(Script::deadline),
+            self.text_due.values().min().copied(),
+            self.later.iter().map(|l| l.at).min(),
+            self.scroll_flash.as_ref().map(|f| f.at + SCROLL_FLASH),
+            // The pages are re-rastered sharp once the camera has rested.
+            Some(self.camera_changed + Duration::from_millis(251)),
+            saving,
+        ];
+        candidates.into_iter().flatten().filter(|t| *t > now).fold(now + IDLE_TICK, Instant::min)
     }
 }
 
@@ -12311,6 +12362,22 @@ impl App {
                         log::info!("script icon card {}: site {site:?} drawn {drawn}", n.id.0);
                     }
                 }
+                Cmd::Frames => {
+                    let (presented, skipped) = self.renderer.as_ref().map_or((0, 0), |r| (r.presented, r.skipped));
+                    log::info!("script frames: presented {presented} skipped {skipped}");
+                }
+                Cmd::Mem => {
+                    let (frames, frame_bytes) = self.cards.values().fold((0, 0u64), |(n, b), c| {
+                        let f = c.page.frame();
+                        (n + usize::from(!f.pixels.is_empty()), b + f.pixels.len() as u64)
+                    });
+                    let (textures, texture_bytes) = self.renderer.as_ref().map_or((0, 0), |r| r.page_texture_bytes());
+                    let mib = |b: u64| b as f64 / (1024.0 * 1024.0);
+                    log::info!(
+                        "script mem: {} live {} frames {} {:.1} MiB textures {} {:.1} MiB",
+                        crate::memstat::summary(), self.cards.len(), frames, mib(frame_bytes), textures, mib(texture_bytes)
+                    );
+                }
                 Cmd::Zooms => {
                     log::info!("script zooms: sites={:?}", self.zooms.borrow().sites);
                     let mut ids: Vec<_> = self.cards.keys().copied().collect();
@@ -12525,6 +12592,9 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        if !matches!(event, WindowEvent::RedrawRequested) {
+            self.event_seen = true;
+        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {

@@ -262,6 +262,7 @@ fn watch_user_list(data_dir: &std::path::Path) -> Option<(RecommendedWatcher, Re
         let read = matches!(ev.kind, EventKind::Access(a) if a != AccessKind::Close(AccessMode::Write));
         if !read && ev.paths.iter().any(|p| storage::privacy::is_user_list(p)) {
             let _ = tx.send(());
+            web::wake();
         }
     })
     .map_err(|e| log::warn!("blocking: can't watch {}: {e}", dir.display()))

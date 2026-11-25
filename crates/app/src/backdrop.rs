@@ -135,6 +135,7 @@ impl Photo {
                 );
             }
             let _ = tx.send((job.0, job.1, result));
+            web::wake();
         });
         if let Err(e) = spawned {
             log::warn!("board photo: no worker: {e}");

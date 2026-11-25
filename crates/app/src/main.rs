@@ -15,6 +15,7 @@ mod hud;
 mod icons;
 mod keymap;
 mod launch;
+mod memstat;
 mod menu;
 mod note;
 mod omnibox;
@@ -29,7 +30,7 @@ mod welcome;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::platform::pump_events::{EventLoopExtPumpEvents, PumpStatus};
@@ -111,28 +112,62 @@ fn main() -> ExitCode {
     let settings = storage::settings::load_settings(&data_dir());
     let urls = args.iter().filter_map(|a| launch::target(a, &cwd, &settings)).collect();
     let mut event_loop = EventLoop::new().expect("event loop");
-    event_loop.set_control_flow(ControlFlow::Poll);
+    event_loop.set_control_flow(ControlFlow::Wait);
+    // CEF asks for pump work from its own threads: wake the loop for it.
+    let proxy = event_loop.create_proxy();
+    web::set_waker(Box::new(move || {
+        let _ = proxy.send_event(());
+    }));
     let mut app = app::App::new(urls, data_dir(), settings);
+    // Draw every frame, as before frames were compared (to bisect a missed redraw).
+    app.always_redraw = std::env::var("TRAILBOARD_REDRAW").is_ok_and(|v| v == "always");
+    if app.always_redraw {
+        log::info!("TRAILBOARD_REDRAW=always: drawing every frame");
+    }
     if storage::crash::take_unseen(&data_dir()) {
         app.note_crash(&storage::crash::log_path(&data_dir()));
     }
     app.note_sandbox(engine.sandbox().clone());
 
+    // The loop sleeps until something needs doing: a window event, CEF's next
+    // work, a page painting, or the app's next deadline. While something
+    // moves it draws at the display's rate (paced by the compositor's frame
+    // callbacks); a frame that would look the same isn't presented.
     let mut last = Instant::now();
+    let mut seen_activity = web::activity();
+    // The app's deadline the loop last slept towards (the first pass draws).
+    let mut deadline = last;
     let code = loop {
-        engine.pump();
+        let event = app.take_event();
         let now = Instant::now();
-        let dt = (now - last).as_secs_f32().min(0.1);
+        if event || engine.next_due() <= now {
+            engine.pump();
+        }
+        // After a rest, the first step of an animation is one frame long.
+        let moving = app.animating() || app.always_redraw;
+        let dt = if moving { (now - last).as_secs_f32().min(0.1) } else { 1.0 / 60.0 };
         last = now;
         app.tick(dt);
-        // Rendering waits for vsync inside the redraw, which paces this loop.
-        if let PumpStatus::Exit(code) = event_loop.pump_app_events(Some(Duration::ZERO), &mut app) {
+        let activity = web::activity();
+        let redraw = moving || event || now >= deadline || activity != seen_activity;
+        seen_activity = activity;
+        if redraw {
+            // Delivered when the compositor is ready for a frame (winit waits
+            // for its frame callback), which wakes the wait below.
+            app.request_redraw();
+            deadline = app.next_deadline(Instant::now());
+        } else {
+            // Only ever sooner: a timer started on a quiet pass (the idle
+            // tick stays counted from the last draw).
+            deadline = deadline.min(app.next_deadline(Instant::now()));
+        }
+        let timeout = engine.next_due().min(deadline).saturating_duration_since(Instant::now());
+        if let PumpStatus::Exit(code) = event_loop.pump_app_events(Some(timeout), &mut app) {
             break code;
         }
         if app.quit {
             break 0;
         }
-        std::thread::sleep(Duration::from_millis(1));
     };
     app.shutdown();
     drop(app);

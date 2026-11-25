@@ -65,7 +65,8 @@ app (trailboard)  winit window · input · omnibox · chrome UI · main loop
 | ✅ | **M13 Full media support** | Our own media CEF (GitHub Actions, release `cef-156.0.26-media`) installed by `install-cef.sh --codecs` and the Arch package: H.264, AAC and HEVC play (all through VA-API); media controls (`,` keys, `:media`), page full screen as Solo, "can't play" messages; Widevine (software level, fetched by Chromium); README update checklist, engine-version warning, `scripts/media-check.html` |
 | ⬜ | **M14 Config file** | One hand-editable `~/.config/trailboard/config.toml` for settings, key bindings and theme; the UI writes it without losing comments |
 | ✅ | **M15 Custom trails** | Join any card to any trail and cut one out, so a named, coloured trail can be a group of any cards (our tab groups) |
-| ⬜ | **M16 Lighter and quieter** | Cut memory and idle CPU: a measured baseline, then the main process, the main loop, sleeping cards and renderer count |
+| 🟡 | **M16 Lighter and quieter** | Cut memory and idle CPU: a measured baseline, then the main process, the main loop, sleeping cards and renderer count |
+| ⬜ | **M16b Benchmark in CI** | An orphan `bench` branch: on every push, Trailboard and reference browsers measured on one runner, results kept on the branch, a chart page and a regression check |
 | ⬜ | **M17 Windows** | Trailboard on Windows 10 and 11 (x64): the Linux-only parts behind platform seams, CEF for Windows, a Windows CI build, a portable zip; Linux unchanged |
 
 ### Owner decisions that still bind
@@ -765,7 +766,7 @@ any cards can be made a trail.
   a zoom of about 0.27. Older boards keep their places until T.
   Checked by `run14.sh` (`s14-gapbefore/gapafter.png`).
 
-### M16: Lighter and quieter ⬜
+### M16: Lighter and quieter 🟡
 
 Asked by the owner on 2026-11-24, after a side-by-side measurement on
 their machine: make Trailboard use less memory and CPU than it does now,
@@ -793,6 +794,36 @@ with only its start card used ~16 % CPU (one run, to be confirmed). Not
 measured yet (the run was stopped): idle for the other two, and CPU while
 playing a 1080p H.264 video (`site/video.html`). All three load the
 VA-API driver (`iHD_drv_video.so`).
+
+**Baseline 2** (2026-11-25, `scripts/bench.py` at `88a17de`, release
+build, saved pages without scripts, default live cap, three runs each,
+medians; the reference browsers in private windows with throwaway
+profiles: "Ref A" is stock Chromium, "Ref B" the Gecko-based one). This
+is the table later steps are measured against:
+
+| Case | Program | Memory (PSS) | Range | CPU % of a core | Processes |
+|---|---|---|---|---|---|
+| idle | Trailboard | 551 MB | 545–557 | 10.4 | 9 |
+| idle | Ref A | 434 MB | 428–436 | 3.2 | 12 |
+| idle | Ref B | 584 MB | 580–587 | 0.4 | 11 |
+| still | Trailboard | 683 MB | 657–689 | 9.7 | 14 |
+| still | Ref A | 584 MB | 575–585 | 1.9 | 17 |
+| still | Ref B | 787 MB | 762–802 | 1.3 | 16 |
+| video-h264 | Trailboard | 557 MB | 553–563 | 27.3 | 9 |
+| video-h264 | Ref A | 464 MB | 458–466 | 9.1 | 12 |
+| video-h264 | Ref B | 689 MB | 657–712 | 10.5 | 11 |
+| video-hevc | Trailboard | 547 MB | 538–548 | 25.5 | 9 |
+| video-hevc | Ref A | 456 MB | 451–464 | 9.3 | 12 |
+| video-hevc | Ref B | 687 MB | 683–731 | 11.8 | 11 |
+| pan | Trailboard | 756 MB | 746–758 | 22.5 | 14 |
+
+Runs agree within ±3 % on memory now. Trailboard is ~100 MB above Ref A
+in every case, the size of its main process (`mem` on a still board:
+PSS ~240 MB, page frames ~22 MB on the CPU and as much on the GPU for
+six cards), and below Ref B. CPU is the clear gap: 10 % of a core doing
+nothing (Ref A 2–3 %, Ref B under 1.5 %) and ~3× theirs during video,
+which is step 2's polling loop plus step 6's frame copies. VA-API is
+loaded by Trailboard and Ref A in every case.
 
 **What it points at**
 
@@ -853,7 +884,31 @@ VA-API driver (`iHD_drv_video.so`).
 
 **Steps:**
 
-- ⬜ 1. **Repeatable benchmark.** Move `~/.cache/browser-bench/bench.py`
+- ✅ 1. **Repeatable benchmark** (2026-11-25). Done as below, with these
+  choices: `scripts/bench.py --snapshot` saves the pages to
+  `~/.cache/trailboard-bench/site/` with HTML, styles, images and fonts
+  but **no scripts** (so runs agree; `--live` loads the real sites), and
+  makes the two videos with ffmpeg (`testsrc2`, 1080p30, 30 s, looping).
+  The six pages: Wikipedia, a GitHub repo, BBC News, MDN, a subreddit
+  (old layout) and ArchWiki; a video home page was dropped since it is
+  empty without scripts (the video cases cover video). Each page is
+  served from its own `127.0.0.N`, so each is its own site and gets its
+  own renderer as on the web. Trailboard starts with a space index
+  already written, so no first-run welcome card. CPU is the scopes'
+  cgroup `usage_usec` (it counts processes that exit, unlike
+  `/proc/<pid>/stat`). The quick check is a script command `mem` rather
+  than `log mem` (`log` already takes free text). `--against NAME=CMD`
+  fills `{profile}` with a throwaway directory and `{urls}` with the
+  pages; reference browsers run in a private window with that profile,
+  never a real one. `pan` runs for Trailboard only. Results:
+  `~/.cache/trailboard-bench/results.jsonl` (each row has the git rev
+  and a `--note`), logs and screenshots under `out/<time>/`.
+  The reference browsers needn't run again: a Trailboard-only run adds
+  each other program's newest saved runs (same case) to its table, and
+  `scripts/bench.py --report` prints the saved runs without running
+  anything. Baseline 2's reference rows are the batch `20261125-203848`
+  (a copy: `results-baseline-20261125.jsonl` beside `results.jsonl`).
+  Plan as written: move `~/.cache/browser-bench/bench.py`
   into `scripts/bench.py` (our own; it compares against any command given
   with `--against`, names no other browser). Pages served locally from
   saved copies (`scripts/bench-site/`, made by `--snapshot` once; kept out
@@ -865,7 +920,37 @@ VA-API driver (`iHD_drv_video.so`).
   Output appends to `~/.cache/trailboard-bench/results.jsonl` and prints
   a Markdown table. A script line `log mem` (main-process RSS/PSS, live
   cards, GPU texture bytes) added to `script.rs` for quick checks.
-- ⬜ 2. **Wait instead of poll.** In order, each checked alone:
+- 🟡 2. **Wait instead of poll** (2026-11-25, code written, uncommitted;
+  measuring not finished). Done: `web` stores CEF's
+  `on_schedule_message_pump_work` time (`Engine::next_due`, a 33 ms
+  fallback as in CEF's own sample), a waker (`web::set_waker`,
+  `web::wake`, winit's `EventLoopProxy`) and `web::activity()` (bumped by
+  every event and paint). `main.rs`: `ControlFlow::Wait`, pumps CEF when
+  due or after a window event, redraws when something moved last frame,
+  an event came, a page painted or a deadline passed, then sleeps until
+  `min(next_due, deadline)`. `App::next_deadline`: toasts, tip dwell, key
+  sequences, prefix panel, sidebar peek, desktop debounce, script waits,
+  page-text reads, `:later`, scroll flash, camera rest (sharp re-raster),
+  autosave, and `IDLE_TICK` (250 ms) for the rest. The renderer
+  fingerprints each frame (`frame_key`, unit-tested) and skips presenting
+  an unchanged one; `TRAILBOARD_REDRAW=always` presents every frame.
+  Background threads (desktop, board photo, blocking lists) call
+  `web::wake()` after sending. Script commands `frames` (presented /
+  skipped) and `mem` added. **Found on the way:** winit on Wayland holds
+  `RedrawRequested` until the frame callback, so a zero timeout spun the
+  loop (pan 109 %); the loop never uses a zero timeout now.
+  Measured so far (release): idle main process 5.9 % → 1.2 % (`percpu`
+  probe); bench, one run each: idle 5.0 % (was 10.4), video-h264 21.5 %
+  (27.3), pan 20.6 % (22.5). An earlier full run *with the spin bug*:
+  still 3.4 % (9.7). E2e: `run13.sh` (links) gives the same `cards` log
+  and screenshots as before; the fold run's slow-motion frames match.
+  **Left to do:** the full bench (`scripts/bench.py --note "step 2"`,
+  Trailboard only, ~30 min); the latency check in
+  `~/.cache/trailboard-m16/lat/` (`run.sh anim anim.html`: a 60 fps page
+  should present ~60 frames/s, compare with `TRAILBOARD_REDRAW=always`;
+  `run.sh still still.html`: ~0 frames/s at rest, Ctrl+D scrolls
+  smoothly); the other `run*.sh`; then decide whether `IDLE_TICK` and
+  the 33 ms pump fallback can be longer. Plan as written, in order, each checked alone:
   a. `on_schedule_message_pump_work(delay)` in `web`: stores the due time
      (atomic, any thread) and calls the waker; `Engine::next_due()`
      returns it; the loop pumps only when due (and once after every
@@ -921,6 +1006,89 @@ VA-API driver (`iHD_drv_video.so`).
 **Open questions for the owner** (none block steps 1–4): a lower default
 live cap or sleeping hidden cards sooner, if step 5 shows a real saving;
 whether dmabuf paint (step 6) becomes its own milestone.
+
+---
+
+### M16b: Benchmark in CI ⬜
+
+Asked by the owner on 2026-11-25: measure Trailboard against reference
+browsers on GitHub Actions on every push, from a branch of its own that
+holds only the benchmark and its results (no app code, no releases), like
+`cef-build`.
+
+**What it can and can't tell.** Hosted runners have no GPU, no VA-API and
+no Hyprland, and share their CPU: everything draws and decodes in
+software. So CI numbers compare the programs *with each other* (all on
+the same runner, in the same job) and *over time*; they are not
+comparable with the laptop's (`scripts/bench.py`, M16), which stays the
+reference for real numbers.
+
+**Decisions** (taken as defaults; the owner can change them):
+
+- **An orphan branch `bench`**: `bench.py`, `browsers.toml`, `site/`,
+  `results/`, `.github/workflows/bench.yml`. Reference browsers are named
+  only there (config and results), never in `master`'s docs.
+- **Triggers:** a push to `bench`; every push to `master` through a
+  ~10-line `.github/workflows/bench-trigger.yml` on `master` that only
+  dispatches the `bench` workflow with the pushed commit (GitHub runs a
+  push's workflows from the pushed branch); and by hand
+  (`gh workflow run bench.yml --ref bench -f ref=<commit>`).
+  `concurrency` cancels an older run still going when a newer push comes.
+- **Browsers:** those on the runner image (two Chromium-based, one
+  Gecko-based, one more Chromium-based), plus two installed by the job
+  (a Gecko-based one from its release archive, a Chromium-based one from
+  its apt repository). Each starts in a private window with a throwaway
+  profile and no first-run screens; its version is saved with each row.
+- **Pages:** copies of pages whose licences allow it (Wikipedia, MDN,
+  ArchWiki, with attribution) and three pages of our own shaped like a
+  news site, a code page and a forum. No copies of other sites' pages in
+  a public repo. Videos made by ffmpeg in the job, VP9 and AV1 (the
+  standard CEF has no H.264/HEVC).
+- **Trailboard:** built from the commit with the standard CEF (cached by
+  version), run on a headless sway.
+
+**Steps:**
+
+- ⬜ 1. **The branch.** `git switch --orphan bench`; the files above.
+- ⬜ 2. **`bench.py` anywhere.** From `scripts/bench.py`: without
+  Hyprland (no `hyprctl`; `grim` on the headless output), each program
+  in its own cgroup (`sudo systemd-run --scope`), PSS and CPU as on the
+  laptop, programs interleaved run by run (A B C, A B C) so the runner's
+  slow moments hit all alike. Writes `results/<date>-<sha>.jsonl`.
+- ⬜ 3. **`browsers.toml`.** Per browser: install, start (private,
+  throwaway profile, first-run screens off) and version commands.
+- ⬜ 4. **The workflow.** A setup job (apt: sway, grim, ffmpeg, Mesa
+  software rendering, fonts, build libraries; Rust with the cargo cache;
+  the standard CEF, cached; `cargo build --release` of the commit; the
+  two extra browsers), then one job per case (idle, still, video, pan)
+  in parallel, each running every program three times, then a save job:
+  merges the rows, commits them to `bench`
+  (`permissions: contents: write`), uploads screenshots and logs as
+  artifacts (14 days). About 15 min of setup and 30–60 min of runs.
+- ⬜ 5. **Where results show.**
+  - The run's **summary page** (`$GITHUB_STEP_SUMMARY`): the medians
+    table, each program per case, and Trailboard's change against the
+    last run (`gh run view`).
+  - **`results/README.md`** on `bench`, rebuilt by every run: the latest
+    table and a history, one line per tested commit.
+  - **A chart page** on GitHub Pages, built from `results/*.jsonl` by
+    the save job: memory and CPU per case over time, one line per
+    program, each point linking to its commit and run.
+  - Screenshots and logs as **artifacts**, to check that every page
+    really loaded.
+- ⬜ 6. **The regression check.** The save job fails the run (so GitHub
+  emails the owner) when Trailboard is more than 20 % worse than the
+  last run's on any case, in memory or CPU, and the reference browsers
+  in the same run moved less than 10 % (a slow runner is not a
+  regression). The summary names the case and the figures.
+- ⬜ 7. **First runs.** Check every program's screenshots (pages drawn,
+  video playing, no welcome screens), that three runs agree within
+  ±10 % on memory (else a longer settle), and the chart and the check on
+  a planted regression (a commit with a busy loop).
+- ⬜ 8. **`bench-trigger.yml` on `master`**, once the branch is green.
+
+**Open questions for the owner:** none block the steps. The 20 %
+threshold and the browser list can change after the first runs.
 
 ---
 
@@ -1037,7 +1205,25 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-25 (forty-sixth). **M15 Custom trails,
+**Last session:** 2026-11-25 (forty-seventh). **M16 step 1, the
+benchmark** (asked by the owner). `scripts/bench.py`: `--snapshot` saves
+six pages (no scripts) and two 1080p videos under
+`~/.cache/trailboard-bench/site/`; runs `idle`, `still`, `video-h264`,
+`video-hevc` and `pan`, three each, against any `--against NAME=CMD`,
+and prints medians. The script runner's `mem` logs the main process's
+memory and page buffer sizes (`app::memstat`, `Renderer::page_texture_bytes`).
+Baseline 2 is in M16. The owner's reference browsers run
+private with throwaway profiles: `chromium --user-data-dir={profile}
+--incognito --no-first-run --no-default-browser-check {urls}`, and
+`~/.cache/trailboard-bench/zen.sh {profile} {urls}` (writes a `user.js`:
+private windows, no welcome screen). Verified: unit test for `memstat`,
+clippy, the full baseline (39 runs) with screenshots checked (pages
+drawn, video playing, the pan moving the board). Not verified: `--live`
+(the old path, unchanged). Then, same session: **M16 step 2 written but
+not finished measuring** (owner paused it); state and what's left are in
+step 2 below. The working tree holds steps 1 and 2, uncommitted.
+
+**Session before:** 2026-11-25 (forty-sixth). **M15 Custom trails,
 all five steps** (asked by the owner, ahead of M14). Any card can join a
 trail or leave one, so a named, coloured trail is a group of any cards:
 `scene::join` (`join_many` / `leave_many`, one undo step via
@@ -1058,21 +1244,6 @@ Alt+drag for moving windows; then the modifier needs changing), several
 selected cards in the app (unit-tested only), the motion at normal speed
 by eye.
 
-**Session before:** 2026-11-24 (forty-fifth). **M13 finished** (asked by
-the owner): step 4, Widevine works in the media build as built (the
-decrypted video draws in an off-screen card; owner: no setting), and step
-6, keeping current: the README's "Updating CEF" checklist, a start-log
-warning when the loaded `libcef.so` isn't the CEF this was built for
-(`launch::engine_mismatch`, `web::loaded_engine_version`), a test that
-the crate, `install-cef.sh` and the PKGBUILD pin the same engine
-(`engine_pins_agree`), and `scripts/media-check.html`. Checking found HEVC
-broken on this laptop when NVIDIA's driver takes the first render node;
-fixed with `web::render_node` (`--render-node-override` to the iGPU). The
-DRM message, GUIDE and CHANGELOG now say protected video works. Details
-under M13 steps 4 and 6. Verified: unit tests, clippy, scripted runs in
-`~/.cache/trailboard-e2e-widevine/` (media check passes; HEVC 8/10-bit
-and HDR play again; screenshots). Not verified: the warning against a
-really different engine, a real DRM service.
 **Repo state:** on `master`, committed (M15, then Shift+A cutting one trail line).
 After that, also asked by the owner: every trail gets a colour of its
 own as it forms (least-used first; board format 7 colours older boards
@@ -1094,7 +1265,11 @@ yet. Then: **room for labels between stacked cards** (`GAP_Y`, see the
 M15 decisions): unit tests for placement and Tidy, and `run14.sh` before
 and after T with screenshots.
 
-**Next up:** M14 step 1, the `config.toml` reader (asked by the owner on
+**Next up:** finish M16 step 2's checks (listed under step 2: the full
+bench, the latency runs, the other e2e scripts), then commit steps 1–2. Planned (owner, 2026-11-25): M16b, the
+benchmark on GitHub Actions from an orphan `bench` branch, with a chart
+page and a regression check. Then M14
+step 1, the `config.toml` reader (asked by the owner on
 2026-11-21; format and decisions in M14). Bundle with
 `CEF_PATH=~/.local/share/cef-standard`. Also retake the README
 screenshots (`docs/images/`) in the new look, and try Alt+drag by hand. Planned since (owner, 2026-11-25): M17 Windows, after M14 and

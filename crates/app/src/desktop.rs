@@ -58,6 +58,7 @@ impl Desktop {
             notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
                 if res.is_ok() {
                     let _ = tx.send(Event::Files);
+                    web::wake();
                 }
             })
             .map_err(|e| log::warn!("can't watch the Omarchy theme: {e}"))
@@ -114,6 +115,11 @@ impl Desktop {
     /// Hyprland last said; `None` without Hyprland. Updated by [`Desktop::poll`].
     pub fn full_window(&self) -> Option<(f32, f32)> {
         self.full_window
+    }
+
+    /// When files that changed have settled, for the event loop to wake.
+    pub fn deadline(&self) -> Option<Instant> {
+        self.pending.map(|t| t + DEBOUNCE)
     }
 
     /// New values since the last call: a new theme when files settled, or a new rounding.
@@ -243,12 +249,12 @@ pub fn full_window(monitors: &str, gaps_out: &str, border_size: &str) -> Option<
 /// `configreloaded`, and (the size) when monitors change.
 fn follow_hyprland(tx: Sender<Event>, hyprctl: &Path, socket: &Path) {
     let size = |tx: &Sender<Event>| match ask_full_window(hyprctl) {
-        Some((w, h)) => tx.send(Event::FullWindow(w, h)).is_ok(),
+        Some((w, h)) => tx.send(Event::FullWindow(w, h)).inspect(|_| web::wake()).is_ok(),
         None => true,
     };
     let report = |tx: &Sender<Event>| {
         let ok = match ask_rounding(hyprctl) {
-            Some(r) => tx.send(Event::Rounding(r)).is_ok(),
+            Some(r) => tx.send(Event::Rounding(r)).inspect(|_| web::wake()).is_ok(),
             None => true,
         };
         ok && size(tx)

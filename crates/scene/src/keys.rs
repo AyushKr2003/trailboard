@@ -340,6 +340,11 @@ impl Pending {
         *self = Pending::default();
     }
 
+    /// When an unfinished sequence times out ([`Pending::expire`]).
+    pub fn deadline(&self) -> Option<Instant> {
+        self.at.map(|at| at + TIMEOUT)
+    }
+
     /// When the last key of a half-typed sequence came.
     pub fn since(&self) -> Option<Instant> {
         self.at.filter(|_| !self.keys.is_empty())

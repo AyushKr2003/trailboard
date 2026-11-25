@@ -75,8 +75,21 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
   codecs, Widevine and playback in one card; the README's *Updating CEF*
   lists the steps for each engine update, and a test fails when the pins
   in the install script and the Arch package disagree.
+- **A memory and CPU benchmark.** `scripts/bench.py` runs Trailboard
+  (and, with `--against`, any other program) alone on a workspace and
+  measures memory (PSS over every process), CPU and process count, with
+  a still board, two 1080p videos (H.264, HEVC), a pan and an idle
+  case, three runs each, against saved copies of six pages. The script
+  runner's `mem` line logs the main process's memory, live cards and
+  page buffer sizes.
 
 ### Changed
+
+- **Much less CPU when nothing moves.** The window now sleeps until a
+  page paints, input comes, or a timer is due, instead of redrawing at
+  the display's rate all the time, and a frame that would look the same
+  isn't drawn again. `TRAILBOARD_REDRAW=always` brings back drawing every
+  frame.
 
 - **Cards one above the other leave room for the title.** New cards and
   Tidy put more space between cards stacked in a column (120 units

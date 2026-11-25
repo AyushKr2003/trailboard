@@ -42,6 +42,8 @@
 //! palette              # log the Ctrl+K palette: query, highlight, each result row and where to click it
 //! open https://…       # same as Ctrl+T + Enter
 //! log some note        # print to the log (marks screenshot moments)
+//! frames               # log frames presented and skipped (unchanged) since the start
+//! mem                  # log the main process's memory (RSS, PSS), live cards, their CPU frames, and keyed GPU textures (pages, thumbnails, icons)
 //! panic               # panic on purpose (tests the crash report)
 //! quit
 //! ```
@@ -100,6 +102,10 @@ pub enum Cmd {
     Find,
     Open(String),
     Log(String),
+    /// Log the main process's memory, live cards and page buffer sizes.
+    Mem,
+    /// Log how many frames were presented and skipped since the start.
+    Frames,
     Panic,
     Quit,
 }
@@ -117,6 +123,11 @@ impl Script {
             .ok()?;
         let cmds = text.lines().filter_map(parse).collect();
         Some(Script { cmds, resume_at: Instant::now() })
+    }
+
+    /// When the next command is due, while any are left.
+    pub fn deadline(&self) -> Option<Instant> {
+        (!self.cmds.is_empty()).then_some(self.resume_at)
     }
 
     /// Next command due now, if any.
@@ -184,6 +195,8 @@ fn parse(line: &str) -> Option<Cmd> {
         "find" => Cmd::Find,
         "open" => Cmd::Open(rest.trim().to_string()),
         "log" => Cmd::Log(rest.trim().to_string()),
+        "mem" => Cmd::Mem,
+        "frames" => Cmd::Frames,
         "panic" => Cmd::Panic,
         "quit" => Cmd::Quit,
         other => {

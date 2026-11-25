@@ -966,6 +966,15 @@ pub struct Peek {
 }
 
 impl Peek {
+    /// When a dwell or grace now running ends, for the event loop to wake.
+    pub fn deadline(&self) -> Option<Instant> {
+        match (self.edge_since, self.away_since) {
+            (Some(t), _) => Some(t + PEEK_DWELL),
+            (None, Some(t)) => Some(t + PEEK_GRACE),
+            (None, None) => None,
+        }
+    }
+
     /// `inside`: the pointer is in the window; `at_edge`: on its left edge
     /// and free to peek; `near`: over the sheet or close to it; `open`: the
     /// sidebar is showing, `peeking` as a peek.

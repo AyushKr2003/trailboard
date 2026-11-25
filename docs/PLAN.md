@@ -66,7 +66,7 @@ app (trailboard)  winit window · input · omnibox · chrome UI · main loop
 | ⬜ | **M14 Config file** | One hand-editable `~/.config/trailboard/config.toml` for settings, key bindings and theme; the UI writes it without losing comments |
 | ✅ | **M15 Custom trails** | Join any card to any trail and cut one out, so a named, coloured trail can be a group of any cards (our tab groups) |
 | 🟡 | **M16 Lighter and quieter** | Cut memory and idle CPU: a measured baseline, then the main process, the main loop, sleeping cards and renderer count |
-| ⬜ | **M16b Benchmark in CI** | An orphan `bench` branch: on every push, Trailboard and reference browsers measured on one runner, results kept on the branch, a chart page and a regression check |
+| 🟡 | **M16b Benchmark in CI** | An orphan `bench` branch: on every push, Trailboard and reference browsers measured on one runner, results kept on the branch, a chart page and a regression check |
 | ⬜ | **M17 Windows** | Trailboard on Windows 10 and 11 (x64): the Linux-only parts behind platform seams, CEF for Windows, a Windows CI build, a portable zip; Linux unchanged |
 
 ### Owner decisions that still bind
@@ -1009,7 +1009,20 @@ whether dmabuf paint (step 6) becomes its own milestone.
 
 ---
 
-### M16b: Benchmark in CI ⬜
+### M16b: Benchmark in CI 🟡
+
+**Built 2026-11-25** (owner: name the browsers on `bench`, as many as
+possible, run on every push). Branch `bench` (orphan): `browsers.toml`
+(17), `install.py`, `make_site.py` (pages made by us, not copies),
+`run.py` (Xvfb + xdotool; processes by session and tree, not systemd
+scopes), `report.py`. Changed from the plan below: `master` carries the
+same `.github/workflows/bench.yml` instead of a trigger file (a push only
+runs workflows from the pushed branch, and `workflow_dispatch` and
+`repository_dispatch` need the file on the default branch anyway); it
+takes its tools from `bench` and saves there. Left: the first green run
+(browsers that fail are skipped, see the run summary), and the owner
+setting Settings → Pages → Source: GitHub Actions for the chart.
+
 
 Asked by the owner on 2026-11-25: measure Trailboard against reference
 browsers on GitHub Actions on every push, from a branch of its own that

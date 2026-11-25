@@ -10,6 +10,11 @@
 //!   the colour.
 //! - Colours are names of desktop-theme colours, so they suit light and dark
 //!   themes alike; no colour means the theme's accent, as before.
+//! - Every trail gets a colour of its own when it forms (owner, 2026-11-25:
+//!   "so we can tell them apart"): the colour the board's trails use least,
+//!   the earliest in [`COLOURS`] on a tie ([`Scene::fresh_trail_colour`]).
+//!   C still changes it, the accent included. A single card shows no colour
+//!   of its own; it shows once the card has a trail.
 
 use serde::{Deserialize, Serialize};
 
@@ -67,58 +72,141 @@ pub fn next_colour(colour: Option<&str>) -> Option<String> {
 }
 
 impl Scene {
-    /// The mark of the trail through `id` (empty for no card).
+    /// The mark of the trail through `id` (empty for no card): the trail's
+    /// name, pin and place, and the colour of `id`'s own colour part.
     pub fn trail_mark(&self, id: NodeId) -> TrailMark {
         let trail = self.trail_of(id);
-        let first = |f: fn(&TrailMark) -> &Option<String>| {
-            trail.iter().find_map(|&n| self.node(n).and_then(|n| f(&n.trail).clone()))
-        };
+        let name = trail.iter().find_map(|&n| self.node(n).and_then(|n| n.trail.name.clone()));
         let pinned = trail.iter().any(|&n| self.node(n).is_some_and(|n| n.trail.pinned));
         let place = trail.iter().find_map(|&n| self.node(n).and_then(|n| n.trail.place));
-        TrailMark { name: first(|m| &m.name), colour: first(|m| &m.colour), pinned, place }
+        let colour = self.node(id).and_then(|n| n.trail.colour.clone());
+        TrailMark { name, colour, pinned, place }
     }
 
-    /// Gives every card of the trail through `id` this mark. Returns each
-    /// card's old mark (to undo), or empty if nothing changed.
+    /// The cards of the trail through `id` that share its colour (its
+    /// colour part), in reading order. Cards that joined from another
+    /// coloured trail keep their colour, so a trail can have several parts.
+    pub fn colour_part(&self, id: NodeId) -> Vec<NodeId> {
+        let Some(colour) = self.node(id).map(|n| n.trail.colour.clone()) else { return Vec::new() };
+        self.trail_of(id).into_iter().filter(|n| self.nodes[n].trail.colour == colour).collect()
+    }
+
+    /// Gives every card of the trail through `id` this mark's name, pin and
+    /// place, and the cards of `id`'s colour part its colour (other parts
+    /// keep theirs). Returns each card's old mark (to undo), or empty if
+    /// nothing changed.
     pub fn set_trail_mark(&mut self, id: NodeId, mark: &TrailMark) -> Vec<(NodeId, TrailMark)> {
+        let part: std::collections::BTreeSet<NodeId> = self.colour_part(id).into_iter().collect();
         let mut old = Vec::new();
         for n in self.trail_of(id) {
             let node = self.nodes.get_mut(&n).expect("trail cards exist");
-            if node.trail != *mark {
-                old.push((n, std::mem::replace(&mut node.trail, mark.clone())));
+            let colour = if part.contains(&n) { mark.colour.clone() } else { node.trail.colour.clone() };
+            let new = TrailMark { colour, ..mark.clone() };
+            if node.trail != new {
+                old.push((n, std::mem::replace(&mut node.trail, new)));
             }
         }
         old
     }
 
     /// Names the trail through `id` (an empty name clears it), keeping its
-    /// colour. Returns the old marks, as [`Scene::set_trail_mark`].
+    /// colours. Returns the old marks, as [`Scene::set_trail_mark`].
     pub fn name_trail(&mut self, id: NodeId, name: &str) -> Vec<(NodeId, TrailMark)> {
         let mark = TrailMark { name: clean_name(name), ..self.trail_mark(id) };
         self.set_trail_mark(id, &mark)
     }
 
-    /// Steps the trail through `id` to its next colour, keeping its name.
-    /// Returns the old marks, as [`Scene::set_trail_mark`].
+    /// Steps the colour part of `id` to its next colour, keeping the
+    /// trail's name. Returns the old marks, as [`Scene::set_trail_mark`].
     pub fn cycle_trail_colour(&mut self, id: NodeId) -> Vec<(NodeId, TrailMark)> {
         let mark = self.trail_mark(id);
         let mark = TrailMark { colour: next_colour(mark.colour.as_deref()), ..mark };
         self.set_trail_mark(id, &mark)
     }
 
-    /// Each marked trail's mark and the card its label goes on: the first
-    /// card of the trail on the board (a folded trail's is its stack's front).
-    pub fn trail_labels(&self) -> Vec<(NodeId, TrailMark)> {
+    /// The colour for a trail (or part) that is forming: of the colours in
+    /// [`COLOURS`] (not the accent), the one the board's trails of two or
+    /// more cards use least (each colour part counts); the earliest on a tie.
+    pub fn fresh_trail_colour(&self) -> String {
+        let mut used: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
         let mut seen = std::collections::BTreeSet::new();
-        let mut out = Vec::new();
         for n in self.all_nodes() {
-            if n.trail.is_empty() || seen.contains(&n.id) {
+            if seen.contains(&n.id) {
                 continue;
             }
             let trail = self.trail_of(n.id);
             seen.extend(trail.iter().copied());
-            if let Some(&head) = trail.iter().find(|&&id| !self.is_hidden(id)) {
-                out.push((head, self.trail_mark(head)));
+            if trail.len() > 1 {
+                let colours: std::collections::BTreeSet<String> = trail.iter().filter_map(|&t| self.nodes[&t].trail.colour.clone()).collect();
+                for c in colours {
+                    *used.entry(c).or_default() += 1;
+                }
+            }
+        }
+        let count = |c: &str| used.get(c).copied().unwrap_or(0);
+        let colours = COLOURS.iter().flatten();
+        let least = colours.clone().map(|c| count(c)).min().unwrap_or(0);
+        colours.copied().find(|c| count(c) == least).unwrap_or("blue").to_string()
+    }
+
+    /// Gives the trail through `id` a fresh colour if it has two or more
+    /// cards and none of them has one yet. Returns the old marks, as
+    /// [`Scene::set_trail_mark`].
+    pub fn colour_new_trail(&mut self, id: NodeId) -> Vec<(NodeId, TrailMark)> {
+        let trail = self.trail_of(id);
+        if trail.len() < 2 || trail.iter().any(|t| self.nodes[t].trail.colour.is_some()) {
+            return Vec::new();
+        }
+        let colour = self.fresh_trail_colour();
+        let mark = self.trail_mark(id);
+        self.set_trail_mark(id, &TrailMark { colour: Some(colour), ..mark })
+    }
+
+    /// Gives every trail of two or more cards without a colour one of its
+    /// own, oldest trail first (a board saved before trails were coloured
+    /// as they formed). Returns how many were coloured.
+    pub fn colour_trails(&mut self) -> usize {
+        let heads: Vec<NodeId> = {
+            let mut seen = std::collections::BTreeSet::new();
+            let mut out = Vec::new();
+            for n in self.all_nodes() {
+                if seen.insert(n.id) {
+                    let trail = self.trail_of(n.id);
+                    seen.extend(trail.iter().copied());
+                    out.push(trail[0]);
+                }
+            }
+            out
+        };
+        heads.into_iter().filter(|&h| !self.colour_new_trail(h).is_empty()).count()
+    }
+
+    /// The labels above trails: each marked trail's mark on its first card
+    /// on the board (a folded trail's is its stack's front), and a colour
+    /// dot on the first card of each further colour part. A single card
+    /// with only a colour shows none: the colour is its trail's, and it has
+    /// none yet.
+    pub fn trail_labels(&self) -> Vec<(NodeId, TrailMark)> {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut out = Vec::new();
+        for n in self.all_nodes() {
+            if seen.contains(&n.id) {
+                continue;
+            }
+            let trail = self.trail_of(n.id);
+            seen.extend(trail.iter().copied());
+            let shown: Vec<NodeId> = trail.iter().copied().filter(|&id| !self.is_hidden(id)).collect();
+            let Some(&head) = shown.first() else { continue };
+            let mark = self.trail_mark(head);
+            if !mark.is_empty() && !(trail.len() == 1 && mark.name.is_none()) {
+                out.push((head, mark.clone()));
+            }
+            let mut colours = std::collections::BTreeSet::from([mark.colour.clone()]);
+            for &id in &shown[1..] {
+                let c = self.nodes[&id].trail.colour.clone();
+                if c.is_some() && colours.insert(c.clone()) {
+                    out.push((id, TrailMark { colour: c, ..TrailMark::default() }));
+                }
             }
         }
         out
@@ -173,10 +261,11 @@ mod tests {
         }
         assert_eq!(name(&s, d), None);
         assert!(s.name_trail(c, "Rust").is_empty(), "no change");
+        assert_eq!(s.trail_mark(c).colour.as_deref(), Some("blue"), "a colour of its own when it formed");
         s.cycle_trail_colour(a);
-        assert_eq!(s.trail_mark(c), TrailMark { name: Some("Rust".into()), colour: Some("blue".into()), ..Default::default() });
+        assert_eq!(s.trail_mark(c), TrailMark { name: Some("Rust".into()), colour: Some("green".into()), ..Default::default() });
         s.name_trail(a, "");
-        assert_eq!(s.trail_mark(c), TrailMark { name: None, colour: Some("blue".into()), ..Default::default() });
+        assert_eq!(s.trail_mark(c), TrailMark { name: None, colour: Some("green".into()), ..Default::default() });
     }
 
     #[test]
@@ -208,16 +297,56 @@ mod tests {
     #[test]
     fn labels_go_on_the_first_card_on_the_board() {
         let (mut s, [a, b, _, d]) = board();
-        assert!(s.trail_labels().is_empty());
+        assert_eq!(s.trail_labels(), vec![(a, TrailMark { colour: Some("blue".into()), ..Default::default() })]);
         s.name_trail(b, "Rust");
+        // A lone card's colour shows only once it has a trail; a name shows.
         s.cycle_trail_colour(d);
+        assert_eq!(s.trail_labels().len(), 1);
+        s.name_trail(d, "Alone");
         let labels = s.trail_labels();
         assert_eq!(labels.len(), 2);
         assert_eq!(labels[0].0, a);
         assert_eq!(labels[0].1.name.as_deref(), Some("Rust"));
-        assert_eq!(labels[1], (d, TrailMark { name: None, colour: Some("blue".into()), ..Default::default() }));
+        assert_eq!(labels[1], (d, TrailMark { name: Some("Alone".into()), colour: Some("blue".into()), ..Default::default() }));
         s.fold(b).unwrap();
         assert_eq!(s.trail_labels()[0].0, b, "the stack's front");
+    }
+
+    #[test]
+    fn each_new_trail_takes_the_colour_used_least() {
+        let mut s = Scene::new();
+        let mut heads = Vec::new();
+        for i in 0..8 {
+            let h = s.add_page(Rect::new(0.0, 1000.0 * i as f32, 400.0, 300.0), "h");
+            s.spawn_beside(h, "x").unwrap();
+            heads.push(h);
+        }
+        let colours: Vec<String> = heads.iter().map(|&h| s.trail_mark(h).colour.unwrap()).collect();
+        // Six trails, six colours; then round again, least used first.
+        assert_eq!(colours, ["blue", "green", "magenta", "orange", "cyan", "red", "blue", "green"]);
+        // A trail recoloured by hand counts as its new colour.
+        s.cycle_trail_colour(heads[0]); // blue → green
+        assert_eq!(s.fresh_trail_colour(), "blue");
+        // Opening more on a trail keeps its colour.
+        s.spawn_beside(heads[1], "y").unwrap();
+        assert_eq!(s.trail_mark(heads[1]).colour.as_deref(), Some("green"));
+    }
+
+    #[test]
+    fn an_older_board_gets_a_colour_per_trail_once() {
+        let mut s = Scene::new();
+        let a = s.add_page(Rect::new(0.0, 0.0, 400.0, 300.0), "a");
+        let b = s.add_page(Rect::new(500.0, 0.0, 400.0, 300.0), "b");
+        let c = s.add_page(Rect::new(0.0, 1000.0, 400.0, 300.0), "c");
+        let d = s.add_page(Rect::new(500.0, 1000.0, 400.0, 300.0), "d");
+        let lone = s.add_page(Rect::new(0.0, 2000.0, 400.0, 300.0), "e");
+        s.insert_edge(crate::Edge { from: a, to: b });
+        s.insert_edge(crate::Edge { from: c, to: d });
+        assert_eq!(s.colour_trails(), 2);
+        assert_eq!(s.trail_mark(b).colour.as_deref(), Some("blue"));
+        assert_eq!(s.trail_mark(d).colour.as_deref(), Some("green"));
+        assert!(s.trail_mark(lone).is_unset(), "a lone card has no trail to colour");
+        assert_eq!(s.colour_trails(), 0, "already coloured");
     }
 
     #[test]
@@ -229,9 +358,9 @@ mod tests {
         let old = s.cycle_trail_colour(c);
         h.marked(old);
         h.undo(&mut s);
-        assert_eq!(s.trail_mark(a), TrailMark { name: Some("Rust".into()), colour: None, ..Default::default() });
+        assert_eq!(s.trail_mark(a), TrailMark { name: Some("Rust".into()), colour: Some("blue".into()), ..Default::default() });
         h.undo(&mut s);
-        assert!(s.trail_mark(c).is_empty());
+        assert_eq!(s.trail_mark(c), TrailMark { colour: Some("blue".into()), ..Default::default() });
         h.redo(&mut s);
         assert_eq!(name(&s, c), Some("Rust".into()));
         h.marked(Vec::new());

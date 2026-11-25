@@ -280,6 +280,7 @@ impl Scene {
         let id = self.add_note(rect, text);
         self.nodes.get_mut(&id).expect("just added").trail = src.trail;
         self.edges.push(Edge { from, to: id });
+        self.colour_new_trail(id);
         Some(id)
     }
 

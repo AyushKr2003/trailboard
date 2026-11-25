@@ -13,6 +13,10 @@
 //!   the front exactly as it was before the fold (shifted if the stack moved).
 //! - Folding a trail that already holds a stack (links opened from a stack's
 //!   front) unfolds that stack first, so one trail is one stack.
+//! - A trail whose cards have different colours (a coloured trail joined
+//!   it, `join`) folds one colour part at a time: S folds the cards of the
+//!   current card's colour, and the other parts stay on the board, their
+//!   lines running from the stack (`Scene::shown_edges`).
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -132,15 +136,18 @@ impl Scene {
         order
     }
 
-    /// S: folds the trail through `id` into a stack with `id` in front. Stacks
-    /// already in that trail are unfolded first. `None` for a lone card or one
-    /// that doesn't exist.
+    /// S: folds the colour part of `id` (its trail's cards of its colour,
+    /// [`Scene::colour_part`]; the whole trail when it has one colour) into a
+    /// stack with `id` in front, so cards of another colour that joined the
+    /// trail stay out (owner, 2026-11-25). Stacks holding any of those cards
+    /// are unfolded first. `None` for a part of one card or a card that
+    /// doesn't exist.
     pub fn fold(&mut self, id: NodeId) -> Option<Folded> {
-        let trail = self.trail_of(id);
+        let trail = self.colour_part(id);
         if trail.len() < 2 {
             return None;
         }
-        let fronts: Vec<NodeId> = self.stacks.iter().filter(|s| trail.contains(&s.front)).map(|s| s.front).collect();
+        let fronts: Vec<NodeId> = self.stacks.iter().filter(|s| s.ids().any(|m| trail.contains(&m))).map(|s| s.front).collect();
         let unfolded: Vec<Stack> = fronts.into_iter().filter_map(|f| self.unfold(f)).collect();
         self.fold_members(&trail, id).then_some(Folded { members: trail, front: id, unfolded })
     }
@@ -189,6 +196,24 @@ impl Scene {
         let front = stack.front;
         self.stacks.push(stack);
         self.bring_to_front(front);
+    }
+
+    /// The trail edges to draw: every edge, with an end folded away behind a
+    /// stack's front moved to that front, so a line into a folded part
+    /// runs from its stack. Edges inside one stack, and repeats, are left out.
+    pub fn shown_edges(&self) -> Vec<crate::Edge> {
+        let shown = |id: NodeId| self.stack_of(id).filter(|s| s.front != id).map_or(id, |s| s.front);
+        let mut out: Vec<crate::Edge> = Vec::new();
+        for e in &self.edges {
+            if self.node(e.from).is_none() || self.node(e.to).is_none() {
+                continue;
+            }
+            let e = crate::Edge { from: shown(e.from), to: shown(e.to) };
+            if e.from != e.to && !out.contains(&e) {
+                out.push(e);
+            }
+        }
+        out
     }
 
     /// Unfolds the stack holding `id`: every member goes back to its place
@@ -298,6 +323,31 @@ mod tests {
         assert!(s.visible_edges().next().is_none());
         assert_eq!(s.topmost_at(Vec2::new(c_at.x + 1.0, c_at.y + 1.0)), Some(c));
         assert!(s.fold(e).is_none(), "a lone card has no trail");
+    }
+
+    #[test]
+    fn a_trail_of_two_colours_folds_one_colour_at_a_time() {
+        let (mut s, [a, b, c, d, e]) = board();
+        // e → x (a trail of its own, green) joins d keeping its colour: the
+        // trail is blue then green.
+        let x = s.spawn_beside(e, "x").unwrap();
+        s.join_keeping(e, d).unwrap();
+        assert_eq!(s.trail_of(a), vec![a, b, c, d, e, x]);
+        let blue = s.fold(b).unwrap();
+        assert_eq!(blue.members, vec![a, b, c, d]);
+        assert!(!s.is_hidden(e) && !s.is_hidden(x), "the green part stays out");
+        // The line d → e now runs from the stack's front.
+        assert!(s.shown_edges().contains(&crate::Edge { from: b, to: e }));
+        assert!(s.shown_edges().iter().all(|e| !s.is_hidden(e.from) && !s.is_hidden(e.to)));
+        // The green part folds on its own, leaving the blue stack as it is.
+        let green = s.fold(x).unwrap();
+        assert_eq!((green.members, green.unfolded.len()), (vec![e, x], 0));
+        assert_eq!(s.stacks().len(), 2);
+        assert_eq!(s.shown_edges(), vec![crate::Edge { from: b, to: x }]);
+        // Unfolding one leaves the other.
+        s.unfold(b).unwrap();
+        assert_eq!(s.stacks().len(), 1);
+        assert!(s.is_hidden(e));
     }
 
     #[test]

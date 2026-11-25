@@ -15,7 +15,10 @@
 //! ctrlwheel 2
 //! drag 10 10 300 200   # left press, move in steps, release
 //! sdrag 10 10 300 200  # same with Shift held (selection band on the board)
+//! adrag 10 10 300 200  # same with Alt held (a label let go on a card joins its trail)
+//! asdrag 10 10 300 200 # same with Alt and Shift held (joins keeping its colour)
 //! press 10 10          # left press only (then `move`s, `release`): to look mid-drag
+//! apress 10 10         # the same with Alt held for the press (an Alt+drag)
 //! release 300 200      # left release
 //! sclick 400 300       # Shift+click (add/remove a card from the selection)
 //! rclick 400 300       # right-click (on the empty board: its menu)
@@ -29,7 +32,7 @@
 //! fit                  # same as Shift+F (fit everything)
 //! undo                 # same as Ctrl+Z on the board
 //! redo                 # same as Ctrl+Shift+Z
-//! cards                # log every card (id, rect, live page, selected, requests blocked, elements hidden, title, url), edge and trail label
+//! cards                # log every card (id, rect, live page, selected, requests blocked, elements hidden, title, url, its trail and parent), edge and trail label
 //! spaces               # log every space (id, name, background) and which is active
 //! sidebar              # log the trails sidebar: open/keys, highlight, scroll, each row and where to click it
 //! zooms                # log each live card's page zoom (wanted, Chromium's, and Chromium's default)
@@ -60,9 +63,12 @@ pub enum Cmd {
     Touchpad { dx: f32, dy: f32, end: bool },
     CtrlWheel(f32),
     /// Left drag; `shift` holds Shift throughout.
-    Drag { from: (f32, f32), to: (f32, f32), shift: bool },
+    /// `drag`, `sdrag` (Shift held), `adrag` (Alt held: join a trail),
+    /// `asdrag` (both: join keeping the colour).
+    Drag { from: (f32, f32), to: (f32, f32), shift: bool, alt: bool },
     /// Left press or release at a point, alone.
-    Button { at: (f32, f32), pressed: bool },
+    /// `press`, `release`; `apress` presses with Alt held (an Alt+drag).
+    Button { at: (f32, f32), pressed: bool, alt: bool },
     Key(String),
     Type(String),
     ImePreedit(String),
@@ -146,8 +152,10 @@ fn parse(line: &str) -> Option<Cmd> {
         "wheel" => Cmd::Wheel(num(0), num(1)),
         "touchpad" => Cmd::Touchpad { dx: num(0), dy: num(1), end: rest.split_whitespace().nth(2) == Some("end") },
         "ctrlwheel" => Cmd::CtrlWheel(num(0)),
-        "press" | "release" => Cmd::Button { at: (num(0), num(1)), pressed: word == "press" },
-        "drag" | "sdrag" => Cmd::Drag { from: (num(0), num(1)), to: (num(2), num(3)), shift: word == "sdrag" },
+        "press" | "apress" | "release" => Cmd::Button { at: (num(0), num(1)), pressed: word != "release", alt: word == "apress" },
+        "drag" | "sdrag" | "adrag" | "asdrag" => {
+            Cmd::Drag { from: (num(0), num(1)), to: (num(2), num(3)), shift: word.contains('s'), alt: word.starts_with('a') }
+        }
         "key" => Cmd::Key(rest.trim().to_string()),
         // Keep the text's own spacing; only the separator after the word is dropped.
         "type" => Cmd::Type(rest.to_string()),

@@ -63,7 +63,7 @@ app (trailboard)  winit window · input · omnibox · chrome UI · main loop
 | ✅ | M12 Keyboard first | Vim-like modes, page keys, scroll sections, command line, cards as tabs, search keywords, jumps/marks/saved pages, user key file, settings and site toggles, navigation extras, caret/visual mode, dialogs and fields, find back, `:messages`, the mode shown by ring and window title |
 | ✅ | **M13 Full media support** | Our own media CEF (GitHub Actions, release `cef-156.0.26-media`) installed by `install-cef.sh --codecs` and the Arch package: H.264, AAC and HEVC play (all through VA-API); media controls (`,` keys, `:media`), page full screen as Solo, "can't play" messages; Widevine (software level, fetched by Chromium); README update checklist, engine-version warning, `scripts/media-check.html` |
 | ⬜ | **M14 Config file** | One hand-editable `~/.config/trailboard/config.toml` for settings, key bindings and theme; the UI writes it without losing comments |
-| ⬜ | **M15 Custom trails** | Join any card to any trail and cut one out, so a named, coloured trail can be a group of any cards (our tab groups) |
+| ✅ | **M15 Custom trails** | Join any card to any trail and cut one out, so a named, coloured trail can be a group of any cards (our tab groups) |
 | ⬜ | **M16 Lighter and quieter** | Cut memory and idle CPU: a measured baseline, then the main process, the main loop, sleeping cards and renderer count |
 
 ### Owner decisions that still bind
@@ -549,7 +549,7 @@ not now).
 
 ---
 
-### M15: Custom trails ⬜
+### M15: Custom trails ✅
 
 Asked by the owner on 2026-11-23, as our answer to tab groups ("I like
 the coloured custom trail part"). Today only opening a link makes a trail
@@ -562,37 +562,165 @@ any cards can be made a trail.
 
 **Steps:**
 
-- ⬜ 1. **Design note.** Settle the open questions below; record the
-  decisions here.
-- ⬜ 2. **Join and leave in `scene`.** `Scene::join(card, target)`: the
-  card gets an edge from `target`, as if opened from it, bringing its own
-  trail along under it. `Scene::leave(card)`: its edge from the card it
-  came from is cut, so it starts a trail of its own (its children stay
-  with it). Each one undo step (`History`). Unit tests: a lone card, a
-  card with its own trail, refusing a cycle (joining a card to its own
-  descendant), stacks, undo/redo. Edges keep their format (no version
-  bump).
-- ⬜ 3. **Ways in.** Drag a card's label with a modifier (Alt?) onto
+- ✅ 1. **Design note.** Decisions below (2026-11-25).
+- ✅ 2. **Join and leave in `scene`.** `Scene::join(card, target)`: the
+  card's edge from its parent is cut and it gets one from `target`, as if
+  opened from it, bringing its followers along under it.
+  `Scene::leave(card)`: its edge from the card it came from is cut, so it
+  starts a trail of its own (its children stay with it). Each one undo
+  step (`History`). Unit tests: a lone card, a card with its own trail,
+  refusing a cycle (joining a card to its own descendant), stacks,
+  undo/redo. Edges keep their format (no version bump).
+  Done 2026-11-25 in `scene::join`: `join_many` / `leave_many` (the
+  one-card forms call them) return a `Relinked` record, and
+  `History::relinked` makes it one step with a new `Edit::SetEdges` (the
+  whole edge list, so undo keeps the order children were opened in, which
+  reading order follows). `placement::beside_skipping` places a card
+  without the cards about to move blocking it. Also `Scene::parent` and
+  `Scene::followers`. Settled while building it:
+  - A card that had a parent brings no mark: only a trail's first card
+    carries its trail's name and colour into the join. (Moving one card
+    out of "Work" onto a lone card shouldn't make a second "Work".)
+  - With several cards, one loop refuses the whole join (one clear
+    message beats a half-done one); cards already under the target are
+    skipped, and *Unchanged* only when none is left.
+  - `leave` on a trail's first card does nothing (*Unchanged*): it has no
+    parent, and cutting its links would split its trail into pieces. The
+    menu entry should be off for it (step 3).
+- ✅ 3. **Ways in.** Drag a card's label with a modifier (Alt?) onto
   another card (the target is highlighted while hovering); `:join <card>`
   with card titles offered; a key that picks the target with letter hints;
   `:leave` and an entry in the card's menu. Ctrl+K entries for both.
-- ⬜ 4. **Show it.** The joined card glides (`motion::Glides`) to its new
+  Done 2026-11-25:
+  - **Keys:** `a` on the board (`join-trail`) puts letters on the other
+    cards in view (in reading order; the joining cards and the cards
+    opened from them get none, as they'd make a loop). Typing a card's
+    letters joins its trail, or so does a click on it; any other key or
+    click cancels. `A` (`leave-trail`) leaves. Board mode only: in a page
+    `a` stays the page's.
+  - **Alt+drag a card's label** onto another card: the dragged cards are
+    outlined and a trail line follows the pointer, drawn as trails are
+    (rounded right-angle turns, a dot at each end). Over a card, that card
+    is outlined and a faint card shows where the grabbed one will land
+    beside it (`placement::beside_skipping`, as the join will place it),
+    the line running into it, all in that trail's colour (owner,
+    2026-11-25: the first dotted line didn't look good). Let go on no
+    card: nothing happens. A selected card's drag takes the selection.
+  - **Keyboard only** (owner, 2026-11-25): h/j/k/l to a card, v to select
+    several, a, then a card's letters; A to leave; `:join` / `:leave`.
+    Checked by a run with no clicks (`run7.sh`).
+  - **`:join [card]`** (a title, or a number in reading order, as `:card`
+    takes; titles offered); alone it shows the letters. **`:leave`.**
+  - **Ctrl+K:** *Join a trail…* (A) and *Leave trail* (Shift+A).
+  - **Card menu:** *Join a trail…*, and *Leave trail* when the card has a
+    parent, as a section before *Inspect*.
+  - All act on the selection when the current card is in it, else on the
+    current card, through `App::join_cards` / `App::leave_trail`.
+  - Messages: *Joined Work*, *Joined the trail of Card e*, *3 cards joined
+    …*; *Left Work*; *Can't join a card to its own trail below it*; *The
+    first card of a trail can't leave it · join it elsewhere instead*;
+    *Not on a trail*; *A card can't join itself*.
+  - The glide and the toast came with it (they were step 4's); step 4
+    keeps the trail line drawing in and checking the sidebar.
+  - Script runner: `adrag` (Alt+drag), `apress` (an Alt press, to look
+    mid-drag); `cards` logs each card's parent, trail, mark and label rect.
+- ✅ 4. **Show it.** The joined card glides (`motion::Glides`) to its new
   place beside the target (or stays put, per the design note); the trail
   line draws in; the sidebar moves its row under the target; a toast names
   the trail it joined.
-- ⬜ 5. **Docs and checks.** GUIDE rows, the `?` sheet (`keys::NAMED`),
+  Done 2026-11-25. The glide and toast came with step 3. A join's new line
+  draws in from the target over `motion::FOLD` (eased out), following the
+  card as it glides; its arrival dot shows once it gets there. The line
+  a join or leave cuts fades out over the same time
+  (`App::edges_in` / `edges_out`, set in `after_relink`; none when the
+  desktop asks for less motion). `scene::route::part` cuts a path to a
+  share of its length (unit-tested). The sidebar needed nothing: it is
+  rebuilt from `trail_tree` every frame (a unit test now pins a joined
+  card under its target and a left one among the other cards). Undo and
+  redo of a join or leave change lines at once, as undo does for moves.
+- ✅ 5. **Docs and checks.** GUIDE rows, the `?` sheet (`keys::NAMED`),
   CHANGELOG; a scripted e2e run (join, leave, undo) with screenshots.
+  Done 2026-11-25: two GUIDE rows (join, leave), the README's trail line
+  and key table, the `?` sheet checked (filtered to "trail": `a`, `A`
+  and both Alt+drag rows show), and the step 3 e2e run again after step 4
+  (same results).
 
-**Open (decide in step 1):**
+**Decisions (step 1, 2026-11-25):**
 
-- Joining a card that is in a stack, or onto one: unfold first, as `fold`
-  does.
-- Where the joined card goes: stays put (the line just reaches it) or
-  glides beside the target like a newly opened link.
-- When two named or coloured trails join, which name and colour win
-  (lean: the target's).
-- Whether several selected cards can join in one go (lean: yes, one undo
-  step).
+- **Join moves a card.** A trail is every card its edges connect,
+  so adding an edge to a card that already has a parent would merge
+  both whole trails. Instead `join(card, target)` first cuts the card's
+  edge from its parent (as `leave` does), then adds `target → card`. The
+  card's own followers (its subtree) come with it; the rest of its old
+  trail stays as it was. Joining a root brings its whole trail.
+- **Inside one trail too.** Joining a card to another card of its own
+  trail moves it there (a new parent), unless the target is the card or
+  one of its followers: that would make a cycle, so it's refused with a
+  toast (*Can't join a card to its own trail below it*). Joining a card
+  to its present parent does nothing (no undo step).
+- **Where it goes (owner, 2026-11-25): it glides beside the target,** to
+  the spot a link opened from the target would take
+  (`placement::beside_sized` at the card's own size). Its followers move
+  by the same offset, so their shape is kept; they aren't fitted around
+  other cards (Tidy does that). The move is part of the join's undo step.
+- **Leave keeps the card where it is.** Only the edge goes; the line
+  fades out. Its followers stay with it as a trail of its own.
+- **Names and colours.** Joined cards take the target trail's mark, field
+  by field: the target's name, colour, pin and sidebar place where it has
+  one, else the joining trail's. So a lone card dropped onto a named
+  trail takes its name, and a named trail dropped onto a lone card keeps
+  its own. A card that leaves (with its followers) loses the mark: no
+  name, colour, pin or place, so a cut-out card doesn't look like a
+  second copy of its old group. Undo gives the old marks back. (Colours
+  changed later the same day: see "Joined trails keep their colours"
+  below.)
+- **Stacks.** A joining card, or a target, in a stack: that stack is
+  unfolded first, as `fold` does, and its cards glide out; undo folds it
+  again. The same for `leave` on a card in a stack.
+- **Several at once: yes**, one undo step. With a selection, every
+  selected card joins the target, except the target itself and cards
+  whose parent is also joining (they come along under it). They join as
+  siblings in reading order of where they are now (top to bottom, then
+  left to right), each placed beside the target in turn. `leave` on a
+  selection cuts each selected card out the same way.
+- **Which cards.** Any card: pages, notes and sticky notes, since a trail
+  edge doesn't care what the card shows. A lone card can be a target; it
+  becomes the trail's first card.
+- **Saved format.** Unchanged: joins and leaves are only edges, marks and
+  rects, all saved already (no version bump).
+- **Every trail its own colour** (owner, 2026-11-25: "all trails different
+  colours so we can tell them apart"). A trail takes a colour when it
+  forms: a link or note opened from a lone card, a join of two lone cards,
+  a card leaving with followers. The colour is the one the board's trails
+  use least, the earliest of blue, green, magenta, orange, cyan, red on a
+  tie (`Scene::fresh_trail_colour`, `colour_new_trail`). Six colours, so a
+  seventh trail shares one with the trail that has had it longest
+  unshared. C still cycles colours, the accent included. A lone card's
+  colour isn't shown (no dot) until it has a trail. Board format 7: a
+  board of 6 or lower has its uncoloured trails coloured once on load
+  (`Scene::colour_trails` in `storage::load_board`), oldest trail first;
+  after that, a trail set back to the accent stays so.
+- **Two kinds of join** (owner, 2026-11-25): a *merge* (the default:
+  `a` then letters, `:join`, Alt+drag, *Join a trail…*), where the
+  joining cards take the target trail's colour and the trail stays one
+  colour; and a join *keeping its colour* (Shift on the last letter,
+  `:join-keep`, Alt+Shift+drag, *Join a trail, keeping its colour…* in
+  Ctrl+K and the card menu, the unbound `join-trail-keep` key), below.
+  `Scene::join_many(cards, target, keep)`; `join` / `join_keeping`.
+- **Joining, keeping colours** (owner, 2026-11-25): colour belongs to a card's *colour part*
+  (`Scene::colour_part`: its trail's cards of its colour), the name, pin
+  and place to the whole trail. A joining part of two or more coloured
+  cards keeps its colour; a single card (or an uncoloured part) takes the
+  target's; a lone target takes the first kept colour, else a fresh one.
+  C recolours one part; R names the whole trail and keeps every part's
+  colour (`set_trail_mark` writes the colour to `id`'s part only). A line
+  takes the colour of the card it runs into; each further part's first
+  card has a colour dot (`trail_labels`). **S folds one colour part**,
+  so a trail can have a stack per colour; a line into or out of a folded
+  part runs from its stack's front (`Scene::shown_edges`). Leaving: a
+  part of another colour than the card it leaves keeps its colour (it
+  came in with it); otherwise, two or more cards take a fresh colour.
+  Fresh colours count each colour part as one use.
 
 ### M16: Lighter and quieter ⬜
 
@@ -685,7 +813,28 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-24 (forty-fifth). **M13 finished** (asked by
+**Last session:** 2026-11-25 (forty-sixth). **M15 Custom trails,
+all five steps** (asked by the owner, ahead of M14). Any card can join a
+trail or leave one, so a named, coloured trail is a group of any cards:
+`scene::join` (`join_many` / `leave_many`, one undo step via
+`History::relinked` and `Edit::SetEdges`); in the app `a` (letters on the
+cards in view, or a click), `A`, Alt+drag a label onto a card,
+`:join [card]` / `:leave`, Ctrl+K and the card menu; the card glides
+beside the target, the new line draws in, a cut one fades out, and the
+sidebar follows. Decisions under M15 (owner: the card glides beside the
+target). Verified: unit tests (12 for join, one for `route::part`),
+clippy, scripted e2e runs in `~/.cache/trailboard-e2e-join/` (`run.sh`
+and friends; copy `board.json` to `data/trailboard/spaces/1.json` before
+each) with screenshots, slow-motion runs for the line, the `?` sheet.
+After the owner's review: the Alt+drag line is now a trail line, with a
+faint card where the dragged one will land; a keyboard-only run (v, a,
+a letter, A, undo) passes (`run7.sh`, `s7-*`). Not verified: a real
+Alt+drag by hand under Hyprland (it may keep
+Alt+drag for moving windows; then the modifier needs changing), several
+selected cards in the app (unit-tested only), the motion at normal speed
+by eye.
+
+**Session before:** 2026-11-24 (forty-fifth). **M13 finished** (asked by
 the owner): step 4, Widevine works in the media build as built (the
 decrypted video draws in an off-screen card; owner: no setting), and step
 6, keeping current: the README's "Updating CEF" checklist, a start-log
@@ -700,11 +849,20 @@ under M13 steps 4 and 6. Verified: unit tests, clippy, scripted runs in
 `~/.cache/trailboard-e2e-widevine/` (media check passes; HEVC 8/10-bit
 and HDR play again; screenshots). Not verified: the warning against a
 really different engine, a real DRM service.
-**Repo state:** on `master`, committed (M13 steps 4 and 6).
+**Repo state:** on `master`, committed (M15 with trail colours and the two kinds of join).
+After that, also asked by the owner: every trail gets a colour of its
+own as it forms (least-used first; board format 7 colours older boards
+once on load). Unit tests (scene, storage) and an e2e load of a version-6
+board (`run8.sh`, `s8-*`). Then: joins keep their colours on request (two kinds of join:
+merge, and keeping the colour) and S folds one colour part at a time (see the M15 decisions); unit tests, and an e2e join of a
+green trail onto "Work" with each part folded on its own (`run10.sh`,
+`s10-all.png`), and merge vs keep by keys and Alt+Shift+drag
+(`run11.sh`, `s11-both.png`).
+
 **Next up:** M14 step 1, the `config.toml` reader (asked by the owner on
 2026-11-21; format and decisions in M14). Bundle with
 `CEF_PATH=~/.local/share/cef-standard`. Also retake the README
-screenshots (`docs/images/`) in the new look.
+screenshots (`docs/images/`) in the new look, and try Alt+drag by hand.
 
 **Backlog:** `:later` lines aren't saved across quits; the messages log is
 this session's only; after Esc clears a find, n starts again from the view;

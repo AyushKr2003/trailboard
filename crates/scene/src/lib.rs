@@ -17,6 +17,7 @@ pub mod keys;
 pub mod history;
 pub mod liveness;
 pub mod messages;
+pub mod join;
 pub mod jump;
 pub mod mark;
 pub mod media;
@@ -48,6 +49,7 @@ pub mod when;
 use std::collections::BTreeMap;
 
 pub use fold::{Folded, Member, Stack};
+pub use join::{RelinkError, Relinked};
 pub use geom::{Camera, Rect, Vec2, FIT_MARGIN};
 pub use history::{Change, Edit, History};
 pub use mark::TrailMark;
@@ -118,7 +120,7 @@ impl Node {
 }
 
 /// A trail edge: `to` was opened from a link on `from`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Edge {
     pub from: NodeId,
     pub to: NodeId,
@@ -164,6 +166,8 @@ impl Scene {
         let id = self.add_page(rect, url);
         self.nodes.get_mut(&id).expect("just added").trail = src.trail;
         self.edges.push(Edge { from, to: id });
+        // A trail just formed takes a colour of its own (`mark`).
+        self.colour_new_trail(id);
         Some(id)
     }
 

@@ -34,7 +34,11 @@ use serde::{Deserialize, Serialize};
 /// 4: adds trail names and colours (`node.trail`), for the same reason.
 /// 5: adds sticky notes (`node.sticky`). 6: adds sidebar pins and order
 /// (`node.trail.pinned`, `node.trail.place`), which older builds would drop.
-pub const BOARD_VERSION: u32 = 6;
+/// 7: every trail has a colour of its own. The format is the same; a board
+/// from before (6 or lower) has its uncoloured trails given one on load
+/// (`Scene::colour_trails`), once, so a trail later set back to the accent
+/// with C stays so.
+pub const BOARD_VERSION: u32 = 7;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Board {
@@ -81,8 +85,13 @@ pub fn load_board(path: &Path) -> Result<Board, LoadError> {
         Err(e) => return Err(LoadError::Io(e)),
     };
     let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(LoadError::Corrupt)?;
+    let from = value.get("version").and_then(|n| n.as_u64()).unwrap_or(0);
     let value = migrate_board(value)?;
-    serde_json::from_value(value).map_err(LoadError::Corrupt)
+    let mut board: Board = serde_json::from_value(value).map_err(LoadError::Corrupt)?;
+    if from < 7 {
+        board.scene.colour_trails();
+    }
+    Ok(board)
 }
 
 /// Upgrades a board file's JSON to [`BOARD_VERSION`] one step at a time.
@@ -104,6 +113,8 @@ pub fn migrate_board(mut v: serde_json::Value) -> Result<serde_json::Value, Load
             4 => v["version"] = 5.into(),
             // Version 6 only adds `pinned` and `place` to trail marks (none).
             5 => v["version"] = 6.into(),
+            // Version 7 colours trails; `load_board` does it after parsing.
+            6 => v["version"] = 7.into(),
             other => return Err(LoadError::UnsupportedVersion(other)),
         }
     }
@@ -235,7 +246,7 @@ mod tests {
         save_board(&path, &Board::new(scene.clone(), Camera::default())).unwrap();
         let back = load_board(&path).unwrap().scene;
         assert_eq!(back.trail_mark(b), scene.trail_mark(b));
-        assert_eq!(back.trail_mark(b).colour.as_deref(), Some("blue"));
+        assert_eq!(back.trail_mark(b).colour.as_deref(), Some("green"));
 
         let mut v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         v["version"] = 3.into();
@@ -245,7 +256,34 @@ mod tests {
         fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
         let b3 = load_board(&path).unwrap();
         assert_eq!(b3.version, BOARD_VERSION);
-        assert!(b3.scene.trail_mark(b).is_empty());
+        // No mark in the file: the trail gets a colour on load (7).
+        assert_eq!(b3.scene.trail_mark(b), scene::TrailMark { colour: Some("blue".into()), ..Default::default() });
+    }
+
+    #[test]
+    fn version_6_boards_colour_their_trails_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = board_path(dir.path());
+        let mut scene = Scene::new();
+        let a = scene.add_page(Rect::new(0.0, 0.0, 10.0, 10.0), "a");
+        let b = scene.spawn_beside(a, "b").unwrap();
+        let c = scene.add_page(Rect::new(0.0, 100.0, 10.0, 10.0), "c");
+        let d = scene.spawn_beside(c, "d").unwrap();
+        // Back to the accent by hand (C), as a 7 board may hold.
+        scene.set_trail_mark(c, &scene::TrailMark::default());
+        save_board(&path, &Board::new(scene, Camera::default())).unwrap();
+        assert_eq!(load_board(&path).unwrap().scene.trail_mark(d).colour, None, "a 7 board is left as it is");
+
+        let mut v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        v["version"] = 6.into();
+        for n in v["scene"]["nodes"].as_object_mut().unwrap().values_mut() {
+            n.as_object_mut().unwrap().remove("trail");
+        }
+        fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
+        let b6 = load_board(&path).unwrap();
+        assert_eq!(b6.version, BOARD_VERSION);
+        assert_eq!(b6.scene.trail_mark(b).colour.as_deref(), Some("blue"));
+        assert_eq!(b6.scene.trail_mark(d).colour.as_deref(), Some("green"));
     }
 
     #[test]

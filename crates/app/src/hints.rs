@@ -112,6 +112,8 @@ const FIXED: &[(&str, &[(&str, &str)])] = &[
         &[
             ("Click", "Focus a page"),
             ("Drag its label", "Move"),
+            ("Alt + drag its label", "Join the trail of the card let go on"),
+            ("Alt + Shift + drag its label", "Join it, keeping its colour"),
             ("Drag corner", "Resize"),
             ("Double-click title", "Fill the view"),
             ("× · d", "Close"),
@@ -126,6 +128,7 @@ const FIXED: &[(&str, &[(&str, &str)])] = &[
             ("Shift + click title", "Add / remove a card"),
             ("Ctrl+A", "Select all"),
             ("Drag a selected title", "Move the selection"),
+            ("Alt + drag a selected title", "The selection joins a trail"),
             ("Delete", "Close the selection"),
             ("Esc · click board", "Clear the selection"),
         ],

@@ -497,6 +497,13 @@ pub enum Action {
     ScrollUp,
     NameTrail,
     TrailColour,
+    /// Join the current card (or the selection) to a trail: pick the target
+    /// card by its letters (`scene::join`).
+    JoinTrail,
+    /// [`Action::JoinTrail`], the joining trail keeping its colour.
+    JoinTrailKeep,
+    /// Cut the current card (or the selection) out of its trail.
+    LeaveTrail,
     Fold,
     Outline,
     StackPrev,
@@ -815,6 +822,9 @@ pub const NAMED: &[(&str, Action, &str)] = &[
     ("stack-next", Ac::StackNext, "Peek on through a stack"),
     ("name-trail", Ac::NameTrail, "Name the trail"),
     ("trail-colour", Ac::TrailColour, "Next trail colour"),
+    ("join-trail", Ac::JoinTrail, "Join the card to a trail (pick a card by its letters; Shift keeps its colour)"),
+    ("join-trail-keep", Ac::JoinTrailKeep, "Join a trail, keeping the card's colour (or Shift with the letters)"),
+    ("leave-trail", Ac::LeaveTrail, "Cut the card out of its trail"),
     ("sidebar", Ac::Sidebar, "Trails sidebar"),
     ("dark-pages", Ac::DarkPages, "Pages dark or light"),
     ("space-panel", Ac::SpacePanel, "Show or hide the space panel"),
@@ -968,6 +978,9 @@ pub fn board() -> Bindings<Action> {
         ("<C-S-6>", OtherCard),
         ("r", NameTrail),
         ("c", TrailColour),
+        // M15: a joins a trail (letters pick the card to join), A leaves.
+        ("a", JoinTrail),
+        ("A", LeaveTrail),
         ("s", Fold),
         ("S", Fold),
         ("o", Outline),

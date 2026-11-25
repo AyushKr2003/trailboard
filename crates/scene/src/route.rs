@@ -44,9 +44,48 @@ pub fn elbow(from: Vec2, to: Vec2, radius: f32) -> Vec<Vec2> {
     out
 }
 
+/// The first `t` (0 to 1) of `path` by length: the line as far as it has
+/// drawn in (a trail just joined grows from its source). The whole path for
+/// `t` ≥ 1; just its start for `t` ≤ 0.
+pub fn part(path: &[Vec2], t: f32) -> Vec<Vec2> {
+    let Some(&first) = path.first() else { return Vec::new() };
+    if t >= 1.0 {
+        return path.to_vec();
+    }
+    let len = |a: Vec2, b: Vec2| (b.x - a.x).hypot(b.y - a.y);
+    let total: f32 = path.windows(2).map(|w| len(w[0], w[1])).sum();
+    let mut left = total * t.max(0.0);
+    let mut out = vec![first];
+    for w in path.windows(2) {
+        let l = len(w[0], w[1]);
+        if l >= left {
+            let k = if l > 0.0 { left / l } else { 0.0 };
+            out.push(Vec2::new(w[0].x + (w[1].x - w[0].x) * k, w[0].y + (w[1].y - w[0].y) * k));
+            return out;
+        }
+        left -= l;
+        out.push(w[1]);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn part_draws_the_line_in_by_length() {
+        let p = elbow(Vec2::new(0.0, 0.0), Vec2::new(100.0, 60.0), 0.0); // 50 + 60 + 50 = 160 long
+        assert_eq!(part(&p, 1.0), p);
+        assert_eq!(part(&p, 0.0), vec![Vec2::new(0.0, 0.0), Vec2::new(0.0, 0.0)]);
+        let q = part(&p, 0.25); // 40 along the first run
+        assert_eq!(q.len(), 2);
+        assert!(close(q[1], Vec2::new(40.0, 0.0)), "{q:?}");
+        let q = part(&p, 0.5); // 80: 30 down the middle run
+        assert_eq!(q.len(), 3);
+        assert!(close(q[1], Vec2::new(50.0, 0.0)) && close(q[2], Vec2::new(50.0, 30.0)), "{q:?}");
+        assert!(part(&[], 0.5).is_empty());
+    }
 
     fn close(a: Vec2, b: Vec2) -> bool {
         (a.x - b.x).abs() < 1e-3 && (a.y - b.y).abs() < 1e-3

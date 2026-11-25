@@ -1,13 +1,13 @@
-//! Undo/redo for board edits: opening, closing, moving and resizing cards, and
-//! folding or unfolding trails, naming or colouring them. Peeking through a
-//! stack is not an edit.
+//! Undo/redo for board edits: opening, closing, moving and resizing cards,
+//! folding or unfolding trails, naming or colouring them, and joining cards
+//! to trails or cutting them out. Peeking through a stack is not an edit.
 //!
 //! Each stack holds the edit that reverses an action. Applying an edit to the
 //! scene returns its own reverse, which goes on the other stack, so undo and
 //! redo share one code path. Page navigation, titles and stacking order are not
 //! board edits and are not recorded.
 
-use crate::{Edge, Folded, Node, NodeId, Rect, Scene, Stack, TrailMark};
+use crate::{Edge, Folded, Node, NodeId, Rect, Relinked, Scene, Stack, TrailMark};
 
 /// Most actions kept for undo.
 pub const LIMIT: usize = 200;
@@ -28,6 +28,8 @@ pub enum Edit {
     SetMarks(Vec<(NodeId, TrailMark)>),
     /// Make a note a sticky note in this colour, or (`None`) a note card again.
     SetSticky { id: NodeId, colour: Option<String> },
+    /// Make the trail edges exactly these (a join or leave).
+    SetEdges(Vec<Edge>),
     /// Several edits undone and redone as one step, applied in order.
     Batch(Vec<Edit>),
 }
@@ -70,6 +72,17 @@ impl Edit {
                 }
                 let first = old.first()?.0;
                 Some((Edit::SetMarks(old), vec![Change::Moved(first)]))
+            }
+            Edit::SetEdges(edges) => {
+                let old = std::mem::replace(&mut scene.edges, edges);
+                let ends: std::collections::BTreeSet<NodeId> = old
+                    .iter()
+                    .filter(|e| !scene.edges.contains(e))
+                    .chain(scene.edges.iter().filter(|e| !old.contains(e)))
+                    .flat_map(|e| [e.from, e.to])
+                    .filter(|&id| scene.node(id).is_some())
+                    .collect();
+                Some((Edit::SetEdges(old), ends.into_iter().map(Change::Moved).collect()))
             }
             Edit::SetSticky { id, colour } => {
                 let old = scene.set_sticky(id, colour)?;
@@ -154,6 +167,19 @@ impl History {
     pub fn folded(&mut self, f: &Folded) {
         let mut edits = vec![Edit::Unfold(f.front)];
         edits.extend(f.unfolded.iter().cloned().map(Edit::Refold));
+        self.push_group(edits);
+    }
+
+    /// Cards joined a trail or left one; `r` is what [`Scene::join_many`] or
+    /// [`Scene::leave_many`] returned. Undo puts back the edges, marks and
+    /// places, then folds again any stack it unfolded.
+    pub fn relinked(&mut self, r: &Relinked) {
+        let mut edits = vec![Edit::SetEdges(r.edges.clone())];
+        if !r.marks.is_empty() {
+            edits.push(Edit::SetMarks(r.marks.clone()));
+        }
+        edits.extend(r.moved.iter().map(|&(id, rect)| Edit::SetRect { id, rect }));
+        edits.extend(r.unfolded.iter().cloned().map(Edit::Refold));
         self.push_group(edits);
     }
 

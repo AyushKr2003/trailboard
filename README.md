@@ -57,7 +57,7 @@ Zoom out to see the whole trail, or jump to any card from the palette or sidebar
 
 | | |
 |---|---|
-| **Trails** | Every link remembers where it came from. Name a trail, colour it, fold it into a stack. |
+| **Trails** | Every link remembers where it came from. Name a trail, colour it, fold it into a stack, or join any card to it to make it a group. |
 | **Live cards** | Each card is a full Chromium page. Pan, zoom, drag, resize. Off-screen cards sleep to save memory. |
 | **Keyboard first** | `h j k l` between cards, `f` to follow links, `Ctrl+K` for everything else. |
 | **Tidy & Fold** | One key lays a messy board out without overlaps; another folds a trail into a stack. |
@@ -226,6 +226,7 @@ misses them. For each new CEF release that the `cef` crate supports:
 | `f` | Follow a link by keyboard |
 | `Tab` | Solo: the page fills the window |
 | `Ctrl+B` · `T` · `S` | Trails sidebar · Tidy · Fold a trail |
+| `A` · `Shift+A` | Join a card to a trail (by its letters) · cut it out |
 | `b` · `:save-page` | Open a saved page · save this one |
 | `td` · `tj` · `:set` | Dark pages · JavaScript for this site · any setting by name |
 | `]]` · `gu` · `Ctrl+A` | Next page · up the address · the address's last number up |

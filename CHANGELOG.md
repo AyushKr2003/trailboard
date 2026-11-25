@@ -11,6 +11,27 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
 
 ### Added
 
+- **Custom trails: any card can join a trail, or leave one**, so a named,
+  coloured trail can hold any cards you like. On the board, `a` puts
+  letters on the other cards in view: type one (or click the card) and
+  the current card, or the selection, joins that card's trail and glides
+  beside it as the trail's line draws in, taking the trail's name (a
+  single card takes its colour too). Select several with `v` first to join them together. Or
+  Alt+drag a card's label onto another card: a trail line follows the
+  pointer, and over a card a faint card shows where it will land. `A`
+  cuts a card out of its trail where it stands (with the cards opened
+  from it). Also `:join [card]`, `:leave`, *Join a trail…* and *Leave
+  trail* in Ctrl+K and the card menu. Each is one undo step.
+- **Every trail has a colour of its own**, so trails are easy to tell
+  apart: a new trail takes the colour the board's trails use least. C
+  still changes it. Boards saved before this get their trails coloured
+  once when they open.
+- **Two kinds of join.** A join merges: the joining cards take the
+  trail's colour. Or join keeping the colour (Shift on the last letter
+  after `a`, `:join-keep`, Alt+Shift+drag, or *Join a trail, keeping its
+  colour…*): the trail then shows several colours, S folds the cards of
+  one colour into a stack and leaves the others out, and C recolours one
+  colour.
 - **Seconds on the start page clock.** *Customise* → *Show seconds*, under
   the time format; the clock then ticks each second. Off by default.
 - **Media controls on any site.** `,` then a key, on the board or in a

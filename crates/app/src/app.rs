@@ -258,6 +258,22 @@ enum Drag {
     Dock { id: NodeId, button: WebButton },
     /// Dragging the divider between card `id`'s page and its inspector.
     Divider { id: NodeId },
+    /// Alt+drag of card `id`'s label: `App::group` holds the cards that
+    /// will join the trail of the card it is let go on (M15); `keep`
+    /// (Alt+Shift) keeps their colour.
+    Join { id: NodeId, keep: bool },
+}
+
+/// Picking the card to join a trail by its letters (`a`, `:join`, Ctrl+K):
+/// `cards` will join the trail of the target chosen among `targets` (the
+/// other cards in view, in reading order), labelled by `hints`.
+struct CardPick {
+    /// Keep the joining trail's colour (Ctrl+K's *keeping its colour*);
+    /// Shift on the last letter does it too.
+    keep: bool,
+    cards: Vec<NodeId>,
+    targets: Vec<NodeId>,
+    hints: hint::Hints,
 }
 
 /// Link hints on card `id`: its visible links (rects in the page view's CSS
@@ -566,6 +582,8 @@ pub struct App {
     sidebar_motion: crate::sidebar::Motion,
     /// Link hints (`f`) on a card's page: asked for, or showing labels.
     link_hints: Option<LinkHints>,
+    /// Picking a card by its letters to join its trail (M15).
+    card_pick: Option<CardPick>,
     /// Each card's chosen scroll section (`web::scroll`); a card not here
     /// scrolls the automatic pick. Forgotten when its page navigates.
     scroll_targets: HashMap<NodeId, u32>,
@@ -749,6 +767,10 @@ pub struct App {
     /// Closed cards shrinking away: the card as it was, its page's texture
     /// (removed once it is gone), and since when.
     ghosts: Vec<(Node, u64, Instant)>,
+    /// Trail lines just made by a join, drawing in from their source, and
+    /// lines just cut by a leave, fading out; since when (M15).
+    edges_in: Vec<(Edge, Instant)>,
+    edges_out: Vec<(Edge, Instant)>,
     /// Cards of a trail being folded, each sliding onto its sheet behind the
     /// stack's front (`motion::folding`).
     gathers: Vec<Gather>,
@@ -1001,6 +1023,7 @@ impl App {
             sheet: Default::default(),
             sidebar_motion: Default::default(),
             link_hints: None,
+            card_pick: None,
             scroll_targets: HashMap::new(),
             sections: HashMap::new(),
             section_ask: None,
@@ -1101,6 +1124,8 @@ impl App {
             },
             glides: motion::Glides::default(),
             ghosts: Vec::new(),
+            edges_in: Vec::new(),
+            edges_out: Vec::new(),
             gathers: Vec::new(),
             space_in: None,
             sidebar_last: None,
@@ -1392,6 +1417,7 @@ impl App {
 
     fn switch_space(&mut self, to: SpaceId) {
         self.link_hints = None;
+        self.card_pick = None;
         if to == self.spaces.active {
             self.toast(format!("{} is the only space · Ctrl+Shift+N makes another", self.spaces.active_entry().name));
             return;
@@ -1424,6 +1450,7 @@ impl App {
 
     fn new_space(&mut self, private: bool) {
         self.link_hints = None;
+        self.card_pick = None;
         let id = self.spaces.add();
         self.spaces.set_private(id, private);
         self.unload_space();
@@ -1444,6 +1471,7 @@ impl App {
     /// pages reopen, so they move to (or out of) the private cookie jar.
     fn toggle_private(&mut self) {
         self.link_hints = None;
+        self.card_pick = None;
         let id = self.spaces.active;
         let on = !self.is_private();
         self.unload_space();
@@ -2591,6 +2619,9 @@ impl App {
             KeyAction::Fill if idle && self.read.is_none() => self.fill_current(),
             KeyAction::NameTrail if idle => self.ask_trail_name(),
             KeyAction::TrailColour if idle => self.cycle_trail_colour(),
+            KeyAction::JoinTrail if idle => self.start_card_pick(false),
+            KeyAction::JoinTrailKeep if idle => self.start_card_pick(true),
+            KeyAction::LeaveTrail if idle => self.leave_trail(),
             KeyAction::Fold if idle => self.toggle_fold(),
             KeyAction::Outline if idle => self.outline_in_view(),
             KeyAction::StackPrev if idle => self.peek_stack(-1),
@@ -4229,6 +4260,20 @@ impl App {
         }
     }
 
+    /// The card `typed` names: a number counts in reading order (`3`), else
+    /// the best title, the card used most recently first.
+    fn card_named(&self, typed: &str) -> Option<NodeId> {
+        if let Ok(n) = typed.trim().parse::<usize>() {
+            return n.checked_sub(1).and_then(|i| scene::tidy::order(&self.scene).get(i).copied());
+        }
+        let cards: Vec<(NodeId, String)> = self.scene.all_nodes().map(|n| (n.id, n.title.trim().to_string())).collect();
+        // Most recently used first, so the same title goes to the card used last.
+        let mut order: Vec<usize> = (0..cards.len()).collect();
+        order.sort_by_key(|&i| std::cmp::Reverse(self.used.get(&cards[i].0).copied().unwrap_or(0)));
+        let sorted: Vec<String> = order.iter().map(|&i| cards[i].1.clone()).collect();
+        Self::best_name(typed, &sorted).map(|i| cards[order[i]].0)
+    }
+
     /// The best of `names` for `typed`: the same name (case ignored), else
     /// the best fuzzy match.
     fn best_name(typed: &str, names: &[String]) -> Option<usize> {
@@ -4439,33 +4484,28 @@ impl App {
             }
             Cmd::JumpBack => self.walk_jumps(true, parsed.count().unwrap_or(1).min(100) as usize),
             Cmd::JumpForward => self.walk_jumps(false, parsed.count().unwrap_or(1).min(100) as usize),
-            Cmd::Card if arg.parse::<usize>().is_ok() => {
-                // A number counts in reading order (`:card 3`).
-                let n: usize = arg.parse().unwrap_or(0);
-                match n.checked_sub(1).and_then(|i| scene::tidy::order(&self.scene).get(i).copied()) {
-                    Some(to) => self.switch_card(to),
-                    None => self.toast(format!("No card {n} here")),
-                }
-            }
-            Cmd::Card => {
-                let cards: Vec<(NodeId, String)> = self.scene.all_nodes().map(|n| (n.id, n.title.trim().to_string())).collect();
-                let names: Vec<String> = cards.iter().map(|(_, t)| t.clone()).collect();
-                // Most recently used first, so the same title goes to the card used last.
-                let mut order: Vec<usize> = (0..cards.len()).collect();
-                order.sort_by_key(|&i| std::cmp::Reverse(self.used.get(&cards[i].0).copied().unwrap_or(0)));
-                let sorted: Vec<String> = order.iter().map(|&i| names[i].clone()).collect();
-                match Self::best_name(&arg, &sorted) {
-                    // From a page the keys go with it (and Solo reads it), as gt does.
-                    Some(i) => self.switch_card(cards[order[i]].0),
-                    None => self.toast(format!("No card called “{arg}”")),
-                }
-            }
+            Cmd::Card => match self.card_named(&arg) {
+                // From a page the keys go with it (and Solo reads it), as gt does.
+                Some(to) => self.switch_card(to),
+                None if arg.parse::<usize>().is_ok() => self.toast(format!("No card {arg} here")),
+                None => self.toast(format!("No card called “{arg}”")),
+            },
             Cmd::Name if parsed.arg.is_some() => match read::pick(&self.scene, self.focused, self.camera.center) {
                 Some(id) => self.name_trail(id, &arg),
                 None => self.toast("No trail here"),
             },
             Cmd::Name => self.run_command(Command::NameTrail),
             Cmd::Colour => self.run_command(Command::ColourTrail),
+            Cmd::Join | Cmd::JoinKeep if parsed.arg.is_some() => match self.card_named(&arg) {
+                Some(target) => {
+                    let cards = self.relink_cards();
+                    self.join_cards(&cards, target, parsed.spec.cmd == Cmd::JoinKeep);
+                }
+                None => self.toast(format!("No card called “{arg}”")),
+            },
+            Cmd::Join => self.run_command(Command::JoinTrail),
+            Cmd::JoinKeep => self.run_command(Command::JoinTrailKeep),
+            Cmd::Leave => self.run_command(Command::LeaveTrail),
             Cmd::SelectAll => self.run_command(Command::SelectAll),
             Cmd::Space => {
                 let names: Vec<String> = self.spaces.spaces.iter().map(|s| s.name.clone()).collect();
@@ -6111,6 +6151,9 @@ impl App {
             Command::Outline => self.outline_in_view(),
             Command::NameTrail => self.ask_trail_name(),
             Command::ColourTrail => self.cycle_trail_colour(),
+            Command::JoinTrail => self.start_card_pick(false),
+            Command::JoinTrailKeep => self.start_card_pick(true),
+            Command::LeaveTrail => self.leave_trail(),
             Command::Sidebar => self.toggle_sidebar(),
             Command::Read => self.toggle_read(),
             Command::LinkHints => self.show_link_hints(),
@@ -7012,6 +7055,276 @@ impl App {
             Some(c) => format!("Trail colour: {c}"),
             None => "Trail colour: accent".to_string(),
         });
+    }
+
+    // ------------------------------------------------------- custom trails (M15)
+
+    /// The cards a join or leave acts on: the selection when the current
+    /// card is in it (or there is none), else the current card.
+    fn relink_cards(&self) -> Vec<NodeId> {
+        match read::pick(&self.scene, self.focused, self.camera.center) {
+            Some(id) if !self.selection.contains(id) => vec![id],
+            _ if !self.selection.is_empty() => self.selection.ids(),
+            Some(id) => vec![id],
+            None => Vec::new(),
+        }
+    }
+
+    /// A card's title for a message, cut short.
+    fn card_title(&self, id: NodeId) -> String {
+        let n = self.scene.node(id);
+        let title = n.map(|n| n.title.trim()).filter(|t| !t.is_empty()).or(n.map(|n| n.url.as_str())).unwrap_or_default();
+        menu::cut(title, 40)
+    }
+
+    /// Joins `cards` to the trail of `target` (`scene::join`), as one undo
+    /// step: they glide to their new places and a toast names the trail.
+    /// `keep`: a coloured joining trail keeps its colour (else it takes the
+    /// target trail's: a merge).
+    fn join_cards(&mut self, cards: &[NodeId], target: NodeId, keep: bool) {
+        use scene::RelinkError as E;
+        if cards.is_empty() {
+            return self.toast("No card here to join");
+        }
+        if cards.iter().all(|&c| c == target) {
+            return self.toast("A card can't join itself · pick another card");
+        }
+        match self.scene.join_many(cards, target, keep) {
+            Ok(r) => {
+                log::info!("join: {:?} to card {} (moved {})", r.cards.iter().map(|c| c.0).collect::<Vec<_>>(), target.0, r.moved.len());
+                self.history.relinked(&r);
+                self.after_relink(&r);
+                let what = match r.cards.len() {
+                    1 => "Joined".to_string(),
+                    n => format!("{n} cards joined"),
+                };
+                let trail = match self.scene.trail_mark(target).name {
+                    Some(name) => name,
+                    None => format!("the trail of {}", self.card_title(target)),
+                };
+                let colours = if keep && self.scene.colour_part(target).len() < self.scene.trail_of(target).len() { ", keeping its colour" } else { "" };
+                self.toast(format!("{what} {trail}{colours}"));
+            }
+            Err(E::Loop) => self.toast("Can't join a card to its own trail below it"),
+            Err(E::Unchanged) => self.toast("Already joined there"),
+            Err(E::Missing) => self.toast("No card to join"),
+        }
+    }
+
+    /// Shift+A, `:leave`: cuts the current card (or the selection) out of
+    /// its trail, with the cards opened from it. One undo step.
+    fn leave_trail(&mut self) {
+        let cards = self.relink_cards();
+        let names: Vec<Option<String>> = cards.iter().map(|&c| self.scene.trail_mark(c).name).collect();
+        match self.scene.leave_many(&cards) {
+            Ok(r) => {
+                log::info!("leave: {:?}", r.cards.iter().map(|c| c.0).collect::<Vec<_>>());
+                self.history.relinked(&r);
+                self.after_relink(&r);
+                let name = cards.iter().zip(&names).find(|(c, _)| r.cards.contains(c)).and_then(|(_, n)| n.clone());
+                self.toast(match (r.cards.len(), name) {
+                    (1, Some(n)) => format!("Left {n}"),
+                    (1, None) => "Left the trail".to_string(),
+                    (k, Some(n)) => format!("{k} cards left {n}"),
+                    (k, None) => format!("{k} cards left their trails"),
+                });
+            }
+            Err(_) if cards.is_empty() => self.toast("No card here"),
+            Err(_) if cards.iter().all(|&c| self.scene.trail_of(c).len() < 2) => self.toast("Not on a trail"),
+            Err(_) => self.toast("The first card of a trail can't leave it · join it elsewhere instead"),
+        }
+    }
+
+    /// After a join or leave: cards that moved glide there, new trail lines
+    /// draw in from their source and cut ones fade out.
+    fn after_relink(&mut self, r: &scene::Relinked) {
+        if !self.still {
+            let now = Instant::now();
+            for &(id, old) in &r.moved {
+                self.glides.start(id, old, false, now);
+            }
+            let made = self.scene.edges().iter().filter(|e| !r.edges.contains(e)).map(|e| (*e, now));
+            let cut = r.edges.iter().filter(|e| !self.scene.edges().contains(e)).map(|e| (*e, now));
+            self.edges_in.extend(made.collect::<Vec<_>>());
+            self.edges_out.extend(cut.collect::<Vec<_>>());
+        }
+        self.after_fold();
+        self.dirty = true;
+    }
+
+    /// A, Ctrl+K *Join a trail…*, `:join`: letters on the other cards in
+    /// view; typing one joins the current card (or the selection) to that
+    /// card's trail.
+    fn start_card_pick(&mut self, keep: bool) {
+        let cards = self.relink_cards();
+        if cards.is_empty() {
+            return self.toast("No card here to join");
+        }
+        self.menu = None;
+        self.link_hints = None;
+        let below: HashSet<NodeId> = cards.iter().flat_map(|&c| self.scene.followers(c)).collect();
+        let mut targets: Vec<NodeId> = self.scene.nodes().map(|n| n.id).filter(|id| !below.contains(id) && self.card_on_screen(*id)).collect();
+        targets.sort_by(|a, b| {
+            let (a, b) = (self.scene.node(*a).expect("on board").rect, self.scene.node(*b).expect("on board").rect);
+            a.y.total_cmp(&b.y).then(a.x.total_cmp(&b.x))
+        });
+        if targets.is_empty() {
+            return self.toast("No other card in view · zoom out, or :join a card by name");
+        }
+        log::info!("join: picking among {} card(s) for {:?}", targets.len(), cards.iter().map(|c| c.0).collect::<Vec<_>>());
+        self.card_pick = Some(CardPick { keep, hints: hint::Hints::new(targets.len()), cards, targets });
+        self.toast(if keep {
+            "Join which trail, keeping this colour? Type a card's letters · Esc cancels"
+        } else {
+            "Join which trail? Type a card's letters (Shift keeps this colour) · Esc cancels"
+        });
+        self.dirty = true;
+    }
+
+    /// A key while card letters are up: letters pick, Backspace takes one
+    /// back, anything else cancels.
+    fn card_pick_key(&mut self, ev: &KeyIn, chord: bool) {
+        let Some(cp) = self.card_pick.as_mut() else { return };
+        let letter = ev.text.as_deref().and_then(|t| {
+            let mut cs = t.chars();
+            cs.next().filter(|c| cs.next().is_none() && c.is_alphabetic())
+        });
+        match (ev.named, letter) {
+            (Some(NamedKey::Backspace), _) if !chord => {
+                cp.hints.backspace();
+            }
+            // Shift on a letter (it comes upper case) keeps the colour.
+            (_, Some(c)) if !chord => match cp.hints.type_char(c.to_ascii_lowercase()) {
+                hint::Typed::Follow(i) => {
+                    let cp = self.card_pick.take().expect("picking");
+                    self.join_cards(&cp.cards, cp.targets[i], cp.keep || c.is_uppercase());
+                }
+                hint::Typed::Narrowed => {}
+                hint::Typed::NoMatch => log::debug!("no card label starts with {c:?}"),
+            },
+            _ => {
+                self.card_pick = None;
+                log::info!("join: cancelled");
+                self.toast("Join cancelled");
+            }
+        }
+        self.dirty = true;
+    }
+
+    /// The card letters: a label in the middle of each target card, and the
+    /// joining cards outlined.
+    fn card_pick_layer(&mut self) -> Option<Layer> {
+        let cp = self.card_pick.as_ref()?;
+        let th = &self.theme;
+        let ui = self.ui();
+        let scale = self.scale();
+        let size = crate::chrome::type_::TITLE * ui;
+        let (pad, bh) = (size * 0.45, size * 1.6);
+        let typed_n = cp.hints.typed.chars().count();
+        let radius = th.small_radius(scale);
+        let mut l = Layer::default();
+        for &c in &cp.cards {
+            if let Some(n) = self.scene.node(c).filter(|_| !self.scene.is_hidden(c)) {
+                crate::chrome::outline(&mut l, self.to_screen_rect(n.frame()), radius, (2.0 * ui).max(1.5), rgb(th.marked(), 0.9));
+            }
+        }
+        let mut items = Vec::new();
+        for (i, &t) in cp.targets.iter().enumerate() {
+            if !cp.hints.shown(i) {
+                continue;
+            }
+            let Some(n) = self.scene.node(t) else { continue };
+            let label = cp.hints.labels[i].to_uppercase();
+            let (head, tail): (String, String) = (label.chars().take(typed_n).collect(), label.chars().skip(typed_n).collect());
+            items.push((self.to_screen_rect(n.frame()), head, tail));
+        }
+        let (bg, fg, done) = (rgb(th.accent(), 1.0), rgb(th.accent_foreground(), 1.0), rgb(th.accent_foreground(), 0.45));
+        let border = rgb(th.background(), 0.9);
+        let screen = Rect::new(0.0, 0.0, self.viewport().x, self.viewport().y);
+        let r = self.renderer.as_mut()?;
+        for (frame, head, tail) in items {
+            crate::chrome::outline(&mut l, frame, radius, (1.5 * ui).max(1.0), rgb(th.accent(), 0.55));
+            let head_w = r.measure(&head, size, true);
+            let w = head_w + r.measure(&tail, size, true) + pad * 2.0;
+            let c = frame.center();
+            let b = Rect::new(c.x - w / 2.0, c.y - bh / 2.0, w, bh);
+            l.quads.push(Quad { shape: Shape::Rect { rect: b.inflate(scale.max(1.0)), radius }, color: border, texture: None });
+            l.quads.push(Quad { shape: Shape::Rect { rect: b, radius }, color: bg, texture: None });
+            let ty = b.y + (bh - size * 1.3) / 2.0;
+            if !head.is_empty() {
+                l.texts.push(Text { text: head, pos: [b.x + pad, ty], size, color: done, clip: screen, bold: true });
+            }
+            l.texts.push(Text { text: tail, pos: [b.x + pad + head_w, ty], size, color: fg, clip: screen, bold: true });
+        }
+        Some(l)
+    }
+
+    /// The card under screen point `p` that an Alt+drag would join: any card
+    /// but the ones being dragged.
+    fn join_drop_target(&self, p: Vec2) -> Option<NodeId> {
+        self.hit(p).id().filter(|id| !self.group.iter().any(|(g, _)| g == id) && self.scene.node(*id).is_some())
+    }
+
+    /// Alt+drag of a label: the dragged cards outlined and a trail line
+    /// drawn as the board draws trails (rounded right-angle turns, a dot at
+    /// each end). Over a card, that card is outlined and a faint card shows
+    /// where the grabbed one will land beside it, the line running into it,
+    /// all in that trail's colour; elsewhere the line runs from the grabbed
+    /// card to the pointer.
+    fn join_drag_layer(&self) -> Option<Layer> {
+        let Drag::Join { id, keep } = self.drag else { return None };
+        let th = &self.theme;
+        let scale = self.scale();
+        let k = self.camera.pixels_per_unit(scale);
+        let radius = th.small_radius(scale);
+        let mut l = Layer::default();
+        let outline = ((2.0 * self.ui()).max(1.5), rgb(th.marked(), 0.9));
+        for &(g, _) in &self.group {
+            if let Some(n) = self.scene.node(g) {
+                crate::chrome::outline(&mut l, self.to_screen_rect(n.frame()), radius, outline.0, outline.1);
+            }
+        }
+        let card = self.to_screen_rect(self.scene.node(id)?.frame());
+        // Where a trail meets a card: its side, near the top, where its name is.
+        let row = |f: Rect| f.y + (28.0 * k).min(f.h / 2.0);
+        let target = self.join_drop_target(self.cursor).and_then(|t| self.scene.node(t));
+        let (from, to, colour) = match target {
+            Some(t) => {
+                let tf = self.to_screen_rect(t.frame());
+                let colour = self.scene.trail_mark(t.id).colour.map_or(th.accent(), |c| th.color(&c));
+                crate::chrome::outline(&mut l, tf, radius, outline.0 * 1.5, rgb(colour, 0.95));
+                // Where the card will land (`scene::join` puts it there): a
+                // faint card in the trail's colour, the line running into it
+                // as the board draws an edge.
+                let skip: std::collections::BTreeSet<NodeId> = self.group.iter().flat_map(|&(g, _)| self.scene.followers(g)).collect();
+                let size = self.scene.node(id)?.rect;
+                let land = scene::placement::beside_skipping(&self.scene, t, size.w, size.h, &skip);
+                let lf = self.to_screen_rect(land);
+                // With Alt+Shift a coloured trail of two or more keeps its colour (`scene::join`).
+                let own = self.scene.node(id).and_then(|n| n.trail.colour.clone()).filter(|_| keep && self.scene.followers(id).len() > 1);
+                let colour = own.map_or(colour, |c| th.color(&c));
+                let corner = th.card_corner(k, scale, lf.w, lf.h);
+                crate::chrome::fill(&mut l, lf, corner, rgb(colour, 0.14));
+                crate::chrome::outline(&mut l, lf, corner, outline.0, rgb(colour, 0.8));
+                (Vec2::new(tf.right(), row(tf)), Vec2::new(lf.x, row(lf)), colour)
+            }
+            None => {
+                let p = self.cursor;
+                let side = if p.x >= card.center().x { card.right() } else { card.x };
+                (Vec2::new(side, row(card)), p, th.accent())
+            }
+        };
+        let width = (2.0 * k).clamp(scale.max(1.0), 3.0 * scale);
+        let turn = th.card_corner(k, scale, f32::MAX, f32::MAX);
+        let path = scene::route::elbow(from, to, turn);
+        for w in path.windows(2) {
+            l.quads.push(Quad { shape: Shape::Segment { from: [w[0].x, w[0].y], to: [w[1].x, w[1].y], width }, color: rgb(colour, 0.95), texture: None });
+        }
+        let d = (7.0 * k).clamp(3.0 * scale, 8.0 * scale);
+        for p in [from, to] {
+            crate::chrome::fill(&mut l, Rect::new(p.x - d / 2.0, p.y - d / 2.0, d, d), d / 2.0, rgb(colour, 1.0));
+        }
+        Some(l)
     }
 
     /// The cards behind stack front `front`, nearest first (as ] shows them).
@@ -7954,6 +8267,21 @@ impl App {
             }
             return;
         }
+        // While card letters are up, a click on a labelled card picks it;
+        // anywhere else cancels. Either way it does nothing else.
+        if let Some(cp) = self.card_pick.as_ref() {
+            if state == ElementState::Pressed {
+                let target = self.hit(p).id().filter(|t| cp.targets.contains(t));
+                let cp = self.card_pick.take().expect("picking");
+                match target {
+                    Some(t) => self.join_cards(&cp.cards, t, cp.keep || self.mods.shift_key()),
+                    None => self.toast("Join cancelled"),
+                }
+                self.menu_pressed = true; // swallow the release
+                self.dirty = true;
+            }
+            return;
+        }
         // A press ends link hints, then does what it always does.
         if state == ElementState::Pressed && self.link_hints.take().is_some() {
             log::info!("link hints cancelled by a click");
@@ -8160,14 +8488,20 @@ impl App {
                     self.menu_pressed = true;
                 }
                 Hit::Header(id) => {
-                    if shift {
+                    if shift && !self.mods.alt_key() {
                         self.selection.toggle(id);
                     } else if !self.selection.contains(id) {
                         self.selection.clear();
                     }
                     self.focus(Some(id));
                     self.keys_in_page = false;
-                    if self.click_count >= 2 && !shift {
+                    if self.mods.alt_key() {
+                        // Alt+drag: let go on another card to join its trail
+                        // (Alt+Shift: keeping its colour).
+                        self.group = selection::drag_group(&self.scene, &self.selection, id);
+                        self.drag = Drag::Join { id, keep: shift };
+                        self.set_cursor(web::Cursor::Grabbing);
+                    } else if self.click_count >= 2 && !shift {
                         self.fill_view(id);
                         self.drag = Drag::None;
                     } else {
@@ -8246,6 +8580,15 @@ impl App {
             match self.drag {
                 Drag::Resize { id, start, .. } => self.history.moved(&self.scene, id, start),
                 Drag::Move { .. } => self.history.moved_many(&self.scene, &std::mem::take(&mut self.group)),
+                Drag::Join { keep, .. } => {
+                    let target = self.join_drop_target(p);
+                    let cards: Vec<NodeId> = std::mem::take(&mut self.group).into_iter().map(|(g, _)| g).collect();
+                    self.dirty = true;
+                    match target {
+                        Some(t) => self.join_cards(&cards, t, keep),
+                        None => log::info!("join: let go on no card"),
+                    }
+                }
                 Drag::Band { .. } => {
                     let band = self.band().expect("band drag");
                     self.selection.extend(selection::in_band(&self.scene, band));
@@ -8339,6 +8682,10 @@ impl App {
                 }
             }
             Drag::Band { .. } => self.set_cursor(web::Cursor::Crosshair),
+            Drag::Join { .. } => {
+                self.dirty = true;
+                self.set_cursor(web::Cursor::Grabbing);
+            }
             Drag::Resize { id, anchor, start } => {
                 self.dirty = true;
                 let d = self.to_world(p) - anchor;
@@ -8645,6 +8992,12 @@ impl App {
             // key (but a modifier) ends the hints and is dropped.
             if pressed && !matches!(ev.named, Some(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super)) {
                 self.link_hint_key(&ev, ctrl || alt);
+            }
+            return;
+        }
+        if self.card_pick.is_some() {
+            if pressed && !matches!(ev.named, Some(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super)) {
+                self.card_pick_key(&ev, ctrl || alt);
             }
             return;
         }
@@ -9430,16 +9783,28 @@ impl App {
         let mut edges = Layer::default();
         let labels: HashMap<NodeId, scene::TrailMark> =
             if board_hidden { HashMap::new() } else { self.scene.trail_labels().into_iter().collect() };
-        let mut edge_colour: HashMap<NodeId, [u8; 3]> = HashMap::new();
-        for (head, mark) in &labels {
-            if let Some(c) = mark.colour.as_deref() {
-                let c = th.color(c);
-                edge_colour.extend(self.scene.trail_of(*head).into_iter().map(|id| (id, c)));
-            }
-        }
+        // A line takes the colour of the card it runs into, so a part of
+        // another colour that joined a trail is that colour up to it.
+        let edge_colour = |id: NodeId| self.scene.node(id).and_then(|n| n.trail.colour.as_deref()).map(|c| th.color(c));
         let current_trail: HashSet<NodeId> = self.focused.map(|f| self.scene.trail_of(f).into_iter().collect()).unwrap_or_default();
-        let board_edges: Vec<Edge> = if board_hidden { Vec::new() } else { self.scene.visible_edges().copied().collect() };
-        for e in &board_edges {
+        // Each line with how far it has drawn in (a join's) and how strongly
+        // it shows (a leave's, fading out), then those cut lines themselves.
+        let now = Instant::now();
+        self.edges_in.retain(|(_, at)| motion::progress(*at, motion::FOLD, now) < 1.0);
+        self.edges_out.retain(|(_, at)| motion::progress(*at, motion::FOLD, now) < 1.0);
+        let board_edges: Vec<(Edge, f32, f32)> = if board_hidden {
+            Vec::new()
+        } else {
+            let grown = |e: &Edge| self.edges_in.iter().find(|(x, _)| x == e).map_or(1.0, |(_, at)| motion::ease_out(motion::progress(*at, motion::FOLD, now)));
+            let fading = self.edges_out.iter().filter(|(e, _)| !self.scene.edges().contains(e) && !self.scene.is_hidden(e.from) && !self.scene.is_hidden(e.to));
+            self.scene
+                .shown_edges()
+                .into_iter()
+                .map(|e| (e, grown(&e), 1.0))
+                .chain(fading.map(|(e, at)| (*e, 1.0, 1.0 - motion::ease_out(motion::progress(*at, motion::FOLD, now)))))
+                .collect()
+        };
+        for &(ref e, grow, fade) in &board_edges {
             let (Some(a), Some(b)) = (self.scene.node(e.from), self.scene.node(e.to)) else { continue };
             let fa = self.to_screen_rect(shown_frame(a));
             let fb = self.to_screen_rect(shown_frame(b));
@@ -9447,7 +9812,7 @@ impl App {
             let (ya, yb) = (fa.y + (28.0 * k).min(fa.h / 2.0), fb.y + (28.0 * k).min(fb.h / 2.0));
             let (p0, p3) = if fb.x >= fa.right() { ([fa.right(), ya], [fb.x, yb]) } else { ([fa.x, ya], [fb.right(), yb]) };
             let hot = current_trail.contains(&e.from) && current_trail.contains(&e.to);
-            let marked = edge_colour.get(&e.from).copied();
+            let marked = edge_colour(e.to);
             let (colour, alpha) = match (marked, hot) {
                 (Some(c), true) => (c, 1.0),
                 (Some(c), false) => (c, 0.7),
@@ -9456,14 +9821,16 @@ impl App {
             };
             let width = ((if hot { 2.0 } else { 1.5 }) * k).clamp(scale.max(1.0), 3.0 * scale);
             let turn = th.card_corner(k, scale, f32::MAX, f32::MAX);
-            let path = scene::route::elbow(Vec2::new(p0[0], p0[1]), Vec2::new(p3[0], p3[1]), turn);
+            let path = scene::route::part(&scene::route::elbow(Vec2::new(p0[0], p0[1]), Vec2::new(p3[0], p3[1]), turn), grow);
             for w in path.windows(2) {
-                edges.quads.push(Quad { shape: Shape::Segment { from: [w[0].x, w[0].y], to: [w[1].x, w[1].y], width }, color: rgb(colour, alpha), texture: None });
+                edges.quads.push(Quad { shape: Shape::Segment { from: [w[0].x, w[0].y], to: [w[1].x, w[1].y], width }, color: rgb(colour, alpha * fade), texture: None });
             }
-            // A dot where the line leaves a card and where it arrives.
+            // A dot where the line leaves a card and where it arrives (once
+            // a line drawing in gets there).
             let d = (7.0 * k).clamp(3.0 * scale, 8.0 * scale);
-            for p in [p0, p3] {
-                crate::chrome::fill(&mut edges, Rect::new(p[0] - d / 2.0, p[1] - d / 2.0, d, d), d / 2.0, rgb(colour, 1.0));
+            let ends: &[[f32; 2]] = if grow < 1.0 { &[p0] } else { &[p0, p3] };
+            for p in ends {
+                crate::chrome::fill(&mut edges, Rect::new(p[0] - d / 2.0, p[1] - d / 2.0, d, d), d / 2.0, rgb(colour, fade));
             }
         }
         layers.push(edges);
@@ -9985,6 +10352,12 @@ impl App {
             layers.push(l);
         }
         if let Some(l) = self.link_hint_layer() {
+            layers.push(l);
+        }
+        if let Some(l) = self.card_pick_layer() {
+            layers.push(l);
+        }
+        if let Some(l) = self.join_drag_layer() {
             layers.push(l);
         }
 
@@ -10870,7 +11243,18 @@ impl App {
             site: self.site_content_state(id),
             ..ctx.clone()
         };
-        let items = web::menu::items(&ctx).into_iter().map(Entry::Page).collect();
+        let mut items: Vec<Entry> = web::menu::items(&ctx).into_iter().map(Entry::Page).collect();
+        // The card's trail (M15), before *Inspect*, which stays last.
+        let mut trail = vec![Entry::command(Command::JoinTrail), Entry::command(Command::JoinTrailKeep)];
+        if self.scene.parent(id).is_some() {
+            trail.push(Entry::command(Command::LeaveTrail));
+        }
+        let at = match items.iter().rposition(|e| matches!(e, Entry::Page(MenuItem::Action { action: web::menu::MenuAction::Inspect(..), .. }))) {
+            Some(i) => i.saturating_sub(1), // its separator
+            None => items.len(),
+        };
+        let lead = if at > 0 { vec![Entry::separator()] } else { Vec::new() };
+        items.splice(at..at, lead.into_iter().chain(trail));
         let m = self.layout_menu(id, items, anchor);
         log::info!("context menu on card {}: {:?}", id.0, menu_labels(&m.items));
         self.menu = Some(m);
@@ -11052,6 +11436,13 @@ impl App {
             }
             Some(Entry::Command { cmd, label, .. }) => {
                 log::info!("menu: {label}");
+                // A card's own rows act on that card.
+                if matches!(cmd, Command::JoinTrail | Command::JoinTrailKeep | Command::LeaveTrail) && id != menu::NO_CARD && self.focused != Some(id) {
+                    if !self.selection.contains(id) {
+                        self.selection.clear();
+                    }
+                    self.focus(Some(id));
+                }
                 self.run_command(cmd);
                 return;
             }
@@ -11562,10 +11953,14 @@ impl App {
                         self.script_key(&c.to_string(), mods);
                     }
                 }
-                Cmd::Drag { from: (x0, y0), to: (x1, y1), shift } => {
+                Cmd::Drag { from: (x0, y0), to: (x1, y1), shift, alt } => {
                     let saved = self.mods;
+                    self.mods = ModifiersState::empty();
                     if shift {
-                        self.mods = ModifiersState::SHIFT;
+                        self.mods |= ModifiersState::SHIFT;
+                    }
+                    if alt {
+                        self.mods |= ModifiersState::ALT;
                     }
                     self.cursor_moved(Vec2::new(x0, y0));
                     self.mouse_input(ElementState::Pressed, MouseButton::Left);
@@ -11576,10 +11971,15 @@ impl App {
                     self.mouse_input(ElementState::Released, MouseButton::Left);
                     self.mods = saved;
                 }
-                Cmd::Button { at: (x, y), pressed } => {
+                Cmd::Button { at: (x, y), pressed, alt } => {
                     self.cursor_moved(Vec2::new(x, y));
                     let state = if pressed { ElementState::Pressed } else { ElementState::Released };
+                    let saved = self.mods;
+                    if alt {
+                        self.mods = ModifiersState::ALT;
+                    }
                     self.mouse_input(state, MouseButton::Left);
+                    self.mods = saved;
                 }
                 Cmd::Undo => self.undo(false),
                 Cmd::Redo => self.undo(true),
@@ -11596,6 +11996,17 @@ impl App {
                             self.selection.contains(n.id), self.scene.is_hidden(n.id),
                             self.cards.get(&n.id).map_or(0, |c| c.page.blocked()),
                             self.cards.get(&n.id).map_or(0, |c| c.page.hidden()), n.title, n.url
+                        );
+                        let m = self.scene.trail_mark(n.id);
+                        let bar = self.bars.iter().find(|(b, _)| *b == n.id).map(|(_, r)| format!("({:.0},{:.0} {:.0}x{:.0})", r.x, r.y, r.w, r.h));
+                        log::info!(
+                            "script relink {}: parent={} trail={:?} name={:?} colour={:?} label={}",
+                            n.id.0,
+                            self.scene.parent(n.id).map_or(0, |p| p.0),
+                            self.scene.trail_of(n.id).iter().map(|t| t.0).collect::<Vec<_>>(),
+                            m.name,
+                            m.colour,
+                            bar.as_deref().unwrap_or("-")
                         );
                         if let Some(text) = &n.note {
                             log::info!("script note {}: {:?}", n.id.0, text);

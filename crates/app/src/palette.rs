@@ -112,7 +112,7 @@ pub const COMMANDS: &[CommandInfo] = &[
     c(Command::ColourTrail, "Next trail colour", "C", "color sticky"),
     c(Command::JoinTrail, "Join a trail…", "A", "group add move put into connect link tab group merge colour color"),
     c(Command::JoinTrailKeep, "Join a trail, keeping its colour…", "", "group add move put into connect link tab group keep colour color several colours"),
-    c(Command::LeaveTrail, "Leave trail", "Shift+A", "ungroup remove cut out split detach tab group"),
+    c(Command::LeaveTrail, "Cut a trail line…", "Shift+A", "leave trail ungroup untrail remove cut out split detach disconnect tab group"),
     c(Command::Sidebar, "Trails sidebar", "Ctrl+B", "list tree panel"),
     c(Command::Read, "Solo", "Tab", "read mode fullscreen focus fill window alone"),
     c(Command::LinkHints, "Follow a link", "f", "link hints keyboard"),

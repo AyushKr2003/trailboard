@@ -214,6 +214,38 @@ impl Scene {
         Ok(r)
     }
 
+    /// The cards joined to `id` by a trail line, either way: its parent(s)
+    /// and the cards opened from it, in reading order. Empty for a lone card.
+    pub fn neighbours(&self, id: NodeId) -> Vec<NodeId> {
+        let next: BTreeSet<NodeId> = self
+            .edges
+            .iter()
+            .filter_map(|e| if e.from == id { Some(e.to) } else if e.to == id { Some(e.from) } else { None })
+            .filter(|&n| n != id && self.node(n).is_some())
+            .collect();
+        self.trail_of(id).into_iter().filter(|n| next.contains(n)).collect()
+    }
+
+    /// Cuts the trail line between `a` and `b` (`Shift+A`, owner
+    /// 2026-11-25): the card on the far side of the line from the trail's
+    /// start leaves, with the cards that follow it ([`Scene::leave_many`]).
+    /// So cutting a card from its parent takes it out; cutting it from a
+    /// card opened from it takes that one out. `Unchanged` if no line joins
+    /// them.
+    pub fn cut(&mut self, a: NodeId, b: NodeId) -> Result<Relinked, RelinkError> {
+        if self.node(a).is_none() || self.node(b).is_none() {
+            return Err(RelinkError::Missing);
+        }
+        let child = if self.edges.iter().any(|e| e.from == a && e.to == b) {
+            b
+        } else if self.edges.iter().any(|e| e.from == b && e.to == a) {
+            a
+        } else {
+            return Err(RelinkError::Unchanged);
+        };
+        self.leave_many(&[child])
+    }
+
     /// Cuts `card` out of its trail. See [`Scene::leave_many`].
     pub fn leave(&mut self, card: NodeId) -> Result<Relinked, RelinkError> {
         self.leave_many(&[card])
@@ -535,6 +567,28 @@ mod tests {
         let gs = groups(&s);
         assert_eq!(gs[0].1.len(), 4);
         assert_eq!(gs.last().unwrap(), &(Group::Others, vec![(g, 0)]));
+    }
+
+    #[test]
+    fn cutting_a_line_splits_the_trail_there() {
+        // a → b → c and a → d.
+        let (mut s, [a, b, c, d, e, f, g]) = board();
+        assert_eq!(s.neighbours(b), vec![a, c]);
+        assert_eq!(s.neighbours(a), vec![b, d]);
+        assert_eq!(s.neighbours(f), vec![e]);
+        assert!(s.neighbours(g).is_empty());
+        // b cut from c (a card opened from it): c leaves.
+        s.cut(b, c).unwrap();
+        assert_eq!(s.trail_of(a), vec![a, b, d]);
+        assert_eq!(s.trail_of(c), vec![c]);
+        // b cut from a (its parent): b leaves; a keeps d.
+        s.cut(b, a).unwrap();
+        assert_eq!(s.trail_of(a), vec![a, d]);
+        assert_eq!(s.neighbours(b), Vec::<NodeId>::new());
+        // A trail's first card can cut its one line: the other card leaves.
+        s.cut(e, f).unwrap();
+        assert!(s.neighbours(e).is_empty());
+        assert_eq!(s.cut(e, g), Err(RelinkError::Unchanged), "no line there");
     }
 
     #[test]

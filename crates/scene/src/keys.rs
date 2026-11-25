@@ -502,7 +502,8 @@ pub enum Action {
     JoinTrail,
     /// [`Action::JoinTrail`], the joining trail keeping its colour.
     JoinTrailKeep,
-    /// Cut the current card (or the selection) out of its trail.
+    /// Cut one of the current card's trail lines (letters pick which when
+    /// it has several); a selection leaves its trails.
     LeaveTrail,
     Fold,
     Outline,
@@ -824,7 +825,7 @@ pub const NAMED: &[(&str, Action, &str)] = &[
     ("trail-colour", Ac::TrailColour, "Next trail colour"),
     ("join-trail", Ac::JoinTrail, "Join the card to a trail (pick a card by its letters; Shift keeps its colour)"),
     ("join-trail-keep", Ac::JoinTrailKeep, "Join a trail, keeping the card's colour (or Shift with the letters)"),
-    ("leave-trail", Ac::LeaveTrail, "Cut the card out of its trail"),
+    ("leave-trail", Ac::LeaveTrail, "Cut one of the card's trail lines (letters pick which)"),
     ("sidebar", Ac::Sidebar, "Trails sidebar"),
     ("dark-pages", Ac::DarkPages, "Pages dark or light"),
     ("space-panel", Ac::SpacePanel, "Show or hide the space panel"),

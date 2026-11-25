@@ -700,6 +700,17 @@ any cards can be made a trail.
   board of 6 or lower has its uncoloured trails coloured once on load
   (`Scene::colour_trails` in `storage::load_board`), oldest trail first;
   after that, a trail set back to the accent stays so.
+- **Shift+A cuts a trail line** (owner, 2026-11-25, replacing "leave
+  your parent"): a card with one line has it cut at once (its parent's,
+  or, for a trail's first card, its one child's); with two or more,
+  letters go on the cards at the other ends (in reading order; a folded
+  one's letters on its stack's front) and the one typed or clicked is cut
+  from. Cutting splits the trail there: the side away from the trail's
+  start leaves with the cards after it (`Scene::cut` over `leave_many`,
+  `Scene::neighbours`). Press it twice to free a card from both sides. A
+  selection of several still leaves its trails as before. Ctrl+K and the
+  card menu call it *Cut a trail line…* (the menu shows it on any card
+  with a line).
 - **Two kinds of join** (owner, 2026-11-25): a *merge* (the default:
   `a` then letters, `:join`, Alt+drag, *Join a trail…*), where the
   joining cards take the target trail's colour and the trail stays one
@@ -849,7 +860,7 @@ under M13 steps 4 and 6. Verified: unit tests, clippy, scripted runs in
 `~/.cache/trailboard-e2e-widevine/` (media check passes; HEVC 8/10-bit
 and HDR play again; screenshots). Not verified: the warning against a
 really different engine, a real DRM service.
-**Repo state:** on `master`, committed (M15 with trail colours and the two kinds of join).
+**Repo state:** on `master`, committed (M15, then Shift+A cutting one trail line).
 After that, also asked by the owner: every trail gets a colour of its
 own as it forms (least-used first; board format 7 colours older boards
 once on load). Unit tests (scene, storage) and an e2e load of a version-6
@@ -857,7 +868,9 @@ board (`run8.sh`, `s8-*`). Then: joins keep their colours on request (two kinds 
 merge, and keeping the colour) and S folds one colour part at a time (see the M15 decisions); unit tests, and an e2e join of a
 green trail onto "Work" with each part folded on its own (`run10.sh`,
 `s10-all.png`), and merge vs keep by keys and Alt+Shift+drag
-(`run11.sh`, `s11-both.png`).
+(`run11.sh`, `s11-both.png`). Then: Shift+A cuts one trail line, with letters on
+the cards at the other ends when there are several (`run12.sh` on a
+board shaped like the owner's, `s12-both.png`).
 
 **Next up:** M14 step 1, the `config.toml` reader (asked by the owner on
 2026-11-21; format and decisions in M14). Bundle with

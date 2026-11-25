@@ -264,13 +264,16 @@ enum Drag {
     Join { id: NodeId, keep: bool },
 }
 
-/// Picking the card to join a trail by its letters (`a`, `:join`, Ctrl+K):
-/// `cards` will join the trail of the target chosen among `targets` (the
-/// other cards in view, in reading order), labelled by `hints`.
+/// Picking a card by its letters: the card to join a trail of (`a`,
+/// `:join`, Ctrl+K), `cards` joining the trail of the target chosen among
+/// `targets` (the other cards in view, in reading order); or, with `cut`
+/// (`Shift+A` on a card of two or more lines), which of `cards[0]`'s
+/// lines to cut, `targets` being the cards at their other ends.
 struct CardPick {
     /// Keep the joining trail's colour (Ctrl+K's *keeping its colour*);
     /// Shift on the last letter does it too.
     keep: bool,
+    cut: bool,
     cards: Vec<NodeId>,
     targets: Vec<NodeId>,
     hints: hint::Hints,
@@ -7113,10 +7116,61 @@ impl App {
 
     /// Shift+A, `:leave`: cuts the current card (or the selection) out of
     /// its trail, with the cards opened from it. One undo step.
+    /// Shift+A, `:leave`: cuts one of the current card's trail lines
+    /// (owner, 2026-11-25). With one line, that one; with more, letters on
+    /// the cards at their other ends pick which. A selection of several
+    /// cards leaves as before ([`App::leave_cards`]).
     fn leave_trail(&mut self) {
         let cards = self.relink_cards();
+        if cards.len() > 1 {
+            return self.leave_cards(&cards);
+        }
+        let Some(&card) = cards.first() else { return self.toast("No card here") };
+        let ends = self.scene.neighbours(card);
+        match ends.as_slice() {
+            [] => self.toast("Not on a trail"),
+            [one] => self.cut_line(card, *one),
+            _ => {
+                self.menu = None;
+                self.link_hints = None;
+                let unseen = ends.iter().filter(|&&e| !self.card_on_screen(self.shown_card(e))).count();
+                log::info!("cut: picking among {:?} for card {}", ends.iter().map(|e| e.0).collect::<Vec<_>>(), card.0);
+                self.card_pick = Some(CardPick { keep: false, cut: true, hints: hint::Hints::new(ends.len()), cards: vec![card], targets: ends });
+                self.toast(if unseen > 0 {
+                    format!("Cut which line? Type the letters on the card to cut it from ({unseen} out of view: zoom out) · Esc cancels")
+                } else {
+                    "Cut which line? Type the letters on the card to cut it from · Esc cancels".to_string()
+                });
+                self.dirty = true;
+            }
+        }
+    }
+
+    /// Cuts the line between `card` and `other`; the side away from the
+    /// trail's start leaves with the cards after it (`Scene::cut`).
+    fn cut_line(&mut self, card: NodeId, other: NodeId) {
+        match self.scene.cut(card, other) {
+            Ok(r) => {
+                log::info!("cut: line {} – {} ({:?} left)", card.0, other.0, r.cards.iter().map(|c| c.0).collect::<Vec<_>>());
+                self.history.relinked(&r);
+                self.after_relink(&r);
+                self.toast(format!("Cut {} from {}", self.card_title(card), self.card_title(other)));
+            }
+            Err(_) => self.toast("No line there to cut"),
+        }
+    }
+
+    /// A card that stands for `id` on the board: itself, or its stack's
+    /// front if it is folded away.
+    fn shown_card(&self, id: NodeId) -> NodeId {
+        self.scene.stack_of(id).filter(|s| s.front != id).map_or(id, |s| s.front)
+    }
+
+    /// Several selected cards leave their trails at once, each cut from the
+    /// card it was opened from.
+    fn leave_cards(&mut self, cards: &[NodeId]) {
         let names: Vec<Option<String>> = cards.iter().map(|&c| self.scene.trail_mark(c).name).collect();
-        match self.scene.leave_many(&cards) {
+        match self.scene.leave_many(cards) {
             Ok(r) => {
                 log::info!("leave: {:?}", r.cards.iter().map(|c| c.0).collect::<Vec<_>>());
                 self.history.relinked(&r);
@@ -7129,9 +7183,8 @@ impl App {
                     (k, None) => format!("{k} cards left their trails"),
                 });
             }
-            Err(_) if cards.is_empty() => self.toast("No card here"),
             Err(_) if cards.iter().all(|&c| self.scene.trail_of(c).len() < 2) => self.toast("Not on a trail"),
-            Err(_) => self.toast("The first card of a trail can't leave it · join it elsewhere instead"),
+            Err(_) => self.toast("The first cards of their trails have no line in to cut · Shift+A on one card picks a line"),
         }
     }
 
@@ -7172,7 +7225,7 @@ impl App {
             return self.toast("No other card in view · zoom out, or :join a card by name");
         }
         log::info!("join: picking among {} card(s) for {:?}", targets.len(), cards.iter().map(|c| c.0).collect::<Vec<_>>());
-        self.card_pick = Some(CardPick { keep, hints: hint::Hints::new(targets.len()), cards, targets });
+        self.card_pick = Some(CardPick { keep, cut: false, hints: hint::Hints::new(targets.len()), cards, targets });
         self.toast(if keep {
             "Join which trail, keeping this colour? Type a card's letters · Esc cancels"
         } else {
@@ -7197,15 +7250,19 @@ impl App {
             (_, Some(c)) if !chord => match cp.hints.type_char(c.to_ascii_lowercase()) {
                 hint::Typed::Follow(i) => {
                     let cp = self.card_pick.take().expect("picking");
-                    self.join_cards(&cp.cards, cp.targets[i], cp.keep || c.is_uppercase());
+                    if cp.cut {
+                        self.cut_line(cp.cards[0], cp.targets[i]);
+                    } else {
+                        self.join_cards(&cp.cards, cp.targets[i], cp.keep || c.is_uppercase());
+                    }
                 }
                 hint::Typed::Narrowed => {}
                 hint::Typed::NoMatch => log::debug!("no card label starts with {c:?}"),
             },
             _ => {
-                self.card_pick = None;
-                log::info!("join: cancelled");
-                self.toast("Join cancelled");
+                let cut = self.card_pick.take().is_some_and(|cp| cp.cut);
+                log::info!("card letters cancelled");
+                self.toast(if cut { "Cut cancelled" } else { "Join cancelled" });
             }
         }
         self.dirty = true;
@@ -7233,7 +7290,7 @@ impl App {
             if !cp.hints.shown(i) {
                 continue;
             }
-            let Some(n) = self.scene.node(t) else { continue };
+            let Some(n) = self.scene.node(self.shown_card(t)) else { continue };
             let label = cp.hints.labels[i].to_uppercase();
             let (head, tail): (String, String) = (label.chars().take(typed_n).collect(), label.chars().skip(typed_n).collect());
             items.push((self.to_screen_rect(n.frame()), head, tail));
@@ -8271,11 +8328,13 @@ impl App {
         // anywhere else cancels. Either way it does nothing else.
         if let Some(cp) = self.card_pick.as_ref() {
             if state == ElementState::Pressed {
-                let target = self.hit(p).id().filter(|t| cp.targets.contains(t));
+                let hit = self.hit(p).id();
+                let target = cp.targets.iter().copied().find(|&t| Some(self.shown_card(t)) == hit);
                 let cp = self.card_pick.take().expect("picking");
                 match target {
+                    Some(t) if cp.cut => self.cut_line(cp.cards[0], t),
                     Some(t) => self.join_cards(&cp.cards, t, cp.keep || self.mods.shift_key()),
-                    None => self.toast("Join cancelled"),
+                    None => self.toast(if cp.cut { "Cut cancelled" } else { "Join cancelled" }),
                 }
                 self.menu_pressed = true; // swallow the release
                 self.dirty = true;
@@ -11246,7 +11305,7 @@ impl App {
         let mut items: Vec<Entry> = web::menu::items(&ctx).into_iter().map(Entry::Page).collect();
         // The card's trail (M15), before *Inspect*, which stays last.
         let mut trail = vec![Entry::command(Command::JoinTrail), Entry::command(Command::JoinTrailKeep)];
-        if self.scene.parent(id).is_some() {
+        if !self.scene.neighbours(id).is_empty() {
             trail.push(Entry::command(Command::LeaveTrail));
         }
         let at = match items.iter().rposition(|e| matches!(e, Entry::Page(MenuItem::Action { action: web::menu::MenuAction::Inspect(..), .. }))) {

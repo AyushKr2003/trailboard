@@ -26,6 +26,11 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
   apart: a new trail takes the colour the board's trails use least. C
   still changes it. Boards saved before this get their trails coloured
   once when they open.
+- **Shift+A cuts a trail line.** On a card with one line it cuts that
+  line; with more, letters show on the cards it is joined to, and typing
+  one (or clicking the card) cuts the line to it. The trail splits there.
+  Press it again to free the card from its other side too. Also `:leave`,
+  and *Cut a trail line…* in Ctrl+K and the card menu.
 - **Two kinds of join.** A join merges: the joining cards take the
   trail's colour. Or join keeping the colour (Shift on the last letter
   after `a`, `:join-keep`, Alt+Shift+drag, or *Join a trail, keeping its

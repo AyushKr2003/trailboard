@@ -804,30 +804,123 @@ VA-API driver (`iHD_drv_video.so`).
 - The live cap (4) saved only ~100–250 MB against all six live.
 - Process count jumps between runs (22 vs 35 for the same pages).
 
+**What the code does now** (read 2026-11-25):
+
+- `main.rs` loops forever: `engine.pump()` (CEF's `do_message_loop_work`),
+  `app.tick()`, `pump_app_events(Some(Duration::ZERO))`, then sleeps 1 ms.
+  The loop never waits on anything.
+- `App::tick` ends with `request_redraw()` every time, so `draw()` runs at
+  the display's rate (`PresentMode::AutoVsync`) with nothing changing: it
+  walks every card, rebuilds layers and text, and presents a frame.
+- `web` sets `external_message_pump` but has no
+  `on_schedule_message_pump_work`, so CEF can't say when it next needs
+  pumping; the loop makes up for it by pumping constantly.
+- Timers are checked by polling inside `tick` (autosave after 3 s, key
+  sequences expiring, `:later`, page-text reads, blocking-list refresh,
+  desktop events from `desktop.rs`'s threads through a channel).
+- Every live card keeps its last paint twice: `PaintFrame::pixels` on the
+  CPU (`web`) and a page texture on the GPU (`compositor`). On the iGPU
+  the texture is system memory too. A sleeping card keeps its texture to
+  show its last frame; that is by design and stays.
+- No CEF switches for process count (`on_before_command_line_processing`
+  only sets the render node, `OverlayScrollbar` and quiet-start switches).
+
+**Decisions** (taken as defaults; the owner can change them):
+
+- **Measure first, always.** No change counts without a before/after from
+  the step-1 bench on this laptop. A change that saves less than the
+  noise (±20 %) is dropped unless it is free.
+- **Behaviour doesn't change.** Same pictures, same motion, same keys; a
+  card that was live is still live. Lower defaults (live cap, sleeping
+  sooner) are proposed with numbers and left to the owner.
+- **Site isolation stays on.** No `--single-process`, no
+  `--disable-site-isolation-trials`, no `--process-per-tab` tricks that
+  put different sites in one renderer. The sandbox stays on.
+- **The event loop.** `ControlFlow::Wait` with a deadline: the loop sleeps
+  in `pump_app_events(Some(timeout))` until the earliest of (a) the next
+  CEF work time from `on_schedule_message_pump_work`, (b) the next app
+  deadline (`App::next_deadline()`: animations, toasts, timers, autosave,
+  key-sequence expiry), (c) a wake from another thread. Other threads
+  (CEF's callback can come on any thread, `desktop.rs`, downloads) wake
+  the loop through a waker the app gives `web` at start (a
+  `Box<dyn Fn() + Send + Sync>` wrapping winit's `EventLoopProxy`), so
+  `web` still doesn't depend on winit.
+- **Redraw only when needed.** `App::needs_redraw` is set by input, a new
+  `PaintFrame::serial`, any running animation, a window resize or theme
+  change, and anything that changes `self.dirty`. A
+  `TRAILBOARD_REDRAW=always` escape hatch keeps today's behaviour, for
+  bisecting a missed redraw.
+
 **Steps:**
 
-- ⬜ 1. **Repeatable benchmark.** Move the bench into `scripts/` (our own,
-  no other browser named; it compares against whatever command is given),
-  finish the idle and video cases, three runs each, and record medians.
-  Prefer local copies of pages where possible so runs agree.
-- ⬜ 2. **Idle CPU.** Wait for events instead of polling: sleep until the
-  next input, a CEF paint or `OnScheduleMessagePumpWork`'s delay, an
-  animation frame or a timer; redraw only when something changed. Goal:
-  under 1 % of a core with a still board.
-- ⬜ 3. **Main process memory.** Measure what the ~300 MB is (heap
-  profile, wgpu buffers and textures, thumbnail cache, `page-text.db`
-  cache, the filter engine) and cut the largest parts; free a sleeping
-  card's texture.
-- ⬜ 4. **Sleeping cards and renderers.** Check that a sleeping card's
-  renderer really exits; see why the process count varies; consider a
-  lower default live cap or sleeping off-screen cards sooner, and CEF
-  switches that limit spare and per-frame renderers, without breaking
-  site isolation.
-- ⬜ 5. **Video.** CPU while playing 1080p H.264 and HEVC in a card, against
-  Chromium; confirm hardware decode is used and frames aren't copied
-  more than needed (dmabuf later, see §5).
-- ⬜ 6. **Report.** Rerun the baseline after each step and keep the table
-  here up to date.
+- ⬜ 1. **Repeatable benchmark.** Move `~/.cache/browser-bench/bench.py`
+  into `scripts/bench.py` (our own; it compares against any command given
+  with `--against`, names no other browser). Pages served locally from
+  saved copies (`scripts/bench-site/`, made by `--snapshot` once; kept out
+  of git, under `~/.cache`), so runs agree. Cases: **idle** (start card
+  only), **still** (six pages loaded, nothing touched), **video** (1080p
+  H.264 and HEVC from `scripts/media-check.html`'s files), **pan** (the
+  script runner pans for 20 s). Three runs each, medians, PSS through the
+  systemd scope as now, CPU from `/proc/<pid>/stat` over the window.
+  Output appends to `~/.cache/trailboard-bench/results.jsonl` and prints
+  a Markdown table. A script line `log mem` (main-process RSS/PSS, live
+  cards, GPU texture bytes) added to `script.rs` for quick checks.
+- ⬜ 2. **Wait instead of poll.** In order, each checked alone:
+  a. `on_schedule_message_pump_work(delay)` in `web`: stores the due time
+     (atomic, any thread) and calls the waker; `Engine::next_due()`
+     returns it; the loop pumps only when due (and once after every
+     batch of input, which CEF needs for input latency).
+  b. `App::next_deadline()` and `needs_redraw`: audit every `Instant`
+     and animation in `app` (camera glide, `scene::motion`, sidebar,
+     toasts, sheet, caret blink, loading spinners, ghosts, peeks) so
+     each one either reports its next frame or asks for a redraw.
+  c. `main.rs`: `ControlFlow::Wait` and the timeout above; drop the 1 ms
+     sleep; `draw()` only when `needs_redraw`.
+  d. `desktop.rs` and the other threads call the waker after sending.
+  Goal: under 1 % of a core on a still board (idle and still cases);
+  paint-to-screen latency no worse (checked with a page animating at
+  60 fps and scrolling by keys). E2e: the full set of existing `run*.sh`
+  scripts still pass, since they lean on timing.
+- ⬜ 3. **Where the main process's memory goes.** Measure, don't guess:
+  `heaptrack` (or `DHAT` through a feature) on a still run, plus a count
+  of page textures × sizes, `PaintFrame` buffers, thumbnail and icon
+  caches, `page-text.db`'s SQLite cache, the adblock engine and the font
+  atlas. Write the breakdown here.
+- ⬜ 4. **Cut the largest parts**, likely candidates in order:
+  - `PaintFrame::pixels` duplicates the texture: upload straight from
+    `on_paint` into a staging buffer the renderer owns (or keep one
+    shared buffer per size), so a live card holds its frame once.
+  - A sleeping card's texture at full resolution: keep it until the card
+    is off screen, then swap it for a downscaled copy (the size it is
+    drawn at, rounded up); wake restores full size from the new paint.
+  - Page textures sized to the zoom: a card drawn at 30 % doesn't need a
+    100 % texture (ties into `settled_page_scale`).
+  - Caches given a size cap (thumbnails decoded on demand, SQLite
+    `cache_size`), the filter engine built once and shared.
+  - The allocator: try returning freed memory (`malloc_trim` after a
+    card sleeps, or a different allocator) only if step 3 shows
+    fragmentation.
+- ⬜ 5. **Renderers and sleeping cards.** Check by `/proc` that a sleeping
+  card's renderer exits (and its frames' renderers); log why processes
+  vary between runs (spare renderer, per-site frames, utility processes).
+  Try one at a time, with numbers: `--disable-features=SpareRendererForSitePerProcess`,
+  `--renderer-process-limit`, discarding hidden cards sooner than the
+  live cap (a hidden card that hasn't been seen for N minutes sleeps),
+  and a lower default cap (3). Each kept only if site isolation and
+  `Awake::Keep`/`Active` work as before.
+- ⬜ 6. **Video.** CPU while playing 1080p H.264 and HEVC in a card
+  against the reference browser; confirm VA-API decode (`chrome://media-internals`
+  in a card, `intel_gpu_top`); count frame copies (GPU → CPU in
+  `on_paint` → texture). If copies dominate, note what
+  `on_accelerated_paint` (dmabuf, §5) would take; doing it is a later
+  milestone of its own.
+- ⬜ 7. **Report.** Rerun the bench after each step and keep the table
+  above current; README gets a short "Memory and CPU" line only if the
+  goal (no more than the reference browser with the same pages) is met.
+
+**Open questions for the owner** (none block steps 1–4): a lower default
+live cap or sleeping hidden cards sooner, if step 5 shows a real saving;
+whether dmabuf paint (step 6) becomes its own milestone.
 
 ---
 

@@ -69,9 +69,53 @@ pub fn part(path: &[Vec2], t: f32) -> Vec<Vec2> {
     out
 }
 
+/// `path` cut into dashes `dash` long with `gap` between them, measured
+/// along the path (so a dash can run round a turn as two pieces): the
+/// segments to draw, in order. A link between trails is drawn so.
+pub fn dashes(path: &[Vec2], dash: f32, gap: f32) -> Vec<(Vec2, Vec2)> {
+    let mut out = Vec::new();
+    if dash <= 0.0 {
+        return out;
+    }
+    let period = dash + gap.max(0.0);
+    let mut along = 0.0_f32; // distance from the path's start to the segment's start
+    for w in path.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let len = (b.x - a.x).hypot(b.y - a.y);
+        if len <= 0.0 {
+            continue;
+        }
+        let at = |t: f32| Vec2::new(a.x + (b.x - a.x) * t / len, a.y + (b.y - a.y) * t / len);
+        // Walk the dashes that overlap this segment.
+        let mut start = (along / period).floor() * period;
+        while start < along + len {
+            let (s0, s1) = ((start - along).max(0.0), (start + dash - along).min(len));
+            if s1 > s0 {
+                out.push((at(s0), at(s1)));
+            }
+            start += period;
+        }
+        along += len;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dashes_run_along_the_path_and_round_turns() {
+        let p = [Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(10.0, 10.0)];
+        let d = dashes(&p, 4.0, 2.0);
+        // 0–4, 6–10, then 12–16 is 2–6 down the second run, 18–20 is 8–10.
+        assert_eq!(d.len(), 4, "{d:?}");
+        assert!(close(d[0].0, Vec2::new(0.0, 0.0)) && close(d[0].1, Vec2::new(4.0, 0.0)));
+        assert!(close(d[1].0, Vec2::new(6.0, 0.0)) && close(d[1].1, Vec2::new(10.0, 0.0)));
+        assert!(close(d[2].0, Vec2::new(10.0, 2.0)) && close(d[2].1, Vec2::new(10.0, 6.0)));
+        assert!(close(d[3].0, Vec2::new(10.0, 8.0)) && close(d[3].1, Vec2::new(10.0, 10.0)));
+        assert!(dashes(&p, 0.0, 2.0).is_empty());
+    }
 
     #[test]
     fn part_draws_the_line_in_by_length() {

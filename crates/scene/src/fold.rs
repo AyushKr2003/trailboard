@@ -208,7 +208,7 @@ impl Scene {
             if self.node(e.from).is_none() || self.node(e.to).is_none() {
                 continue;
             }
-            let e = crate::Edge { from: shown(e.from), to: shown(e.to) };
+            let e = crate::Edge::new(shown(e.from), shown(e.to));
             if e.from != e.to && !out.contains(&e) {
                 out.push(e);
             }
@@ -337,13 +337,13 @@ mod tests {
         assert_eq!(blue.members, vec![a, b, c, d]);
         assert!(!s.is_hidden(e) && !s.is_hidden(x), "the green part stays out");
         // The line d → e now runs from the stack's front.
-        assert!(s.shown_edges().contains(&crate::Edge { from: b, to: e }));
+        assert!(s.shown_edges().contains(&crate::Edge::new(b, e)));
         assert!(s.shown_edges().iter().all(|e| !s.is_hidden(e.from) && !s.is_hidden(e.to)));
         // The green part folds on its own, leaving the blue stack as it is.
         let green = s.fold(x).unwrap();
         assert_eq!((green.members, green.unfolded.len()), (vec![e, x], 0));
         assert_eq!(s.stacks().len(), 2);
-        assert_eq!(s.shown_edges(), vec![crate::Edge { from: b, to: x }]);
+        assert_eq!(s.shown_edges(), vec![crate::Edge::new(b, x)]);
         // Unfolding one leaves the other.
         s.unfold(b).unwrap();
         assert_eq!(s.stacks().len(), 1);

@@ -279,7 +279,7 @@ impl Scene {
         let rect = placement::beside_sized(self, &src, w, h);
         let id = self.add_note(rect, text);
         self.nodes.get_mut(&id).expect("just added").trail = src.trail;
-        self.edges.push(Edge { from, to: id });
+        self.edges.push(Edge::new(from, id));
         self.colour_new_trail(id);
         Some(id)
     }
@@ -476,7 +476,7 @@ mod tests {
         assert_eq!(s.node(page).unwrap().note, None);
 
         let b = s.note_beside(page, "> quote", 400.0, 300.0).unwrap();
-        assert!(s.edges().contains(&Edge { from: page, to: b }));
+        assert!(s.edges().contains(&Edge::new(page, b)));
         let (fp, fb) = (s.node(page).unwrap().frame(), s.node(b).unwrap().frame());
         assert!(fb.x > fp.right() && !fb.intersects(&fp));
         assert_eq!((s.node(b).unwrap().rect.w, s.node(b).unwrap().rect.h), (400.0, 300.0));

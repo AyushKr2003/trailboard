@@ -22,7 +22,8 @@
 //! ```
 //!
 //! Trails come in the order their first card was made; folded cards are
-//! included in their place. Headings inside notes move down a level so the
+//! included in their place. A card linked to cards of other trails (`link`)
+//! has a `See also:` item under it naming them. Headings inside notes move down a level so the
 //! space stays the only `#`.
 
 use crate::{Node, Scene};
@@ -64,6 +65,7 @@ pub fn board_markdown(scene: &Scene, space: &str) -> String {
         for (id, depth) in tree {
             if let Some(n) = scene.node(id) {
                 out.push_str(&item(n, depth));
+                out.push_str(&see_also(scene, n, depth));
             }
         }
     }
@@ -72,10 +74,25 @@ pub fn board_markdown(scene: &Scene, space: &str) -> String {
         for id in lone_pages {
             if let Some(n) = scene.node(id) {
                 out.push_str(&item(n, 0));
+                out.push_str(&see_also(scene, n, 0));
             }
         }
     }
     out
+}
+
+/// `See also:` the cards linked to `n`, as an item under it; empty if none.
+fn see_also(scene: &Scene, n: &Node, depth: usize) -> String {
+    let others: Vec<String> = scene
+        .link_ends(n.id)
+        .into_iter()
+        .filter_map(|o| scene.node(o))
+        .map(|o| if o.is_note() { escape(&one_line(&o.title, crate::note::UNTITLED)) } else { link(&o.title, &o.url) })
+        .collect();
+    if others.is_empty() {
+        return String::new();
+    }
+    format!("{}- See also: {}\n", "  ".repeat(depth + 1), others.join(", "))
 }
 
 /// A list item for card `n` at `depth`: a link for a page, the note's text
@@ -212,6 +229,21 @@ mod tests {
     fn headings_move_down_outside_code() {
         let t = "# One\n## Two\n```\n# code\n```\n#tag\n    # indented code\n###### Six";
         assert_eq!(demote(t), "## One\n### Two\n```\n# code\n```\n#tag\n    # indented code\n###### Six");
+    }
+
+    #[test]
+    fn linked_cards_say_see_also() {
+        let mut s = Scene::new();
+        let a = s.add_page(Rect::new(0.0, 0.0, 400.0, 300.0), "https://a.example");
+        s.node_mut(a).unwrap().title = "Alpha".into();
+        let b = s.spawn_beside(a, "https://b.example").unwrap();
+        s.node_mut(b).unwrap().title = "Beta".into();
+        let r = s.add_page(Rect::new(0.0, 1000.0, 400.0, 300.0), "https://r.example");
+        s.node_mut(r).unwrap().title = "Reddit".into();
+        s.link_many(&[r], b).unwrap();
+        let md = board_markdown(&s, "S");
+        assert!(md.contains("  - [Beta](<https://b.example>)\n    - See also: [Reddit](<https://r.example>)\n"), "{md}");
+        assert!(md.contains("- [Reddit](<https://r.example>)\n  - See also: [Beta](<https://b.example>)\n"), "{md}");
     }
 
     #[test]

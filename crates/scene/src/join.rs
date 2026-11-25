@@ -183,7 +183,7 @@ impl Scene {
         let takers: Vec<NodeId> = cards.iter().copied().filter(|&c| !(keep && coloured(self, c))).collect();
         for &c in &cards {
             self.edges.retain(|e| e.to != c || e.from == c);
-            self.edges.push(Edge { from: target, to: c });
+            self.edges.push(Edge::new(target, c));
         }
         // Takers join the target's colour part, which then takes the mark's colour.
         let target_colour = self.nodes[&target].trail.colour.clone();

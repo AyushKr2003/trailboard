@@ -37,8 +37,9 @@ use serde::{Deserialize, Serialize};
 /// 7: every trail has a colour of its own. The format is the same; a board
 /// from before (6 or lower) has its uncoloured trails given one on load
 /// (`Scene::colour_trails`), once, so a trail later set back to the accent
-/// with C stays so.
-pub const BOARD_VERSION: u32 = 7;
+/// with C stays so. 8: adds links between trails (`scene.links`), which
+/// older builds would drop.
+pub const BOARD_VERSION: u32 = 8;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Board {
@@ -115,6 +116,8 @@ pub fn migrate_board(mut v: serde_json::Value) -> Result<serde_json::Value, Load
             5 => v["version"] = 6.into(),
             // Version 7 colours trails; `load_board` does it after parsing.
             6 => v["version"] = 7.into(),
+            // Version 8 only adds `scene.links`, which defaults to none.
+            7 => v["version"] = 8.into(),
             other => return Err(LoadError::UnsupportedVersion(other)),
         }
     }
@@ -258,6 +261,25 @@ mod tests {
         assert_eq!(b3.version, BOARD_VERSION);
         // No mark in the file: the trail gets a colour on load (7).
         assert_eq!(b3.scene.trail_mark(b), scene::TrailMark { colour: Some("blue".into()), ..Default::default() });
+    }
+
+    #[test]
+    fn links_are_saved_and_version_7_boards_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = board_path(dir.path());
+        let mut scene = Scene::new();
+        let a = scene.add_page(Rect::new(0.0, 0.0, 10.0, 10.0), "a");
+        let b = scene.add_page(Rect::new(0.0, 100.0, 10.0, 10.0), "b");
+        scene.link_many(&[b], a).unwrap();
+        save_board(&path, &Board::new(scene, Camera::default())).unwrap();
+        assert_eq!(load_board(&path).unwrap().scene.links(), &[scene::Edge::link(a, b)]);
+        let mut v: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        v["version"] = 7.into();
+        v["scene"].as_object_mut().unwrap().remove("links");
+        fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
+        let b7 = load_board(&path).unwrap();
+        assert_eq!(b7.version, BOARD_VERSION);
+        assert!(b7.scene.links().is_empty());
     }
 
     #[test]

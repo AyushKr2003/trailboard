@@ -732,6 +732,28 @@ any cards can be made a trail.
   part of another colour than the card it leaves keeps its colour (it
   came in with it); otherwise, two or more cards take a fresh colour.
   Fresh colours count each colour part as one use.
+- **Links between trails** (owner, 2026-11-25: keep a card joined to two
+  trails, the line staying when one folds). A second trail edge would
+  merge the trails, so a *link* is a separate kind of line
+  (`scene::link`): kept in `Scene::links`, apart from trail edges, so
+  trails, parents, join, leave, Fold, Tidy and the sidebar's tree never
+  see it. Each trail keeps its name, colours, group and stack.
+  Decisions (owner said "go on" to the defaults): the key is **`gl`**
+  (letters on the cards in view; `g` alone does nothing on the board, so
+  it is safe as a prefix); it is **dashed**, in the colour of the card
+  linked to, routed and dotted as trail lines are, and runs straight up
+  or down between cards one above the other; **the card stays put**.
+  Also `:link [card]`, *Link to a card…* in Ctrl+K and the card menu,
+  Ctrl+Alt+drag a label onto a card; a selection links every card.
+  Refused within one trail and for a duplicate. A folded end is drawn at
+  its stack's front (`Scene::shown_links`). Shift+A counts link ends
+  among a card's lines: picking one removes only the link. Closing a card
+  removes its links, undo brings them back (`Edge::link` carries them);
+  link and unlink are one undo step (`Edit::SetLinks`). Sidebar: a link
+  icon (with a count past one) at the end of a linked card's row; not
+  yet clickable. Save as Markdown: a `See also:` item under the card.
+  **Board format 8**, so an older build refuses a board with links
+  rather than dropping them. Checked by `run13.sh` (`s13-*`).
 
 ### M16: Lighter and quieter ⬜
 
@@ -870,7 +892,14 @@ green trail onto "Work" with each part folded on its own (`run10.sh`,
 `s10-all.png`), and merge vs keep by keys and Alt+Shift+drag
 (`run11.sh`, `s11-both.png`). Then: Shift+A cuts one trail line, with letters on
 the cards at the other ends when there are several (`run12.sh` on a
-board shaped like the owner's, `s12-both.png`).
+board shaped like the owner's, `s12-both.png`). Then: **links between
+trails** (`gl`, see the M15 decisions; board format 8): unit tests
+(link, refusals, undo, close, save, fold, Markdown, dashes), an e2e on
+the owner's board shape (`run13.sh`: link by letters, fold the top
+trail, cut the link with Shift+A, Ctrl+Alt+drag and undo) with
+screenshots `s13-linkletters/linked/linkfold/linkside.png` checked. Not
+verified: Ctrl+Alt+drag by hand, the sidebar link icon isn't clickable
+yet.
 
 **Next up:** M14 step 1, the `config.toml` reader (asked by the owner on
 2026-11-21; format and decisions in M14). Bundle with

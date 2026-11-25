@@ -847,6 +847,23 @@ pub fn layer(r: &mut Renderer, panel: &Panel, rows: &[Row], v: &View, scene: &Sc
                 } else {
                     right
                 };
+                // A card linked to cards of other trails (`gl`): a link icon
+                // at the row's end, its count beside it when more than one.
+                let links = scene.link_ends(*id).len();
+                let end = if links > 0 {
+                    let ls = type_::CAPTION * ui;
+                    let count = if links > 1 { links.to_string() } else { String::new() };
+                    let cw = if count.is_empty() { 0.0 } else { r.measure(&count, ls, false) + 3.0 * ui };
+                    let li = 14.0 * ui;
+                    let lx = end - cw - li;
+                    icons::draw(&mut l, r, Icon::Link, lx + li / 2.0, rect.center().y, li, rgb(dim, fade));
+                    if !count.is_empty() {
+                        chrome::text(&mut l, count, end - cw + 3.0 * ui, rect.center().y, ls, rgb(dim, fade), rect, false);
+                    }
+                    lx - 6.0 * ui
+                } else {
+                    end
+                };
                 let tx = x + icon + 10.0 * ui;
                 let title = if n.title.trim().is_empty() { n.url.as_str() } else { n.title.trim() };
                 let title = fit(r, title, size, current, (end - tx).max(1.0));

@@ -114,6 +114,7 @@ const FIXED: &[(&str, &[(&str, &str)])] = &[
             ("Drag its label", "Move"),
             ("Alt + drag its label", "Join the trail of the card let go on"),
             ("Alt + Shift + drag its label", "Join it, keeping its colour"),
+            ("Ctrl + Alt + drag its label", "Link it to the card let go on (both trails stay)"),
             ("Drag corner", "Resize"),
             ("Double-click title", "Fill the view"),
             ("× · d", "Close"),

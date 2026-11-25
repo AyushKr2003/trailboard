@@ -31,6 +31,15 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
   one (or clicking the card) cuts the line to it. The trail splits there.
   Press it again to free the card from its other side too. Also `:leave`,
   and *Cut a trail line…* in Ctrl+K and the card menu.
+- **Links between trails.** A card can be joined to a card of another
+  trail without the trails merging: `gl`, then the other card's letters
+  (or `:link [card]`, *Link to a card…* in Ctrl+K and the card menu, or
+  Ctrl+Alt+drag a label onto a card). Both trails keep their own name,
+  colour, sidebar group and fold; a dashed line joins the two cards and
+  stays, from the stack, when one side is folded. Shift+A on the card
+  offers the link among its lines and removes only it. Linked cards show
+  a link icon in the sidebar, and Save as Markdown adds a *See also* line.
+  Boards with links are saved as format 8, which older builds won't open.
 - **Two kinds of join.** A join merges: the joining cards take the
   trail's colour. Or join keeping the colour (Shift on the last letter
   after `a`, `:join-keep`, Alt+Shift+drag, or *Join a trail, keeping its

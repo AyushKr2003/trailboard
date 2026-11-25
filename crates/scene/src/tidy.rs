@@ -228,10 +228,10 @@ mod tests {
         let d = s.add_page(Rect::new(1000.0, 0.0, 400.0, 300.0), "d");
         let x = s.add_page(Rect::new(0.0, 2000.0, 400.0, 300.0), "x");
         let y = s.add_page(Rect::new(500.0, 2000.0, 400.0, 300.0), "y");
-        s.insert_edge(Edge { from: a, to: b });
-        s.insert_edge(Edge { from: a, to: c });
-        s.insert_edge(Edge { from: c, to: d });
-        s.insert_edge(Edge { from: x, to: y });
+        s.insert_edge(Edge::new(a, b));
+        s.insert_edge(Edge::new(a, c));
+        s.insert_edge(Edge::new(c, d));
+        s.insert_edge(Edge::new(x, y));
         // c is above b, so it is a's first child; d follows its parent c.
         assert_eq!(order(&s), vec![a, c, d, b, x, y, lone_a, lone_b]);
         // The same order after Tidy has laid the board out.
@@ -248,9 +248,9 @@ mod tests {
         let b = s.add_page(Rect::new(-3000.0, 100.0, 1000.0, 400.0), "b");
         let c = s.add_page(Rect::new(4000.0, 2000.0, 600.0, 300.0), "c");
         let d = s.add_page(Rect::new(0.0, 5000.0, 300.0, 300.0), "d");
-        s.insert_edge(Edge { from: a, to: b });
-        s.insert_edge(Edge { from: a, to: c });
-        s.insert_edge(Edge { from: c, to: d });
+        s.insert_edge(Edge::new(a, b));
+        s.insert_edge(Edge::new(a, c));
+        s.insert_edge(Edge::new(c, d));
         let before_bounds = s.bounds().unwrap();
         let r = tidy(&s);
         apply(&mut s, &r);
@@ -342,10 +342,10 @@ mod tests {
         let a = s.add_page(Rect::new(0.0, 0.0, 100.0, 100.0), "a");
         let b = s.add_page(Rect::new(0.0, 0.0, 100.0, 100.0), "b");
         let c = s.add_page(Rect::new(0.0, 0.0, 100.0, 100.0), "c");
-        s.insert_edge(Edge { from: a, to: b });
-        s.insert_edge(Edge { from: b, to: a });
-        s.insert_edge(Edge { from: c, to: c });
-        s.insert_edge(Edge { from: NodeId(99), to: c });
+        s.insert_edge(Edge::new(a, b));
+        s.insert_edge(Edge::new(b, a));
+        s.insert_edge(Edge::new(c, c));
+        s.insert_edge(Edge::new(NodeId(99), c));
         let r = tidy(&s);
         assert_eq!(r.len(), 3);
         apply(&mut s, &r);

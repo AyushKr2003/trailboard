@@ -19,6 +19,7 @@ pub mod liveness;
 pub mod messages;
 pub mod join;
 pub mod jump;
+pub mod link;
 pub mod mark;
 pub mod media;
 pub mod motion;
@@ -50,6 +51,7 @@ use std::collections::BTreeMap;
 
 pub use fold::{Folded, Member, Stack};
 pub use join::{RelinkError, Relinked};
+pub use link::LinkError;
 pub use geom::{Camera, Rect, Vec2, FIT_MARGIN};
 pub use history::{Change, Edit, History};
 pub use mark::TrailMark;
@@ -119,11 +121,29 @@ impl Node {
     }
 }
 
-/// A trail edge: `to` was opened from a link on `from`.
+/// A trail edge: `to` was opened from a link on `from`. Or, with `link`
+/// set, a link between cards of two trails (`gl`, `scene::link`): drawn,
+/// but never part of a trail. Links are kept apart from trail edges
+/// ([`Scene::links`]); the flag lets a closed card's links come back with
+/// its edges on undo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Edge {
     pub from: NodeId,
     pub to: NodeId,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub link: bool,
+}
+
+impl Edge {
+    /// A trail edge from `from` to `to`.
+    pub const fn new(from: NodeId, to: NodeId) -> Self {
+        Self { from, to, link: false }
+    }
+
+    /// A link from `from` to `to`.
+    pub const fn link(from: NodeId, to: NodeId) -> Self {
+        Self { from, to, link: true }
+    }
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -135,6 +155,10 @@ pub struct Scene {
     /// Folded trails (`fold`). Absent in boards saved before stacks.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     stacks: Vec<Stack>,
+    /// Links between cards of different trails (`link`), each with `link`
+    /// set. Absent in boards saved before links (format 8).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    links: Vec<Edge>,
 }
 
 impl Scene {
@@ -165,18 +189,23 @@ impl Scene {
         let rect = placement::beside_sized(self, &src, size.x, size.y);
         let id = self.add_page(rect, url);
         self.nodes.get_mut(&id).expect("just added").trail = src.trail;
-        self.edges.push(Edge { from, to: id });
+        self.edges.push(Edge::new(from, id));
         // A trail just formed takes a colour of its own (`mark`).
         self.colour_new_trail(id);
         Some(id)
     }
 
-    /// Removes a card and its trail edges, returning both so the card can be restored.
+    /// Removes a card and its trail edges and links, returning them so the
+    /// card can be restored.
     pub fn remove(&mut self, id: NodeId) -> Option<(Node, Vec<Edge>)> {
         let node = self.nodes.remove(&id)?;
         self.forget_in_stacks(id, node.rect.pos());
-        let (gone, kept) = self.edges.drain(..).partition(|e| e.from == id || e.to == id);
+        let touches = |e: &Edge| e.from == id || e.to == id;
+        let (mut gone, kept): (Vec<Edge>, Vec<Edge>) = self.edges.drain(..).partition(touches);
         self.edges = kept;
+        let (links, kept): (Vec<Edge>, Vec<Edge>) = self.links.drain(..).partition(touches);
+        self.links = kept;
+        gone.extend(links);
         Some((node, gone))
     }
 
@@ -194,8 +223,9 @@ impl Scene {
         self.nodes.insert(id, node);
         for e in edges {
             let touches = e.from == id || e.to == id;
-            if touches && self.nodes.contains_key(&e.from) && self.nodes.contains_key(&e.to) && !self.edges.contains(e) {
-                self.edges.push(*e);
+            let list = if e.link { &mut self.links } else { &mut self.edges };
+            if touches && self.nodes.contains_key(&e.from) && self.nodes.contains_key(&e.to) && !list.contains(e) {
+                list.push(*e);
             }
         }
         true
@@ -326,7 +356,7 @@ mod tests {
         assert_eq!(edges_b.len(), 2);
         s.remove(c);
         assert!(s.insert(node_b.clone(), &edges_b));
-        assert_eq!(s.edges(), &[Edge { from: a, to: b }]);
+        assert_eq!(s.edges(), &[Edge::new(a, b)]);
         assert!(!s.insert(node_b, &edges_b), "id already in use");
         // Restored card is on top, and fresh ids never collide with it.
         assert_eq!(s.topmost_at(Vec2::new(200.0, 50.0)), Some(b));

@@ -30,6 +30,8 @@ pub enum Edit {
     SetSticky { id: NodeId, colour: Option<String> },
     /// Make the trail edges exactly these (a join or leave).
     SetEdges(Vec<Edge>),
+    /// Make the links exactly these (`link`).
+    SetLinks(Vec<Edge>),
     /// Several edits undone and redone as one step, applied in order.
     Batch(Vec<Edit>),
 }
@@ -83,6 +85,17 @@ impl Edit {
                     .filter(|&id| scene.node(id).is_some())
                     .collect();
                 Some((Edit::SetEdges(old), ends.into_iter().map(Change::Moved).collect()))
+            }
+            Edit::SetLinks(links) => {
+                let old = std::mem::replace(&mut scene.links, links);
+                let ends: std::collections::BTreeSet<NodeId> = old
+                    .iter()
+                    .filter(|e| !scene.links.contains(e))
+                    .chain(scene.links.iter().filter(|e| !old.contains(e)))
+                    .flat_map(|e| [e.from, e.to])
+                    .filter(|&id| scene.node(id).is_some())
+                    .collect();
+                Some((Edit::SetLinks(old), ends.into_iter().map(Change::Moved).collect()))
             }
             Edit::SetSticky { id, colour } => {
                 let old = scene.set_sticky(id, colour)?;
@@ -181,6 +194,12 @@ impl History {
         edits.extend(r.moved.iter().map(|&(id, rect)| Edit::SetRect { id, rect }));
         edits.extend(r.unfolded.iter().cloned().map(Edit::Refold));
         self.push_group(edits);
+    }
+
+    /// Cards were linked or unlinked; `old` is the links as they were
+    /// ([`Scene::link_many`], [`Scene::unlink`]).
+    pub fn linked(&mut self, old: Vec<Edge>) {
+        self.push(Edit::SetLinks(old));
     }
 
     /// A stack was unfolded; `stack` is what [`Scene::unfold`] returned.
@@ -291,7 +310,7 @@ mod tests {
         assert!(s.node(b).is_none() && s.edges().is_empty());
         assert_eq!(h.redo(&mut s), vec![Change::Added(b)]);
         assert_eq!(s.node(b).unwrap().url, "https://b");
-        assert_eq!(s.edges(), &[Edge { from: a, to: b }]);
+        assert_eq!(s.edges(), &[Edge::new(a, b)]);
     }
 
     #[test]
@@ -413,7 +432,7 @@ mod tests {
         assert_eq!(undone, vec![Change::Added(b), Change::Added(c)]);
         let mut edges = s.edges().to_vec();
         edges.sort_by_key(|e| (e.from, e.to));
-        assert_eq!(edges, vec![Edge { from: a, to: b }, Edge { from: b, to: c }]);
+        assert_eq!(edges, vec![Edge::new(a, b), Edge::new(b, c)]);
         let redone = h.redo(&mut s);
         assert_eq!(redone.len(), 2);
         assert!(s.node(b).is_none() && s.node(c).is_none() && s.edges().is_empty());

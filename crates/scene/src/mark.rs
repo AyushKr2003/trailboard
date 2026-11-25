@@ -340,8 +340,8 @@ mod tests {
         let c = s.add_page(Rect::new(0.0, 1000.0, 400.0, 300.0), "c");
         let d = s.add_page(Rect::new(500.0, 1000.0, 400.0, 300.0), "d");
         let lone = s.add_page(Rect::new(0.0, 2000.0, 400.0, 300.0), "e");
-        s.insert_edge(crate::Edge { from: a, to: b });
-        s.insert_edge(crate::Edge { from: c, to: d });
+        s.insert_edge(crate::Edge::new(a, b));
+        s.insert_edge(crate::Edge::new(c, d));
         assert_eq!(s.colour_trails(), 2);
         assert_eq!(s.trail_mark(b).colour.as_deref(), Some("blue"));
         assert_eq!(s.trail_mark(d).colour.as_deref(), Some("green"));

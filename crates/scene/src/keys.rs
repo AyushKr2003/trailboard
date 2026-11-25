@@ -502,6 +502,9 @@ pub enum Action {
     JoinTrail,
     /// [`Action::JoinTrail`], the joining trail keeping its colour.
     JoinTrailKeep,
+    /// Link the current card (or the selection) to a card of another trail,
+    /// picked by its letters, without merging the trails (`scene::link`).
+    LinkCard,
     /// Cut one of the current card's trail lines (letters pick which when
     /// it has several); a selection leaves its trails.
     LeaveTrail,
@@ -825,6 +828,7 @@ pub const NAMED: &[(&str, Action, &str)] = &[
     ("trail-colour", Ac::TrailColour, "Next trail colour"),
     ("join-trail", Ac::JoinTrail, "Join the card to a trail (pick a card by its letters; Shift keeps its colour)"),
     ("join-trail-keep", Ac::JoinTrailKeep, "Join a trail, keeping the card's colour (or Shift with the letters)"),
+    ("link-card", Ac::LinkCard, "Link the card to a card of another trail (pick it by its letters)"),
     ("leave-trail", Ac::LeaveTrail, "Cut one of the card's trail lines (letters pick which)"),
     ("sidebar", Ac::Sidebar, "Trails sidebar"),
     ("dark-pages", Ac::DarkPages, "Pages dark or light"),
@@ -982,6 +986,8 @@ pub fn board() -> Bindings<Action> {
         // M15: a joins a trail (letters pick the card to join), A leaves.
         ("a", JoinTrail),
         ("A", LeaveTrail),
+        // gl links to a card of another trail (letters pick it).
+        ("gl", LinkCard),
         ("s", Fold),
         ("S", Fold),
         ("o", Outline),
@@ -1488,14 +1494,15 @@ mod tests {
         assert_eq!(get("<C-u>"), Some(Action::ScrollUp));
         assert_eq!(get("<A-3>"), Some(Action::NthCard(3)));
         assert_eq!(get("<C-S-6>"), Some(Action::OtherCard));
-        // Only the hint kinds, marks, toggles, media and Ctrl+w keys wait for another key; m stays Arrange.
+        // Only the hint kinds, marks, toggles, media, gl and Ctrl+w keys wait for another key; m stays Arrange.
         assert!(b.iter().all(|(seq, a)| seq.len() == 1
-            || matches!(a, Action::Hint(_) | Action::SetMark(_) | Action::GoMark(_) | Action::Media(_))
+            || matches!(a, Action::Hint(_) | Action::SetMark(_) | Action::GoMark(_) | Action::Media(_) | Action::LinkCard)
             || seq[0] == ch('t')
             || seq[0] == parse("<C-w>").unwrap()[0]));
         // Owner (2026-11-20): t starts toggles everywhere, Tidy is T.
         assert_eq!(b.lookup(&parse("t").unwrap()), Lookup::Prefix);
         assert_eq!(get("T"), Some(Action::Tidy));
+        assert_eq!(get("gl"), Some(Action::LinkCard));
         assert_eq!(get("td"), Some(Action::DarkPages));
         assert_eq!(get("tj"), Some(Action::SiteToggle(SW::Content(Content::JavaScript), false)));
         assert_eq!(get("tA"), Some(Action::SiteToggle(SW::Ads, true)));

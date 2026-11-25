@@ -17,6 +17,7 @@
 //! sdrag 10 10 300 200  # same with Shift held (selection band on the board)
 //! adrag 10 10 300 200  # same with Alt held (a label let go on a card joins its trail)
 //! asdrag 10 10 300 200 # same with Alt and Shift held (joins keeping its colour)
+//! cadrag 10 10 300 200 # same with Ctrl and Alt held (links the card to the one let go on)
 //! press 10 10          # left press only (then `move`s, `release`): to look mid-drag
 //! apress 10 10         # the same with Alt held for the press (an Alt+drag)
 //! release 300 200      # left release
@@ -65,7 +66,7 @@ pub enum Cmd {
     /// Left drag; `shift` holds Shift throughout.
     /// `drag`, `sdrag` (Shift held), `adrag` (Alt held: join a trail),
     /// `asdrag` (both: join keeping the colour).
-    Drag { from: (f32, f32), to: (f32, f32), shift: bool, alt: bool },
+    Drag { from: (f32, f32), to: (f32, f32), shift: bool, alt: bool, ctrl: bool },
     /// Left press or release at a point, alone.
     /// `press`, `release`; `apress` presses with Alt held (an Alt+drag).
     Button { at: (f32, f32), pressed: bool, alt: bool },
@@ -153,9 +154,13 @@ fn parse(line: &str) -> Option<Cmd> {
         "touchpad" => Cmd::Touchpad { dx: num(0), dy: num(1), end: rest.split_whitespace().nth(2) == Some("end") },
         "ctrlwheel" => Cmd::CtrlWheel(num(0)),
         "press" | "apress" | "release" => Cmd::Button { at: (num(0), num(1)), pressed: word != "release", alt: word == "apress" },
-        "drag" | "sdrag" | "adrag" | "asdrag" => {
-            Cmd::Drag { from: (num(0), num(1)), to: (num(2), num(3)), shift: word.contains('s'), alt: word.starts_with('a') }
-        }
+        "drag" | "sdrag" | "adrag" | "asdrag" | "cadrag" => Cmd::Drag {
+            from: (num(0), num(1)),
+            to: (num(2), num(3)),
+            shift: matches!(word, "sdrag" | "asdrag"),
+            alt: matches!(word, "adrag" | "asdrag" | "cadrag"),
+            ctrl: word == "cadrag",
+        },
         "key" => Cmd::Key(rest.trim().to_string()),
         // Keep the text's own spacing; only the separator after the word is dropped.
         "type" => Cmd::Type(rest.to_string()),

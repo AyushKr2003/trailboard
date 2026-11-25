@@ -227,6 +227,7 @@ misses them. For each new CEF release that the `cef` crate supports:
 | `Tab` | Solo: the page fills the window |
 | `Ctrl+B` · `T` · `S` | Trails sidebar · Tidy · Fold a trail |
 | `A` · `Shift+A` | Join a card to a trail (by its letters) · cut it out |
+| `gl` | Link a card to a card of another trail, keeping both trails |
 | `b` · `:save-page` | Open a saved page · save this one |
 | `td` · `tj` · `:set` | Dark pages · JavaScript for this site · any setting by name |
 | `]]` · `gu` · `Ctrl+A` | Next page · up the address · the address's last number up |

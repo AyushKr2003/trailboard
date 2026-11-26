@@ -999,6 +999,88 @@ loaded by Trailboard and Ref A in every case.
   `on_paint` → texture). If copies dominate, note what
   `on_accelerated_paint` (dmabuf, §5) would take; doing it is a later
   milestone of its own.
+
+  **Detailed plan (written 2026-11-26, owner: "work on Trailboard's
+  performance", video first; start here in a fresh session).**
+
+  *The gap.* CI run 45773585181 (software rendering, 1080p30 clip in one
+  card): Trailboard ~365 % of a core in every codec, Chrome 34–46 %, the
+  Qt WebEngine browsers ~180–250 %. Laptop (Baseline 2 + step 2):
+  Trailboard 21.5 %, Ref A 9.1 % (H.264). Memory isn't the issue here.
+
+  *What one video frame costs today* (code read 2026-11-26):
+  1. Chromium composites the frame and hands it to the browser process
+     (OSR, no `on_accelerated_paint`). `windowless_frame_rate` is 60 for
+     a visible card (`FULL_FPS`, `app.rs` `show_card`).
+  2. `web` `on_paint` (`crates/web/src/lib.rs`, ~l.947) copies the
+     **whole** buffer into `PaintFrame::pixels` (`extend_from_slice`,
+     8 MB at 1080p) even when the dirty rect is small, then bumps the
+     serial with the dirty rect.
+  3. The app (`app.rs` ~l.9860) calls `Renderer::update_page_part` with
+     `changed_since`; `queue.write_texture` copies the changed part
+     again (into wgpu's staging), then to the texture.
+  4. `Renderer::render` (`crates/compositor/src/lib.rs` ~l.570): a
+     partial redraw only if the damage is ≤ `PARTIAL_MAX` (0.5) of the
+     window; a video card bigger than half the window redraws the whole
+     window (background dots and grain, shadows, every card) each frame.
+     Frames < `MOTION_GAP` (100 ms) apart skip the canvas copy.
+
+  *Steps, each measured alone, kept only if it beats the noise:*
+  - 🟡 **6a. Measure where the CPU goes.** (Code in, 2026-11-26:
+    `run.py` rows' `by_kind` is `[n, pss, cpu_pct]`, CPU counted per pid
+    over the window with its kind taken at first sight; Trailboard runs
+    with `TRAILBOARD_PERF=1` (`crates/app/src/perf.rs`: paints/s and
+    bytes copied in `on_paint` from `web::paint_stats`, bytes uploaded,
+    frames presented/partial/skipped, ms per frame in `render` and % of
+    the time; waiting for the surface counts in render), read back into
+    the row's `perf`; the summary gets two tables, per process kind and
+    Trailboard's drawing. Waiting for the first CI numbers.) (i) On `bench`, `run.py`:
+    record CPU per process kind as well as PSS (`by_kind` → `[n, pss,
+    cpu_pct]`; ticks per pid are already read), so a row says how much is
+    the main process vs the GPU process vs the renderer. (ii) In
+    Trailboard, a script command or the existing `frames` counter logged
+    once a second in the video case: page paints/s, bytes uploaded/s,
+    frames presented/s (full vs partial), and time in `render`. Put the
+    first breakdown here before changing code.
+  - **6b. CEF compositing switches** (likely the biggest, one line).
+    Without accelerated paint, Chromium composites on the GPU process
+    and reads the frame back; `--disable-gpu-compositing` makes it
+    composite in software straight into the paint buffer. Add an
+    env override for extra CEF switches (e.g. `TRAILBOARD_CEF_ARGS`,
+    read in `on_before_command_line_processing`, documented as a debug
+    knob) so it can be A/B'd without a rebuild, try it in CI and on the
+    laptop, and check that VA-API decode still works on the laptop
+    (`chrome://media-internals` in a card). Keep only if it helps on
+    both, or make it the default only where there's no GPU.
+  - **6c. Frame rate.** Check whether a 30 fps video makes CEF paint at
+    60/s (6a's paints/s). If so, try `windowless_frame_rate` 30 for a
+    card while it plays media (or always, if scrolling stays smooth;
+    the latency check in step 2's notes).
+  - **6d. Copy less in `on_paint`.** Copy only the dirty rows/rect
+    into `PaintFrame::pixels` when the size didn't change (the rest is
+    already there). Keeps the CEF → app rule (no app code in CEF
+    callbacks). Removing this copy altogether (handing CEF's buffer to
+    the renderer) would break that rule: owner's call, ask first.
+  - **6e. Draw less.** Raise `PARTIAL_MAX` (try 0.9) so a large playing
+    card redraws only its own rect; and/or skip the background shader
+    under opaque cards. Check no seams (screenshots), as for the partial
+    redraw.
+  - **6f. Report.** Update the table at the top of M16 with CI and
+    laptop numbers; decide with the owner whether dmabuf paint
+    (`on_accelerated_paint`, §5) becomes its own milestone.
+
+  *How to measure* (the owner prefers CI to the laptop for bench work):
+  push the change to a branch (not `master`, which starts a full
+  ~1 h run) and start a short run on it:
+  `gh workflow run bench.yml --ref master -f ref=<branch> -f cases=video-vp9,video-h264 -f only=trailboard,chrome -f runs=3 -f save=false`
+  (~10–15 min; `save=false` keeps experiments out of `results/` and the
+  chart). Compare with the same cases on `master` run the same way, on
+  the same CPU model (each row's `runner`). Laptop numbers for the
+  final table only: `scripts/bench.py --note "step 6x"`, Trailboard only.
+
+  *Done when:* video CPU in CI at most ~2× Chrome's (now ~9×) and on the
+  laptop no more than Ref A + 50 %; idle/still/pan no worse; `cargo test`,
+  `cargo clippy`, the e2e scripts, and a screenshot of a playing card.
 - ⬜ 7. **Report.** Rerun the bench after each step and keep the table
   above current; README gets a short "Memory and CPU" line only if the
   goal (no more than the reference browser with the same pages) is met.
@@ -1218,7 +1300,23 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-25 (forty-seventh). **M16 step 1, the
+**Last session:** 2026-11-26 (fiftieth): **M16 step 6a written, not
+yet measured.** `TRAILBOARD_PERF=1` (`crates/app/src/perf.rs`, unit
+test) and, uncommitted in `../trailboard-bench`, CPU per process kind
+and the perf lines read into each row, with two new summary tables
+(`report.py` `by_kind`, checked on made-up rows). Verified: `cargo test`,
+`cargo clippy`, `run.py`'s log parsing on a sample log. Not verified: a
+real run (owner: bench on CI, not the laptop). To measure: commit and
+push `bench` (starts a full run of master), push this work to a branch,
+then the short `gh workflow run` in step 6's "How to measure" with
+`-f ref=<branch>` (it cancels the full run: `concurrency`). Then fill
+6a's breakdown and go on to 6b.
+
+**Session before:** 2026-11-26 (forty-ninth): M16b brought to a trusted
+state (runs 45754226156, 45761289882, 45773585181; see "Run … read"
+below), the partial redraw measured in CI (idle 45.6 % → ~5 %), and the
+video plan written (M16 step 6, "Detailed plan"). Before that,
+2026-11-25 (forty-seventh): **M16 step 1, the
 benchmark** (asked by the owner). `scripts/bench.py`: `--snapshot` saves
 six pages (no scripts) and two 1080p videos under
 `~/.cache/trailboard-bench/site/`; runs `idle`, `still`, `video-h264`,
@@ -1376,6 +1474,15 @@ video either measured with real CPU or failed as "stopped"; no other
 browser newly failing the 2-second check (Trailboard included); pan's
 three runs alike; each case's "compared with" line.
 
+**Run 45773585181 read** (2026-11-26). Same-CPU comparison, warm-up
+(pan runs 362/362/361 %), installs and the 2-second playback check all
+work. Idle 4.7 %, still 0.8 %. 13 of 16 browsers ran properly in every
+case. Owner's decision: skip browsers only where they can't run on the
+runner (`skip` in `browsers.toml`, listed in the summary): Chromium and
+Opera in video-h264 (no H.264 decoder), GNOME Web in all three video
+cases (its web process plays VP9/AV1 for a while, then crashes; H.264
+never plays). Measured in their other cases.
+
 **Idle CPU finding (M16):** CI idle 37 % is the start card's search
 box caret: every blink (~2/s) repaints the page in CEF, uploads the
 texture and redraws the whole window; with llvmpipe that costs ~20–40 %
@@ -1402,8 +1509,22 @@ script's `frames` reports partial frames. Unit tests in `web` and
 `compositor`. **Check on CI:** idle CPU (was 37 %) and the idle
 screenshot (caret, no seams); video and pan no worse; still unchanged.
 
-**Next up:** the M16b checks above, then finish M16 step 2's checks (listed under step 2: the full
-bench, the latency runs, the other e2e scripts), then commit steps 1–2. Planned (owner, 2026-11-25): M16b, the
+**Next up (2026-11-26, owner):** Trailboard's performance, **video
+first: M16 step 6, its "Detailed plan"** (6a measure → 6b CEF
+compositing switch → 6c frame rate → 6d copy less → 6e draw less →
+6f report). Then main-process memory (M16 steps 3–4: Trailboard's main
+process is ~295–315 MB PSS in CI against Chrome's ~145 MB, the whole
+memory gap; its renderers are no bigger than Chrome's). Then idle
+(4.7 % vs Chrome 0.6 %, but Trailboard's idle shows a live start page
+with a caret, the others an empty window). **Before starting:** the
+per-case skips are edited but uncommitted in `../trailboard-bench`
+(`browsers.toml` `skip`, `run.py`, `report.py`); this file's notes on
+runs 45773585181 and the step-6 plan are uncommitted here. Ask the
+owner before committing/pushing (a push to `bench` starts a ~1 h run;
+docs-only pushes to `master` don't). CI is green and its data is
+trusted except where `skip` says (see "Run 45773585181 read").
+Earlier next-up, still open: finish M16 step 2's laptop checks (the
+latency runs, the other e2e scripts). Planned (owner, 2026-11-25): M16b, the
 benchmark on GitHub Actions from an orphan `bench` branch, with a chart
 page and a regression check. Then M14
 step 1, the `config.toml` reader (asked by the owner on

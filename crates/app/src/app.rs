@@ -666,6 +666,8 @@ pub struct App {
     event_seen: bool,
     /// Present every frame, as before frames were compared (`TRAILBOARD_REDRAW=always`).
     pub always_redraw: bool,
+    /// `TRAILBOARD_PERF`: the cost of drawing, logged once a second.
+    pub perf: Option<crate::perf::PerfLog>,
     data_dir: std::path::PathBuf,
     spaces: SpaceIndex,
     /// False when the space index could not be read safely; nothing is saved then.
@@ -1079,6 +1081,7 @@ impl App {
             frame_changed: true,
             event_seen: false,
             always_redraw: false,
+            perf: None,
             data_dir,
             spaces: SpaceIndex::default(),
             persist: true,
@@ -10988,6 +10991,21 @@ impl App {
         if let Some(r) = self.renderer.as_mut() {
             r.always_present = self.always_redraw;
             self.frame_changed = r.render(bg, &layers);
+            if let Some(p) = self.perf.as_mut() {
+                let (paints, copied) = web::paint_stats();
+                let t = crate::perf::Totals {
+                    paints,
+                    copied,
+                    uploaded: r.uploaded,
+                    presented: r.presented,
+                    partial: r.partial,
+                    skipped: r.skipped,
+                    render: r.render_time,
+                };
+                if let Some(line) = p.tick(Instant::now(), t) {
+                    log::info!("{line}");
+                }
+            }
         }
     }
 

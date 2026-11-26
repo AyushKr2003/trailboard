@@ -324,6 +324,16 @@ fn schedule_pump(delay_ms: i64) {
     wake();
 }
 
+/// Page paints received from CEF, and the bytes `on_paint` copied for them,
+/// since the start (for `TRAILBOARD_PERF`).
+static PAINTS: AtomicU64 = AtomicU64::new(0);
+static PAINT_BYTES: AtomicU64 = AtomicU64::new(0);
+
+/// Paints CEF delivered and bytes copied out of its buffers, since the start.
+pub fn paint_stats() -> (u64, u64) {
+    (PAINTS.load(Ordering::Relaxed), PAINT_BYTES.load(Ordering::Relaxed))
+}
+
 fn note_activity() {
     ACTIVITY.fetch_add(1, Ordering::Relaxed);
 }
@@ -959,6 +969,8 @@ wrap_render_handler! {
             let len = width as usize * height as usize * 4;
             // SAFETY: CEF guarantees `buffer` holds width*height BGRA pixels for this call.
             let src = unsafe { std::slice::from_raw_parts(buffer, len) };
+            PAINTS.fetch_add(1, Ordering::Relaxed);
+            PAINT_BYTES.fetch_add(len as u64, Ordering::Relaxed);
             let sh = &self.shared;
             log::trace!("page {} paint {width}x{height} popup={}", sh.key, type_ == PaintElementType::POPUP);
             if type_ != PaintElementType::POPUP && sh.frame.borrow().width != width as u32 {

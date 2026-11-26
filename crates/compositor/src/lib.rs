@@ -167,6 +167,11 @@ pub struct Renderer {
     pub skipped: u64,
     /// Of `presented`, the frames redrawn only where page pixels changed.
     pub partial: u64,
+    /// Page pixel bytes handed to the GPU, and the time spent in
+    /// [`Renderer::render`] for presented frames (waiting for the surface
+    /// included), since the start.
+    pub uploaded: u64,
+    pub render_time: std::time::Duration,
     /// The surface takes copies, so frames are drawn on [`Renderer::canvas`]
     /// and copied over; without it every frame is drawn whole, as before.
     can_copy: bool,
@@ -408,6 +413,8 @@ impl Renderer {
             presented: 0,
             skipped: 0,
             partial: 0,
+            uploaded: 0,
+            render_time: std::time::Duration::ZERO,
             can_copy,
             canvas: None,
             last_layout: None,
@@ -500,6 +507,7 @@ impl Renderer {
             },
             wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         );
+        self.uploaded += w as u64 * h as u64 * 4;
         let whole = [x, y, w, h] == [0, 0, width, height];
         let entry = self.page_damage.entry(key).or_insert(Some([x, y, 0, 0]));
         *entry = match (*entry, whole) {
@@ -568,6 +576,7 @@ impl Renderer {
     /// (same layers, background, size and page pixels) is skipped; returns
     /// whether it was presented.
     pub fn render(&mut self, bg: Background, layers: &[Layer]) -> bool {
+        let started = std::time::Instant::now();
         let key = frame_key(self.viewport(), &bg, layers, |k| self.pages.get(&k).map(|p| p.serial));
         if !self.always_present && self.last_frame == Some(key) {
             self.skipped += 1;
@@ -827,6 +836,7 @@ impl Renderer {
         self.presented += 1;
         self.partial += u64::from(scissor.is_some());
         self.atlas.trim();
+        self.render_time += started.elapsed();
         true
     }
 }

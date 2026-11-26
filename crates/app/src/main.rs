@@ -21,6 +21,7 @@ mod note;
 mod omnibox;
 mod palette;
 mod pathfield;
+mod perf;
 mod script;
 mod settings_page;
 mod sidebar;
@@ -123,6 +124,10 @@ fn main() -> ExitCode {
     app.always_redraw = std::env::var("TRAILBOARD_REDRAW").is_ok_and(|v| v == "always");
     if app.always_redraw {
         log::info!("TRAILBOARD_REDRAW=always: drawing every frame");
+    }
+    app.perf = perf::PerfLog::from_env();
+    if app.perf.is_some() {
+        log::info!("TRAILBOARD_PERF: logging the cost of drawing once a second");
     }
     if storage::crash::take_unseen(&data_dir()) {
         app.note_crash(&storage::crash::log_path(&data_dir()));

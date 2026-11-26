@@ -82,6 +82,11 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
   case, three runs each, against saved copies of six pages. The script
   runner's `mem` line logs the main process's memory, live cards and
   page buffer sizes.
+- **`TRAILBOARD_PERF=1`**, a debug knob: while frames are drawn, a line a
+  second says what drawing cost (page paints from the engine, bytes
+  copied and uploaded, frames presented and how many were partial, time
+  in the renderer). The CI benchmark turns it on and also splits CPU by
+  process kind (main, GPU, renderer…).
 
 ### Changed
 

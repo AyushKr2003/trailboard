@@ -37,14 +37,33 @@ GECKO_PREFS = {
     "app.update.enabled": False,
     "app.update.auto": False,
     "media.autoplay.default": 0,
+    # Floorp: no welcome page and no release-notes tab or prompt (without
+    # these both open in front of the test pages).
+    "floorp.browser.welcome.page.shown": True,
+    "floorp.releaseNotes.mode": "disabled",
+    "floorp.releaseNotes.choiceConfirmed": True,
+    "floorp.releaseNotes.promptShown": True,
+    "startup.homepage_override_url": "",
 }
 
 
 # ---------------------------------------------------------------- pages
 
+# What the video page reported this run ("playing", "cannot-play"); measure() clears it.
+BEACONS = set()
+
+
 class Quiet(SimpleHTTPRequestHandler):
     def log_message(self, *a):
         pass
+
+    def do_GET(self):
+        if self.path.startswith("/beacon/"):
+            BEACONS.add(self.path[len("/beacon/"):].split("?")[0])
+            self.send_response(204)
+            self.end_headers()
+            return
+        super().do_GET()
 
 
 class Server(ThreadingHTTPServer):
@@ -207,6 +226,13 @@ def command(name, spec, case, urls, profile, a):
                    XDG_DATA_HOME=os.path.join(home, ".local", "share"))
         return [spec["bin"], "--profile", profile, "--no-remote", "--width", str(W), "--height", str(H), *urls], env
     if fam == "epiphany":
+        # Its settings live in GSettings, not the profile: a key file of the
+        # run's own stops the "Set as Default Browser?" dialog.
+        conf = os.path.join(profile, "config")
+        os.makedirs(os.path.join(conf, "glib-2.0", "settings"))
+        open(os.path.join(conf, "glib-2.0", "settings", "keyfile"), "w").write(
+            "[org/gnome/epiphany]\nask-for-default=false\n")
+        env.update(GSETTINGS_BACKEND="keyfile", XDG_CONFIG_HOME=conf)
         return [spec["bin"], "--private-instance", f"--profile={profile}", *urls], env
     if fam == "falkon":
         env.update(XDG_CONFIG_HOME=os.path.join(profile, "config"), XDG_DATA_HOME=os.path.join(profile, "data"),
@@ -222,6 +248,7 @@ def measure(name, spec, case, urls, a, shot):
     shutil.rmtree(profile, ignore_errors=True)
     os.makedirs(profile)
     argv, env = command(name, spec, case, urls, profile, a)
+    BEACONS.clear()
     before = windows()
     log = open(shot + ".log", "w")
     t0 = time.time()
@@ -267,13 +294,14 @@ def measure(name, spec, case, urls, a, shot):
             if n % 3 == 0:
                 samples.append((*pss(pids), len(pids)))
         s1 = time.time()
-        # A video page titles itself "...: playing" once it plays; Trailboard's
-        # window doesn't carry page titles, so it is checked by screenshot only.
-        if case.startswith("video-") and name != "trailboard" and not x("search", "--name", ": playing"):
+        # The video page reports to our server once it plays (make_site.py);
+        # this checks every program alike, Trailboard included.
+        if case.startswith("video-") and "playing" not in BEACONS:
             names = [" ".join(subprocess.run(["xdotool", "getwindowname", w], capture_output=True, text=True).stdout.split())
                      for w in windows() - before]
             screenshot(shot + ".png")
-            row["error"] = f"video not playing (windows: {'; '.join(n for n in names if n)[:120]})"
+            said = ", ".join(sorted(BEACONS)) or "nothing"
+            row["error"] = f"video not playing (page said {said}; windows: {'; '.join(n for n in names if n)[:100]})"
             return row
         cpu_s = sum(last[p] - first[p] for p in last) / CLK
         if not samples:

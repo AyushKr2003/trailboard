@@ -148,7 +148,9 @@ rm -rf /opt/palemoon && mkdir -p /opt/palemoon && tar -xf /tmp/palemoon.tar.xz -
 engine = "WebKit"
 family = "epiphany"
 bin = "epiphany-browser"
-install = "apt-get install -y epiphany-browser"
+# WebKitGTK plays video through GStreamer: VP9 is in -good, AV1 in -bad,
+# H.264 in -libav. Without them the page says "cannot play".
+install = "apt-get install -y epiphany-browser gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav"
 
 [falkon]
 engine = "Blink (Qt WebEngine)"

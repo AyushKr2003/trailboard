@@ -164,11 +164,15 @@ def main():
         with open(os.path.join(vid, f"{codec}.html"), "w") as f:
             f.write(f"<!doctype html><title>{codec} 1080p</title><style>body{{margin:0;background:#000}}video{{width:100vw;height:100vh}}</style>"
                     f"<video src={clip} autoplay muted loop playsinline></video>"
-                    # The title says whether it plays, so run.py can tell a black
-                    # window (codec missing) from playback.
+                    # The page tells run.py's server whether it plays (a request to
+                    # /beacon/playing or /beacon/cannot-play), so a black window
+                    # (codec missing) isn't counted as playback. The title says the
+                    # same for people reading screenshots; run.py can't rely on it,
+                    # as not every browser puts the page title in its window title.
                     "<script>const v=document.querySelector('video'),t=document.title;"
-                    "v.addEventListener('error',()=>document.title=t+': cannot play');"
-                    "const i=setInterval(()=>{if(v.currentTime>1){document.title=t+': playing';clearInterval(i)}},500);"
+                    "function say(s){document.title=t+': '+s.replace('-',' ');new Image().src='/beacon/'+s+'?'+Date.now()}"
+                    "v.addEventListener('error',()=>say('cannot-play'));"
+                    "const i=setInterval(()=>{if(v.currentTime>1){say('playing');clearInterval(i)}},500);"
                     "</script>")
     print(f"site in {out}: {', '.join(PAGES)} and videos {', '.join(VIDEOS)}")
 

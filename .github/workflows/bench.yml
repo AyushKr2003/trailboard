@@ -44,7 +44,9 @@ permissions:
   id-token: write
 
 env:
-  REF: ${{ github.ref_name == 'master' && github.sha || inputs.ref || 'master' }}
+  # A push to master measures that commit; a manual run measures -f ref
+  # (from either branch: on master this used to take github.sha and ignore it).
+  REF: ${{ github.event_name == 'push' && github.ref_name == 'master' && github.sha || inputs.ref || 'master' }}
   CASES: ${{ inputs.cases || 'all' }}
   ONLY: ${{ inputs.only || '' }}
   RUNS: ${{ inputs.runs || '3' }}

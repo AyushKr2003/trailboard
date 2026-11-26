@@ -1056,8 +1056,12 @@ loaded by Trailboard and Ref A in every case.
     6c (frame rate), with 6b and 6d after, and probably small. (Earlier
     run 45840344177 built master by mistake, see "How to measure"; its
     split matched: main process 305–348 %.) CEF's zygote-forked children
-    show as `zygote` (CEF keeps the zygote's command line), so renderer
-    and utility CPU aren't split apart; enough for now. (i) On `bench`, `run.py`:
+    keep the zygote's command line, so in this run they all show as
+    `zygote` (the GPU process among them: it is zygote-forked too). Fixed
+    after it: `kind_of` names them by their threads (`VizCompositorTh` →
+    gpu-process, `Compositor` → renderer, `Chrome_ChildIOT` → utility),
+    and reads Chrome's rewritten title, checked on a live Trailboard and
+    Chromium here. (i) On `bench`, `run.py`:
     record CPU per process kind as well as PSS (`by_kind` → `[n, pss,
     cpu_pct]`; ticks per pid are already read), so a row says how much is
     the main process vs the GPU process vs the renderer. (ii) In
@@ -1096,8 +1100,9 @@ loaded by Trailboard and Ref A in every case.
   push the change to a branch (not `master`, which starts a full
   ~1 h run) and start a short run on it:
   `gh workflow run bench.yml --ref bench -f ref=<branch> -f cases=video-vp9,video-h264 -f only=trailboard,chrome -f runs=3 -f save=false`
-  (dispatch from `bench`, not `master`: on `master` the workflow's `REF`
-  takes `github.sha` and ignores `-f ref`, as run 45840344177 found)
+  (run 45840344177 found that dispatching on `master` took `github.sha`
+  and ignored `-f ref`; fixed 2026-11-26, `REF` takes the sha only on a
+  push, so either branch works)
   (~10–15 min; `save=false` keeps experiments out of `results/` and the
   chart). Compare with the same cases on `master` run the same way, on
   the same CPU model (each row's `runner`). Laptop numbers for the
@@ -1335,11 +1340,11 @@ test) and, uncommitted in `../trailboard-bench`, CPU per process kind
 and the perf lines read into each row, with two new summary tables
 (`report.py` `by_kind`, checked on made-up rows). Verified: `cargo test`,
 `cargo clippy`, `run.py`'s log parsing on a sample log. Not verified: a
-real run until CI (owner: bench on CI, not the laptop). `bench` pushed
-as 87c3ed7; uncommitted there: `kind_of` reads Chrome's rewritten
-title (one string joined by spaces) so Chrome's kinds stop being whole
-command lines (checked on this shell's own pid only). The perf-6a
-branch isn't merged into master yet (owner's call).
+real run until CI (owner: bench on CI, not the laptop). Then, asked by
+the owner ("fix it all and push it"): the workflow's `REF` fix (both
+copies), `kind_of` splitting CEF's zygote children and Chrome's kinds;
+perf-6a merged into master and both branches pushed, so a full run of
+master with the new tools follows (its summary has the split per kind).
 
 **Session before:** 2026-11-26 (forty-ninth): M16b brought to a trusted
 state (runs 45754226156, 45761289882, 45773585181; see "Run … read"

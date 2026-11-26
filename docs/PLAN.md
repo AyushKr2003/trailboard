@@ -1026,15 +1026,38 @@ loaded by Trailboard and Ref A in every case.
      Frames < `MOTION_GAP` (100 ms) apart skip the canvas copy.
 
   *Steps, each measured alone, kept only if it beats the noise:*
-  - 🟡 **6a. Measure where the CPU goes.** (Code in, 2026-11-26:
+  - ✅ **6a. Measure where the CPU goes.** (Done 2026-11-26.
     `run.py` rows' `by_kind` is `[n, pss, cpu_pct]`, CPU counted per pid
     over the window with its kind taken at first sight; Trailboard runs
     with `TRAILBOARD_PERF=1` (`crates/app/src/perf.rs`: paints/s and
     bytes copied in `on_paint` from `web::paint_stats`, bytes uploaded,
     frames presented/partial/skipped, ms per frame in `render` and % of
     the time; waiting for the surface counts in render), read back into
-    the row's `perf`; the summary gets two tables, per process kind and
-    Trailboard's drawing. Waiting for the first CI numbers.) (i) On `bench`, `run.py`:
+    the row's `perf`; the summary gets two tables.)
+
+    **First breakdown** (run 45842886738, perf-6a 97f0a78, 3 runs each,
+    medians; same runner per case):
+
+    | Case | Total | Main process | CEF children | Paints/s | Copied = uploaded | Frames/s (partial) | Render |
+    |---|---|---|---|---|---|---|---|
+    | video-h264 (EPYC 9V74) | 371 % (Chrome 37 %) | 350 % | 21 % | 20 | 167 MB/s | 20 (0) | 46 ms/frame, 92 % of the time |
+    | video-vp9 (EPYC 7763) | 372 % (Chrome 49 %) | 330 % | 26–42 % | 16–24 | 110–136 MB/s | 16–24 (0) | 38–57 ms, 91–93 % |
+
+    *Read:* the cost is **our own drawing on llvmpipe**: the main thread
+    spends ~92 % of its time in `Renderer::render`, ~40–55 ms a frame,
+    and llvmpipe's threads spread that over the 4 cores (the main
+    process's ~350 %). No frame was partial: the video card is more than
+    `PARTIAL_MAX` of the window, so every paint redraws the whole
+    1920×1080 window. Because the loop is that busy, CEF's 30 fps video
+    is shown at only 16–24 frames/s. Chromium itself is cheap (renderer
+    and zygote children ~20–40 %, no GPU process of its own on the
+    runner). The `on_paint` copy is ~8 MB a paint, ~170 MB/s: small next
+    to the render. *So the order changes:* **6e (draw less) first**, then
+    6c (frame rate), with 6b and 6d after, and probably small. (Earlier
+    run 45840344177 built master by mistake, see "How to measure"; its
+    split matched: main process 305–348 %.) CEF's zygote-forked children
+    show as `zygote` (CEF keeps the zygote's command line), so renderer
+    and utility CPU aren't split apart; enough for now. (i) On `bench`, `run.py`:
     record CPU per process kind as well as PSS (`by_kind` → `[n, pss,
     cpu_pct]`; ticks per pid are already read), so a row says how much is
     the main process vs the GPU process vs the renderer. (ii) In
@@ -1072,7 +1095,9 @@ loaded by Trailboard and Ref A in every case.
   *How to measure* (the owner prefers CI to the laptop for bench work):
   push the change to a branch (not `master`, which starts a full
   ~1 h run) and start a short run on it:
-  `gh workflow run bench.yml --ref master -f ref=<branch> -f cases=video-vp9,video-h264 -f only=trailboard,chrome -f runs=3 -f save=false`
+  `gh workflow run bench.yml --ref bench -f ref=<branch> -f cases=video-vp9,video-h264 -f only=trailboard,chrome -f runs=3 -f save=false`
+  (dispatch from `bench`, not `master`: on `master` the workflow's `REF`
+  takes `github.sha` and ignores `-f ref`, as run 45840344177 found)
   (~10–15 min; `save=false` keeps experiments out of `results/` and the
   chart). Compare with the same cases on `master` run the same way, on
   the same CPU model (each row's `runner`). Laptop numbers for the
@@ -1300,17 +1325,21 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-26 (fiftieth): **M16 step 6a written, not
-yet measured.** `TRAILBOARD_PERF=1` (`crates/app/src/perf.rs`, unit
+**Last session:** 2026-11-26 (fiftieth): **M16 step 6a done**; the
+breakdown is in 6a: ~92 % of the main thread is `Renderer::render`
+redrawing the whole window on llvmpipe (no partial frames with a big
+video card), Chromium is cheap. **Next up: 6e (draw less)**, then 6c.
+Work so far, on branch `perf-6a` (pushed; this file's update committed
+locally after the push): `TRAILBOARD_PERF=1` (`crates/app/src/perf.rs`, unit
 test) and, uncommitted in `../trailboard-bench`, CPU per process kind
 and the perf lines read into each row, with two new summary tables
 (`report.py` `by_kind`, checked on made-up rows). Verified: `cargo test`,
 `cargo clippy`, `run.py`'s log parsing on a sample log. Not verified: a
-real run (owner: bench on CI, not the laptop). To measure: commit and
-push `bench` (starts a full run of master), push this work to a branch,
-then the short `gh workflow run` in step 6's "How to measure" with
-`-f ref=<branch>` (it cancels the full run: `concurrency`). Then fill
-6a's breakdown and go on to 6b.
+real run until CI (owner: bench on CI, not the laptop). `bench` pushed
+as 87c3ed7; uncommitted there: `kind_of` reads Chrome's rewritten
+title (one string joined by spaces) so Chrome's kinds stop being whole
+command lines (checked on this shell's own pid only). The perf-6a
+branch isn't merged into master yet (owner's call).
 
 **Session before:** 2026-11-26 (forty-ninth): M16b brought to a trusted
 state (runs 45754226156, 45761289882, 45773585181; see "Run … read"

@@ -164,15 +164,17 @@ def main():
         with open(os.path.join(vid, f"{codec}.html"), "w") as f:
             f.write(f"<!doctype html><title>{codec} 1080p</title><style>body{{margin:0;background:#000}}video{{width:100vw;height:100vh}}</style>"
                     f"<video src={clip} autoplay muted loop playsinline></video>"
-                    # The page tells run.py's server whether it plays (a request to
-                    # /beacon/playing or /beacon/cannot-play), so a black window
-                    # (codec missing) isn't counted as playback. The title says the
-                    # same for people reading screenshots; run.py can't rely on it,
-                    # as not every browser puts the page title in its window title.
-                    "<script>const v=document.querySelector('video'),t=document.title;"
+                    # The page tells run.py's server whether it plays: a request to
+                    # /beacon/playing every 2 s while the video moves on, or one to
+                    # /beacon/cannot-play. So neither a black window (codec missing)
+                    # nor a video that played once and froze counts as playback.
+                    # The title says the same for people reading screenshots;
+                    # run.py can't rely on it, as not every browser puts the page
+                    # title in its window title.
+                    "<script>const v=document.querySelector('video'),t=document.title;let last=-1;"
                     "function say(s){document.title=t+': '+s.replace('-',' ');new Image().src='/beacon/'+s+'?'+Date.now()}"
                     "v.addEventListener('error',()=>say('cannot-play'));"
-                    "const i=setInterval(()=>{if(v.currentTime>1){say('playing');clearInterval(i)}},500);"
+                    "setInterval(()=>{const c=v.currentTime;if(c>0.5&&c!==last)say('playing');last=c},2000);"
                     "</script>")
     print(f"site in {out}: {', '.join(PAGES)} and videos {', '.join(VIDEOS)}")
 

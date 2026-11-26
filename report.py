@@ -5,9 +5,11 @@ and the regression check.
     python3 report.py NEW.jsonl --results results --summary $GITHUB_STEP_SUMMARY --pages pages-out
 
 NEW.jsonl is this workflow run's rows; it is saved as results/<date>-<sha>.jsonl.
-Exits 1 when Trailboard got more than 20 % worse than the last run on a case
-(memory or CPU) while the other browsers in the same run moved less than
-10 % (a slower runner is not a regression).
+Exits 1 when Trailboard got more than 20 % worse on a case (memory or CPU)
+than the newest earlier run of that case on the same CPU model, while the
+other browsers moved less than 10 % (a slower runner is not a regression).
+Each case is its own job, and jobs land on different CPU models (AMD EPYC
+and Intel Xeon seen in one run), so runs on another CPU aren't compared.
 """
 import argparse, html, json, os, statistics, sys
 from collections import defaultdict
@@ -39,6 +41,7 @@ def medians(rows):
     for key, rs in groups.items():
         ok = [r for r in rs if r.get("ok")]
         m = {"n": len(ok), "failed": len(rs) - len(ok), "engine": rs[0].get("engine", ""), "version": rs[0].get("version", ""),
+             "runner": rs[0].get("runner", ""),
              "error": next((r.get("error") for r in rs if r.get("error")), "")}
         for k in ("pss_mib", "peak_pss_mib", "cpu_pct", "procs", "startup_s"):
             vals = [r[k] for r in ok if r.get(k) is not None]
@@ -62,10 +65,30 @@ def pct(new, old):
     return None if not old or new is None else (new - old) / old
 
 
-def regressions(new, old):
+def runner_of(med, case):
+    t = med.get((case, "trailboard"))
+    return t["runner"] if t else ""
+
+
+def baselines(new, before):
+    """{case: (label, medians)}: the newest earlier run of each case on the same CPU model."""
+    out = {}
+    for case in CASES:
+        cpu = runner_of(new, case)
+        for label, _, med in reversed(before):
+            if cpu and runner_of(med, case) == cpu:
+                out[case] = (label, med)
+                break
+    return out
+
+
+def regressions(new, base):
     """Cases where Trailboard got worse while the others held steady."""
     found = []
     for case in CASES:
+        if case not in base:
+            continue
+        old = base[case][1]
         tb_new, tb_old = new.get((case, "trailboard")), old.get((case, "trailboard"))
         if not tb_new or not tb_old or tb_new["pss_mib"] is None or tb_old["pss_mib"] is None:
             continue
@@ -88,13 +111,16 @@ def fmt(v, unit=""):
     return "–" if v is None else (f"{v:.0f}{unit}" if unit == " MB" else f"{v:.1f}{unit}" if unit == "" else f"{v}{unit}")
 
 
-def table(med, prev=None):
+def table(med, base):
     lines = []
     for case in CASES:
         keys = sorted([k for k in med if k[0] == case], key=lambda k: (k[1] != "trailboard", med[k]["pss_mib"] or 1e9))
         if not keys:
             continue
-        lines += [f"\n### {case}\n", "| Program | Engine | Memory (PSS) | Peak | CPU % of a core | Processes | Start | Change since last run |",
+        prev = base[case][1] if case in base else None
+        since = f"compared with {base[case][0]}" if prev else "no earlier run on this CPU to compare with"
+        lines += [f"\n### {case}\n", f"Runner: {runner_of(med, case) or '?'}; {since}.\n",
+                  "| Program | Engine | Memory (PSS) | Peak | CPU % of a core | Processes | Start | Change (same CPU) |",
                   "|---|---|---|---|---|---|---|---|"]
         for k in keys:
             m = med[k]
@@ -204,17 +230,21 @@ def main():
     with open(os.path.join(a.results, name + ".jsonl"), "w") as f:
         f.writelines(json.dumps(r) + "\n" for r in rows)
     new = medians(rows)
-    prev = before[-1][2] if before else None
-    found = regressions(new, prev) if prev else []
+    base = baselines(new, before)
+    found = regressions(new, base)
 
     head = (f"## Bench: Trailboard {meta.get('trailboard_sha', '')[:7]} against {len({k[1] for k in new}) - 1} browsers\n\n"
-            f"{meta.get('date', '')} · runner {meta.get('runner', '')} · {meta.get('runs', '?')} runs each, medians · "
+            f"{meta.get('date', '')} · {meta.get('runs', '?')} runs each, medians · each case on its own runner · "
             f"[workflow run]({meta.get('run_url', '#')})\n")
+    cases = [c for c in CASES if (c, "trailboard") in new]
+    unchecked = [c for c in cases if c not in base]
     verdict = ("\n> [!WARNING]\n> **Regression:**\n" + "".join(f"> - {f}\n" for f in found)) if found else \
-              ("\n✅ No regression against the last run.\n" if prev else "\nFirst run: nothing to compare with yet.\n")
+              (f"\n✅ No regression against earlier runs on the same CPU"
+               + (f" (not checked, no earlier run on their CPU: {', '.join(unchecked)})" if unchecked else "") + ".\n"
+               if len(unchecked) < len(cases) else "\nNo earlier run on these CPUs: nothing to compare with yet.\n")
     missing = sorted({k[1] for k, m in new.items() if not m["n"]})
     note = f"\nFailed to run: {', '.join(missing)} (see the logs).\n" if missing else ""
-    text = head + verdict + note + table(new, prev)
+    text = head + verdict + note + table(new, base)
     open(a.summary, "a").write(text + "\n")
 
     runs = history(a.results)
@@ -227,7 +257,7 @@ def main():
         tb.append(f"| [{label[:15]}]({m0.get('run_url', '#')}) | `{m0.get('trailboard_sha', '')[:7]}` | " + " | ".join(cells) + " |")
     readme = (f"# Results\n\nWritten by the bench workflow after every run. Chart: "
               f"<https://{meta.get('repo', '').split('/')[0].lower()}.github.io/{meta.get('repo', '').split('/')[-1]}/>\n\n"
-              f"{head}{verdict}{note}{table(new, prev)}\n\n## Trailboard over time (newest first)\n\n" + "\n".join(tb) + "\n")
+              f"{head}{verdict}{note}{table(new, base)}\n\n## Trailboard over time (newest first)\n\n" + "\n".join(tb) + "\n")
     open(os.path.join(a.results, "README.md"), "w").write(readme)
     pages(runs, a.pages)
     print(text)

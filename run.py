@@ -49,8 +49,8 @@ GECKO_PREFS = {
 
 # ---------------------------------------------------------------- pages
 
-# What the video page reported this run ("playing", "cannot-play"); measure() clears it.
-BEACONS = set()
+# What the video page reported this run: [(time, "playing" | "cannot-play")]; measure() clears it.
+BEACONS = []
 
 
 class Quiet(SimpleHTTPRequestHandler):
@@ -59,7 +59,7 @@ class Quiet(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.startswith("/beacon/"):
-            BEACONS.add(self.path[len("/beacon/"):].split("?")[0])
+            BEACONS.append((time.time(), self.path[len("/beacon/"):].split("?")[0]))
             self.send_response(204)
             self.end_headers()
             return
@@ -294,15 +294,19 @@ def measure(name, spec, case, urls, a, shot):
             if n % 3 == 0:
                 samples.append((*pss(pids), len(pids)))
         s1 = time.time()
-        # The video page reports to our server once it plays (make_site.py);
-        # this checks every program alike, Trailboard included.
-        if case.startswith("video-") and "playing" not in BEACONS:
-            names = [" ".join(subprocess.run(["xdotool", "getwindowname", w], capture_output=True, text=True).stdout.split())
-                     for w in windows() - before]
-            screenshot(shot + ".png")
-            said = ", ".join(sorted(BEACONS)) or "nothing"
-            row["error"] = f"video not playing (page said {said}; windows: {'; '.join(n for n in names if n)[:100]})"
-            return row
+        # The video page reports to our server every 2 s while it plays
+        # (make_site.py); it must have played through the measured window, to
+        # its last few seconds. This checks every program alike, Trailboard included.
+        if case.startswith("video-"):
+            playing = [t for t, s in BEACONS if s == "playing" and s0 <= t <= s1]
+            if not playing or max(playing) < s1 - 6:
+                names = [" ".join(subprocess.run(["xdotool", "getwindowname", w], capture_output=True, text=True).stdout.split())
+                         for w in windows() - before]
+                screenshot(shot + ".png")
+                said = ", ".join(sorted({s for _, s in BEACONS})) or "nothing"
+                why = "video not playing" if not playing else f"video stopped {s1 - max(playing):.0f} s before the end"
+                row["error"] = f"{why} (page said {said}; windows: {'; '.join(n for n in names if n)[:100]})"
+                return row
         cpu_s = sum(last[p] - first[p] for p in last) / CLK
         if not samples:
             samples.append((*pss(pids), len(pids)))
@@ -372,6 +376,12 @@ def main():
     os.makedirs(a.scratch, exist_ok=True)
     urls = case_urls(a.case, serve(os.path.abspath(a.site)))
     meta = json.loads(a.meta)
+    # A first launch on a fresh runner reads the program from disk; the first
+    # measured run was the slow one (pan run 0 managed two thirds of the
+    # panning). Start each program once, briefly, unmeasured.
+    warm = argparse.Namespace(**{**vars(a), "settle": 8, "sample": 0})
+    for name, spec, _ in programs:
+        measure(name, spec, a.case, urls, warm, os.path.join(a.scratch, f"warmup-{a.case}-{name}"))
     print(f"case {a.case}: {len(programs)} programs, {a.runs} runs each", flush=True)
     for i in range(a.runs):
         for name, spec, ver in programs:

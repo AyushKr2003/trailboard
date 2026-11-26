@@ -58,10 +58,15 @@ def main():
         b = browsers[name]
         print(f"::group::install {name}", flush=True)
         err = ""
-        try:
-            subprocess.run(["bash", "-c", HELPERS + b["install"]], check=True, timeout=600)
-        except Exception as e:  # noqa: BLE001
-            err = str(e)
+        # One retry: a mirror or a release download can be slow or fail once.
+        for attempt in (1, 2):
+            try:
+                subprocess.run(["bash", "-c", HELPERS + b["install"]], check=True, timeout=b.get("timeout", 600))
+                err = ""
+                break
+            except Exception as e:  # noqa: BLE001
+                err = str(e).split("\n")[0][:60] + " … " + str(e)[-160:]
+                print(f"attempt {attempt} failed: {err}", flush=True)
         path = resolve(b["bin"])
         if not path and not err:
             err = f"{b['bin']} not found after installing"

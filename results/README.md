@@ -2,146 +2,142 @@
 
 Written by the bench workflow after every run. Chart: <https://ayushkr2003.github.io/trailboard/>
 
-## Bench: Trailboard bd53a3d against 16 browsers
+## Bench: Trailboard e1edf21 against 16 browsers
 
-20261126-0725 · 3 runs each, medians · each case on its own runner · [workflow run](https://github.com/AyushKr2003/trailboard/actions/runs/45773585181)
+20261126-1507 · 3 runs each, medians · each case on its own runner · [workflow run](https://github.com/AyushKr2003/trailboard/actions/runs/45845659696)
 
-✅ No regression against earlier runs on the same CPU (not checked, no earlier run on their CPU: video-av1).
+✅ No regression against earlier runs on the same CPU (not checked, no earlier run on their CPU: video-vp9, video-h264, pan).
 
-Failed to run: chromium, gnome-web, opera (see the logs).
+Not run, by design (see browsers.toml): chromium (video-h264); opera (video-h264); gnome-web (video-vp9, video-av1, video-h264).
 
 ### idle
 
-Runner: 4 × Intel(R) Xeon(R) 6975P-C, 15 GB; compared with 20261126-0524-4c931f8-45761289882.
+Runner: 4 × Intel(R) Xeon(R) 6975P-C, 15 GB; compared with 20261126-0725-bd53a3d-45773585181.
 
 | Program | Engine | Memory (PSS) | Peak | CPU % of a core | Processes | Start | Change (same CPU) |
 |---|---|---|---|---|---|---|---|
-| **trailboard** | Blink (CEF) | 578 MB | 578 MB | 4.7 | 9 | 0.21 s | mem +0%, CPU -8% |
-| palemoon | Goanna | 257 MB | 267 MB | 0.5 | 1 | 0.52 s | mem -2%, CPU -17% |
-| falkon | Blink (Qt WebEngine) | 393 MB | 401 MB | 9.8 | 5 | 0.21 s | mem -1%, CPU -3% |
-| ungoogled-chromium | Blink | 428 MB | 440 MB | 0.7 | 10 | 0.22 s | mem -0%, CPU +0% |
-| qutebrowser | Blink (Qt WebEngine) | 430 MB | 443 MB | 0.0 | 5 | 0.52 s | mem +2% |
-| chrome | Blink | 435 MB | 492 MB | 0.6 | 13 | 0.22 s | mem -1%, CPU -25% |
-| gnome-web | WebKit | 437 MB | 439 MB | 0.0 | 8 | 0.31 s | mem +1% |
-| brave | Blink | 468 MB | 485 MB | 0.7 | 12 | 0.33 s | mem +0%, CPU -22% |
-| edge | Blink | 494 MB | 606 MB | 0.5 | 12 | 0.33 s | mem -0%, CPU -17% |
-| chromium | Blink | 502 MB | 544 MB | 0.8 | 12 | 0.22 s | mem +1%, CPU -11% |
-| opera | Blink | 549 MB | 656 MB | 6.2 | 14 | 0.32 s | mem -0%, CPU -18% |
-| waterfox | Gecko | 568 MB | 981 MB | 8.7 | 10 | 1.23 s | mem +0%, CPU -2% |
-| floorp | Gecko | 654 MB | 812 MB | 10.6 | 9 | 0.83 s | mem +1%, CPU -12% |
-| zen | Gecko | 664 MB | 858 MB | 16.4 | 11 | 0.83 s | mem -1%, CPU -1% |
-| vivaldi | Blink | 688 MB | 862 MB | 5.0 | 12 | 0.33 s | mem -0%, CPU -22% |
-| firefox | Gecko | 750 MB | 843 MB | 3.3 | 10 | 0.82 s | mem -0%, CPU -35% |
-| librewolf | Gecko | 995 MB | 1276 MB | 2.6 | 9 | 0.93 s | mem +1%, CPU -10% |
+| **trailboard** | Blink (CEF) | 574 MB | 576 MB | 4.7 | 9 | 0.21 s | mem -1%, CPU +0% |
+| palemoon | Goanna | 256 MB | 266 MB | 0.5 | 1 | 0.52 s | mem -0%, CPU +0% |
+| falkon | Blink (Qt WebEngine) | 403 MB | 411 MB | 9.8 | 5 | 0.21 s | mem +3%, CPU +0% |
+| qutebrowser | Blink (Qt WebEngine) | 422 MB | 435 MB | 0.0 | 5 | 0.52 s | mem -2% |
+| ungoogled-chromium | Blink | 431 MB | 443 MB | 0.7 | 10 | 0.21 s | mem +1%, CPU +0% |
+| chrome | Blink | 435 MB | 493 MB | 0.7 | 12 | 0.32 s | mem +0%, CPU +17% |
+| gnome-web | WebKit | 435 MB | 438 MB | 0.0 | 8 | 0.32 s | mem -0% |
+| brave | Blink | 468 MB | 481 MB | 0.9 | 12 | 0.32 s | mem +0%, CPU +29% |
+| edge | Blink | 496 MB | 608 MB | 0.6 | 12 | 0.33 s | mem +0%, CPU +20% |
+| chromium | Blink | 499 MB | 541 MB | 0.9 | 12 | 0.22 s | mem -1%, CPU +12% |
+| opera | Blink | 554 MB | 659 MB | 6.5 | 14 | 0.33 s | mem +1%, CPU +5% |
+| waterfox | Gecko | 559 MB | 982 MB | 8.6 | 10 | 1.23 s | mem -2%, CPU -1% |
+| floorp | Gecko | 646 MB | 789 MB | 10.8 | 9 | 0.93 s | mem -1%, CPU +2% |
+| zen | Gecko | 679 MB | 922 MB | 18.2 | 11 | 0.83 s | mem +2%, CPU +11% |
+| vivaldi | Blink | 688 MB | 860 MB | 5.9 | 12 | 0.42 s | mem +0%, CPU +18% |
+| firefox | Gecko | 743 MB | 834 MB | 4.9 | 10 | 0.82 s | mem -1%, CPU +48% |
+| librewolf | Gecko | 967 MB | 1229 MB | 2.8 | 9 | 0.93 s | mem -3%, CPU +8% |
 
 ### still
 
-Runner: 4 × Intel(R) Xeon(R) 6975P-C, 15 GB; compared with 20261126-0524-4c931f8-45761289882.
+Runner: 4 × Intel(R) Xeon(R) 6975P-C, 15 GB; compared with 20261126-0725-bd53a3d-45773585181.
 
 | Program | Engine | Memory (PSS) | Peak | CPU % of a core | Processes | Start | Change (same CPU) |
 |---|---|---|---|---|---|---|---|
-| **trailboard** | Blink (CEF) | 697 MB | 699 MB | 0.8 | 14 | 0.21 s | mem -0%, CPU +33% |
-| palemoon | Goanna | 206 MB | 209 MB | 0.1 | 1 | 0.52 s | mem -1%, CPU +0% |
-| falkon | Blink (Qt WebEngine) | 435 MB | 447 MB | 0.3 | 5 | 0.21 s | mem +2%, CPU +0% |
-| ungoogled-chromium | Blink | 527 MB | 539 MB | 0.3 | 15 | 0.34 s | mem -0%, CPU +50% |
-| chrome | Blink | 529 MB | 586 MB | 0.4 | 18 | 0.33 s | mem -1%, CPU +33% |
-| brave | Blink | 529 MB | 548 MB | 0.1 | 17 | 0.32 s | mem -6%, CPU +0% |
-| qutebrowser | Blink (Qt WebEngine) | 560 MB | 574 MB | 0.0 | 10 | 0.52 s | mem -1% |
-| edge | Blink | 587 MB | 709 MB | 0.2 | 17 | 0.43 s | mem +0%, CPU -33% |
-| chromium | Blink | 598 MB | 645 MB | 0.5 | 17 | 0.33 s | mem -1%, CPU +0% |
-| opera | Blink | 658 MB | 790 MB | 0.6 | 20 | 0.33 s | mem -1%, CPU -14% |
-| floorp | Gecko | 664 MB | 856 MB | 2.7 | 15 | 0.93 s | mem +0%, CPU +13% |
-| waterfox | Gecko | 677 MB | 1063 MB | 9.6 | 16 | 1.36 s | mem +0%, CPU +4% |
-| zen | Gecko | 754 MB | 934 MB | 19.6 | 17 | 0.93 s | mem -0%, CPU +17% |
-| firefox | Gecko | 814 MB | 906 MB | 5.2 | 16 | 0.95 s | mem -0%, CPU +4% |
-| vivaldi | Blink | 864 MB | 1013 MB | 1.5 | 18 | 0.45 s | mem +0%, CPU +7% |
-| gnome-web | WebKit | 967 MB | 978 MB | 0.1 | 38 | 0.31 s | mem -5%, CPU +0% |
-| librewolf | Gecko | 1047 MB | 1308 MB | 3.0 | 15 | 0.94 s | mem -4%, CPU +7% |
+| **trailboard** | Blink (CEF) | 700 MB | 714 MB | 0.9 | 14 | 0.21 s | mem +0%, CPU +12% |
+| palemoon | Goanna | 209 MB | 212 MB | 0.1 | 1 | 0.52 s | mem +1%, CPU +0% |
+| falkon | Blink (Qt WebEngine) | 427 MB | 444 MB | 0.3 | 5 | 0.21 s | mem -2%, CPU +0% |
+| ungoogled-chromium | Blink | 527 MB | 539 MB | 0.3 | 15 | 0.33 s | mem +0%, CPU +0% |
+| chrome | Blink | 529 MB | 587 MB | 0.3 | 18 | 0.33 s | mem +0%, CPU -25% |
+| brave | Blink | 560 MB | 579 MB | 0.2 | 17 | 0.33 s | mem +6%, CPU +100% |
+| qutebrowser | Blink (Qt WebEngine) | 570 MB | 585 MB | 0.0 | 10 | 0.52 s | mem +2% |
+| edge | Blink | 588 MB | 709 MB | 0.2 | 17 | 0.32 s | mem +0%, CPU +0% |
+| chromium | Blink | 596 MB | 651 MB | 0.6 | 17 | 0.32 s | mem -0%, CPU +20% |
+| floorp | Gecko | 663 MB | 895 MB | 2.6 | 15 | 0.94 s | mem -0%, CPU -4% |
+| opera | Blink | 666 MB | 802 MB | 0.6 | 20 | 0.33 s | mem +1%, CPU +0% |
+| waterfox | Gecko | 681 MB | 1067 MB | 9.1 | 16 | 1.25 s | mem +1%, CPU -5% |
+| zen | Gecko | 748 MB | 927 MB | 17.0 | 17 | 0.94 s | mem -1%, CPU -13% |
+| firefox | Gecko | 813 MB | 937 MB | 5.0 | 16 | 0.94 s | mem -0%, CPU -4% |
+| vivaldi | Blink | 861 MB | 1012 MB | 1.3 | 18 | 0.45 s | mem -0%, CPU -13% |
+| gnome-web | WebKit | 999 MB | 1007 MB | 0.1 | 38 | 0.31 s | mem +3%, CPU +0% |
+| librewolf | Gecko | 1061 MB | 1418 MB | 2.9 | 15 | 0.94 s | mem +1%, CPU -3% |
 
 ### video-vp9
 
-Runner: 4 × Intel(R) Xeon(R) 6975P-C, 15 GB; compared with 20261126-0524-4c931f8-45761289882.
+Runner: 4 × AMD EPYC 9V74 80-Core Processor, 15 GB; no earlier run on this CPU to compare with.
 
 | Program | Engine | Memory (PSS) | Peak | CPU % of a core | Processes | Start | Change (same CPU) |
 |---|---|---|---|---|---|---|---|
-| **trailboard** | Blink (CEF) | 619 MB | 623 MB | 366.2 | 9 | 0.21 s | mem -0%, CPU +0% |
-| palemoon | Goanna | 262 MB | 268 MB | 31.8 | 1 | 0.52 s | mem +0%, CPU +6% |
-| qutebrowser | Blink (Qt WebEngine) | 467 MB | 470 MB | 199.2 | 5 | 0.52 s | mem +2%, CPU +1% |
-| ungoogled-chromium | Blink | 492 MB | 503 MB | 40.6 | 10 | 0.22 s | mem +1%, CPU -3% |
-| chrome | Blink | 494 MB | 553 MB | 40.4 | 12 | 0.32 s | mem -1%, CPU +3% |
-| falkon | Blink (Qt WebEngine) | 497 MB | 505 MB | 187.1 | 5 | 0.21 s | mem +0%, CPU -2% |
-| brave | Blink | 516 MB | 523 MB | 37.6 | 12 | 0.33 s | mem +0%, CPU +1% |
-| edge | Blink | 543 MB | 655 MB | 40.0 | 12 | 0.33 s | mem -0%, CPU +2% |
-| chromium | Blink | 555 MB | 598 MB | 40.0 | 12 | 0.33 s | mem -1%, CPU +7% |
-| opera | Blink | 604 MB | 724 MB | 41.8 | 15 | 0.32 s | mem +0%, CPU -2% |
-| waterfox | Gecko | 703 MB | 1068 MB | 48.6 | 11 | 1.24 s | mem +0%, CPU +2% |
-| floorp | Gecko | 716 MB | 870 MB | 44.6 | 10 | 0.93 s | mem +0%, CPU +2% |
-| vivaldi | Blink | 768 MB | 931 MB | 51.6 | 13 | 0.44 s | mem -1%, CPU -1% |
-| zen | Gecko | 813 MB | 1018 MB | 66.5 | 12 | 0.93 s | mem +1%, CPU -1% |
-| firefox | Gecko | 833 MB | 907 MB | 48.6 | 11 | 0.83 s | mem +0%, CPU +0% |
-| librewolf | Gecko | 1150 MB | 1326 MB | 47.4 | 10 | 0.93 s | mem +2%, CPU +4% |
-| gnome-web | WebKit | failed: video not playing (page said cannot-play, playing; windows:  | | | | | |
+| **trailboard** | Blink (CEF) | 591 MB | 593 MB | 366.7 | 9 | 0.32 s |  |
+| palemoon | Goanna | 255 MB | 262 MB | 33.4 | 1 | 0.65 s |  |
+| qutebrowser | Blink (Qt WebEngine) | 451 MB | 457 MB | 222.4 | 5 | 0.63 s |  |
+| ungoogled-chromium | Blink | 470 MB | 481 MB | 43.5 | 10 | 0.34 s |  |
+| falkon | Blink (Qt WebEngine) | 475 MB | 484 MB | 204.3 | 5 | 0.32 s |  |
+| chrome | Blink | 479 MB | 542 MB | 41.6 | 13 | 0.32 s |  |
+| opera | Blink | 490 MB | 616 MB | 41.1 | 15 | 0.33 s |  |
+| brave | Blink | 498 MB | 507 MB | 39.9 | 12 | 0.33 s |  |
+| edge | Blink | 532 MB | 646 MB | 41.8 | 12 | 0.44 s |  |
+| chromium | Blink | 544 MB | 597 MB | 42.7 | 12 | 0.34 s |  |
+| waterfox | Gecko | 691 MB | 1035 MB | 47.1 | 11 | 1.59 s |  |
+| floorp | Gecko | 707 MB | 800 MB | 41.2 | 10 | 1.15 s |  |
+| vivaldi | Blink | 755 MB | 916 MB | 52.7 | 13 | 0.47 s |  |
+| zen | Gecko | 806 MB | 986 MB | 63.0 | 12 | 1.06 s |  |
+| firefox | Gecko | 825 MB | 901 MB | 46.6 | 11 | 1.26 s |  |
+| librewolf | Gecko | 1179 MB | 1412 MB | 43.8 | 10 | 1.18 s |  |
 
 ### video-av1
+
+Runner: 4 × Intel(R) Xeon(R) 6975P-C, 15 GB; compared with 20261126-0418-ea5b59f-45754226156.
+
+| Program | Engine | Memory (PSS) | Peak | CPU % of a core | Processes | Start | Change (same CPU) |
+|---|---|---|---|---|---|---|---|
+| **trailboard** | Blink (CEF) | 632 MB | 634 MB | 363.4 | 9 | 0.21 s | mem -2%, CPU -2% |
+| palemoon | Goanna | 281 MB | 290 MB | 32.9 | 1 | 0.52 s |  |
+| opera | Blink | 484 MB | 617 MB | 38.7 | 15 | 0.34 s | mem -24%, CPU +22% |
+| ungoogled-chromium | Blink | 503 MB | 512 MB | 37.2 | 10 | 0.32 s | mem -4%, CPU +18% |
+| chrome | Blink | 505 MB | 565 MB | 35.6 | 12 | 0.33 s | mem -5%, CPU +17% |
+| brave | Blink | 528 MB | 531 MB | 33.4 | 12 | 0.32 s | mem -4%, CPU +16% |
+| qutebrowser | Blink (Qt WebEngine) | 555 MB | 576 MB | 197.0 | 5 | 0.52 s | mem -8%, CPU +15% |
+| edge | Blink | 556 MB | 665 MB | 35.5 | 12 | 0.33 s | mem -4%, CPU +16% |
+| chromium | Blink | 571 MB | 608 MB | 35.5 | 12 | 0.33 s | mem -3%, CPU +17% |
+| falkon | Blink (Qt WebEngine) | 574 MB | 600 MB | 182.9 | 5 | 0.22 s | mem -0%, CPU +11% |
+| waterfox | Gecko | 739 MB | 1058 MB | 50.4 | 11 | 1.36 s | mem -2%, CPU +5% |
+| floorp | Gecko | 742 MB | 919 MB | 46.9 | 10 | 0.94 s |  |
+| vivaldi | Blink | 783 MB | 938 MB | 48.4 | 13 | 0.44 s | mem -3%, CPU +26% |
+| zen | Gecko | 848 MB | 989 MB | 66.9 | 12 | 0.95 s | mem -1%, CPU +7% |
+| firefox | Gecko | 856 MB | 952 MB | 49.9 | 11 | 0.94 s | mem -1%, CPU +2% |
+| librewolf | Gecko | 1395 MB | 1556 MB | 46.0 | 10 | 0.95 s | mem -0%, CPU +8% |
+
+### video-h264
 
 Runner: 4 × INTEL(R) XEON(R) PLATINUM 8573C, 15 GB; no earlier run on this CPU to compare with.
 
 | Program | Engine | Memory (PSS) | Peak | CPU % of a core | Processes | Start | Change (same CPU) |
 |---|---|---|---|---|---|---|---|
-| **trailboard** | Blink (CEF) | 646 MB | 648 MB | 362.8 | 9 | 0.32 s |  |
-| palemoon | Goanna | 290 MB | 295 MB | 43.8 | 1 | 0.63 s |  |
-| ungoogled-chromium | Blink | 524 MB | 531 MB | 47.4 | 10 | 0.33 s |  |
-| chrome | Blink | 528 MB | 586 MB | 46.3 | 12 | 0.33 s |  |
-| brave | Blink | 549 MB | 552 MB | 43.9 | 12 | 0.33 s |  |
-| qutebrowser | Blink (Qt WebEngine) | 563 MB | 586 MB | 252.1 | 5 | 0.63 s |  |
-| edge | Blink | 575 MB | 686 MB | 46.5 | 12 | 0.44 s |  |
-| chromium | Blink | 594 MB | 635 MB | 46.8 | 12 | 0.33 s |  |
-| falkon | Blink (Qt WebEngine) | 615 MB | 630 MB | 234.0 | 5 | 0.32 s |  |
-| opera | Blink | 636 MB | 745 MB | 46.5 | 15 | 0.34 s |  |
-| waterfox | Gecko | 746 MB | 1097 MB | 65.3 | 11 | 1.66 s |  |
-| floorp | Gecko | 750 MB | 838 MB | 58.2 | 10 | 1.25 s |  |
-| vivaldi | Blink | 806 MB | 963 MB | 59.6 | 13 | 0.56 s |  |
-| zen | Gecko | 847 MB | 1033 MB | 86.7 | 12 | 1.14 s |  |
-| firefox | Gecko | 869 MB | 925 MB | 63.6 | 11 | 1.14 s |  |
-| librewolf | Gecko | 1464 MB | 1511 MB | 59.6 | 10 | 1.15 s |  |
-| gnome-web | WebKit | failed: video not playing (page said cannot-play, playing; windows:  | | | | | |
-
-### video-h264
-
-Runner: 4 × Intel(R) Xeon(R) 6975P-C, 15 GB; compared with 20261126-0524-4c931f8-45761289882.
-
-| Program | Engine | Memory (PSS) | Peak | CPU % of a core | Processes | Start | Change (same CPU) |
-|---|---|---|---|---|---|---|---|
-| **trailboard** | Blink (CEF) | 646 MB | 648 MB | 364.3 | 9 | 0.21 s | mem -1%, CPU +0% |
-| palemoon | Goanna | 273 MB | 281 MB | 30.7 | 1 | 0.52 s | mem +0%, CPU -4% |
-| qutebrowser | Blink (Qt WebEngine) | 488 MB | 488 MB | 181.7 | 5 | 0.52 s | mem +0%, CPU -8% |
-| ungoogled-chromium | Blink | 512 MB | 522 MB | 34.9 | 10 | 0.22 s | mem +0%, CPU -0% |
-| chrome | Blink | 517 MB | 579 MB | 33.6 | 12 | 0.23 s | mem -2%, CPU -2% |
-| falkon | Blink (Qt WebEngine) | 517 MB | 525 MB | 181.5 | 5 | 0.21 s | mem -1%, CPU -6% |
-| brave | Blink | 538 MB | 546 MB | 32.4 | 12 | 0.33 s | mem +1%, CPU -2% |
-| edge | Blink | 568 MB | 684 MB | 34.9 | 12 | 0.33 s | mem +1%, CPU +2% |
-| floorp | Gecko | 726 MB | 897 MB | 44.6 | 10 | 0.93 s | mem +1%, CPU -2% |
-| waterfox | Gecko | 733 MB | 1088 MB | 48.6 | 11 | 1.24 s | mem +0%, CPU -2% |
-| vivaldi | Blink | 788 MB | 949 MB | 47.0 | 13 | 0.43 s | mem -1%, CPU -0% |
-| firefox | Gecko | 841 MB | 934 MB | 47.4 | 11 | 0.83 s | mem +0%, CPU -4% |
-| zen | Gecko | 842 MB | 1037 MB | 64.7 | 12 | 0.93 s | mem +1%, CPU -4% |
-| librewolf | Gecko | 1167 MB | 1412 MB | 44.5 | 10 | 0.93 s | mem +0%, CPU -0% |
-| chromium | Blink | failed: video not playing (page said cannot-play; windows: h264 1080 | | | | | |
-| opera | Blink | failed: video not playing (page said cannot-play; windows: h264 1080 | | | | | |
-| gnome-web | WebKit | failed: video not playing (page said cannot-play; windows: h264 1080 | | | | | |
+| **trailboard** | Blink (CEF) | 631 MB | 633 MB | 358.9 | 9 | 0.32 s |  |
+| palemoon | Goanna | 276 MB | 280 MB | 44.0 | 1 | 0.63 s |  |
+| qutebrowser | Blink (Qt WebEngine) | 482 MB | 494 MB | 264.1 | 5 | 0.63 s |  |
+| ungoogled-chromium | Blink | 511 MB | 519 MB | 46.5 | 10 | 0.33 s |  |
+| chrome | Blink | 515 MB | 578 MB | 45.6 | 12 | 0.33 s |  |
+| falkon | Blink (Qt WebEngine) | 518 MB | 518 MB | 248.2 | 5 | 0.32 s |  |
+| brave | Blink | 538 MB | 543 MB | 43.1 | 12 | 0.33 s |  |
+| edge | Blink | 560 MB | 672 MB | 45.5 | 12 | 0.44 s |  |
+| waterfox | Gecko | 719 MB | 1094 MB | 65.2 | 11 | 1.77 s |  |
+| floorp | Gecko | 726 MB | 822 MB | 59.1 | 10 | 1.26 s |  |
+| vivaldi | Blink | 792 MB | 953 MB | 59.3 | 13 | 0.56 s |  |
+| firefox | Gecko | 831 MB | 903 MB | 67.2 | 11 | 1.25 s |  |
+| zen | Gecko | 831 MB | 1014 MB | 90.7 | 12 | 1.25 s |  |
+| librewolf | Gecko | 941 MB | 1423 MB | 60.1 | 10 | 1.25 s |  |
 
 ### pan
 
-Runner: 4 × Intel(R) Xeon(R) 6975P-C, 15 GB; compared with 20261126-0524-4c931f8-45761289882.
+Runner: 4 × AMD EPYC 9V74 80-Core Processor, 15 GB; no earlier run on this CPU to compare with.
 
 | Program | Engine | Memory (PSS) | Peak | CPU % of a core | Processes | Start | Change (same CPU) |
 |---|---|---|---|---|---|---|---|
-| **trailboard** | Blink (CEF) | 749 MB | 753 MB | 361.9 | 14 | 0.23 s | mem +0%, CPU -2% |
+| **trailboard** | Blink (CEF) | 792 MB | 800 MB | 375.2 | 14 | 0.23 s |  |
 
 ## Trailboard over time (newest first)
 
 | Run | Trailboard | idle mem / CPU | still mem / CPU | video-vp9 mem / CPU | video-av1 mem / CPU | video-h264 mem / CPU | pan mem / CPU |
 |---|---|---|---|---|---|---|---|
+| [20261126-1507-e](https://github.com/AyushKr2003/trailboard/actions/runs/45845659696) | `e1edf21` | 574 MB / 4.7 % | 700 MB / 0.9 % | 591 MB / 366.7 % | 632 MB / 363.4 % | 631 MB / 358.9 % | 792 MB / 375.2 % |
 | [20261126-0725-b](https://github.com/AyushKr2003/trailboard/actions/runs/45773585181) | `bd53a3d` | 578 MB / 4.7 % | 697 MB / 0.8 % | 619 MB / 366.2 % | 646 MB / 362.8 % | 646 MB / 364.3 % | 749 MB / 361.9 % |
 | [20261126-0524-4](https://github.com/AyushKr2003/trailboard/actions/runs/45761289882) | `4c931f8` | 577 MB / 5.1 % | 699 MB / 0.6 % | 622 MB / 365.8 % | 672 MB / 376.2 % | 651 MB / 363.0 % | 746 MB / 368.2 % |
 | [20261126-0418-e](https://github.com/AyushKr2003/trailboard/actions/runs/45754226156) | `ea5b59f` | 582 MB / 45.6 % | 697 MB / 0.5 % | 617 MB / 365.2 % | 648 MB / 372.2 % | 643 MB / 365.4 % | 738 MB / 358.0 % |

@@ -90,6 +90,11 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
   the display's rate all the time, and a frame that would look the same
   isn't drawn again. `TRAILBOARD_REDRAW=always` brings back drawing every
   frame.
+- **A blinking caret no longer redraws the whole window.** When only a
+  page's pixels changed (a caret, a spinner, a small animation), just
+  that part of the page is uploaded and only that part of the window is
+  drawn again. It matters most without a GPU, where the start page's
+  search box alone cost a fifth to a third of a CPU core.
 
 - **Cards one above the other leave room for the title.** New cards and
   Tidy put more space between cards stacked in a column (120 units

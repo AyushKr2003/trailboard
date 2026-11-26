@@ -165,7 +165,32 @@ pub struct Renderer {
     /// Frames presented and frames skipped as unchanged, since the start.
     pub presented: u64,
     pub skipped: u64,
+    /// Of `presented`, the frames redrawn only where page pixels changed.
+    pub partial: u64,
+    /// The surface takes copies, so frames are drawn on [`Renderer::canvas`]
+    /// and copied over; without it every frame is drawn whole, as before.
+    can_copy: bool,
+    /// The last frame drawn, kept so a frame where only page pixels changed
+    /// (a caret blinking, a spinner) redraws just those pixels.
+    canvas: Option<wgpu::Texture>,
+    /// [`frame_key`] of the last frame without the pages' serials: the same
+    /// value means only page pixels can differ. `None` while the canvas
+    /// doesn't hold the last frame.
+    last_layout: Option<u64>,
+    /// When the last frame was presented: frames in quick succession (video,
+    /// panning) are drawn straight to the screen, skipping the canvas copy.
+    last_present: Option<std::time::Instant>,
+    /// Pixels of each page changed since the last frame presented (texture
+    /// px: x, y, w, h); `None` for the whole page.
+    page_damage: HashMap<u64, Option<[u32; 4]>>,
 }
+
+/// Damaged area above which a frame is drawn whole: a scissored redraw only
+/// pays off when it is small.
+const PARTIAL_MAX: f32 = 0.5;
+/// Frames closer together than this are motion: drawn straight to the screen
+/// (the canvas copy would cost every frame), so the canvas waits for a pause.
+const MOTION_GAP: std::time::Duration = std::time::Duration::from_millis(100);
 
 impl Renderer {
     pub async fn new(
@@ -191,8 +216,14 @@ impl Renderer {
             .map_err(|e| e.to_string())?;
 
         let size = window.inner_size();
+        let can_copy = surface.get_capabilities(&adapter).usages.contains(wgpu::TextureUsages::COPY_DST);
+        log::info!("partial redraw: {}", if can_copy { "on" } else { "off (the surface takes no copies)" });
         let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            usage: if can_copy {
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST
+            } else {
+                wgpu::TextureUsages::RENDER_ATTACHMENT
+            },
             format: FORMAT,
             width: size.width.max(1),
             height: size.height.max(1),
@@ -376,6 +407,12 @@ impl Renderer {
             always_present: false,
             presented: 0,
             skipped: 0,
+            partial: 0,
+            can_copy,
+            canvas: None,
+            last_layout: None,
+            last_present: None,
+            page_damage: HashMap::new(),
         })
     }
 
@@ -390,12 +427,14 @@ impl Renderer {
             self.surface.configure(&self.device, &self.config);
         }
         self.last_frame = None;
+        self.last_layout = None;
     }
 
     /// Present the next frame even if it looks the same (the window was
     /// exposed, say).
     pub fn invalidate(&mut self) {
         self.last_frame = None;
+        self.last_layout = None;
     }
 
     pub fn viewport(&self) -> (f32, f32) {
@@ -404,6 +443,19 @@ impl Renderer {
 
     /// Upload a page frame (BGRA8) if it changed since the last upload.
     pub fn update_page(&mut self, key: u64, width: u32, height: u32, pixels: &[u8], serial: u64) {
+        self.update_page_part(key, width, height, pixels, serial, None);
+    }
+
+    /// The serial of the pixels uploaded for `key`, if any.
+    pub fn page_serial(&self, key: u64) -> Option<u64> {
+        self.pages.get(&key).map(|p| p.serial)
+    }
+
+    /// [`Renderer::update_page`], told which pixels changed since the serial
+    /// last uploaded ([`Renderer::page_serial`]): `changed` (x, y, w, h in
+    /// `pixels`), or `None` for all of them. Only those are uploaded and
+    /// redrawn.
+    pub fn update_page_part(&mut self, key: u64, width: u32, height: u32, pixels: &[u8], serial: u64, changed: Option<[u32; 4]>) {
         if width == 0 || height == 0 || pixels.len() < (width * height * 4) as usize {
             return;
         }
@@ -427,17 +479,33 @@ impl Renderer {
             return;
         }
         page.serial = serial;
+        // A new texture holds nothing yet: all of it.
+        let [x, y, w, h] = match changed.filter(|_| !needs_new).map(|r| clamp_px(r, width, height)) {
+            Some([_, _, 0, _] | [_, _, _, 0]) => return, // a new serial, the same pixels
+            Some(r) => r,
+            None => [0, 0, width, height],
+        };
         self.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &page.texture,
                 mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
+                origin: wgpu::Origin3d { x, y, z: 0 },
                 aspect: wgpu::TextureAspect::All,
             },
             pixels,
-            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * width), rows_per_image: Some(height) },
-            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            wgpu::TexelCopyBufferLayout {
+                offset: (y as u64 * width as u64 + x as u64) * 4,
+                bytes_per_row: Some(4 * width),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         );
+        let whole = [x, y, w, h] == [0, 0, width, height];
+        let entry = self.page_damage.entry(key).or_insert(Some([x, y, 0, 0]));
+        *entry = match (*entry, whole) {
+            (Some(old), false) => Some(union_px(old, [x, y, w, h])),
+            _ => None,
+        };
     }
 
     pub fn has_page(&self, key: u64) -> bool {
@@ -505,6 +573,23 @@ impl Renderer {
             self.skipped += 1;
             return false;
         }
+        let layout = frame_key(self.viewport(), &bg, layers, |k| self.pages.get(&k).map(|_| 0));
+        let damage = std::mem::take(&mut self.page_damage);
+        // Only page pixels changed: redraw just where they show.
+        let scissor = if self.can_copy && !self.always_present && self.last_layout == Some(layout) {
+            match screen_damage(layers, &damage, |k| self.pages.get(&k).map(|p| p.size), self.viewport()) {
+                Some(r) if r.w <= 0.0 || r.h <= 0.0 => {
+                    // What changed isn't on screen.
+                    self.last_frame = Some(key);
+                    self.skipped += 1;
+                    return false;
+                }
+                Some(r) if r.w * r.h <= PARTIAL_MAX * self.viewport().0 * self.viewport().1 => Some(r),
+                _ => None,
+            }
+        } else {
+            None
+        };
         // Trim the shaped-text cache between frames only: clearing it while a
         // frame's texts are being shaped dropped buffers that frame still needed.
         if self.text_cache.len() > 1024 {
@@ -654,26 +739,60 @@ impl Renderer {
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface.configure(&self.device, &self.config);
                 self.last_frame = None;
+                self.last_layout = None;
                 return false;
             }
             _ => {
                 self.last_frame = None;
+                self.last_layout = None;
                 return false;
             }
         };
-        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let size = wgpu::Extent3d { width: self.config.width, height: self.config.height, depth_or_array_layers: 1 };
+        let now = std::time::Instant::now();
+        let moving = self.last_present.is_some_and(|t| now - t < MOTION_GAP);
+        // The canvas is kept up to date at rest, or when drawing on it partly.
+        let use_canvas = self.can_copy && (scissor.is_some() || !moving);
+        let fresh = use_canvas && self.canvas.as_ref().is_none_or(|c| c.size() != size);
+        if fresh {
+            self.canvas = Some(self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("canvas"),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            }));
+        }
+        // A new canvas holds nothing: draw it whole.
+        let scissor = scissor.filter(|_| !fresh);
+        let target = match (&self.canvas, use_canvas) {
+            (Some(c), true) => c,
+            _ => &frame.texture,
+        };
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
         let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("board") });
         {
+            // Partly: the last frame stays and everything is drawn again
+            // inside the scissor, the background first (opaque), as a whole
+            // frame would be.
+            let load = if scissor.is_some() { wgpu::LoadOp::Load } else { wgpu::LoadOp::Clear(wgpu::Color::BLACK) };
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("board"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+                    ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
                     depth_slice: None,
                 })],
                 ..Default::default()
             });
+            if let Some(r) = scissor {
+                let [x, y, w, h] = scissor_px(r, size.width, size.height);
+                pass.set_scissor_rect(x, y, w, h);
+            }
             pass.set_bind_group(0, &self.globals_bg, &[]);
             pass.set_bind_group(1, &self.white, &[]);
             pass.set_pipeline(&self.bg_pipeline);
@@ -696,14 +815,93 @@ impl Renderer {
                     }
             }
         }
+        if let (Some(c), true) = (&self.canvas, use_canvas) {
+            enc.copy_texture_to_texture(c.as_image_copy(), frame.texture.as_image_copy(), size);
+        }
         self.queue.submit(Some(enc.finish()));
         self.window.pre_present_notify();
         self.queue.present(frame);
         self.last_frame = Some(key);
+        self.last_layout = use_canvas.then_some(layout);
+        self.last_present = Some(now);
         self.presented += 1;
+        self.partial += u64::from(scissor.is_some());
         self.atlas.trim();
         true
     }
+}
+
+/// `r` (x, y, w, h) cut to a `width`×`height` image.
+fn clamp_px(r: [u32; 4], width: u32, height: u32) -> [u32; 4] {
+    let (x, y) = (r[0].min(width), r[1].min(height));
+    [x, y, r[2].min(width - x), r[3].min(height - y)]
+}
+
+/// The smallest rect holding both (x, y, w, h); an empty one adds nothing.
+fn union_px(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    if a[2] == 0 || a[3] == 0 {
+        return b;
+    }
+    if b[2] == 0 || b[3] == 0 {
+        return a;
+    }
+    let (x0, y0) = (a[0].min(b[0]), a[1].min(b[1]));
+    let (x1, y1) = ((a[0] + a[2]).max(b[0] + b[2]), (a[1] + a[3]).max(b[1] + b[3]));
+    [x0, y0, x1 - x0, y1 - y0]
+}
+
+/// Where on screen the changed page pixels show: the union over every quad
+/// drawing a damaged page, cut to the viewport (empty: none on screen), or
+/// `None` when a whole page changed and the frame should be drawn whole.
+/// `damage` holds texture px per page key; `size` gives a page's texture size.
+fn screen_damage(
+    layers: &[Layer],
+    damage: &HashMap<u64, Option<[u32; 4]>>,
+    size: impl Fn(u64) -> Option<(u32, u32)>,
+    viewport: (f32, f32),
+) -> Option<Rect> {
+    let mut out: Option<Rect> = None;
+    for q in layers.iter().flat_map(|l| &l.quads) {
+        let Some(k) = q.texture else { continue };
+        let Some(&changed) = damage.get(&k) else { continue };
+        let (rect, extent) = match q.shape {
+            Shape::Page { rect, extent, .. } => (rect, extent),
+            Shape::Rect { rect, .. } | Shape::RoundBottom { rect, .. } => (rect, [1.0, 1.0]),
+            _ => continue,
+        };
+        let r = page_damage_on_screen(rect, extent, size(k)?, changed?);
+        out = Some(out.map_or(r, |o| o.union(&r)));
+    }
+    let view = Rect::new(0.0, 0.0, viewport.0, viewport.1);
+    let Some(r) = out else { return Some(Rect::new(0.0, 0.0, 0.0, 0.0)) };
+    let (x0, y0) = (r.x.max(0.0), r.y.max(0.0));
+    let (x1, y1) = (r.right().min(view.w), r.bottom().min(view.h));
+    Some(Rect::new(x0, y0, (x1 - x0).max(0.0), (y1 - y0).max(0.0)))
+}
+
+/// The screen rect where texture px `dirty` (x, y, w, h) of a `tex`-sized
+/// page show, drawn into `rect` spanning `extent` textures (see
+/// [`Shape::Page`]), with a margin for filtering and anti-aliasing.
+fn page_damage_on_screen(rect: Rect, extent: [f32; 2], tex: (u32, u32), dirty: [u32; 4]) -> Rect {
+    // Past the texture the shader repeats its left column: a change there
+    // shows across the rest of the rect.
+    if (extent[0] > 1.0 || extent[1] > 1.0) && dirty[0] == 0 {
+        return rect.inflate(2.0);
+    }
+    let sx = rect.w / extent[0].max(1e-3) / tex.0.max(1) as f32;
+    let sy = rect.h / extent[1].max(1e-3) / tex.1.max(1) as f32;
+    let r = Rect::new(rect.x + dirty[0] as f32 * sx, rect.y + dirty[1] as f32 * sy, dirty[2] as f32 * sx, dirty[3] as f32 * sy);
+    // A texel blends into its neighbours when scaled.
+    r.inflate(2.0 + sx.max(sy))
+}
+
+/// A screen rect as a scissor (whole pixels, inside the target).
+fn scissor_px(r: Rect, width: u32, height: u32) -> [u32; 4] {
+    let x0 = (r.x.floor().max(0.0) as u32).min(width);
+    let y0 = (r.y.floor().max(0.0) as u32).min(height);
+    let x1 = (r.right().ceil().max(0.0) as u32).clamp(x0, width);
+    let y1 = (r.bottom().ceil().max(0.0) as u32).clamp(y0, height);
+    [x0, y0, x1 - x0, y1 - y0]
 }
 
 /// A fingerprint of everything a frame shows: the viewport, the background,
@@ -823,5 +1021,55 @@ mod tests {
         assert_ne!(same, frame_key((800.0, 600.0), &dark, &[layer(10.0, Some(7), "a")], serial(1)), "the theme changed");
         let two = frame_key((800.0, 600.0), &bg(), &[layer(10.0, Some(7), "a"), Layer::default()], serial(1));
         assert_ne!(same, two, "an empty layer counts");
+    }
+
+    fn page_quad(rect: Rect, extent: [f32; 2], key: u64) -> Layer {
+        Layer {
+            quads: vec![Quad { shape: Shape::Page { rect, radius: 8.0, square: 0, extent }, color: [1.0; 4], texture: Some(key) }],
+            texts: vec![],
+        }
+    }
+
+    #[test]
+    fn page_damage_maps_texels_to_the_screen() {
+        // A 200×100 page drawn at half size from (10, 20).
+        let r = page_damage_on_screen(Rect::new(10.0, 20.0, 100.0, 50.0), [1.0, 1.0], (200, 100), [40, 20, 2, 18]);
+        // 0.5 px a texel, plus the 2.5 px filtering margin.
+        let want = Rect::new(30.0, 30.0, 1.0, 9.0).inflate(2.5);
+        assert_eq!((r.x, r.y, r.w, r.h), (want.x, want.y, want.w, want.h));
+    }
+
+    #[test]
+    fn page_damage_in_the_repeated_column_covers_the_rect() {
+        let rect = Rect::new(10.0, 20.0, 100.0, 50.0);
+        let r = page_damage_on_screen(rect, [1.5, 1.0], (200, 100), [0, 5, 3, 3]);
+        assert_eq!((r.x, r.y, r.w, r.h), (8.0, 18.0, 104.0, 54.0));
+        let inside = page_damage_on_screen(rect, [1.5, 1.0], (200, 100), [50, 5, 3, 3]);
+        assert!(inside.w < 10.0, "away from the left column it stays small");
+    }
+
+    #[test]
+    fn screen_damage_unions_cuts_and_gives_up_on_whole_pages() {
+        let layers = [page_quad(Rect::new(0.0, 0.0, 100.0, 100.0), [1.0, 1.0], 1), page_quad(Rect::new(500.0, 0.0, 100.0, 100.0), [1.0, 1.0], 2)];
+        let size = |_| Some((100, 100));
+        let vp = (300.0, 300.0);
+        let none = HashMap::new();
+        assert_eq!(screen_damage(&layers, &none, size, vp).map(|r| r.w), Some(0.0), "nothing changed");
+        let off = HashMap::from([(2, Some([0, 0, 10, 10]))]);
+        assert_eq!(screen_damage(&layers, &off, size, vp).map(|r| r.w), Some(0.0), "card 2 is off screen");
+        let caret = HashMap::from([(1, Some([50, 50, 2, 10]))]);
+        let r = screen_damage(&layers, &caret, size, vp).expect("known");
+        assert!(r.x > 40.0 && r.right() < 60.0 && r.h < 20.0, "{r:?}");
+        let whole = HashMap::from([(1, None)]);
+        assert!(screen_damage(&layers, &whole, size, vp).is_none());
+    }
+
+    #[test]
+    fn rects_in_pixels() {
+        assert_eq!(clamp_px([90, 40, 50, 50], 100, 50), [90, 40, 10, 10]);
+        assert_eq!(clamp_px([200, 0, 5, 5], 100, 50), [100, 0, 0, 5]);
+        assert_eq!(union_px([0, 0, 0, 0], [5, 5, 2, 2]), [5, 5, 2, 2], "an empty rect adds nothing");
+        assert_eq!(union_px([1, 1, 2, 2], [5, 5, 2, 2]), [1, 1, 6, 6]);
+        assert_eq!(scissor_px(Rect::new(-3.0, 2.5, 10.2, 400.0), 50, 100), [0, 2, 8, 98]);
     }
 }

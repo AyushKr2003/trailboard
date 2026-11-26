@@ -641,6 +641,42 @@ pub struct PaintFrame {
     /// app can show the old pixels at their own size instead of stretching
     /// them over the new one.
     pub css: (f32, f32),
+    /// What the last few serials changed, oldest first: `(serial, rect in
+    /// pixels)`, `None` for the whole frame. See [`PaintFrame::changed_since`].
+    damage: Vec<(u64, Option<IRect>)>,
+}
+
+/// Serials remembered in [`PaintFrame::damage`]; a consumer further behind
+/// uploads the whole frame.
+const DAMAGE_KEPT: usize = 16;
+
+impl PaintFrame {
+    /// A new serial, which changed `rect` (`None`: everything, or unknown).
+    fn bump(&mut self, rect: Option<IRect>) {
+        self.serial += 1;
+        if self.damage.len() == DAMAGE_KEPT {
+            self.damage.remove(0);
+        }
+        self.damage.push((self.serial, rect));
+    }
+
+    /// The pixels that changed after `serial` up to now, as one rect (clamped
+    /// to the frame), or `None` if that isn't known (too far behind, a resize,
+    /// a popup), in which case the whole frame should be taken.
+    pub fn changed_since(&self, serial: u64) -> Option<IRect> {
+        if serial >= self.serial {
+            return Some(IRect::default());
+        }
+        let first = self.damage.first()?.0;
+        if first > serial + 1 {
+            return None; // forgotten
+        }
+        let rects: Option<Vec<IRect>> = self.damage.iter().filter(|(s, _)| *s > serial).map(|(_, r)| *r).collect();
+        let r = popup::bounding(&rects?)?;
+        let (x0, y0) = (r.x.max(0), r.y.max(0));
+        let (x1, y1) = ((r.x + r.w).min(self.width as i32), (r.y + r.h).min(self.height as i32));
+        Some(IRect { x: x0, y: y0, w: (x1 - x0).max(0), h: (y1 - y0).max(0) })
+    }
 }
 
 /// The CSS size a `px` (width, height) paint was laid out at: the newest of
@@ -815,7 +851,7 @@ impl Shared {
             );
             popup::blit(&mut f.pixels, (view.width, view.height), &p.pixels, (p.width, p.height), (dev.x, dev.y));
         }
-        f.serial += 1;
+        f.bump(None);
         note_activity();
     }
 }
@@ -884,7 +920,7 @@ wrap_render_handler! {
                 if sh.view.borrow().is_none() {
                     let f = sh.frame.borrow();
                     *sh.view.borrow_mut() =
-                        Some(PaintFrame { width: f.width, height: f.height, pixels: f.pixels.clone(), serial: 0, css: f.css });
+                        Some(PaintFrame { width: f.width, height: f.height, pixels: f.pixels.clone(), serial: 0, css: f.css, damage: Vec::new() });
                 }
             } else {
                 *sh.popup.borrow_mut() = PopupState::default();
@@ -895,7 +931,7 @@ wrap_render_handler! {
                     f.height = view.height;
                     f.css = view.css;
                     f.pixels = view.pixels;
-                    f.serial += 1;
+                    f.bump(None);
                     note_activity();
                 }
             }
@@ -912,7 +948,7 @@ wrap_render_handler! {
             &self,
             _browser: Option<&mut Browser>,
             type_: PaintElementType,
-            _dirty_rects: Option<&[Rect]>,
+            dirty_rects: Option<&[Rect]>,
             buffer: *const u8,
             width: ::std::os::raw::c_int,
             height: ::std::os::raw::c_int,
@@ -929,13 +965,17 @@ wrap_render_handler! {
                 log::debug!("page {} paints at {width}x{height} (scale {})", sh.key, sh.scale.borrow());
             }
             let css = paint_css((width as u32, height as u32), &sh.recent.borrow());
+            // Only what Chromium says it repainted changed, unless the size did.
+            let dirty: Vec<IRect> =
+                dirty_rects.unwrap_or_default().iter().map(|r| IRect { x: r.x, y: r.y, w: r.width, h: r.height }).collect();
             let store = |f: &mut PaintFrame| {
+                let resized = (f.width, f.height) != (width as u32, height as u32);
                 f.width = width as u32;
                 f.height = height as u32;
                 f.css = css;
                 f.pixels.clear();
                 f.pixels.extend_from_slice(src);
-                f.serial += 1;
+                f.bump(if resized { None } else { popup::bounding(&dirty) });
                 note_activity();
             };
             if type_ == PaintElementType::POPUP {
@@ -2243,6 +2283,51 @@ pub mod flags {
 
 #[cfg(test)]
 mod tests {
+    use super::{IRect, PaintFrame, DAMAGE_KEPT};
+
+    fn r(x: i32, y: i32, w: i32, h: i32) -> IRect {
+        IRect { x, y, w, h }
+    }
+
+    fn frame() -> PaintFrame {
+        PaintFrame { width: 100, height: 50, ..Default::default() }
+    }
+
+    #[test]
+    fn changed_since_unions_the_paints_after_a_serial() {
+        let mut f = frame();
+        f.bump(Some(r(10, 10, 2, 16))); // 1: a caret
+        f.bump(Some(r(40, 5, 10, 10))); // 2
+        f.bump(Some(r(0, 30, 5, 5))); // 3
+        assert_eq!(f.changed_since(3), Some(IRect::default()), "nothing new");
+        assert_eq!(f.changed_since(2), Some(r(0, 30, 5, 5)));
+        assert_eq!(f.changed_since(1), Some(r(0, 5, 50, 30)));
+        assert_eq!(f.changed_since(0), Some(r(0, 5, 50, 30)));
+    }
+
+    #[test]
+    fn changed_since_is_clamped_to_the_frame() {
+        let mut f = frame();
+        f.bump(Some(r(-5, 40, 200, 30)));
+        assert_eq!(f.changed_since(0), Some(r(0, 40, 100, 10)));
+    }
+
+    #[test]
+    fn changed_since_doesnt_know_after_a_whole_frame_change_or_when_too_far_behind() {
+        let mut f = frame();
+        f.bump(Some(r(1, 1, 1, 1)));
+        f.bump(None); // a popup, a resize
+        f.bump(Some(r(1, 1, 1, 1)));
+        assert_eq!(f.changed_since(0), None);
+        assert_eq!(f.changed_since(1), None);
+        assert_eq!(f.changed_since(2), Some(r(1, 1, 1, 1)));
+        for _ in 0..DAMAGE_KEPT {
+            f.bump(Some(r(1, 1, 1, 1)));
+        }
+        assert_eq!(f.changed_since(2), None, "serial 3 is forgotten");
+        assert_eq!(f.changed_since(3), Some(r(1, 1, 1, 1)));
+    }
+
     /// The engine the tests load is the one at `CEF_PATH`, which the build
     /// already checked is this version (`cef-dll-sys` reads its archive.json).
     #[test]

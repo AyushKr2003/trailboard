@@ -9855,13 +9855,18 @@ impl App {
             self.page_css.clear();
             for (id, card) in &self.cards {
                 let f = card.page.frame();
-                r.update_page(page_key(epoch, *id), f.width, f.height, &f.pixels, f.serial);
+                let key = page_key(epoch, *id);
+                // Only what the page repainted since the last upload (a caret).
+                let changed = r.page_serial(key).and_then(|s| f.changed_since(s)).map(|c| [c.x, c.y, c.w, c.h].map(|v| v.max(0) as u32));
+                r.update_page_part(key, f.width, f.height, &f.pixels, f.serial, changed);
                 self.page_css.insert(*id, f.css);
             }
             self.dock_css.clear();
             for (id, d) in &self.docks {
                 let f = d.page.frame();
-                r.update_page(dock_key(epoch, *id), f.width, f.height, &f.pixels, f.serial);
+                let key = dock_key(epoch, *id);
+                let changed = r.page_serial(key).and_then(|s| f.changed_since(s)).map(|c| [c.x, c.y, c.w, c.h].map(|v| v.max(0) as u32));
+                r.update_page_part(key, f.width, f.height, &f.pixels, f.serial, changed);
                 self.dock_css.insert(*id, f.css);
             }
             for s in self.icons.values() {
@@ -12363,8 +12368,9 @@ impl App {
                     }
                 }
                 Cmd::Frames => {
-                    let (presented, skipped) = self.renderer.as_ref().map_or((0, 0), |r| (r.presented, r.skipped));
-                    log::info!("script frames: presented {presented} skipped {skipped}");
+                    let (presented, partial, skipped) =
+                        self.renderer.as_ref().map_or((0, 0, 0), |r| (r.presented, r.partial, r.skipped));
+                    log::info!("script frames: presented {presented} (partial {partial}) skipped {skipped}");
                 }
                 Cmd::Mem => {
                     let (frames, frame_bytes) = self.cards.values().fold((0, 0u64), |(n, b), c| {

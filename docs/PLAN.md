@@ -1278,7 +1278,83 @@ yet. Then: **room for labels between stacked cards** (`GAP_Y`, see the
 M15 decisions): unit tests for placement and Tidy, and `run14.sh` before
 and after T with screenshots.
 
-**Next up:** finish M16 step 2's checks (listed under step 2: the full
+**M16b first CI run** (2026-11-25, run 45665317928, master ea5b59f; the
+owner paused here, check it first next session): build ✅ with the media
+CEF; Trailboard runs in CI (sandbox on, llvmpipe Vulkan, pages drawn). At
+pause, `pan` ✅ and the five browser cases still measuring. **To check:**
+(1) `gh run view 45665317928` and its summary: which of the 17 browsers
+installed and opened a window (failed ones say why in the summary; fix
+their `browsers.toml` entries on `bench`: likely suspects the GitHub
+release downloads Thorium, Floorp, Waterfox, ungoogled-chromium, and Pale
+Moon); `gh run download 45665317928 -n shots-<case>` and look at every
+browser's screenshot (pages drawn, video playing, no welcome or crash
+screens); (2) that `results/` on `bench` got the run's file and README;
+(3) **fix `pan`**: run 1 of 3 didn't pan (its screenshot shows the
+gallery card filling the window, so the touchpad scrolled a page; 4.6 %
+CPU against 360 % for runs 2–3): make `run.py`'s pan script put the
+pointer on empty board, or pan by keys, and check each run's screenshot;
+(4) software panning costs ~360 % CPU in CI (3.6 cores): expected with
+llvmpipe at 60 fps, a baseline only; (5) the chart needs the owner's
+Settings → Pages → Source: GitHub Actions (I wasn't allowed to change
+it), plus `bench` under Environments → github-pages → deployment branches
+for pushes to `bench`; (6) the regression check only works from the
+second saved run. The `bench` branch is checked out as a git worktree
+at `../trailboard-bench` (edit and push it there). Local edits to this file after ea5b59f are uncommitted
+on purpose (a push to master starts a new CI run and cancels a running
+one).
+
+**M16b checks done** (2026-11-26, forty-eighth session; run
+45665317928 read, fixes pushed to `bench` as run 45754226156). The owner
+wants bench work checked on CI, not on the laptop (it's their working
+machine). Found and fixed on `bench`:
+(1) all four Gecko browsers sat on "profile cannot be loaded" in every
+case (so their ~150 MB / 0 % rows were the error box): `run.py` gives
+each Gecko run its own `HOME`/XDG dirs, and `install.py` runs as root
+with `HOME=/root` instead of the runner's. (2) `gh_get` put the asset
+regex inside the jq filter (`\.` is a bad jq escape): Thorium,
+ungoogled-chromium, Floorp and Waterfox never installed; now `jq --arg`.
+(3) Waterfox releases have no files: CDN by tag. (4) **Thorium dropped**:
+GitHub has no Linux builds any more and the only source is an unsigned
+apt repo at Chromium 138 (decision; the owner can bring it back).
+(5) Video pages title themselves `…: playing` / `…: cannot play`;
+`run.py` fails a browser run whose window never says playing (Chromium
+and Opera can't play h264, GNOME Web showed black on h264; before, they
+counted as ~0.5 % CPU). (6) `pan` presses Escape first: over a focused
+card the touchpad scrolls the page (run 0's problem); verified the
+board moves the same in each run. **To check on run 45754226156:**
+every browser installed, every screenshot a page or a playing video,
+pan run 0 moving, results saved; GitHub Pages still needs the owner to
+enable it (deploy failed 404). **Still wrong in the harness:** GNOME Web
+shows 0 % CPU while playing VP9 (its bwrap-sandboxed processes are
+probably not counted); count by cgroup as `scripts/bench.py` does.
+
+**Idle CPU finding (M16):** CI idle 37 % is the start card's search
+box caret: every blink (~2/s) repaints the page in CEF, uploads the
+texture and redraws the whole window; with llvmpipe that costs ~20–40 %
+of a core (layers identical frame to frame, only the page serial
+changes; reproduced once with software GL before the owner asked for CI
+only). On a GPU it is ~1.5 %. Options: redraw only the damaged rect
+(keep the last frame in an offscreen texture, scissor to the card's
+dirty rect from `on_paint`, blit), or cheaper shaders for shadows and
+grain. Also: the other browsers' "idle" is an empty window, Trailboard's
+a live start page, so the case isn't like for like.
+**Done (code, 2026-11-26), to check on CI:** partial redraw. `web`
+keeps each `PaintFrame`'s last 16 (serial, dirty rect) from
+`on_paint` (`PaintFrame::changed_since`; a popup, resize or forgotten
+serial means the whole frame). The app passes that to
+`Renderer::update_page_part`, which uploads only the changed texels.
+`render` keeps the last frame on a canvas texture (when the surface
+takes `COPY_DST`) and, if only page pixels changed and they cover at
+most half the window, loads it and redraws everything under a scissor
+round the changed pixels mapped to the screen (`screen_damage`, with a
+filtering margin; a change in the repeated left column covers the whole
+quad), then copies the canvas to the swapchain. Frames under 100 ms
+apart (video, panning) skip the canvas, so they pay no copy. The
+script's `frames` reports partial frames. Unit tests in `web` and
+`compositor`. **Check on CI:** idle CPU (was 37 %) and the idle
+screenshot (caret, no seams); video and pan no worse; still unchanged.
+
+**Next up:** the M16b checks above, then finish M16 step 2's checks (listed under step 2: the full
 bench, the latency runs, the other e2e scripts), then commit steps 1–2. Planned (owner, 2026-11-25): M16b, the
 benchmark on GitHub Actions from an orphan `bench` branch, with a chart
 page and a regression check. Then M14

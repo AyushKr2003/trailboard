@@ -141,6 +141,26 @@ def pss(pids):
     return total / 1024, uss / 1024
 
 
+PERF_KEYS = ["paints", "copied", "uploaded", "presented", "partial", "skipped", "render_ms", "render_pct"]
+
+
+def perf_of(log_path, seconds):
+    """Medians of Trailboard's TRAILBOARD_PERF lines over the last `seconds`
+    of its log (one line a second while it draws), or None."""
+    try:
+        lines = [l for l in open(log_path, errors="replace") if "perf: paints" in l]
+    except OSError:
+        return None
+    vals = []
+    for l in lines[-int(seconds):]:
+        nums = re.findall(r"[-0-9.]+(?=/s| MB/s| ms/frame| %)", l.split("perf:", 1)[1])
+        if len(nums) == len(PERF_KEYS):
+            vals.append([float(n) for n in nums])
+    if not vals:
+        return None
+    return {k: round(statistics.median(v[i] for v in vals), 1) for i, k in enumerate(PERF_KEYS)} | {"lines": len(vals)}
+
+
 def kind_of(pid):
     try:
         args = open(f"/proc/{pid}/cmdline").read().split("\0")
@@ -194,7 +214,9 @@ def command(name, spec, case, urls, profile, a):
         # A board saved before: no first-run welcome card.
         json.dump({"version": 3, "active": 1, "next_id": 1, "spaces": [
             {"id": 1, "name": "Space 1", "tint": None, "private": False}]}, open(os.path.join(data, "trailboard", "spaces.json"), "w"))
-        env.update(XDG_DATA_HOME=data, XDG_CACHE_HOME=os.path.join(profile, "cache"), RUST_LOG="info")
+        # TRAILBOARD_PERF: a line a second on what drawing costs (paints,
+        # copies, uploads, frames, render time); read back into the row.
+        env.update(XDG_DATA_HOME=data, XDG_CACHE_HOME=os.path.join(profile, "cache"), RUST_LOG="info", TRAILBOARD_PERF="1")
         if case == "pan":
             script = os.path.join(profile, "script")
             # No card focused, so the touchpad pans the board: over a focused
@@ -277,10 +299,11 @@ def measure(name, spec, case, urls, a, shot):
             time.sleep(2)
         # CPU over the window: per process, from its first sight (or the
         # start) to its last; a process that exits keeps what it used.
-        first, last = {}, {}
+        first, last, kinds = {}, {}, {}
         pids, ticks = members(root)
         first.update(ticks)
         last.update(ticks)
+        kinds.update({p: kind_of(p) for p in ticks})
         s0 = time.time()
         samples = []
         n = 0
@@ -290,6 +313,8 @@ def measure(name, spec, case, urls, a, shot):
             for p, t in ticks.items():
                 first.setdefault(p, 0 if n else t)
                 last[p] = t
+                if p not in kinds:
+                    kinds[p] = kind_of(p)
             n += 1
             if n % 3 == 0:
                 samples.append((*pss(pids), len(pids)))
@@ -311,17 +336,25 @@ def measure(name, spec, case, urls, a, shot):
         if not samples:
             samples.append((*pss(pids), len(pids)))
         peak = max([peak] + [s[0] for s in samples])
+        # Per process kind: [count, PSS MiB, CPU % of one core]. CPU counts
+        # every process seen in the window, PSS and count the ones left at its end.
+        span = s1 - s0
         by = {}
         for p in pids:
-            k = by.setdefault(kind_of(p), [0, 0.0])
+            k = by.setdefault(kinds.get(p) or kind_of(p), [0, 0.0, 0.0])
             k[0] += 1
             k[1] += pss([p])[0]
+        for p in last:
+            by.setdefault(kinds.get(p, "?"), [0, 0.0, 0.0])[2] += (last[p] - first[p]) / CLK / span * 100
         screenshot(shot + ".png")
+        if name == "trailboard":
+            log.flush()
+            row["perf"] = perf_of(shot + ".log", a.sample)
         row.update(ok=True, startup_s=round(startup, 2),
                    pss_mib=round(statistics.mean(s[0] for s in samples)), uss_mib=round(statistics.mean(s[1] for s in samples)),
                    peak_pss_mib=round(peak), procs=round(statistics.mean(s[2] for s in samples)),
                    cpu_pct=round(cpu_s / (s1 - s0) * 100, 1),
-                   by_kind={k: [v[0], round(v[1])] for k, v in sorted(by.items(), key=lambda kv: -kv[1][1])})
+                   by_kind={k: [v[0], round(v[1]), round(v[2], 1)] for k, v in sorted(by.items(), key=lambda kv: -kv[1][1])})
         return row
     finally:
         pids, _ = members(root)
@@ -367,7 +400,7 @@ def main():
     if a.case != "pan":
         for name, spec in browsers.items():
             got = installed.get(name, {})
-            if got.get("ok"):
+            if got.get("ok") and a.case not in spec.get("skip", []):
                 programs.append((name, {**spec, "bin": got["bin"]}, got.get("version", "")))
     if a.only:
         keep = set(a.only.split(","))

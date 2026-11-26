@@ -6,6 +6,8 @@
 #   private  chromium family only: the private-window switch (default --incognito)
 #   install  bash, run as root by install.py; helpers there: gh_get, apt_repo
 #   engine   shown in the results
+#   skip     cases it isn't run in, because it can't do them on the runner
+#   timeout  install time limit in seconds (default 600)
 #
 # A browser whose install fails is left out of that run (and says so in the
 # summary); it never fails the workflow.
@@ -24,6 +26,8 @@ command -v google-chrome || {
 [chromium]
 engine = "Blink"
 family = "chromium"
+# This build has no H.264 decoder: its page says "cannot play".
+skip = ["video-h264"]
 bin = "/opt/chromium/chrome-linux/chrome"
 install = """
 rev=$(curl -fsSL https://storage.googleapis.com/chromium-browser-snapshots/Linux_x64/LAST_CHANGE)
@@ -67,6 +71,8 @@ apt-get install -y vivaldi-stable
 [opera]
 engine = "Blink"
 family = "chromium"
+# Opera's Linux build has no H.264 decoder: its page says "cannot play".
+skip = ["video-h264"]
 bin = "opera"
 private = "--private"
 install = """
@@ -147,6 +153,10 @@ rm -rf /opt/palemoon && mkdir -p /opt/palemoon && tar -xf /tmp/palemoon.tar.xz -
 [gnome-web]
 engine = "WebKit"
 family = "epiphany"
+# On the runner its web process plays VP9 and AV1 for a while, then crashes,
+# and H.264 never plays (runs 45761289882, 45773585181). Measured in idle
+# and still only.
+skip = ["video-vp9", "video-av1", "video-h264"]
 bin = "epiphany-browser"
 # WebKitGTK plays video through GStreamer: VP9 is in -good, AV1 in -bad,
 # H.264 in -libav. Without them the page says "cannot play".

@@ -11,7 +11,7 @@ other browsers moved less than 10 % (a slower runner is not a regression).
 Each case is its own job, and jobs land on different CPU models (AMD EPYC
 and Intel Xeon seen in one run), so runs on another CPU aren't compared.
 """
-import argparse, html, json, os, statistics, sys
+import argparse, html, json, os, statistics, sys, tomllib
 from collections import defaultdict
 
 WORSE = 0.20       # Trailboard this much worse than the last run: a regression
@@ -211,6 +211,43 @@ Each point links to its workflow run. Raw data: <a href="https://github.com/{htm
     open(os.path.join(out_dir, "index.html"), "w").write(doc)
 
 
+def by_kind(rows, programs=("trailboard", "chrome")):
+    """Where each program's CPU and memory go, per process kind (median of the
+    runs): a section for the summary. Rows saved before CPU was split have none."""
+    out = []
+    for case in CASES:
+        for prog in programs:
+            ok = [r for r in rows if r["case"] == case and r["program"] == prog and r.get("ok")
+                  and any(len(v) > 2 for v in (r.get("by_kind") or {}).values())]
+            if not ok:
+                continue
+            kinds = sorted({k for r in ok for k in r["by_kind"]})
+            cells = []
+            for k in kinds:
+                vals = [r["by_kind"].get(k, [0, 0, 0]) for r in ok]
+                cpu = statistics.median(v[2] for v in vals)
+                mem = statistics.median(v[1] for v in vals)
+                cells.append((cpu, f"{k} {cpu:.1f} % / {mem:.0f} MB"))
+            cells.sort(key=lambda c: -c[0])
+            out.append(f"| {case} | {prog} | " + " · ".join(c[1] for c in cells) + " |")
+    perf = []
+    for case in CASES:
+        ps = [r["perf"] for r in rows if r["case"] == case and r["program"] == "trailboard" and r.get("ok") and r.get("perf")]
+        if ps:
+            m = {k: statistics.median(p[k] for p in ps) for k in ps[0] if k != "lines"}
+            perf.append(f"| {case} | {m['paints']:.0f} | {m['copied']:.0f} | {m['uploaded']:.0f} | {m['presented']:.0f} "
+                        f"({m['partial']:.0f}) | {m['render_ms']:.1f} ms, {m['render_pct']:.0f} % |")
+    text = ""
+    if out:
+        text += ("\n### Per process kind (CPU % of a core / PSS, medians)\n\n| Case | Program | Kinds |\n|---|---|---|\n"
+                 + "\n".join(out) + "\n")
+    if perf:
+        text += ("\n### Trailboard's drawing, per second (TRAILBOARD_PERF, medians)\n\n"
+                 "| Case | Paints | Copied MB | Uploaded MB | Frames (partial) | Render |\n|---|---|---|---|---|---|\n"
+                 + "\n".join(perf) + "\n")
+    return text
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("new")
@@ -244,7 +281,14 @@ def main():
                if len(unchecked) < len(cases) else "\nNo earlier run on these CPUs: nothing to compare with yet.\n")
     missing = sorted({k[1] for k, m in new.items() if not m["n"]})
     note = f"\nFailed to run: {', '.join(missing)} (see the logs).\n" if missing else ""
-    text = head + verdict + note + table(new, base)
+    try:
+        conf = tomllib.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "browsers.toml"), "rb"))
+        skips = [f"{n} ({', '.join(s['skip'])})" for n, s in conf.items() if s.get("skip")]
+        if skips:
+            note += f"\nNot run, by design (see browsers.toml): {'; '.join(skips)}.\n"
+    except (OSError, ValueError):
+        pass
+    text = head + verdict + note + table(new, base) + by_kind(rows)
     open(a.summary, "a").write(text + "\n")
 
     runs = history(a.results)

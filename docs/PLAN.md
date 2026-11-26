@@ -1328,6 +1328,29 @@ enable it (deploy failed 404). **Still wrong in the harness:** GNOME Web
 shows 0 % CPU while playing VP9 (its bwrap-sandboxed processes are
 probably not counted); count by cgroup as `scripts/bench.py` does.
 
+**Run 45754226156 read** (2026-11-26, forty-ninth session; measured
+ea5b59f, before the partial redraw). All jobs green, regression check
+passed (first with a run to compare), the chart deployed to
+ayushkr2003.github.io/trailboard. Trailboard medians: idle 582 MB,
+45.6 % CPU (runs 45.6/37.0/47.3; the baseline for the partial redraw);
+still 697 MB, 0.5 %; video 617–648 MB, ~365–372 %; pan 738 MB, 358 %,
+run 0 now pans. The Gecko browsers and the GitHub downloads work; Chromium
+and Opera failing h264 is right. Fixed on `bench` after reading it:
+(1) Floorp showed its welcome page and a release-notes tab in front of
+every case: the `floorp.browser.welcome.page.shown` and
+`floorp.releaseNotes.*` prefs. (2) Pale Moon played the video but keeps
+the page title out of its window title: the video page now sends a
+request to run.py's server (`/beacon/playing` or `/beacon/cannot-play`)
+and run.py checks that instead of window titles, Trailboard included.
+(3) GNOME Web: a "Set as Default Browser?" dialog (a GSettings key file
+of the run's own, `ask-for-default=false`) and "cannot play" on every
+codec (the GStreamer -good, -bad and -libav plugins installed).
+`master`'s `bench.yml` synced with `bench`'s (it lacked the `HOME=/root`
+install fix). **To check on the next run:** idle CPU against 45.6 % and
+the idle screenshot (caret, no seams); Floorp, Pale Moon and GNOME Web
+rows in every case; GNOME Web's video CPU not ~0 % (if it is, count by
+cgroup); Zen idle at 24 % CPU against Firefox's 8 % (its own UI animating?).
+
 **Idle CPU finding (M16):** CI idle 37 % is the start card's search
 box caret: every blink (~2/s) repaints the page in CEF, uploads the
 texture and redraws the whole window; with llvmpipe that costs ~20–40 %

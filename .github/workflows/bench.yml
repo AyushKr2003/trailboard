@@ -145,7 +145,8 @@ jobs:
           names=""
           [ -n "$ONLY" ] && names=$(echo "$ONLY" | tr , ' ' | sed 's/\btrailboard\b//')
           [ -n "$ONLY" ] && [ -z "${names// }" ] && { echo '{}' > installed.json; exit 0; }
-          sudo -E python3 bench/install.py $names --out installed.json
+          # Root keeps its own home: browsers run later as the runner user.
+          sudo -E env HOME=/root python3 bench/install.py $names --out installed.json
       - name: Measure
         run: |
           Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &

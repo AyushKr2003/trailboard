@@ -1351,6 +1351,31 @@ the idle screenshot (caret, no seams); Floorp, Pale Moon and GNOME Web
 rows in every case; GNOME Web's video CPU not ~0 % (if it is, count by
 cgroup); Zen idle at 24 % CPU against Firefox's 8 % (its own UI animating?).
 
+**Run 45761289882 read** (2026-11-26; measured 4c931f8, the partial
+redraw). **Idle CPU 45.6 % → 5.1 %** (runs 5.6/4.0/5.1); still, video
+and pan no worse; idle screenshot right (caret, no seams). Floorp and
+Pale Moon now measured in every case. Found and fixed on `bench`:
+(1) GNOME Web "played" VP9 at 0 % CPU: the screenshot was frozen on the
+clip's last frame and its web process had crashed; the page reported
+once and stopped. The page now reports every 2 s while the video moves,
+and run.py fails a run whose last report is over 6 s before the end of
+the measured window. (2) GNOME Web's ~130-package apt install hit the
+10-minute limit in one job: per-browser `timeout` in `browsers.toml`
+(1500 s for it), apt retries, and one retry of any failed install.
+(3) Each case is its own job and jobs land on different CPU models
+(AMD EPYC 7763 / 9V45, Intel Xeon 6975P-C within one run): AV1 went
++50 % for every browser between runs. `report.py` now compares each case
+with the newest earlier run of it on the same CPU model, says which, and
+skips the regression check where there is none. The chart still mixes
+CPU models (later: a line per CPU, or mark the points). (4) Pan run 0
+did two thirds of the panning (721 events against ~1100): a cold first
+launch. run.py now starts every program once, briefly and unmeasured,
+before the measured runs (for all programs, so it stays fair).
+**To check on the next run:** GNOME Web installed in all jobs and its
+video either measured with real CPU or failed as "stopped"; no other
+browser newly failing the 2-second check (Trailboard included); pan's
+three runs alike; each case's "compared with" line.
+
 **Idle CPU finding (M16):** CI idle 37 % is the start card's search
 box caret: every blink (~2/s) repaints the page in CEF, uploads the
 texture and redraws the whole window; with llvmpipe that costs ~20–40 %

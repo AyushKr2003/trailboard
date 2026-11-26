@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Install the browsers in browsers.toml and say which worked.
 
-    sudo -E python3 install.py [NAME...] --out installed.json
+    sudo -E env HOME=/root python3 install.py [NAME...] --out installed.json
 
 Each install runs on its own (a failure skips that browser only) with a time
 limit. Writes {name: {"ok": bool, "bin": path, "version": str, "error": str}}.
@@ -15,7 +15,8 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 # gh_get REPO REGEX OUT: the newest release asset of REPO whose name matches REGEX.
 gh_get() {
-  url=$(gh api "repos/$1/releases/latest" --jq ".assets[] | select(.name | test(\"$2\")) | .browser_download_url" | head -1)
+  # The pattern goes to jq as data: pasted into the filter, its \. was a bad escape.
+  url=$(gh api "repos/$1/releases/latest" | jq -r --arg re "$2" '.assets[] | select(.name | test($re)) | .browser_download_url' | head -1)
   [ -n "$url" ] || { echo "no asset matching $2 in $1" >&2; return 1; }
   curl -fsSLo "$3" "$url"
 }

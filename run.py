@@ -178,7 +178,10 @@ def command(name, spec, case, urls, profile, a):
         env.update(XDG_DATA_HOME=data, XDG_CACHE_HOME=os.path.join(profile, "cache"), RUST_LOG="info")
         if case == "pan":
             script = os.path.join(profile, "script")
-            lines = [f"wait {a.settle * 1000}", "move 960 40", "log bench: pan starts"]
+            # No card focused, so the touchpad pans the board: over a focused
+            # card it scrolls the page (the first run of the first CI run did that).
+            lines = [f"wait {a.settle * 1000}", "key Escape", "wait 500", "move 960 40",
+                     "log bench: pan starts"]
             for i in range(int(a.sample * 60)):
                 lines += [f"touchpad {24 if (i // 90) % 2 == 0 else -24} 0", "wait 16"]
             lines += ["touchpad 0 0 end", "log bench: pan ends"]
@@ -194,7 +197,14 @@ def command(name, spec, case, urls, profile, a):
         with open(os.path.join(profile, "user.js"), "w") as f:
             for k, v in GECKO_PREFS.items():
                 f.write(f"user_pref({json.dumps(k)}, {json.dumps(v)});\n")
-        env.update(MOZ_ENABLE_WAYLAND="0", MOZ_CRASHREPORTER_DISABLE="1")
+        # A home of its own: Gecko also keeps state outside --profile (the
+        # profile registry, its cache), and on the runner it stopped at
+        # "profile cannot be loaded" with the shared home.
+        home = os.path.join(profile, "home")
+        os.makedirs(home)
+        env.update(MOZ_ENABLE_WAYLAND="0", MOZ_CRASHREPORTER_DISABLE="1", HOME=home,
+                   XDG_CONFIG_HOME=os.path.join(home, ".config"), XDG_CACHE_HOME=os.path.join(home, ".cache"),
+                   XDG_DATA_HOME=os.path.join(home, ".local", "share"))
         return [spec["bin"], "--profile", profile, "--no-remote", "--width", str(W), "--height", str(H), *urls], env
     if fam == "epiphany":
         return [spec["bin"], "--private-instance", f"--profile={profile}", *urls], env
@@ -257,6 +267,14 @@ def measure(name, spec, case, urls, a, shot):
             if n % 3 == 0:
                 samples.append((*pss(pids), len(pids)))
         s1 = time.time()
+        # A video page titles itself "...: playing" once it plays; Trailboard's
+        # window doesn't carry page titles, so it is checked by screenshot only.
+        if case.startswith("video-") and name != "trailboard" and not x("search", "--name", ": playing"):
+            names = [" ".join(subprocess.run(["xdotool", "getwindowname", w], capture_output=True, text=True).stdout.split())
+                     for w in windows() - before]
+            screenshot(shot + ".png")
+            row["error"] = f"video not playing (windows: {'; '.join(n for n in names if n)[:120]})"
+            return row
         cpu_s = sum(last[p] - first[p] for p in last) / CLK
         if not samples:
             samples.append((*pss(pids), len(pids)))

@@ -75,15 +75,6 @@ apt_repo opera https://deb.opera.com/archive.key "https://deb.opera.com/opera-st
 apt-get install -y opera-stable
 """
 
-[thorium]
-engine = "Blink"
-family = "chromium"
-bin = "thorium-browser"
-install = """
-gh_get Alex313031/thorium '_AVX2\\.deb$' /tmp/thorium.deb
-apt-get install -y /tmp/thorium.deb
-"""
-
 [ungoogled-chromium]
 engine = "Blink"
 family = "chromium"
@@ -138,7 +129,9 @@ engine = "Gecko"
 family = "gecko"
 bin = "/opt/waterfox/*/waterfox"
 install = """
-gh_get BrowserWorks/waterfox '[Ll]inux.*\\.tar\\.(bz2|xz)$' /tmp/waterfox.tar
+# The releases carry no files; the tarball is on Waterfox's own CDN.
+tag=$(gh api repos/BrowserWorks/waterfox/releases/latest --jq .tag_name)
+curl -fsSLo /tmp/waterfox.tar "https://cdn.waterfox.com/waterfox/releases/$tag/Linux_x86_64/waterfox-$tag.tar.bz2"
 rm -rf /opt/waterfox && mkdir -p /opt/waterfox && tar -xf /tmp/waterfox.tar -C /opt/waterfox
 """
 

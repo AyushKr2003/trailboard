@@ -163,7 +163,13 @@ def main():
                    "-row-mt", "1", "-b:v", "3M", "-pix_fmt", "yuv420p", os.path.join(vid, clip))
         with open(os.path.join(vid, f"{codec}.html"), "w") as f:
             f.write(f"<!doctype html><title>{codec} 1080p</title><style>body{{margin:0;background:#000}}video{{width:100vw;height:100vh}}</style>"
-                    f"<video src={clip} autoplay muted loop playsinline></video>")
+                    f"<video src={clip} autoplay muted loop playsinline></video>"
+                    # The title says whether it plays, so run.py can tell a black
+                    # window (codec missing) from playback.
+                    "<script>const v=document.querySelector('video'),t=document.title;"
+                    "v.addEventListener('error',()=>document.title=t+': cannot play');"
+                    "const i=setInterval(()=>{if(v.currentTime>1){document.title=t+': playing';clearInterval(i)}},500);"
+                    "</script>")
     print(f"site in {out}: {', '.join(PAGES)} and videos {', '.join(VIDEOS)}")
 
 

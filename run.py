@@ -166,14 +166,34 @@ def kind_of(pid):
         args = open(f"/proc/{pid}/cmdline").read().split("\0")
     except OSError:
         return "?"
+    args = [a for a in args if a]
+    # Chrome rewrites its title as one string, the arguments joined by spaces.
+    if len(args) == 1 and " --" in args[0]:
+        args = args[0].split(" ")
     t = next((a.split("=", 1)[1] for a in args if a.startswith("--type=")), None)
+    if t == "zygote":
+        # CEF's zygote-forked children keep the zygote's command line: tell
+        # them apart by their threads (the GPU process runs the display
+        # compositor, a renderer has a compositor thread, any child an IO thread).
+        threads = set()
+        try:
+            for tid in os.listdir(f"/proc/{pid}/task"):
+                threads.add(open(f"/proc/{pid}/task/{tid}/comm").read().strip())
+        except OSError:
+            pass
+        if threads & {"VizCompositorTh", "CrGpuMain"}:
+            return "gpu-process"
+        if "Compositor" in threads:
+            return "renderer"
+        if "Chrome_ChildIOT" in threads:
+            return "utility"
     if t == "utility":
         t = next((a.split("=", 1)[1].split(".")[-1] for a in args if a.startswith("--utility-sub-type=")), t)
     if t:
         return t
     if "-contentproc" in args:
         return "child:" + args[-1]
-    return os.path.basename(args[0]) if args and args[0] else "?"
+    return os.path.basename(args[0]) if args else "?"
 
 
 # ---------------------------------------------------------------- windows

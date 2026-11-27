@@ -2,50 +2,18 @@
 //! and the camera that views them. Pure data — no GPU or browser types — so it
 //! can be unit-tested and serialized.
 
-pub mod address;
-pub mod arrange;
-pub mod caret;
-pub mod command;
-pub mod dock;
-pub mod export;
-pub mod fold;
-pub mod geom;
-pub mod download;
-pub mod hint;
-pub mod icon;
-pub mod keys;
-pub mod history;
-pub mod liveness;
-pub mod messages;
-pub mod join;
-pub mod jump;
-pub mod link;
-pub mod mark;
-pub mod media;
-pub mod motion;
-pub mod nav;
-pub mod note;
-pub mod pagezoom;
-pub mod pagetext;
-pub mod palette;
-pub mod placement;
-pub mod privacy;
-pub mod read;
-pub mod route;
-pub mod saved;
-pub mod scroll;
-pub mod scrolltarget;
-pub mod search;
-pub mod selection;
-pub mod setcmd;
-pub mod settings;
-pub mod sidebar;
-pub mod sitesettings;
-pub mod startpage;
-pub mod tidy;
-pub mod trail;
-pub mod userkeys;
-pub mod when;
+pub mod board;
+pub mod trails;
+pub mod input;
+pub mod pages;
+pub mod prefs;
+
+// Every module stays reachable at the crate root (`scene::keys`, …).
+pub use board::{arrange, dock, geom, history, icon, liveness, motion, nav, placement, read, selection, tidy};
+pub use trails::{fold, join, link, mark, route, sidebar, trail};
+pub use input::{address, caret, command, hint, jump, keys, palette, scroll, scrolltarget, search, userkeys};
+pub use pages::{download, export, media, messages, note, pagetext, pagezoom, saved, startpage, when};
+pub use prefs::{privacy, setcmd, settings, sitesettings};
 
 use std::collections::BTreeMap;
 

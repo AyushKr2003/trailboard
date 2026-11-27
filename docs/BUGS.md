@@ -44,7 +44,7 @@ memory below Firefox and GNOME Web.
 
 ---
 
-## PB1. Video: the main process burns 5–8× Chrome's CPU 🔴 (1–2 written, to measure)
+## PB1. Video: the main process burns 5–8× Chrome's CPU 🔴 (now 5.7–6.7×)
 
 **Seen.** Video with the card filling the 1920×1080 window:
 
@@ -118,6 +118,14 @@ now checks `shader.wgsl` in `cargo test` (wgpu checks it only at start).
 Only the largest covering page per frame gets it, as `cover()` picks one;
 panning several cards would want every page's inside (PB2 (2)).
 
+**Measured** (run 46034126404, both on a Xeon 6975P-C): video-h264
+211.0 % vs Chrome's 31.6 % (**6.7×**, was 257 % and 8.1× on the same CPU
+model), render 16.7 ms a frame (was 20.8); video-vp9 224.0 % vs 39.5 %
+(5.7×), drawn plainly 59.5 Mpx a second (the whole page). Screenshots
+of video and pan look as before. About a fifth off our drawing; the
+≤ 2× goal needs the page not shaded at all, so the exact-scale question
+(above) is the next lever, then dmabuf on a GPU.
+
 **Next to try.**
 1. **Copy a page shown at 1:1 instead of shading it.** When a page quad's
    colour is white, its rect equals its texture size × `extent`, and its
@@ -151,6 +159,21 @@ panning several cards would want every page's inside (PB2 (2)).
 **Goal.** M16's: video ≤ 2× Chrome in CI. Measure each change with the
 short run in PLAN M16 ("How to measure"), `cases=video-vp9,video-h264
 only=trailboard,chrome`, and compare Trailboard ÷ Chrome in the same job.
+
+**On a real GPU** (2026-11-27, the owner's laptop, Intel ADL GT2 iGPU,
+owner: "test it in real gpu in this pc … in half"; the 1080p H.264 page
+in a 957×1050 window, 2 runs each, CPU over 30 s from `/proc` by
+executable): Trailboard 15.3 % (main 7.7 %, renderer + GPU process
+7.6 %) vs Chromium 9.6 % in all: **1.6×**. Our render is 0.5–0.7 ms a
+frame (2 % of the time), so 1:1 copy and the plain pipeline change
+nothing here (`master` 17.4 %, `perf-copy` 16.4 %, within noise). What
+is left on a GPU: Chromium's GPU process reading each frame back for
+`on_paint`, our copy out of CEF's buffer and the upload (58.6 MB/s, the
+video's dirty rects), and **~17 frames a second built and skipped as
+unchanged while the video plays**: something bumps `web::activity()`
+without new pixels. Next: find that (cheap, main thread); then dmabuf,
+which removes the readback and both copies. The CI ratio (6.7×) is
+software rendering; users with a GPU see ~1.6×.
 
 ## PB2. Panning the board costs 3.5 cores 🔴
 
@@ -234,8 +257,12 @@ copy); fonts and glyph atlases; the board.
 ## Measurement gaps
 
 - **No GPU in CI.** PB1 and PB2 are mostly software-rendering costs; on a
-  real GPU they shrink and PB1's copies matter more. Laptop runs
-  (`scripts/bench.py`) are what would show it; the owner prefers CI today.
+  real GPU they shrink and PB1's copies matter more. The owner allows
+  local GPU runs in a half-screen window (2026-11-27); the harness used
+  is described under PB1 ("On a real GPU"). `scripts/bench.py` moves the
+  window to its own workspace and takes the screen, so it wasn't used.
+  Chromium moves its browser process into a systemd scope of its own:
+  count processes by executable, not by the launch scope.
 - **Different CPUs per job.** Each case lands on its own runner (EPYC 7763,
   9V74, Xeon 6975P-C…). Compare Trailboard with Chrome *in the same job*,
   never across jobs.

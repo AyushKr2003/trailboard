@@ -1571,9 +1571,12 @@ pipeline ("2"): `fs_page` + `page_pipeline` (unblended) for the cover
 hole when not copied and `damage::page_plain` (unit-tested); perf line
 adds `drawn plainly N Mpx a second`; a naga dev-dependency validates
 `shader.wgsl` in `cargo test`. Verified: build, clippy, all tests.
-**Next up:** push, run `cases=video-h264,video-vp9,pan
-only=trailboard,chrome`, read the perf line (plain ~60 Mpx/s in video)
-and the screenshots; the exact-scale question stays with the owner.
+Measured (run 46034126404; h264 re-run after an apt 403 on the runner;
+the re-run's `pages` job failed, results read from the rows artifact):
+video-h264 211 % vs Chrome 31.6 % (6.7×, was 8.1× on the same CPU
+model), render 16.7 ms a frame (was 20.8); vp9 5.7×; plain path 59.5
+Mpx/s; screenshots fine. **Next up:** the owner merges `perf-copy`; the
+exact-scale question (BUGS.md PB1) is theirs; else PB2's overdraw.
 
 **Session before:** 2026-11-27 (fifty-fourth): **BUGS.md research, then
 PB3 (idle)**, asked by the owner ("do a intensive research what way is

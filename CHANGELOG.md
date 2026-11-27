@@ -105,6 +105,10 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
   and a large card playing a video redraws only its own part of the
   window instead of the whole board each frame. Without a GPU, a playing
   video was costing over three CPU cores, almost all of it drawing.
+- **Less copying when a small part of a page changes.** Only the parts of
+  a page the engine says it repainted are copied out of its paint
+  buffer, not the whole page each time (a blinking caret was copying
+  every pixel of its page).
 
 - **Cards one above the other leave room for the title.** New cards and
   Tidy put more space between cards stacked in a column (120 units

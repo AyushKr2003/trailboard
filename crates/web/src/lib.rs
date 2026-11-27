@@ -970,7 +970,6 @@ wrap_render_handler! {
             // SAFETY: CEF guarantees `buffer` holds width*height BGRA pixels for this call.
             let src = unsafe { std::slice::from_raw_parts(buffer, len) };
             PAINTS.fetch_add(1, Ordering::Relaxed);
-            PAINT_BYTES.fetch_add(len as u64, Ordering::Relaxed);
             let sh = &self.shared;
             log::trace!("page {} paint {width}x{height} popup={}", sh.key, type_ == PaintElementType::POPUP);
             if type_ != PaintElementType::POPUP && sh.frame.borrow().width != width as u32 {
@@ -985,17 +984,19 @@ wrap_render_handler! {
                 f.width = width as u32;
                 f.height = height as u32;
                 f.css = css;
-                f.pixels.clear();
-                f.pixels.extend_from_slice(src);
+                // The rest of the frame already holds these pixels.
+                let n = popup::copy_dirty(&mut f.pixels, src, f.width, f.height, !resized, &dirty);
+                PAINT_BYTES.fetch_add(n as u64, Ordering::Relaxed);
                 f.bump(if resized { None } else { popup::bounding(&dirty) });
                 note_activity();
             };
             if type_ == PaintElementType::POPUP {
                 let mut p = sh.popup.borrow_mut();
+                let same = (p.width, p.height) == (width as u32, height as u32);
                 p.width = width as u32;
                 p.height = height as u32;
-                p.pixels.clear();
-                p.pixels.extend_from_slice(src);
+                let n = popup::copy_dirty(&mut p.pixels, src, width as u32, height as u32, same, &dirty);
+                PAINT_BYTES.fetch_add(n as u64, Ordering::Relaxed);
             } else {
                 let mut view = sh.view.borrow_mut();
                 match view.as_mut() {

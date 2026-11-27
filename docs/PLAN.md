@@ -1097,7 +1097,7 @@ loaded by Trailboard and Ref A in every case.
     60/s (6a's paints/s). If so, try `windowless_frame_rate` 30 for a
     card while it plays media (or always, if scrolling stays smooth;
     the latency check in step 2's notes).
-  - ⬜ **6d. Copy less in `on_paint`.** (Next, owner 2026-11-27.) Copy only the dirty rows/rect
+  - 🟡 **6d. Copy less in `on_paint`.** (Code done 2026-11-27, not yet measured in CI; see the note at the end.) Copy only the dirty rows/rect
     into `PaintFrame::pixels` when the size didn't change (the rest is
     already there). Keeps the CEF → app rule (no app code in CEF
     callbacks). Removing this copy altogether (handing CEF's buffer to
@@ -1114,6 +1114,22 @@ loaded by Trailboard and Ref A in every case.
     small for a page-filling video (its dirty rect is the whole page,
     ~8 MB/paint either way), real for carets, spinners and small videos;
     so also look at idle in the run. Keep it if nothing gets worse.
+    **Code done 2026-11-27 (uncommitted on `perf-6e`):**
+    `popup::copy_dirty(dst, src, w, h, same_size, dirty)` copies each
+    dirty rect's rows (clipped; overlapping rects may copy a few rows
+    twice, cheaper than a union's extra area), or everything after a
+    resize, a length change, or no rects; returns the bytes copied, which
+    `PAINT_BYTES` now counts (so `perf`'s `copied` drops while
+    `uploaded` stays). Used for the page frame and for the popup buffer
+    (a popup that changes size, or a new one, still copies whole).
+    Unit tests `copy_dirty_takes_only_the_dirty_rows`,
+    `copy_dirty_takes_everything_when_it_cant_tell`; clippy clean. Local
+    e2e (`~/.cache/trailboard-e2e-6d/run.sh`, shots `a/b/c.png`): typing
+    in a field, a `<select>` popup opening and closing, a 10/s counter
+    (small rects) and a scroll all draw right, no stale pixels.
+    **Not yet:** the commit, push and CI run (the session's permission
+    check refused the push; the owner to allow it or push). Run:
+    `-f cases=video-vp9,video-h264,idle,still -f only=trailboard,chrome`.
   - ✅ **6e. Draw less.** Raise `PARTIAL_MAX` (try 0.9) so a large playing
     card redraws only its own rect; and/or skip the background shader
     under opaque cards. Check no seams (screenshots), as for the partial
@@ -1434,7 +1450,16 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-27 (fifty-first): read master run 45845659696
+**Last session:** 2026-11-27 (fifty-second): **M16 step 6d code done**,
+uncommitted on `perf-6e`: `on_paint` copies only the dirty rects
+(`popup::copy_dirty`, unit-tested), and `copied` counts only those
+bytes. Verified: `cargo test`, clippy, a local e2e with screenshots
+(typing, a popup, a small counter, a scroll). Not verified: CI; the
+commit and push were refused by the session's permission check. **Next
+up:** commit and push 6d, run the bench on `perf-6e` (cases in 6d), write
+the numbers into 6d; then 6b, then 6f, then 6g (merge).
+
+**Session before:** 2026-11-27 (fifty-first): read master run 45845659696
 (it confirms 6a's split on vp9, h264 and AV1); **M16 step 6e done** on
 branch `perf-6e` (pushed, not merged): no drawing under opaque pages,
 `PARTIAL_MAX` 0.9, a page repainted whole still redrawn only where it

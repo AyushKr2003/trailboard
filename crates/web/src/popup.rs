@@ -72,6 +72,35 @@ pub fn blit(dst: &mut [u8], dst_size: (u32, u32), src: &[u8], src_size: (u32, u3
     }
 }
 
+/// Bring `dst` up to date with `src`, a `width`×`height` 4-byte-per-pixel
+/// image of which only `dirty` changed since `dst` last matched it. Copies
+/// each dirty rect's rows (clipped), or the whole image when `dst` isn't the
+/// same size (`same_size` false or another length) or nothing says what
+/// changed. Returns the bytes copied.
+pub fn copy_dirty(dst: &mut Vec<u8>, src: &[u8], width: u32, height: u32, same_size: bool, dirty: &[IRect]) -> usize {
+    if !same_size || dst.len() != src.len() || dirty.is_empty() {
+        dst.clear();
+        dst.extend_from_slice(src);
+        return src.len();
+    }
+    let (w, h) = (width as i64, height as i64);
+    let mut copied = 0;
+    for r in dirty {
+        let (x0, y0) = ((r.x as i64).max(0), (r.y as i64).max(0));
+        let (x1, y1) = ((r.x as i64 + r.w as i64).min(w), (r.y as i64 + r.h as i64).min(h));
+        if x0 >= x1 || y0 >= y1 {
+            continue;
+        }
+        let n = ((x1 - x0) * 4) as usize;
+        for row in y0..y1 {
+            let o = ((row * w + x0) * 4) as usize;
+            dst[o..o + n].copy_from_slice(&src[o..o + n]);
+            copied += n;
+        }
+    }
+    copied
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,5 +167,29 @@ mod tests {
         let mut d = img(4, 4, 0);
         blit(&mut d, (4, 4), &img(2, 2, 7), (2, 2), (10, 0));
         assert!(d.iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn copy_dirty_takes_only_the_dirty_rows() {
+        let src = img(4, 3, 5);
+        let mut d = img(4, 3, 0);
+        let n = copy_dirty(&mut d, &src, 4, 3, true, &[r(1, 1, 2, 1), r(3, 2, 5, 5)]);
+        assert_eq!(n, (2 + 1) * 4, "two pixels, then one clipped to the frame");
+        let fives: Vec<(u32, u32)> = (0..3).flat_map(|y| (0..4).map(move |x| (x, y))).filter(|&(x, y)| px(&d, 4, x, y) == 5).collect();
+        assert_eq!(fives, vec![(1, 1), (2, 1), (3, 2)]);
+        assert_eq!(copy_dirty(&mut d, &src, 4, 3, true, &[r(-9, -9, 2, 2)]), 0, "outside");
+    }
+
+    #[test]
+    fn copy_dirty_takes_everything_when_it_cant_tell() {
+        let src = img(4, 3, 5);
+        for (mut d, same, dirty) in [
+            (img(4, 3, 0), false, vec![r(0, 0, 1, 1)]),
+            (Vec::new(), true, vec![r(0, 0, 1, 1)]),
+            (img(4, 3, 0), true, vec![]),
+        ] {
+            assert_eq!(copy_dirty(&mut d, &src, 4, 3, same, &dirty), src.len());
+            assert_eq!(d, src);
+        }
     }
 }

@@ -1069,7 +1069,7 @@ loaded by Trailboard and Ref A in every case.
     once a second in the video case: page paints/s, bytes uploaded/s,
     frames presented/s (full vs partial), and time in `render`. Put the
     first breakdown here before changing code.
-  - **6b. CEF compositing switches** (likely the biggest, one line).
+  - ⬜ **6b. CEF compositing switches** (after 6d, owner 2026-11-27).
     Without accelerated paint, Chromium composites on the GPU process
     and reads the frame back; `--disable-gpu-compositing` makes it
     composite in software straight into the paint buffer. Add an
@@ -1079,15 +1079,41 @@ loaded by Trailboard and Ref A in every case.
     laptop, and check that VA-API decode still works on the laptop
     (`chrome://media-internals` in a card). Keep only if it helps on
     both, or make it the default only where there's no GPU.
-  - **6c. Frame rate.** Check whether a 30 fps video makes CEF paint at
+    *How, given CI-only measuring:* add `TRAILBOARD_CEF_ARGS`
+    (whitespace-split, appended in `on_before_command_line_processing`,
+    `crates/web/src/lib.rs` ~l.430; log what was added). To A/B in CI
+    without touching the harness, make a throwaway commit on `perf-6e`
+    that sets a default in code, or add an `env` input to `bench.yml` /
+    `run.py` on `bench` (asks the owner first: a push to `bench` starts a
+    ~1 h run). Try `--disable-gpu-compositing` first; maybe also
+    `--disable-gpu` (CI has no GPU anyway). Watch by_kind: today
+    gpu-process ~15–20 % and renderer ~20–25 % in the video cases. The
+    laptop/VA-API check can't be done under the CI-only rule: if CI
+    shows a win, keep it as an env knob, or the default only when the
+    adapter is software (wgpu `AdapterInfo::device_type == Cpu`), and
+    ask the owner to check VA-API on the laptop themselves.
+  - ⏭ **6c. Frame rate.** Skipped (2026-11-27): CEF already paints at
+    the video's 30/s (6e's runs), so there is nothing to cut. Check whether a 30 fps video makes CEF paint at
     60/s (6a's paints/s). If so, try `windowless_frame_rate` 30 for a
     card while it plays media (or always, if scrolling stays smooth;
     the latency check in step 2's notes).
-  - **6d. Copy less in `on_paint`.** Copy only the dirty rows/rect
+  - ⬜ **6d. Copy less in `on_paint`.** (Next, owner 2026-11-27.) Copy only the dirty rows/rect
     into `PaintFrame::pixels` when the size didn't change (the rest is
     already there). Keeps the CEF → app rule (no app code in CEF
     callbacks). Removing this copy altogether (handing CEF's buffer to
     the renderer) would break that rule: owner's call, ask first.
+    *Where:* `crates/web/src/lib.rs` `on_paint` (~l.960–1000): the view
+    (`f.pixels.clear(); f.pixels.extend_from_slice(src)`) and the popup
+    (`p.pixels`) both copy the whole buffer. When not `resized` and the
+    buffer length matches, copy each dirty rect's rows (`popup::bounding`
+    of `dirty`, or each rect) from `src` into `f.pixels` at the same
+    offsets; a resize, a length change or no dirty rects still copies
+    all. `web::paint_stats` counts bytes copied: make it count only what
+    is copied, so `perf`'s `copied` MB/s shows the saving. A unit test
+    for the row copy (pure function: dst, src, width, rect). *Expect:*
+    small for a page-filling video (its dirty rect is the whole page,
+    ~8 MB/paint either way), real for carets, spinners and small videos;
+    so also look at idle in the run. Keep it if nothing gets worse.
   - ✅ **6e. Draw less.** Raise `PARTIAL_MAX` (try 0.9) so a large playing
     card redraws only its own rect; and/or skip the background shader
     under opaque cards. Check no seams (screenshots), as for the partial
@@ -1144,9 +1170,16 @@ loaded by Trailboard and Ref A in every case.
     here. The main process is still ~135 % while `render` is only ~38 % of
     the main thread's time: llvmpipe's worker threads, the canvas copy, and
     the `on_paint` copy plus upload (6d). Next: 6d, then 6b.
-  - **6f. Report.** Update the table at the top of M16 with CI and
+  - ⬜ **6f. Report.** Update the table at the top of M16 with CI and
     laptop numbers; decide with the owner whether dmabuf paint
     (`on_accelerated_paint`, §5) becomes its own milestone.
+  - ⬜ **6g. Merge `perf-6e` into `master`** (owner, 2026-11-27: only
+    after 6d, 6b and 6f are done, not step by step). All of step 6 lives on
+    the branch `perf-6e` until then. Before merging: `cargo test`,
+    `cargo clippy`, and a short CI run of all five Trailboard cases on the
+    branch. The push to `master` starts the full ~1 h bench and saves
+    its results (the new baseline on the chart); read it like
+    "Run … read" in the Handoff.
 
   *How to measure* (the owner prefers CI to the laptop for bench work):
   push the change to a branch (not `master`, which starts a full
@@ -1157,7 +1190,26 @@ loaded by Trailboard and Ref A in every case.
   push, so either branch works)
   (~10–15 min; `save=false` keeps experiments out of `results/` and the
   chart). Compare with the same cases on `master` run the same way, on
-  the same CPU model (each row's `runner`). Laptop numbers for the
+  the same CPU model (each row's `runner`).
+  **Only one bench run at a time:** `bench.yml` has
+  `concurrency: bench, cancel-in-progress`, so a second dispatch cancels
+  the first. Start one, `gh run watch <id>` in the background, then the
+  next. Jobs land on different CPUs (EPYC 7763 / 9V45 / 9V74, Xeon
+  6975P-C / Platinum); where the CPUs differ, compare each Trailboard
+  number with Chrome's in the same job (Trailboard ÷ Chrome).
+  **Reading a run:** `gh run download <id> -p 'rows-*' -p 'shots-*'` into
+  the scratchpad; each `rows-<case>.jsonl` line is one run of one program:
+  `cpu_pct`, `pss_mib`, `runner`, `by_kind` (`{kind: [n, pss, cpu]}`, the
+  main process is the `trailboard` kind) and, for Trailboard, `perf`
+  (`paints`, `copied`, `uploaded`, `presented`, `partial`, `render_ms`,
+  `render_pct`). Take medians over the 3 runs. Look at the Trailboard
+  screenshots (`shots-<case>/<case>/<case>-trailboard-N.png`), cropping
+  a card corner to check for seams.
+  **Latest numbers to beat** (perf-6e at 35159a4, run 45973419447, Xeon
+  6975P-C): video-vp9 174 % (Chrome 40.5 %), video-h264 165 % (Chrome
+  33.9 %), pan 352 %, idle 3.0 %, still 0.6 %; video perf: 30 paints/s,
+  30 frames/s all partial, ~13 ms/frame, `render` 38 % of the time; main
+  process ~135 %, renderer ~20–25 %, gpu-process ~15–20 %. Laptop numbers for the
   final table only: `scripts/bench.py --note "step 6x"`, Trailboard only.
 
   *Done when:* video CPU in CI at most ~2× Chrome's (now ~9×) and on the
@@ -1391,10 +1443,16 @@ CI roughly halved** (vp9 304 → 174 %, h264 368 → 165 %; ~4.5× Chrome,
 was ~9×); idle, still and pan no worse (table in 6e). Verified: unit
 tests, clippy, three CI runs (45970171546 master, 45971592897 and
 45973419447 perf-6e) with screenshots checked. Not verified: the laptop
-(owner: CI only), a docked inspector or Solo by eye. **Next up:** owner
-to say whether `perf-6e` merges into master; then 6d (copy less in
-`on_paint`), then 6b; 6c looks moot (CEF paints at 30/s for a 30 fps
-video).
+(owner: CI only), a docked inspector or Solo by eye. **Next up (owner,
+2026-11-27): M16 step 6d, then 6b, then 6f, all on branch `perf-6e`;
+merge into `master` only after all of step 6 (6g).** Start a fresh
+session with `git switch perf-6e` (it holds 6e and this plan); 6c is
+skipped (CEF already paints at the video's 30/s). Each step: code + unit
+test, clippy, commit and push to `perf-6e`, one short CI run (see "How
+to measure", which now says how to read a run and lists the numbers to
+beat), screenshots checked, results written into the step. Pushing
+`perf-6e` and dispatching the Bench workflow on it is authorised (owner:
+"push it and run the bench"); pushing `bench` or `master` is not.
 
 **Session before:** 2026-11-26 (fiftieth): **M16 step 6a done**; the
 breakdown is in 6a: ~92 % of the main thread is `Renderer::render`

@@ -11,7 +11,7 @@ use glyphon::{
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
-use crate::{clamp_px, cover, cut_px, frame_key, scissor_px, screen_damage, union_px, Background, Layer, Shape, LINE};
+use crate::{clamp_px, cover, cut_px, frame_key, page_copy_from, scissor_px, screen_damage, union_px, Background, Layer, Shape, LINE};
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 
@@ -77,6 +77,9 @@ pub struct Renderer {
     /// Frames presented and frames skipped as unchanged, since the start.
     pub presented: u64,
     pub skipped: u64,
+    /// Screen pixels filled by copying a page in rather than shading it
+    /// ([`page_copy_from`]), since the start.
+    pub copied_px: u64,
     /// The last frame presented was laid out differently from the one shown
     /// before it (not only page pixels changed): something may be moving.
     pub relaid: bool,
@@ -336,6 +339,7 @@ impl Renderer {
             always_present: false,
             presented: 0,
             skipped: 0,
+            copied_px: 0,
             relaid: true,
             partial: 0,
             uploaded: 0,
@@ -512,21 +516,28 @@ impl Renderer {
         }
         let layout = frame_key(self.viewport(), &bg, layers, |k| self.pages.get(&k).map(|_| 0));
         let damage = std::mem::take(&mut self.page_damage);
-        // Only page pixels changed: redraw just where they show.
-        let scissor = if self.can_copy && !self.always_present && self.last_layout == Some(layout) {
-            match screen_damage(layers, &damage, |k| self.pages.get(&k).map(|p| p.size), self.viewport()) {
-                Some(r) if r.w <= 0.0 || r.h <= 0.0 => {
+        // Only page pixels changed since the frame shown: where they show
+        // (`None`: too much to tell, a whole page).
+        let steady = self.shown_layout == Some(layout);
+        let changed = steady.then(|| screen_damage(layers, &damage, |k| self.pages.get(&k).map(|p| p.size), self.viewport()));
+        let max_area = PARTIAL_MAX * self.viewport().0 * self.viewport().1;
+        // Redraw just there, on the canvas, when it is small enough.
+        let scissor = match changed {
+            Some(Some(r)) if self.can_copy && !self.always_present && self.last_layout == Some(layout) => {
+                if r.w <= 0.0 || r.h <= 0.0 {
                     // What changed isn't on screen.
                     self.last_frame = Some(key);
                     self.skipped += 1;
                     return false;
                 }
-                Some(r) if r.w * r.h <= PARTIAL_MAX * self.viewport().0 * self.viewport().1 => Some(r),
-                _ => None,
+                (r.w * r.h <= max_area).then_some(r)
             }
-        } else {
-            None
+            _ => None,
         };
+        // Only pages changed, but too much of the frame to draw partly (a
+        // video filling the window): the next frame won't be partial
+        // either, so the canvas isn't kept for it.
+        let big = matches!(changed, Some(None)) || matches!(changed, Some(Some(r)) if r.w * r.h > max_area);
         // Trim the shaped-text cache between frames only: clearing it while a
         // frame's texts are being shaped dropped buffers that frame still needed.
         if self.text_cache.len() > 1024 {
@@ -690,7 +701,7 @@ impl Renderer {
         let moving = self.last_present.is_some_and(|t| now - t < MOTION_GAP);
         // The canvas is kept up to date at rest, when drawing on it partly,
         // or when only page pixels changed (so the next frame can be partial).
-        let use_canvas = self.can_copy && (scissor.is_some() || !moving || self.shown_layout == Some(layout));
+        let use_canvas = self.can_copy && (scissor.is_some() || !moving || (steady && !big));
         let fresh = use_canvas && self.canvas.as_ref().is_none_or(|c| c.size() != size);
         if fresh {
             self.canvas = Some(self.device.create_texture(&wgpu::TextureDescriptor {
@@ -700,7 +711,7 @@ impl Renderer {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: FORMAT,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             }));
         }
@@ -712,11 +723,37 @@ impl Renderer {
         };
         let view = target.create_view(&wgpu::TextureViewDescriptor::default());
         let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("board") });
+        let area = match scissor {
+            Some(r) => scissor_px(r, size.width, size.height),
+            None => [0, 0, size.width, size.height],
+        };
+        // Under an opaque page nothing drawn before it shows: there the
+        // frame starts at that page, and only the rest of `area` gets the
+        // background, shadows and cards beneath.
+        let covered = cover(layers, area);
+        // That page shown 1:1 is copied there rather than shaded (the
+        // target takes copies: the canvas always, the screen when
+        // `can_copy`); the pass then starts above it.
+        let copied = covered.and_then(|(_, inst, hole)| {
+            let q = layers.iter().flat_map(|l| &l.quads).nth(inst as usize)?;
+            let page = self.pages.get(&q.texture?)?;
+            let from = page_copy_from(&q.shape, q.color, page.size, hole)?;
+            let to_target = use_canvas || self.can_copy;
+            to_target.then(|| {
+                enc.copy_texture_to_texture(
+                    wgpu::TexelCopyTextureInfo { texture: &page.texture, mip_level: 0, origin: wgpu::Origin3d { x: from[0], y: from[1], z: 0 }, aspect: wgpu::TextureAspect::All },
+                    wgpu::TexelCopyTextureInfo { texture: target, mip_level: 0, origin: wgpu::Origin3d { x: hole[0], y: hole[1], z: 0 }, aspect: wgpu::TextureAspect::All },
+                    wgpu::Extent3d { width: hole[2], height: hole[3], depth_or_array_layers: 1 },
+                );
+            })
+        });
+        self.copied_px += copied.map_or(0, |()| covered.map_or(0, |(_, _, h)| h[2] as u64 * h[3] as u64));
         {
             // Partly: the last frame stays and everything is drawn again
             // inside the scissor, the background first (opaque), as a whole
-            // frame would be.
-            let load = if scissor.is_some() { wgpu::LoadOp::Load } else { wgpu::LoadOp::Clear(wgpu::Color::BLACK) };
+            // frame would be. With a page copied in, the frame keeps it: the
+            // rest of it is drawn over opaquely all the same.
+            let load = if scissor.is_some() || copied.is_some() { wgpu::LoadOp::Load } else { wgpu::LoadOp::Clear(wgpu::Color::BLACK) };
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("board"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -727,17 +764,11 @@ impl Renderer {
                 })],
                 ..Default::default()
             });
-            let area = match scissor {
-                Some(r) => scissor_px(r, size.width, size.height),
-                None => [0, 0, size.width, size.height],
-            };
-            // Under an opaque page nothing drawn before it shows: there the
-            // frame starts at that page, and only the rest of `area` gets the
-            // background, shadows and cards beneath.
-            let pieces = match cover(layers, area) {
+            let pieces = match covered {
                 Some((layer, inst, hole)) => {
                     let mut v: Vec<_> = cut_px(area, hole).into_iter().map(|r| (r, None)).collect();
-                    v.push((hole, Some((layer, inst))));
+                    // A copied page is there already: draw from above it.
+                    v.push((hole, Some((layer, inst + u32::from(copied.is_some())))));
                     v
                 }
                 None => vec![(area, None)],

@@ -115,6 +115,27 @@ pub(crate) fn cover(layers: &[Layer], area: [u32; 4]) -> Option<(usize, u32, [u3
     best
 }
 
+/// Where in its texture to copy `hole` (screen px: x, y, w, h) from, when a
+/// page quad there would show its texels 1:1 and unchanged: its colour
+/// white and opaque, its rect at whole pixels, one texel a pixel, and the
+/// hole inside the texture's part of the rect (past it the shader repeats
+/// the left column). The shader samples each pixel's centre at a texel's
+/// centre then, so a copy gives the same pixels for a fraction of the cost
+/// on a software renderer. `None`: shade it.
+pub(crate) fn page_copy_from(shape: &Shape, color: [f32; 4], tex: (u32, u32), hole: [u32; 4]) -> Option<[u32; 2]> {
+    const EPS: f32 = 1e-3;
+    let Shape::Page { rect, extent, .. } = *shape else { return None };
+    let whole = |v: f32| (v - v.round()).abs() < EPS;
+    let one = |span: f32, ext: f32, texels: u32| ext > 0.0 && (span / ext - texels as f32).abs() < EPS * texels.max(1) as f32;
+    if color != [1.0; 4] || !whole(rect.x) || !whole(rect.y) || !one(rect.w, extent[0], tex.0) || !one(rect.h, extent[1], tex.1) {
+        return None;
+    }
+    let (x0, y0) = (rect.x.round() as i64, rect.y.round() as i64);
+    let (sx, sy) = (hole[0] as i64 - x0, hole[1] as i64 - y0);
+    let fits = sx >= 0 && sy >= 0 && sx + hole[2] as i64 <= tex.0 as i64 && sy + hole[3] as i64 <= tex.1 as i64;
+    (fits && hole[2] > 0 && hole[3] > 0).then_some([sx as u32, sy as u32])
+}
+
 /// The overlap of two px rects (x, y, w, h); empty (w or h 0) if none.
 pub(crate) fn intersect_px(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
     let (x0, y0) = (a[0].max(b[0]), a[1].max(b[1]));
@@ -246,6 +267,28 @@ mod tests {
             quads: vec![Quad { shape: Shape::Page { rect, radius: 8.0, square: 0, extent }, color: [1.0; 4], texture: Some(key) }],
             texts: vec![],
         }
+    }
+
+    #[test]
+    fn a_page_at_one_texel_a_pixel_is_copied() {
+        let page = |rect, extent| Shape::Page { rect, radius: 8.0, square: 0, extent };
+        let at = page(Rect::new(100.0, 50.0, 800.0, 600.0), [1.0, 1.0]);
+        // The hole inside the corners: from the texture at (10, 10).
+        assert_eq!(page_copy_from(&at, [1.0; 4], (800, 600), [110, 60, 780, 580]), Some([10, 10]));
+        // Dimmed (a sleeping card), half a pixel off, or scaled: shaded.
+        assert_eq!(page_copy_from(&at, [0.72, 0.72, 0.74, 1.0], (800, 600), [110, 60, 780, 580]), None);
+        let off = page(Rect::new(100.5, 50.0, 800.0, 600.0), [1.0, 1.0]);
+        assert_eq!(page_copy_from(&off, [1.0; 4], (800, 600), [110, 60, 780, 580]), None);
+        assert_eq!(page_copy_from(&at, [1.0; 4], (1600, 1200), [110, 60, 780, 580]), None, "a 2× texture");
+        // Painted smaller than its card (extent 1.25 wide): copied only
+        // where the texture reaches, not where its left column repeats.
+        let wide = page(Rect::new(100.0, 50.0, 1000.0, 600.0), [1.25, 1.0]);
+        assert_eq!(page_copy_from(&wide, [1.0; 4], (800, 600), [110, 60, 700, 580]), Some([10, 10]));
+        assert_eq!(page_copy_from(&wide, [1.0; 4], (800, 600), [110, 60, 980, 580]), None);
+        // Cropped (extent below 1): the part shown is still 1:1.
+        let crop = page(Rect::new(0.0, 0.0, 400.0, 600.0), [0.5, 1.0]);
+        assert_eq!(page_copy_from(&crop, [1.0; 4], (800, 600), [5, 5, 390, 590]), Some([5, 5]));
+        assert_eq!(page_copy_from(&Shape::Rect { rect: Rect::new(0.0, 0.0, 10.0, 10.0), radius: 0.0 }, [1.0; 4], (10, 10), [0, 0, 10, 10]), None);
     }
 
     #[test]

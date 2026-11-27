@@ -100,6 +100,10 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
   paint), and the start page's caret stops blinking after 10 s without a
   key or click (it stays shown). Work handed over from a background thread
   (a decoded board photo, a desktop change) and toasts show at once.
+- **A page shown at its own size is copied to the screen, not redrawn
+  pixel by pixel**, its rounded corners and border still drawn round it;
+  and a video filling the window no longer copies each frame twice. Much
+  cheaper without a GPU (software rendering), the same pixels.
 - Docs: `docs/BUGS.md` now holds the researched next steps for each gap
   (a 1:1 page drawn as a copy, overdraw cuts, a memory breakdown, the
   `cef` crate's dmabuf import).

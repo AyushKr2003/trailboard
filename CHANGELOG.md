@@ -94,8 +94,9 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
 ### Changed
 
 - **Quieter at rest.** With nothing happening the window no longer builds
-  a frame four times a second only to find it unchanged (now at most once
-  a second, and only after a frame laid out anew, not after every page
+  a frame four times a second only to find it unchanged, nor wakes 30
+  times a second to look for work (each timer now wakes it when due, and
+  it keeps drawing only after a frame laid out anew, not after every page
   paint), and the start page's caret stops blinking after 10 s without a
   key or click (it stays shown). Work handed over from a background thread
   (a decoded board photo, a desktop change) and toasts show at once.

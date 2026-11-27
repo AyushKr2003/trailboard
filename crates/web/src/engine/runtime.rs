@@ -8,9 +8,11 @@ use cef::*;
 
 use crate::{EVENTS, WebEvent};
 
-/// The longest CEF goes unpumped even when it asked for nothing (CEF's own
-/// external-pump sample does the same: some work is never scheduled).
-pub const MAX_PUMP_DELAY: std::time::Duration = std::time::Duration::from_millis(33);
+/// The longest CEF goes unpumped even when it asked for nothing: a safety
+/// net, as in CEF's own external-pump sample, for work it might not
+/// schedule. CEF does schedule its work (`on_schedule_message_pump_work`),
+/// so this needn't be short: at 33 ms it woke an idle app 30 times a second.
+pub const MAX_PUMP_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// When CEF next wants [`Engine::pump`], in nanoseconds since [`epoch`];
 /// `u64::MAX` when it asked for nothing. Written from any thread.

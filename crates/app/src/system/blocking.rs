@@ -93,6 +93,12 @@ impl Blocking {
         told
     }
 
+    /// When [`Blocking::tick`] next has something to do: a change to the
+    /// user's list settling, or the next look at the lists.
+    pub fn deadline(&self) -> Instant {
+        self.user_pending.map_or(self.next_check, |t| (t + USER_SETTLE).min(self.next_check))
+    }
+
     fn follow_user_list(&mut self, now: Instant, on: bool) -> Option<String> {
         if let Some(rx) = &self.user_changes {
             while rx.try_recv().is_ok() {

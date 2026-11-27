@@ -1161,21 +1161,6 @@ impl App {
         if let Some(r) = self.renderer.as_mut() {
             r.always_present = self.always_redraw;
             self.frame_changed = r.render(bg, &layers) && r.relaid;
-            if let Some(p) = self.perf.as_mut() {
-                let (paints, copied) = web::paint_stats();
-                let t = crate::dev::perf::Totals {
-                    paints,
-                    copied,
-                    uploaded: r.uploaded,
-                    presented: r.presented,
-                    partial: r.partial,
-                    skipped: r.skipped,
-                    render: r.render_time,
-                };
-                if let Some(line) = p.tick(Instant::now(), t) {
-                    log::info!("{line}");
-                }
-            }
         }
     }
 
@@ -1498,6 +1483,39 @@ impl App {
         }
         self.sync_pages();
         self.sync_ime();
+        self.log_perf();
+    }
+
+    /// `TRAILBOARD_PERF`: the line for the last second, from `tick` so a
+    /// quiet app still logs without drawing.
+    fn log_perf(&mut self) {
+        let (Some(p), Some(r)) = (self.perf.as_mut(), self.renderer.as_ref()) else { return };
+        let (paints, copied) = web::paint_stats();
+        let t = crate::dev::perf::Totals {
+            paints,
+            copied,
+            uploaded: r.uploaded,
+            presented: r.presented,
+            partial: r.partial,
+            skipped: r.skipped,
+            render: r.render_time,
+        };
+        if let Some(line) = p.tick(Instant::now(), t) {
+            log::info!("{line}");
+        }
+    }
+
+    /// The next time [`App::tick`] has something to look at without being
+    /// woken: a field out in an editor, a change to the user's filter list
+    /// settling, a stopped video's grace running out, the desktop wallpaper,
+    /// the perf line. The loop wakes by then, never later than
+    /// [`IDLE_TICK`](super::IDLE_TICK); that alone doesn't draw.
+    pub fn next_poll(&self, now: Instant) -> Instant {
+        let editing = self.editing.as_ref().map(|_| now + Duration::from_millis(250));
+        let media = self.media.values().filter_map(|m| m.stopped).min().map(|t| t + scene::liveness::MEDIA_GRACE + Duration::from_millis(1));
+        let candidates = [editing, media, self.wallpaper_due(), Some(self.blocking.deadline()), self.perf.as_ref().map(|p| p.due())];
+        // Only times to come: one past (a grace long run out) would spin.
+        candidates.into_iter().flatten().filter(|t| *t > now).fold(now + super::IDLE_TICK, Instant::min)
     }
 
     /// Whether the last frame drawn was laid out anew (something is moving).

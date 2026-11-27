@@ -152,10 +152,9 @@ fn main() -> ExitCode {
             // tick stays counted from the last draw).
             deadline = deadline.min(app.next_deadline(Instant::now()));
         }
-        // Awake every `IDLE_TICK` for the timers `tick` polls; that alone
-        // doesn't draw.
+        // Awake for what `tick` polls (`next_poll`); that alone doesn't draw.
         let now = Instant::now();
-        let timeout = engine.next_due().min(deadline).min(now + app::IDLE_TICK).saturating_duration_since(now);
+        let timeout = engine.next_due().min(deadline).min(app.next_poll(now)).saturating_duration_since(now);
         if let PumpStatus::Exit(code) = event_loop.pump_app_events(Some(timeout), &mut app) {
             break code;
         }

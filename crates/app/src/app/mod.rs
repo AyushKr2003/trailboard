@@ -138,14 +138,15 @@ pub(crate) const MIN_CARD: f32 = 240.0;
 /// How long a half-typed sequence waits before the panel of what can
 /// follow it shows (typed quickly, `gg` never shows it).
 pub(crate) const PREFIX_PANEL_AFTER: Duration = Duration::from_millis(400);
-/// The longest the event loop sleeps with nothing scheduled: [`App::tick`]'s
-/// polled timers run this often.
-pub(crate) const IDLE_TICK: Duration = Duration::from_millis(250);
+/// The longest the event loop sleeps with nothing scheduled. What
+/// [`App::tick`] polls gives its own time (`App::next_poll`); this is the
+/// net under it.
+pub(crate) const IDLE_TICK: Duration = Duration::from_secs(1);
 /// The longest between draws with nothing scheduled (see
-/// `App::next_deadline`): what the draw itself polls (the wallpaper file,
-/// a board photo decoding) shows within this. Not every tick: a frame built
-/// to be skipped as unchanged 4 times a second was most of idle's CPU.
-pub(crate) const IDLE_DRAW: Duration = Duration::from_secs(1);
+/// `App::next_deadline`), a net too: every change draws by itself (an
+/// event, a page's paint, `web::wake`, a toast, a timer due). A frame built
+/// only to be skipped as unchanged 4 times a second was most of idle's CPU.
+pub(crate) const IDLE_DRAW: Duration = Duration::from_secs(5);
 /// How long after a page loads (or retitles itself) its text is read for history.
 pub(crate) const TEXT_SETTLE: Duration = Duration::from_millis(1200);
 /// How long the outline around a newly chosen scroll section shows.

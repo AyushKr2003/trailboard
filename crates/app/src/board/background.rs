@@ -30,7 +30,15 @@ impl App {
         if w != self.wallpaper {
             log::info!("desktop wallpaper: {w:?}");
             self.wallpaper = w;
+            self.draw_wanted = true;
         }
+    }
+
+    /// When [`App::check_wallpaper`] next looks: only while the board shows
+    /// the desktop's wallpaper (or would, with *Photo* on).
+    pub(crate) fn wallpaper_due(&self) -> Option<Instant> {
+        let follows = self.settings.backdrop == prefs::Backdrop::Photo && self.spaces.active_entry().photo.is_none();
+        follows.then(|| self.wallpaper_checked.map_or_else(Instant::now, |t| t + Duration::from_secs(2)))
     }
 
     /// *Board background* changed in the settings.

@@ -1,4 +1,4 @@
-//! `TRAILBOARD_PERF=1`: once a second while frames are drawn, log what one
+//! `TRAILBOARD_PERF=1`: once a second (drawing or not), log what one
 //! second of drawing cost: page paints from CEF, bytes copied out of CEF's
 //! buffers and uploaded to the GPU, frames presented (and how many were
 //! partial), and time spent in the renderer. A debug knob for M16 step 6.
@@ -29,6 +29,11 @@ impl PerfLog {
 
     fn new(now: Instant) -> Self {
         Self { since: now, last: Totals::default() }
+    }
+
+    /// When the next line is due.
+    pub fn due(&self) -> Instant {
+        self.since + Duration::from_secs(1)
     }
 
     /// The line for the second (or more) that ended at `now`, if one has;
@@ -68,6 +73,16 @@ fn line(span: Duration, a: &Totals, b: &Totals) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn is_due_a_second_after_the_last_line() {
+        let t0 = Instant::now();
+        let mut p = PerfLog::new(t0);
+        assert_eq!(p.due(), t0 + Duration::from_secs(1));
+        let later = t0 + Duration::from_millis(1500);
+        assert!(p.tick(later, Totals::default()).is_some());
+        assert_eq!(p.due(), later + Duration::from_secs(1));
+    }
 
     #[test]
     fn logs_once_a_second_with_rates() {

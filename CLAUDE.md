@@ -24,6 +24,19 @@ browsers in the docs.
 | `compositor` | wgpu rendering, text | CEF |
 | `app` | window, input mapping, UI state, main loop | — |
 
+Inside the crates (put new code where its neighbours are):
+
+- `app/src/app/`: the `App` struct (`mod.rs`) and one file per area, each an
+  `impl App` block (`cards.rs`, `input.rs`, `drawing.rs`, `camera.rs`,
+  `trails.rs`…); methods shared between them are `pub(super)`. Beside it:
+  `ui/` (what the app draws), `pages/` (its own HTML pages), `system/`
+  (desktop, clipboard, launch), `dev/` (script runner, perf, memstat).
+- `scene/src/`: `board/`, `trails/`, `input/`, `pages/`, `prefs/`; `lib.rs`
+  re-exports every module, so paths stay `scene::keys`, `scene::tidy`….
+- `web/src/`: `events`, `runtime` (pump, wake), `engine` (CEF start),
+  `frame`, `shared`, `handlers` (CEF callbacks), `page` (`Page`), plus the
+  feature modules; `lib.rs` re-exports, so paths stay `web::Page`….
+
 - CEF runs on the main thread with `external_message_pump`; use `Rc`/`RefCell`, not locks.
   The exception is request blocking (`web::shield`), called on Chromium's IO
   thread: it uses locks and atomics, and must never touch a page's `Rc` state.

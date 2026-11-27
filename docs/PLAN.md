@@ -1553,7 +1553,28 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-27 (fifty-second): **M16 steps 6d and 6b
+**Last session:** 2026-11-27 (fifty-third): **code layout** (asked by
+the owner: "work on the folder structure of the code", all four steps),
+on branch `refactor-layout`, one commit each, no behaviour change: (1)
+`app/src/app.rs` (12,684 lines) split into `app/src/app/`, `mod.rs` plus
+one file per former section, each an `impl App`, methods `pub(super)`;
+(2) the app crate's files grouped into `ui/`, `pages/` (with their
+HTML), `system/`, `dev/`; (3) `scene` grouped into `board/`, `trails/`,
+`input/`, `pages/`, `prefs/`, re-exported at the root so every path
+stays; (4) `web/src/lib.rs` (2,438 lines) split into `events`,
+`runtime`, `engine`, `frame`, `shared`, `handlers`, `page`, items shared
+between them `pub(crate)`, the public API unchanged. Verified after each
+step: build, `cargo clippy` clean, 604 tests; step 1 also by comparing
+the moved lines (identical but for `pub(super)`), steps 1 and 4 by the
+e2e script (typing, popup, counter, scroll) with screenshots. Layout
+written in `CLAUDE.md`. `compositor` (one 1,215-line file) left as is.
+Git sees the moved code as new files: use `git blame -C -C` or `git log
+--follow -M` across the move. **Next up:** the owner reviews and merges
+`refactor-layout` (a push to `master` starts the full bench; the `master`
+bench run 45989683312 from the step 6 merge should be read first); then
+the open M16 calls below.
+
+**Session before:** 2026-11-27 (fifty-second): **M16 steps 6d and 6b
 done** on `perf-6e`, plus a fix, and 6f started. 6d: `on_paint` copies
 only the dirty rects (`popup::copy_dirty`); idle copies 14× less, video
 unchanged, CPU within noise (run 45981644696). 6b: `TRAILBOARD_CEF_ARGS`

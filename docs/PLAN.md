@@ -1292,7 +1292,7 @@ loaded by Trailboard and Ref A in every case.
     (352 % at 53 fps before; the cards are bigger now).
     **Laptop:** not run yet (`scripts/bench.py --note "step 6"`, the
     owner's machine); 6f stays 🟡 until it is, or the owner drops it.
-  - ⬜ **6g. Merge `perf-6e` into `master`** (owner, 2026-11-27: only
+  - ✅ **6g. Merge `perf-6e` into `master`** (done 2026-11-27, owner: "merge it in master"; fast-forward, the pre-merge run is 6f's 45987313397) (owner, 2026-11-27: only
     after 6d, 6b and 6f are done, not step by step). All of step 6 lives on
     the branch `perf-6e` until then. Before merging: `cargo test`,
     `cargo clippy`, and a short CI run of all five Trailboard cases on the
@@ -1569,10 +1569,12 @@ knob; the opening refit on Hyprland), both CI runs' screenshots. The
 owner pushes (the session's permission check refuses `git push`). Then the joint CI run
 (45987313397, all five cases, owner pushed and dispatched): results in
 6f; video 5.4–7.6× Chrome with the full-window card, the ≤ 2× goal not
-met. **Next up (owner's calls):** the laptop run for 6f (or drop it);
-dmabuf's place as a milestone; whether to try the 1:1 page copy for CI
-inside M16 or leave it; then 6g (merge `perf-6e` into `master`: the push
-starts the full ~1 h bench, its result the new baseline).
+met. Then **6g: `perf-6e` merged
+into `master`** (fast-forward; asked by the owner). **Next up:** read
+the full bench that the push to `master` starts (~1 h; the new baseline
+on the chart, read it like "Run … read" below); then the owner's calls:
+the laptop run for 6f (or drop it), dmabuf's place as a milestone, and
+whether to try the 1:1 page copy for CI inside M16.
 
 **Session before:** 2026-11-27 (fifty-first): read master run 45845659696
 (it confirms 6a's split on vp9, h264 and AV1); **M16 step 6e done** on

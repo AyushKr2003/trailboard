@@ -1088,10 +1088,29 @@ loaded by Trailboard and Ref A in every case.
     already there). Keeps the CEF → app rule (no app code in CEF
     callbacks). Removing this copy altogether (handing CEF's buffer to
     the renderer) would break that rule: owner's call, ask first.
-  - **6e. Draw less.** Raise `PARTIAL_MAX` (try 0.9) so a large playing
+  - 🟡 **6e. Draw less.** Raise `PARTIAL_MAX` (try 0.9) so a large playing
     card redraws only its own rect; and/or skip the background shader
     under opaque cards. Check no seams (screenshots), as for the partial
     redraw.
+    **Code done 2026-11-27, uncommitted, not yet measured.** Master run
+    45845659696 (e1edf21) confirmed 6a on all three codecs: main process
+    318–341 % of 359–367 %, `render` 86–91 % of the time, 0 partial
+    frames; the card is ~1425×800 of 1920×1080 (55 %, just over 0.5).
+    Both halves done in `compositor` `render`: (1) `PARTIAL_MAX` 0.9;
+    (2) **occlusion**: `cover` finds the opaque `Shape::Page` (colour
+    alpha 1; CEF pages paint over an opaque background) hiding the most
+    of the frame's area (scissor, or the whole window), inset past its
+    rounded corners (r·(1 − 1/√2) + 1 px). Inside it drawing starts at
+    that page's instance (no background, shadow, card body, nor earlier
+    layers' text); `cut_px` gives the up-to-four strips round it, drawn
+    as before. Works for full frames too, so pan, Solo and a fresh
+    canvas gain as well. Unit tests `frames_start_at_the_page_hiding_the_most`,
+    `cut_leaves_strips_round_the_hole`; clippy clean. Decision: no new
+    `perf` field (run.py's parser expects the current count); partial/s
+    already shows (1). **To measure:** push `perf-6e`, dispatch on it
+    and on master (cases video-vp9, video-h264, idle, still, pan;
+    trailboard, chrome), compare same CPU model; check the screenshots
+    for seams at a card's corners and edges.
   - **6f. Report.** Update the table at the top of M16 with CI and
     laptop numbers; decide with the owner whether dmabuf paint
     (`on_accelerated_paint`, §5) becomes its own milestone.
@@ -1330,7 +1349,16 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-26 (fiftieth): **M16 step 6a done**; the
+**Last session:** 2026-11-27 (fifty-first): read master run 45845659696
+(it confirms 6a's split on vp9, h264 and AV1); **M16 step 6e written**
+(occlusion under opaque pages + `PARTIAL_MAX` 0.9, see 6e), unit-tested,
+clippy clean, **uncommitted on `master`**. Pushing `perf-6e` and
+dispatching the bench was blocked by this session's permission check,
+so it waits for the owner. **Next up:** commit to `perf-6e`, push,
+dispatch the two runs in 6e's "To measure", read them (CPU, partial/s,
+render ms, screenshots for seams); then 6c.
+
+**Session before:** 2026-11-26 (fiftieth): **M16 step 6a done**; the
 breakdown is in 6a: ~92 % of the main thread is `Renderer::render`
 redrawing the whole window on llvmpipe (no partial frames with a big
 video card), Chromium is cheap. **Next up: 6e (draw less)**, then 6c.

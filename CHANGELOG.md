@@ -100,6 +100,11 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
   that part of the page is uploaded and only that part of the window is
   drawn again. It matters most without a GPU, where the start page's
   search box alone cost a fifth to a third of a CPU core.
+- **Less drawing behind pages, and around a playing video.** Nothing is
+  drawn under a page any more (the board, shadows and cards it hides),
+  and a large card playing a video redraws only its own part of the
+  window instead of the whole board each frame. Without a GPU, a playing
+  video was costing over three CPU cores, almost all of it drawing.
 
 - **Cards one above the other leave room for the title.** New cards and
   Tidy put more space between cards stacked in a column (120 units

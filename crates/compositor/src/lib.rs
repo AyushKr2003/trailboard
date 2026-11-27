@@ -190,9 +190,14 @@ pub struct Renderer {
     page_damage: HashMap<u64, Option<[u32; 4]>>,
 }
 
-/// Damaged area above which a frame is drawn whole: a scissored redraw only
-/// pays off when it is small.
-const PARTIAL_MAX: f32 = 0.5;
+/// Damaged area above which a frame is drawn whole. A scissored redraw costs
+/// a copy of the whole canvas, cheap next to drawing the board around a
+/// large playing video (M16 step 6e: a card over half the window drew it all
+/// every frame).
+const PARTIAL_MAX: f32 = 0.9;
+/// Smallest part of a frame (px²) worth drawing from an opaque page up
+/// rather than from the background (see [`cover`]).
+const COVER_MIN: u32 = 64 * 64;
 /// Frames closer together than this are motion: drawn straight to the screen
 /// (the canvas copy would cost every frame), so the canvas waits for a pause.
 const MOTION_GAP: std::time::Duration = std::time::Duration::from_millis(100);
@@ -798,30 +803,53 @@ impl Renderer {
                 })],
                 ..Default::default()
             });
-            if let Some(r) = scissor {
-                let [x, y, w, h] = scissor_px(r, size.width, size.height);
-                pass.set_scissor_rect(x, y, w, h);
-            }
-            pass.set_bind_group(0, &self.globals_bg, &[]);
-            pass.set_bind_group(1, &self.white, &[]);
-            pass.set_pipeline(&self.bg_pipeline);
-            pass.draw(0..3, 0..1);
-
-            for (i, lb) in batches.iter().enumerate() {
-                if let (Some(buf), false) = (&instance_buf, lb.is_empty()) {
-                    pass.set_pipeline(&self.quad_pipeline);
-                    pass.set_bind_group(0, &self.globals_bg, &[]);
-                    pass.set_vertex_buffer(0, buf.slice(..));
-                    for (range, tex) in lb {
-                        let group = tex.and_then(|k| self.pages.get(&k)).map_or(&self.white, |p| &p.bind_group);
-                        pass.set_bind_group(1, group, &[]);
-                        pass.draw(0..4, range.clone());
-                    }
+            let area = match scissor {
+                Some(r) => scissor_px(r, size.width, size.height),
+                None => [0, 0, size.width, size.height],
+            };
+            // Under an opaque page nothing drawn before it shows: there the
+            // frame starts at that page, and only the rest of `area` gets the
+            // background, shadows and cards beneath.
+            let pieces = match cover(layers, area) {
+                Some((layer, inst, hole)) => {
+                    let mut v: Vec<_> = cut_px(area, hole).into_iter().map(|r| (r, None)).collect();
+                    v.push((hole, Some((layer, inst))));
+                    v
                 }
-                if !layers[i].texts.is_empty()
-                    && let Err(e) = self.text_layers[i].render(&self.atlas, &self.text_viewport, &mut pass) {
-                        log::warn!("text render failed: {e}");
+                None => vec![(area, None)],
+            };
+            for ([x, y, w, h], from) in pieces {
+                if w == 0 || h == 0 {
+                    continue;
+                }
+                pass.set_scissor_rect(x, y, w, h);
+                let (first_layer, first_inst) = from.unwrap_or((0, 0));
+                if from.is_none() {
+                    pass.set_bind_group(0, &self.globals_bg, &[]);
+                    pass.set_bind_group(1, &self.white, &[]);
+                    pass.set_pipeline(&self.bg_pipeline);
+                    pass.draw(0..3, 0..1);
+                }
+                for (i, lb) in batches.iter().enumerate().skip(first_layer) {
+                    if let (Some(buf), false) = (&instance_buf, lb.is_empty()) {
+                        pass.set_pipeline(&self.quad_pipeline);
+                        pass.set_bind_group(0, &self.globals_bg, &[]);
+                        pass.set_vertex_buffer(0, buf.slice(..));
+                        for (range, tex) in lb {
+                            let range = range.start.max(first_inst)..range.end;
+                            if range.is_empty() {
+                                continue;
+                            }
+                            let group = tex.and_then(|k| self.pages.get(&k)).map_or(&self.white, |p| &p.bind_group);
+                            pass.set_bind_group(1, group, &[]);
+                            pass.draw(0..4, range);
+                        }
                     }
+                    if !layers[i].texts.is_empty()
+                        && let Err(e) = self.text_layers[i].render(&self.atlas, &self.text_viewport, &mut pass) {
+                            log::warn!("text render failed: {e}");
+                        }
+                }
             }
         }
         if let (Some(c), true) = (&self.canvas, use_canvas) {
@@ -912,6 +940,63 @@ fn scissor_px(r: Rect, width: u32, height: u32) -> [u32; 4] {
     let x1 = (r.right().ceil().max(0.0) as u32).clamp(x0, width);
     let y1 = (r.bottom().ceil().max(0.0) as u32).clamp(y0, height);
     [x0, y0, x1 - x0, y1 - y0]
+}
+
+/// The opaque page hiding the most of `area` (px: x, y, w, h), as its layer,
+/// its instance (quads are numbered in drawing order, as `render` lays them
+/// out) and the part of `area` it hides, clear of its rounded corners and
+/// anti-aliased edge. `None` when no page hides at least [`COVER_MIN`] of it.
+/// Pages are opaque (CEF paints over an opaque background); one faded with
+/// the colour's alpha doesn't count.
+fn cover(layers: &[Layer], area: [u32; 4]) -> Option<(usize, u32, [u32; 4])> {
+    let mut best: Option<(usize, u32, [u32; 4])> = None;
+    let mut inst = 0u32;
+    for (i, layer) in layers.iter().enumerate() {
+        for q in &layer.quads {
+            if let Shape::Page { rect, radius, .. } = q.shape
+                && q.color[3] >= 1.0
+            {
+                // A rounded corner's arc passes (1 - 1/√2)·r in from both
+                // edges at its middle; the edge's last half pixel blends.
+                let r = radius.min(rect.w / 2.0).min(rect.h / 2.0).max(0.0);
+                let m = r * (1.0 - std::f32::consts::FRAC_1_SQRT_2) + 1.0;
+                let x0 = (rect.x + m).ceil().max(0.0) as u32;
+                let y0 = (rect.y + m).ceil().max(0.0) as u32;
+                let x1 = (rect.right() - m).floor().max(0.0) as u32;
+                let y1 = (rect.bottom() - m).floor().max(0.0) as u32;
+                let hole = intersect_px([x0, y0, x1.saturating_sub(x0), y1.saturating_sub(y0)], area);
+                let size = hole[2] * hole[3];
+                if size >= COVER_MIN && best.is_none_or(|b| size > b.2[2] * b.2[3]) {
+                    best = Some((i, inst, hole));
+                }
+            }
+            inst += 1;
+        }
+    }
+    best
+}
+
+/// The overlap of two px rects (x, y, w, h); empty (w or h 0) if none.
+fn intersect_px(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
+    let (x0, y0) = (a[0].max(b[0]), a[1].max(b[1]));
+    let (x1, y1) = ((a[0] + a[2]).min(b[0] + b[2]), (a[1] + a[3]).min(b[1] + b[3]));
+    [x0, y0, x1.saturating_sub(x0), y1.saturating_sub(y0)]
+}
+
+/// `area` without `hole` (inside it), as the strips above, below, left and
+/// right of it; together with `hole` they cover `area` once.
+fn cut_px(area: [u32; 4], hole: [u32; 4]) -> Vec<[u32; 4]> {
+    let [ax, ay, aw, ah] = area;
+    let [hx, hy, hw, hh] = hole;
+    [
+        [ax, ay, aw, hy - ay],
+        [ax, hy + hh, aw, ay + ah - (hy + hh)],
+        [ax, hy, hx - ax, hh],
+        [hx + hw, hy, ax + aw - (hx + hw), hh],
+    ]
+    .into_iter()
+    .filter(|r| r[2] > 0 && r[3] > 0)
+    .collect()
 }
 
 /// A fingerprint of everything a frame shows: the viewport, the background,
@@ -1081,5 +1166,41 @@ mod tests {
         assert_eq!(union_px([0, 0, 0, 0], [5, 5, 2, 2]), [5, 5, 2, 2], "an empty rect adds nothing");
         assert_eq!(union_px([1, 1, 2, 2], [5, 5, 2, 2]), [1, 1, 6, 6]);
         assert_eq!(scissor_px(Rect::new(-3.0, 2.5, 10.2, 400.0), 50, 100), [0, 2, 8, 98]);
+    }
+
+    #[test]
+    fn frames_start_at_the_page_hiding_the_most() {
+        let shadow = Quad {
+            shape: Shape::Shadow { rect: Rect::new(0.0, 0.0, 400.0, 300.0), radius: 8.0, blur: 20.0 },
+            color: [0.0, 0.0, 0.0, 0.5],
+            texture: None,
+        };
+        let small = page_quad(Rect::new(10.0, 10.0, 100.0, 100.0), [1.0, 1.0], 1);
+        let mut big = page_quad(Rect::new(100.0, 50.0, 400.0, 300.0), [1.0, 1.0], 2);
+        big.quads.insert(0, shadow);
+        let area = [0, 0, 1000, 800];
+        let (layer, inst, hole) = cover(&[small.clone(), big.clone()], area).expect("a cover");
+        // Layer 1's page follows its shadow: instance 2 in drawing order.
+        assert_eq!((layer, inst), (1, 2));
+        // In from the rounded corners (8 px: 3.34 px) and the blended edge.
+        assert_eq!(hole, [104, 54, 392, 292]);
+        // Only the part inside the area counts.
+        assert_eq!(cover(&[big.clone()], [0, 0, 200, 200]).map(|c| c.2), Some([104, 54, 96, 146]));
+        // A faded page, or one too small, hides nothing.
+        let mut faded = big.clone();
+        faded.quads[1].color[3] = 0.5;
+        assert!(cover(&[faded], area).is_none());
+        assert!(cover(&[page_quad(Rect::new(0.0, 0.0, 40.0, 40.0), [1.0, 1.0], 3)], area).is_none());
+    }
+
+    #[test]
+    fn cut_leaves_strips_round_the_hole() {
+        let area = [0, 0, 100, 80];
+        let strips = cut_px(area, [10, 20, 30, 40]);
+        assert_eq!(strips, vec![[0, 0, 100, 20], [0, 60, 100, 20], [0, 20, 10, 40], [40, 20, 60, 40]]);
+        let covered: u32 = strips.iter().map(|r| r[2] * r[3]).sum::<u32>() + 30 * 40;
+        assert_eq!(covered, 100 * 80, "strips and hole cover the area once");
+        assert!(cut_px(area, area).is_empty());
+        assert_eq!(intersect_px([0, 0, 10, 10], [20, 20, 5, 5])[2..], [0, 0]);
     }
 }

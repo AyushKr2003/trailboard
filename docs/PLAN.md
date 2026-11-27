@@ -1553,7 +1553,30 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-27 (fifty-third): **code layout**, asked by
+**Last session:** 2026-11-27 (fifty-fourth): **BUGS.md research, then
+PB3 (idle)**, asked by the owner ("do a intensive research what way is
+best", then "yes go on" and "write this into docs/BUGS.md"). Research,
+from the code and the web: PB1's lever is copying a page shown at 1:1
+(`copy_texture_to_texture` into `cover()`'s hole) instead of shading it,
+plus a canvas copy every video frame found on the way; PB2 is likely
+overdraw (4–5 shaded layers a card), to be split with timestamp queries
+first; PB4 needs an `smaps` breakdown; the `cef` crate already ships
+dmabuf → wgpu 30 import (`accelerated_osr`). All written into each PB's
+"Next to try". PB3 fix (uncommitted, on `master`'s working tree):
+`IDLE_DRAW` (1 s) apart from `IDLE_TICK` (250 ms, ticks only);
+`web::wake()` counts as activity (pump scheduling uses a private
+`wake_loop`); toasts set `draw_wanted`; `frame_changed` only when the
+frame was laid out anew (`Renderer::relaid`); the start page's caret
+rests after 10 s (`caret-animation: manual`). Decided: a steady caret
+after 10 s is the desktop's own default, so not asked. Verified: build,
+clippy clean, all unit tests. **Not verified:** no e2e or screenshot run
+(the owner's PC is in use: CI only), so toasts, wallpaper changes,
+animations ending and video after the change are unchecked by eye.
+**Next up:** a CI run of `idle,still,video-h264` (Trailboard and Chrome)
+on a throwaway branch to measure PB3 and check video didn't regress;
+then PB1 (1–2).
+
+**Session before:** 2026-11-27 (fifty-third): **code layout**, asked by
 the owner ("work on the folder structure", then "still app folder has
 too many files … do a proper folder structure"). On branch
 `refactor-layout`, no behaviour change. Decisions: group by feature, not
@@ -1582,7 +1605,7 @@ owner reviews and merges `refactor-layout` after the `master` bench run
 per-feature structs (the real coupling; folders don't fix it), rustfmt
 with a config, then the open M16 calls below.
 
-**Session before:** 2026-11-27 (fifty-second): **M16 steps 6d and 6b
+**Earlier:** 2026-11-27 (fifty-second): **M16 steps 6d and 6b
 done** on `perf-6e`, plus a fix, and 6f started. 6d: `on_paint` copies
 only the dirty rects (`popup::copy_dirty`); idle copies 14× less, video
 unchanged, CPU within noise (run 45981644696). 6b: `TRAILBOARD_CEF_ARGS`

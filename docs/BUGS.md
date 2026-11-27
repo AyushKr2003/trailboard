@@ -5,6 +5,10 @@ evidence, what is already known, and what to try next. Ranked: the
 first is the biggest gap. Move an entry into its milestone in
 [PLAN.md](PLAN.md) when it is taken up, and delete it here when it is fixed.
 
+**Research:** 2026-11-27, against the code at `3053e6f`; each PB's
+"Next to try" is in the order to take it up. Suggested order across
+them: PB3, PB1 (1–2), PB2 (1–3), PB4 (1–3), then dmabuf.
+
 **Source:** bench run [46010069445](https://github.com/AyushKr2003/trailboard/actions/runs/46010069445)
 (2026-11-27, Trailboard `5aa154c`, all six cases, 3 runs each, medians).
 Raw rows: `results/20261127-1348-5aa154c-46010069445.jsonl` on the `bench`
@@ -69,23 +73,42 @@ that is ~21–30 ms a frame, 2 M pixels, spread over all cores.
 **On a real GPU** (the owner's iGPU) the drawing is cheap; what's left is
 the two 8 MB copies per frame (out of CEF's buffer, into a texture).
 
+**Also found (2026-11-27 research).** During video every frame is drawn
+into the canvas and then copied to the screen: `use_canvas` stays on while
+the layout is unchanged (`shown_layout == Some(layout)`, `renderer.rs`
+`render`). That is a third 8 MB copy a frame. A partial frame above
+`PARTIAL_MAX` would save almost nothing here: under the page, `cover()`
+already starts drawing at the page, so the page's rect *is* the work.
+
 **Next to try.**
-1. **Draw a page shown at 1:1 as a plain copy.** When a card's page is
-   drawn unscaled and axis-aligned, copy its pixels straight to the
-   frame (`copy_texture_to_texture`, or a no-filter, no-blend pass over
-   just its rect), and draw only the rounded corners, border and shadow
-   round it with the general shader. Expected: most of the 21–30 ms goes.
-   This is the lever for the CI numbers.
-2. **Partial frames for a big card.** When only the page changed (video),
-   the damage is the page rect; redraw that rect even when it is over
-   `PARTIAL_MAX`, if what's round it is unchanged. Check it combines
-   with (1).
-3. **dmabuf paint** (`on_accelerated_paint`, PLAN §5): Chromium hands a
-   GPU buffer per frame; importing it into wgpu (Vulkan
-   `VK_EXT_external_memory_dma_buf` via wgpu-hal) drops both copies and the
-   upload. Helps only with a GPU, so CI won't show it; needs a fallback
-   (no GPU, Windows, import failure). Recommended as its own milestone (M16
-   6f); the owner places it against M17.
+1. **Copy a page shown at 1:1 instead of shading it.** When a page quad's
+   colour is white, its rect equals its texture size × `extent`, and its
+   position is on whole pixels (snap within 0.01 px), copy the texture
+   into `cover()`'s hole with `copy_texture_to_texture` (same
+   `Bgra8Unorm` format), before the render pass. The pass then loads
+   (`LoadOp::Load`, no clear: every other piece gets the opaque
+   background anyway), draws the pieces round the hole as now (corners,
+   border, shadow stay exact in the general shader), and in the hole
+   draws only what comes after the page. The canvas needs `COPY_DST`.
+   On llvmpipe a copy is a memcpy, ~1 ms for 8 MB, against 21–30 ms of
+   shading. This is the lever for the CI numbers.
+2. **No canvas for full frames in motion.** A full frame drawn while
+   frames come quickly goes straight to the screen; the canvas is
+   refreshed at the pause, as for panning. Saves one 8 MB copy a frame.
+3. **Upload from CEF's buffer inside `on_paint`** (owner's call: it
+   breaks "CEF → app only through `drain_events`"). Drops the copy into
+   `pixels` and 8 MB a card (helps PB4); thumbnails would read back.
+4. **dmabuf paint (M16 6f), closer than thought.** Our `cef` crate
+   (156.4.0) has an `accelerated_osr` feature with Linux DMA-BUF import
+   into wgpu 30 (`cef::osr_texture_import`): it imports the planes as a
+   Vulkan image, copies into an app-owned texture and waits before CEF
+   reuses the buffer (our `cef_render_handler.h` says it must be copied
+   inside the callback). wgpu 30 has
+   `Features::VULKAN_EXTERNAL_MEMORY_DMA_BUF`. To check: it seems to make
+   a new texture each frame (we want a copy into the page's texture);
+   fall back to `on_paint` with no GPU or on import failure; Chromium
+   notes linear buffers fail on some NVIDIA drivers. CI has no GPU, so
+   only a laptop run shows the gain.
 
 **Goal.** M16's: video ≤ 2× Chrome in CI. Measure each change with the
 short run in PLAN M16 ("How to measure"), `cases=video-vp9,video-h264
@@ -102,19 +125,36 @@ background, every card's page quad, shadows, labels, trail lines, all
 through the general shader on llvmpipe. A pan moves everything, so partial
 frames can't help.
 
+**Also found (2026-11-27 research).** Overdraw: each card's pixels are
+shaded four or five times: the background, two shadow quads (each covers
+the whole card plus its blur), the card's frame fill, then the page.
+`cover()` cuts the background out under the single largest opaque page
+only.
+
 **Next to try.**
-1. Profile one pan frame (`TRAILBOARD_PERF=1` locally, or a `perf record`
-   on CI) to split the 19 ms: background dots, page quads, shadows, text.
-2. Cheapen what is drawn per pixel: shadows (blur is per pixel), the
-   background dot pattern, page quads drawn at a scale (mipmaps / a
-   cheaper filter while moving).
-3. Cap the redraw rate while panning on a software renderer (e.g. 30 fps)
-   if the device can't keep 60 anyway.
+1. **Measure per group with timestamp queries** (wgpu
+   `TIMESTAMP_QUERY`, which lavapipe has) in `TRAILBOARD_PERF`:
+   background, shadows, pages, text. Better than `perf record`, which
+   can't name llvmpipe's JIT code.
+2. **Cut overdraw.** Shadows as a ring round the card (no interior: it is
+   under the opaque page); the frame fill only where the page doesn't
+   cover (the label strip); the background cut out under every opaque
+   page, not only the largest.
+3. **An opaque-page pipeline** for scaled pages: no blending, no SDF, no
+   branches, one sample; the rounded edges stay with the general shader
+   as in PB1 (1). Mesa's llvmpipe has a linear 2D fast path (2–3× for
+   blits) that only engages for simple shaders without depth; whether
+   lavapipe reaches it is unknown, so measure it rather than count on it.
+4. **Last, owner's call:** cap motion at 30 fps when the adapter is a CPU
+   one (`DeviceType::Cpu`); it reaches only 46 fps now.
+5. **Not now:** scrolling the last frame and drawing only the strips a
+   pan exposes. It needs the board drawn apart from the overlays, and the
+   window-fixed gradient and grain changed.
 
 **Goal.** No reference browser has a board, so compare with ourselves:
 halve it (≤ 175 %), keeping the motion smooth in the screenshots.
 
-## PB3. Idle: 4× Chrome's CPU, with nothing happening 🟡
+## PB3. Idle: 4× Chrome's CPU, with nothing happening 🟡 (fix written, to measure)
 
 **Seen.** `idle` (start card only, EPYC 9V74): 2.4 % CPU, 2.0 % of it in the
 main process, against Chrome's 0.6 % (0.4 % in its browser process).
@@ -131,9 +171,29 @@ partial, 3 ms each), and **5 renders/s skipped as unchanged**. In `still`
    (HUD, hover, a clock, a pending save, `pump` scheduling) instead of only
    on change.
 
-**Next to try.** Run idle locally with `TRAILBOARD_PERF=1` and log who calls
-`request_redraw` and why each CEF paint happens (its dirty rect says what
-moved). Fix the sources; the frames skipped should drop to ~0.
+**Found (2026-11-27).**
+1. The 4 skipped renders a second were `IDLE_TICK`: the loop asked for a
+   frame at every 250 ms wake (`now >= deadline`, `next_deadline` never
+   later than `IDLE_TICK`), built every layer and threw it away.
+2. Every presented frame asked for one more (`animating()` was "the last
+   frame was new"), so each caret paint cost a second, skipped, build.
+3. The start page's field has `autofocus`: Chromium blinks its caret
+   ~2×/s. (The clock's digit roll adds ~37 frames once a minute.)
+
+**Done (uncommitted, to measure on CI).** The loop still wakes every
+`IDLE_TICK` for the timers `tick` polls, but draws by itself only every
+`IDLE_DRAW` (1 s; the draw polls the wallpaper and a decoding board
+photo). `web::wake()` (background threads handing something over) now
+counts as activity, so it draws at once; CEF's pump scheduling only
+wakes. A toast asks for a draw (`draw_wanted`). The loop keeps drawing
+only after a frame laid out anew (`Renderer::relaid`), not after one
+where only page pixels changed. The start page rests its caret after
+10 s without a key, click or focus (`caret-animation: manual`, Chromium
+139+): it stays shown, steady, as on the desktop.
+
+**Next to try.** A CI run (`cases=idle,still only=trailboard,chrome`):
+skipped frames should be ~1/s and paints ~0 after 10 s. If idle is
+still above 1 %, log each CEF paint's dirty rect to see what else moves.
 
 **Goal.** Idle ≤ 1 % and still ≤ 0.5 %, near Chrome.
 
@@ -156,10 +216,21 @@ its framebuffers and shader caches count here, where Chrome's sit in its
 gpu-process); page textures (one 8 MB texture per 1080p card, plus the CEF
 copy); fonts and glyph atlases; the board.
 
-**Next to try.** Break the main process down (`/proc/<pid>/smaps_rollup`
-and `smaps` by mapping, on CI and locally) into CEF, Vulkan driver, heap
-and textures; check the copy of each page's pixels we keep after uploading
-(could it go once it is on the GPU?).
+**Next to try.**
+1. **Break it down on CI.** At the end of the idle case, `run.py` saves
+   the main process's `smaps` and sums Pss by mapping: libcef, the Vulkan
+   driver (llvmpipe, CI only), `[heap]` and anonymous maps, textures.
+2. **Suspects, from the code.** The canvas (8 MB) and 2–3 swapchain
+   images (8 MB each); per card the texture plus our CPU copy of its
+   pixels (8 + 8 MB); wgpu's staging for `write_texture`; the glyph
+   atlas; on CI, llvmpipe's per-thread tile buffers and JIT code (which
+   Chrome keeps in its GPU process).
+3. **Cheap experiment: glibc arenas.** CEF's and llvmpipe's threads each
+   grow a malloc arena in our process; try `MALLOC_ARENA_MAX=2` in the
+   bench environment first, then `mallopt(M_ARENA_MAX)` at start if it
+   pays.
+4. **Then cut:** drop the CPU copy once uploaded (PB1 (3) or (4) does
+   it), free the canvas after a long idle.
 
 **Goal.** Within 50 MB of Chrome's idle, or know which part we can't cut.
 

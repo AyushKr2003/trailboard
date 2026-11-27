@@ -44,7 +44,7 @@ memory below Firefox and GNOME Web.
 
 ---
 
-## PB1. Video: the main process burns 5–8× Chrome's CPU 🔴
+## PB1. Video: the main process burns 5–8× Chrome's CPU 🔴 (1–2 written, to measure)
 
 **Seen.** Video with the card filling the 1920×1080 window:
 
@@ -81,6 +81,17 @@ the layout is unchanged (`shown_layout == Some(layout)`, `renderer.rs`
 `render`). That is a third 8 MB copy a frame. A partial frame above
 `PARTIAL_MAX` would save almost nothing here: under the page, `cover()`
 already starts drawing at the page, so the page's rect *is* the work.
+
+**Written (branch `perf-copy`, to measure).** (1) and (2) below:
+`damage::page_copy_from` (unit-tested) says when a cover page shows its
+texels 1:1 (white, whole pixels, one texel a pixel, the hole inside the
+texture); `render` then copies it into the hole before the pass, loads
+instead of clearing, and draws the hole from the quad above the page.
+Page-only frames too big to draw partly skip the canvas (`big`). The
+perf line ends with `pages copied in N Mpx a second` (a unit `run.py`'s
+parser skips): ~60 in the video case if the copy runs there. If it reads
+0, the bench's card isn't 1:1 (page scale steps of 0.25, or a
+fractional position) and that is the next thing to look at.
 
 **Next to try.**
 1. **Copy a page shown at 1:1 instead of shading it.** When a page quad's

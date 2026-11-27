@@ -1553,7 +1553,24 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-27 (fifty-fourth): **BUGS.md research, then
+**Last session:** 2026-11-27 (fifty-fifth): **PB1 steps 1–2** (video),
+asked by the owner ("merge it in main and start the next step"): merged
+`perf-idle` into `master` (fast-forward, pushed), then branch
+`perf-copy`. Done: `damage::page_copy_from` (unit-tested: white,
+whole-pixel position, one texel a pixel, hole inside the texture) and
+`render` copying that page into `cover()`'s hole with
+`copy_texture_to_texture`, `LoadOp::Load`, the hole drawn from the quad
+above the page; the canvas gets `COPY_DST`; page-only frames over
+`PARTIAL_MAX` go straight to the screen (`big`); the perf line ends with
+`pages copied in N Mpx a second`, and `Renderer::copied_px` counts it.
+Verified: build, clippy (all targets), unit tests. **Not verified:** no
+local run (CI only): whether the bench's video card is 1:1 (the perf
+line says), and the pixels by eye (the bench's screenshots will). **Next
+up:** push `perf-copy`, run `cases=video-h264,video-vp9,still,pan
+only=trailboard,chrome`, read the perf line and screenshots; if the copy
+doesn't run, find why the card isn't 1:1.
+
+**Session before:** 2026-11-27 (fifty-fourth): **BUGS.md research, then
 PB3 (idle)**, asked by the owner ("do a intensive research what way is
 best", then "yes go on" and "write this into docs/BUGS.md"). Research,
 from the code and the web: PB1's lever is copying a page shown at 1:1
@@ -1589,7 +1606,7 @@ before, on an EPYC 9V74), so the 250 ms pump net delayed nothing seen.
 PB3's goal is met, so it left BUGS.md. **Next up:** the owner merges
 `perf-idle`; then PB1 (1–2).
 
-**Session before:** 2026-11-27 (fifty-third): **code layout**, asked by
+**Earlier:** 2026-11-27 (fifty-third): **code layout**, asked by
 the owner ("work on the folder structure", then "still app folder has
 too many files … do a proper folder structure"). On branch
 `refactor-layout`, no behaviour change. Decisions: group by feature, not

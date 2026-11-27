@@ -73,6 +73,12 @@ than 10 %, so a slower runner is not taken for a regression.
 browser that fails to install or open a window is listed as failed in that
 run's summary and doesn't stop the others. To add one, add an entry and push.
 
+The list is one browser per engine (Chrome for Blink, Firefox for Gecko,
+GNOME Web for WebKit), Brave as a widely used Blink browser, and Falkon, which
+embeds Chromium the way Trailboard embeds CEF. The other Blink and Gecko
+browsers measured until 2026-11-27 came within a few points of Chrome or
+Firefox and only lengthened the run; their results are still in `results/`.
+
 ## Files
 
 | File | Does |

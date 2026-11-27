@@ -33,16 +33,11 @@ GECKO_PREFS = {
     "toolkit.telemetry.reportingpolicy.firstRun": False,
     "browser.tabs.warnOnClose": False,
     "browser.sessionstore.resume_from_crash": False,
-    "zen.welcome-screen.seen": True,
     "app.update.enabled": False,
     "app.update.auto": False,
     "media.autoplay.default": 0,
     # Floorp: no welcome page and no release-notes tab or prompt (without
     # these both open in front of the test pages).
-    "floorp.browser.welcome.page.shown": True,
-    "floorp.releaseNotes.mode": "disabled",
-    "floorp.releaseNotes.choiceConfirmed": True,
-    "floorp.releaseNotes.promptShown": True,
     "startup.homepage_override_url": "",
 }
 
@@ -280,8 +275,6 @@ def command(name, spec, case, urls, profile, a):
         env.update(XDG_CONFIG_HOME=os.path.join(profile, "config"), XDG_DATA_HOME=os.path.join(profile, "data"),
                    XDG_CACHE_HOME=os.path.join(profile, "cache"))
         return [spec["bin"], "--private-browsing", "--no-remote", *urls], env
-    if fam == "qutebrowser":
-        return [spec["bin"], "--basedir", profile, "-s", "content.private_browsing", "true", *urls], env
     raise ValueError(f"unknown family {fam}")
 
 

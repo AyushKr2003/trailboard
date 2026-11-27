@@ -178,7 +178,10 @@ def svg_chart(runs, case, metric, label, programs):
 
 def pages(runs, out_dir):
     os.makedirs(out_dir, exist_ok=True)
-    programs = sorted({k[1] for _, _, m in runs for k in m}, key=lambda p: (p != "trailboard", p))
+    # The programs of the latest run: a browser dropped from browsers.toml
+    # leaves the chart (its old points stay in results/).
+    latest = runs[-1][2] if runs else {}
+    programs = sorted({k[1] for k in latest}, key=lambda p: (p != "trailboard", p))
     legend = "".join(f"<span><i style='background:{COLORS[j % len(COLORS)]}'></i>{html.escape(p)}</span>" for j, p in enumerate(programs))
     body = ""
     for case in CASES:

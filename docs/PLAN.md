@@ -1069,7 +1069,7 @@ loaded by Trailboard and Ref A in every case.
     once a second in the video case: page paints/s, bytes uploaded/s,
     frames presented/s (full vs partial), and time in `render`. Put the
     first breakdown here before changing code.
-  - 🟡 **6b. CEF compositing switches** (after 6d, owner 2026-11-27; knob done, CI A/B to do).
+  - ✅ **6b. CEF compositing switches** (done 2026-11-27: knob kept, no default; no gain in CI).
     Without accelerated paint, Chromium composites on the GPU process
     and reads the frame back; `--disable-gpu-compositing` makes it
     composite in software straight into the paint buffer. Add an
@@ -1101,16 +1101,24 @@ loaded by Trailboard and Ref A in every case.
     command line (without: "Hardware accelerated"); Video Decode still
     says "Hardware accelerated" on the laptop's iGPU (a report only, not
     a playback check). Zygote-forked children keep the zygote's command
-    line, so `/proc/*/cmdline` can't show it. **To do:** the CI A/B: a
-    throwaway commit on `perf-6e` that sets the variable when unset (in
-    `main` before the engine starts), a run of the 6d cases, then revert
-    it; compare with the 6d run on the same CPU (or ÷ Chrome).
+    line, so `/proc/*/cmdline` can't show it.
+    **CI A/B** (run 45983554997 on throwaway branch `perf-6b-try`,
+    e55d4d2: the variable defaulted to `--disable-gpu-compositing`; the
+    log confirms it was added): **no change.** video-vp9 (Xeon) 175 %
+    (174 % without), gpu-process 13.5 % (13.3), renderer 23.1 % (22.7);
+    video-h264 (EPYC 9V45) 140 %, 4.7× Chrome (4.8× without); idle 2.4 %,
+    still 0.8 %. The runner has no GPU, so Chromium composited in
+    software already; the switch only names what it did. *Decision:*
+    keep `TRAILBOARD_CEF_ARGS` as a debug knob, change no default (no win
+    to buy with the laptop's VA-API risk). Not tried: `--disable-gpu`
+    (same reasoning: nothing for it to turn off on the runner). The
+    throwaway branch is to be deleted (local and `origin`).
   - ⏭ **6c. Frame rate.** Skipped (2026-11-27): CEF already paints at
     the video's 30/s (6e's runs), so there is nothing to cut. Check whether a 30 fps video makes CEF paint at
     60/s (6a's paints/s). If so, try `windowless_frame_rate` 30 for a
     card while it plays media (or always, if scrolling stays smooth;
     the latency check in step 2's notes).
-  - 🟡 **6d. Copy less in `on_paint`.** (Code done 2026-11-27, not yet measured in CI; see the note at the end.) Copy only the dirty rows/rect
+  - ✅ **6d. Copy less in `on_paint`.** (Done 2026-11-27, measured; see the notes at the end.) Copy only the dirty rows/rect
     into `PaintFrame::pixels` when the size didn't change (the rest is
     already there). Keeps the CEF → app rule (no app code in CEF
     callbacks). Removing this copy altogether (handing CEF's buffer to
@@ -1127,7 +1135,7 @@ loaded by Trailboard and Ref A in every case.
     small for a page-filling video (its dirty rect is the whole page,
     ~8 MB/paint either way), real for carets, spinners and small videos;
     so also look at idle in the run. Keep it if nothing gets worse.
-    **Code done 2026-11-27 (uncommitted on `perf-6e`):**
+    **Code done 2026-11-27 (`219ad8e` on `perf-6e`):**
     `popup::copy_dirty(dst, src, w, h, same_size, dirty)` copies each
     dirty rect's rows (clipped; overlapping rects may copy a few rows
     twice, cheaper than a union's extra area), or everything after a
@@ -1140,9 +1148,25 @@ loaded by Trailboard and Ref A in every case.
     e2e (`~/.cache/trailboard-e2e-6d/run.sh`, shots `a/b/c.png`): typing
     in a field, a `<select>` popup opening and closing, a 10/s counter
     (small rects) and a scroll all draw right, no stale pixels.
-    **Not yet:** the commit, push and CI run (the session's permission
-    check refused the push; the owner to allow it or push). Run:
-    `-f cases=video-vp9,video-h264,idle,still -f only=trailboard,chrome`.
+    **Result** (perf-6e run 45981644696 at 7bc362c, vs 45973419447 at
+    35159a4; medians of the runs with the usual card size, see below):
+
+    | Case (CPU) | before (6e) | 6d | Chrome, same job |
+    |---|---|---|---|
+    | video-h264 (Xeon 6975P-C, both) | 165 % (4.9×) | 170 % (4.8×) | 33.9 → 35.6 % |
+    | video-vp9 | 174 % (Xeon, 4.3×) | 227 % (EPYC 7763, one run, 4.4×) | 40.5 → 51.6 % |
+    | idle: copied | 13.8 MB/s | **1.0 MB/s** | — |
+    | idle / still CPU | 3.0 / 0.6 % | 4.0 / 0.5 % (other CPU; 2.4 % in the 6b run) | 0.7 / 0.3 % |
+
+    As expected: the video, whose dirty rect is the whole page, copies
+    the same ~4.7 MB a paint; idle (a caret) copies 14× less. CPU is
+    within noise everywhere. Kept. **Found while reading it:** in 3 of the
+    12 video runs since (vp9 runs 1–2 here, h264 run 0 in 45983554997)
+    the card filled the window: 8 MB paints, 0 partial frames,
+    ~350 % / ~233 %. Not 6d: big from the first second, so the startup
+    camera did it (see §7, "First fit uses the requested window size").
+    Those runs are left out above; read every run's `copied` (≈140 MB/s
+    usual, ≈240 big) before taking medians until it's fixed.
   - ✅ **6e. Draw less.** Raise `PARTIAL_MAX` (try 0.9) so a large playing
     card redraws only its own rect; and/or skip the background shader
     under opaque cards. Check no seams (screenshots), as for the partial
@@ -1463,14 +1487,22 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-27 (fifty-second): **M16 step 6d code done**,
-uncommitted on `perf-6e`: `on_paint` copies only the dirty rects
-(`popup::copy_dirty`, unit-tested), and `copied` counts only those
-bytes. Verified: `cargo test`, clippy, a local e2e with screenshots
-(typing, a popup, a small counter, a scroll). Not verified: CI; the
-commit and push were refused by the session's permission check. **Next
-up:** commit and push 6d, run the bench on `perf-6e` (cases in 6d), write
-the numbers into 6d; then 6b, then 6f, then 6g (merge).
+**Last session:** 2026-11-27 (fifty-second): **M16 steps 6d and 6b
+done** on `perf-6e`. 6d: `on_paint` copies only the dirty rects
+(`popup::copy_dirty`); idle copies 14× less, video unchanged, CPU within
+noise (run 45981644696). 6b: `TRAILBOARD_CEF_ARGS` debug knob;
+`--disable-gpu-compositing` changed nothing in CI (run 45983554997 on
+the throwaway branch `perf-6b-try`), so no default changes. Found a
+startup race that decides the bench's card size (§7, "First fit uses the
+requested window size"). Verified: unit tests, clippy, local e2e with
+screenshots (typing, popup, counter, scroll; `chrome://gpu` with and
+without the knob), both CI runs' screenshots. The owner pushed and
+dispatched (the session's permission check refused `git push`). Not
+verified: the laptop (CI-only rule). **Next up:** delete `perf-6b-try`
+(local and origin); decide on the §7 race (fix it before 6f so the
+final table is measured on one card size?); then 6f (needs the owner:
+laptop numbers via `scripts/bench.py --note "step 6"`, and whether
+dmabuf paint becomes a milestone), then 6g (merge).
 
 **Session before:** 2026-11-27 (fifty-first): read master run 45845659696
 (it confirms 6a's split on vp9, h264 and AV1); **M16 step 6e done** on
@@ -1779,7 +1811,20 @@ the stack; gi on the settings page misses its `input type=search`.
 Open problems waiting for a decision or a session. Move an entry into its
 milestone when it is taken up, and delete it here when it is fixed.
 
-None open.
+- **First fit uses the requested window size** (found 2026-11-27, M16
+  6d). `App::resumed` fits the camera to the opening cards with
+  `self.viewport()` straight after `create_window`, i.e. the requested
+  1440×900. When the window manager gives it another size (CI's
+  1920×1080, a tiling WM), the fit is wrong if the resize lands after
+  the fit (the usual case in CI: the card is 1424 px wide in a 1920 px
+  window), right if it lands before (the card fills the window). So the
+  bench's card size depends on a race: 3 of 12 video runs got the big
+  card, with 8 MB paints and no partial frames (~350 % instead of
+  ~170 %). Fix: redo the opening fit on the first `Resized` if the
+  camera hasn't been moved since; then the bench always gets the big
+  card, so its numbers will step up once and step 6 should be compared
+  again on it (or have the bench fix the card size). Owner's call when:
+  it changes what every later bench run measures.
 
 ## 8. Future ideas
 

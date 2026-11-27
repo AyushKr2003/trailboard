@@ -24,18 +24,30 @@ browsers in the docs.
 | `compositor` | wgpu rendering, text | CEF |
 | `app` | window, input mapping, UI state, main loop | — |
 
-Inside the crates (put new code where its neighbours are):
+Inside the crates, code is grouped by feature; put new code beside its
+neighbours, and keep each folder to one area.
 
-- `app/src/app/`: the `App` struct (`mod.rs`) and one file per area, each an
-  `impl App` block (`cards.rs`, `input.rs`, `drawing.rs`, `camera.rs`,
-  `trails.rs`…); methods shared between them are `pub(super)`. Beside it:
-  `ui/` (what the app draws), `pages/` (its own HTML pages), `system/`
-  (desktop, clipboard, launch), `dev/` (script runner, perf, memstat).
+- `app/src/`: `app/` is the core (`mod.rs` holds `App`; setup, persistence,
+  window and page events, input routing, typing, drawing). Each feature
+  folder holds that area's `impl App` methods, its state types and its
+  widgets: `board/` (cards, camera, arrange, background, spaces),
+  `trails/` (joins, sidebar, panel), `keyboard/` (keymap, user keys, link
+  hints, jumps, scroll sections, page nav, key sheet), `page/` (editing and
+  clipboard, find/zoom, dialogs, file chooser, permissions, cookies,
+  inspector, downloads), `ui/` (chrome, theme, icons, HUD, menus, omnibox,
+  palette, messages), `builtin/` (the app's own HTML pages), `system/`
+  (desktop, launch, crash, filter lists), `dev/` (script runner, perf).
+  `App`'s fields and methods are `pub(crate)`; imports are explicit, no
+  `use super::*` outside tests.
 - `scene/src/`: `board/`, `trails/`, `input/`, `pages/`, `prefs/`; `lib.rs`
   re-exports every module, so paths stay `scene::keys`, `scene::tidy`….
-- `web/src/`: `events`, `runtime` (pump, wake), `engine` (CEF start),
-  `frame`, `shared`, `handlers` (CEF callbacks), `page` (`Page`), plus the
-  feature modules; `lib.rs` re-exports, so paths stay `web::Page`….
+- `web/src/`: `engine/` (CEF start, pump, handlers, shared state, frames,
+  popups, keys, sandbox), `page/` (`Page` and per-page features),
+  `blocking/` (filter, cosmetic, consent, stand-ins), `events.rs`,
+  `prefs.rs`; `lib.rs` re-exports, so paths stay `web::Page`, `web::caret`….
+- `compositor/src/`: `layer.rs` (what the app hands over), `damage.rs`
+  (partial-frame maths), `renderer.rs`.
+- `storage/src/`: flat, one file per on-disk format.
 
 - CEF runs on the main thread with `external_message_pump`; use `Rc`/`RefCell`, not locks.
   The exception is request blocking (`web::shield`), called on Chromium's IO

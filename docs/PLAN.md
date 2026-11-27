@@ -1553,26 +1553,34 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-27 (fifty-third): **code layout** (asked by
-the owner: "work on the folder structure of the code", all four steps),
-on branch `refactor-layout`, one commit each, no behaviour change: (1)
-`app/src/app.rs` (12,684 lines) split into `app/src/app/`, `mod.rs` plus
-one file per former section, each an `impl App`, methods `pub(super)`;
-(2) the app crate's files grouped into `ui/`, `pages/` (with their
-HTML), `system/`, `dev/`; (3) `scene` grouped into `board/`, `trails/`,
-`input/`, `pages/`, `prefs/`, re-exported at the root so every path
-stays; (4) `web/src/lib.rs` (2,438 lines) split into `events`,
-`runtime`, `engine`, `frame`, `shared`, `handlers`, `page`, items shared
-between them `pub(crate)`, the public API unchanged. Verified after each
-step: build, `cargo clippy` clean, 604 tests; step 1 also by comparing
-the moved lines (identical but for `pub(super)`), steps 1 and 4 by the
-e2e script (typing, popup, counter, scroll) with screenshots. Layout
-written in `CLAUDE.md`. `compositor` (one 1,215-line file) left as is.
-Git sees the moved code as new files: use `git blame -C -C` or `git log
---follow -M` across the move. **Next up:** the owner reviews and merges
-`refactor-layout` (a push to `master` starts the full bench; the `master`
-bench run 45989683312 from the step 6 merge should be read first); then
-the open M16 calls below.
+**Last session:** 2026-11-27 (fifty-third): **code layout**, asked by
+the owner ("work on the folder structure", then "still app folder has
+too many files … do a proper folder structure"). On branch
+`refactor-layout`, no behaviour change. Decisions: group by feature, not
+by layer (a feature's `impl App` methods, state types and widgets live
+together); keep the tree shallow (one level of folders per crate); crates
+stay flat under `crates/` (matklad's layout, already used). Done:
+`app.rs` split into files, then the app crate arranged as `app/` (core)
+plus `board/`, `trails/`, `keyboard/`, `page/`, `ui/`, `builtin/`,
+`system/`, `dev/`, with 14 feature state types moved out of `app/mod.rs`
+(now 978 lines); `App`'s fields and methods `pub(crate)`; imports made
+explicit everywhere (no `use super::*`). `scene` grouped into five
+folders and `web` into `engine/`, `page/`, `blocking/`, both re-exported
+so outside paths are unchanged; `web`'s tests moved beside their code.
+`compositor/lib.rs` split into `layer`, `damage` (with its tests),
+`renderer`. `storage` left flat (19 small files, one per format). Layout
+written in `CLAUDE.md`. Verified after each step: build, clippy clean, 604
+tests; e2e runs (typing, popup, counter, scroll; sidebar, palette, key
+sheet and settings by their log lines; the renderer by `TRAILBOARD_PERF`
+lines, partial frames working). Screenshots stopped once the owner's own
+windows overlapped Trailboard's (the shots that caught them were
+deleted). Not changed: code isn't rustfmt-formatted (no config; 2,276
+diffs on master), so only import blocks were tidied. Git sees moved code
+as new files: `git blame -C -C` / `git log --follow -M`. **Next up:** the
+owner reviews and merges `refactor-layout` after the `master` bench run
+45989683312 is read; later, if wanted: split `App`'s state into
+per-feature structs (the real coupling; folders don't fix it), rustfmt
+with a config, then the open M16 calls below.
 
 **Session before:** 2026-11-27 (fifty-second): **M16 steps 6d and 6b
 done** on `perf-6e`, plus a fix, and 6f started. 6d: `on_paint` copies

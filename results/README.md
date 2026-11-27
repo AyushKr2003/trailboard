@@ -6,32 +6,41 @@ Written by the bench workflow after every run. Chart: <https://ayushkr2003.githu
 
 20261127-1631 · 3 runs each, medians · each case on its own runner · [workflow run](https://github.com/AyushKr2003/trailboard/actions/runs/46034126404)
 
-✅ No regression against earlier runs on the same CPU (not checked, no earlier run on their CPU: pan).
+✅ No regression against earlier runs on the same CPU.
 
 Not run, by design (see browsers.toml): gnome-web (video-vp9, video-av1, video-h264).
 
 ### video-vp9
 
-Runner: 4 × Intel(R) Xeon(R) 6975P-C, 15 GB; compared with 20261127-1223-5aa154c-45998021086.
+Runner: 4 × Intel(R) Xeon(R) 6975P-C, 15 GB; compared with 20261127-1631-d95458b-46034126404.
 
 | Program | Engine | Memory (PSS) | Peak | CPU % of a core | Processes | Start | Change (same CPU) |
 |---|---|---|---|---|---|---|---|
-| **trailboard** | Blink (CEF) | 624 MB | 629 MB | 224.0 | 9 | 0.22 s | mem +0%, CPU -17% |
-| chrome | Blink | 523 MB | 585 MB | 39.5 | 12 | 0.23 s | mem +6%, CPU -2% |
+| **trailboard** | Blink (CEF) | 624 MB | 629 MB | 224.0 | 9 | 0.22 s | mem +0%, CPU +0% |
+| chrome | Blink | 523 MB | 585 MB | 39.5 | 12 | 0.23 s | mem +0%, CPU +0% |
+
+### video-h264
+
+Runner: 4 × Intel(R) Xeon(R) 6975P-C, 15 GB; compared with 20261127-1554-a2d9617-46028826700.
+
+| Program | Engine | Memory (PSS) | Peak | CPU % of a core | Processes | Start | Change (same CPU) |
+|---|---|---|---|---|---|---|---|
+| **trailboard** | Blink (CEF) | 651 MB | 652 MB | 211.0 | 9 | 0.23 s | mem +1%, CPU -18% |
+| chrome | Blink | 544 MB | 605 MB | 31.6 | 12 | 0.23 s | mem +5%, CPU -5% |
 
 ### pan
 
-Runner: 4 × Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz, 15 GB; no earlier run on this CPU to compare with.
+Runner: 4 × Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz, 15 GB; compared with 20261127-1631-d95458b-46034126404.
 
 | Program | Engine | Memory (PSS) | Peak | CPU % of a core | Processes | Start | Change (same CPU) |
 |---|---|---|---|---|---|---|---|
-| **trailboard** | Blink (CEF) | 795 MB | 801 MB | 351.2 | 14 | 0.23 s |  |
+| **trailboard** | Blink (CEF) | 795 MB | 801 MB | 351.2 | 14 | 0.23 s | mem +0%, CPU +0% |
 
 ## Trailboard over time (newest first)
 
 | Run | Trailboard | idle mem / CPU | still mem / CPU | video-vp9 mem / CPU | video-av1 mem / CPU | video-h264 mem / CPU | pan mem / CPU |
 |---|---|---|---|---|---|---|---|
-| [20261127-1631-d](https://github.com/AyushKr2003/trailboard/actions/runs/46034126404) | `d95458b` | – | – | 624 MB / 224.0 % | – | – | 795 MB / 351.2 % |
+| [20261127-1631-d](https://github.com/AyushKr2003/trailboard/actions/runs/46034126404) | `d95458b` | – | – | 624 MB / 224.0 % | – | 651 MB / 211.0 % | 795 MB / 351.2 % |
 | [20261127-1615-8](https://github.com/AyushKr2003/trailboard/actions/runs/46031642472) | `8ad3a04` | – | 712 MB / 0.3 % | 639 MB / 349.4 % | – | 662 MB / 328.7 % | 822 MB / 361.4 % |
 | [20261127-1554-a](https://github.com/AyushKr2003/trailboard/actions/runs/46028826700) | `a2d9617` | 583 MB / 0.2 % | 712 MB / 0.3 % | 631 MB / 228.6 % | 659 MB / 266.7 % | 644 MB / 256.8 % | 805 MB / 355.3 % |
 | [20261127-1538-9](https://github.com/AyushKr2003/trailboard/actions/runs/46026446381) | `9501932` | 595 MB / 0.9 % | 703 MB / 0.2 % | – | – | 644 MB / 288.5 % | – |

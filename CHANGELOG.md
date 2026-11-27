@@ -93,6 +93,10 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
 
 ### Changed
 
+- Docs: `docs/BUGS.md` lists the performance gaps the CI bench shows
+  against other browsers (video, panning, idle, memory), with evidence
+  and next steps. The bench now measures five browsers (Chrome, Brave,
+  Firefox, GNOME Web, Falkon) instead of fifteen.
 - **A new mark.** The app icon is now a trail of five pages stepping down
   the board, each a skeleton of a different kind of page, in the default
   theme's colours (blue-grey, blue, magenta, orange, yellow). No key behind

@@ -1912,7 +1912,9 @@ the stack; gi on the settings page misses its `input type=search`.
 Open problems waiting for a decision or a session. Move an entry into its
 milestone when it is taken up, and delete it here when it is fixed.
 
-None open.
+- **Performance against other browsers** (CI bench, 2026-11-27): video
+  5–8× Chrome's CPU, panning 3.5 cores, idle 4× Chrome, ~150 MB more
+  memory. Evidence, causes and what to try: [BUGS.md](BUGS.md) (PB1–PB4).
 
 ## 8. Future ideas
 

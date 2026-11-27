@@ -1563,12 +1563,17 @@ whole-pixel position, one texel a pixel, hole inside the texture) and
 above the page; the canvas gets `COPY_DST`; page-only frames over
 `PARTIAL_MAX` go straight to the screen (`big`); the perf line ends with
 `pages copied in N Mpx a second`, and `Renderer::copied_px` counts it.
-Verified: build, clippy (all targets), unit tests. **Not verified:** no
-local run (CI only): whether the bench's video card is 1:1 (the perf
-line says), and the pixels by eye (the bench's screenshots will). **Next
-up:** push `perf-copy`, run `cases=video-h264,video-vp9,still,pan
-only=trailboard,chrome`, read the perf line and screenshots; if the copy
-doesn't run, find why the card isn't 1:1.
+Measured (run 46031642472): no change; the copy never ran, because the
+bench's card is on the board at a stepped raster scale (~1.5 for ~1.48
+shown), not 1:1 (BUGS.md PB1). Offered: exact raster scale at rest
+(owner's call, open) or an opaque-page pipeline; the owner took the
+pipeline ("2"): `fs_page` + `page_pipeline` (unblended) for the cover
+hole when not copied and `damage::page_plain` (unit-tested); perf line
+adds `drawn plainly N Mpx a second`; a naga dev-dependency validates
+`shader.wgsl` in `cargo test`. Verified: build, clippy, all tests.
+**Next up:** push, run `cases=video-h264,video-vp9,pan
+only=trailboard,chrome`, read the perf line (plain ~60 Mpx/s in video)
+and the screenshots; the exact-scale question stays with the owner.
 
 **Session before:** 2026-11-27 (fifty-fourth): **BUGS.md research, then
 PB3 (idle)**, asked by the owner ("do a intensive research what way is

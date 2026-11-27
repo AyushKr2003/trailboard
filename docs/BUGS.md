@@ -93,6 +93,31 @@ parser skips): ~60 in the video case if the copy runs there. If it reads
 0, the bench's card isn't 1:1 (page scale steps of 0.25, or a
 fractional position) and that is the next thing to look at.
 
+**Measured** (run 46031642472): no change, video-h264 328.7 % vs Chrome's
+43.7 % (7.5×), vp9 349.4 % vs 47.9 % (7.3×); `pages copied in 0.0 Mpx`
+throughout. The bench's video card is on the board, fitted to the window,
+not in Solo: its page rasters at the 0.25-step scale (`page_scale_for`,
+~1.5) while it shows at ~1.48, so its texture is ~1.6 % larger than its
+rect and it is shaded, scaled. The copy only engages for a card shown at
+its raster scale (Solo, full screen). Two ways on:
+- **Raster settled cards at their exact on-screen scale**, on whole
+  pixels: the copy engages on the board too, and pages are sharper (now
+  they are resampled by up to 1/8). Owner's call: the raster scale is
+  Chromium's page zoom, shared per site, and was stepped on purpose.
+- **An opaque-page pipeline** (PB2 (3)): no blending, no SDF, for the
+  inside of any page, scaled or not. No product change; helps panning
+  too; the gain is to measure.
+
+**Taken (owner: "2"): the opaque-page pipeline** (written, to measure).
+`fs_page` samples the texel and nothing else; `page_pipeline` draws it
+unblended. `render` uses it for `cover()`'s hole when the page wasn't
+copied and `damage::page_plain` holds (white, extent ≤ 1); the hole is
+clear of corners and edge, so for an opaque page it gives `fs_quad`'s
+pixels. The perf line adds `drawn plainly N Mpx a second`. A naga test
+now checks `shader.wgsl` in `cargo test` (wgpu checks it only at start).
+Only the largest covering page per frame gets it, as `cover()` picks one;
+panning several cards would want every page's inside (PB2 (2)).
+
 **Next to try.**
 1. **Copy a page shown at 1:1 instead of shading it.** When a page quad's
    colour is white, its rect equals its texture size × `extent`, and its

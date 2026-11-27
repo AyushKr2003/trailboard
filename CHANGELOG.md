@@ -103,7 +103,9 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
 - **A page shown at its own size is copied to the screen, not redrawn
   pixel by pixel**, its rounded corners and border still drawn round it;
   and a video filling the window no longer copies each frame twice. Much
-  cheaper without a GPU (software rendering), the same pixels.
+  cheaper without a GPU (software rendering), the same pixels. A page
+  shown scaled has its inside drawn by a plain, unblended shader, also
+  the same pixels for less work.
 - Docs: `docs/BUGS.md` now holds the researched next steps for each gap
   (a 1:1 page drawn as a copy, overdraw cuts, a memory breakdown, the
   `cef` crate's dmabuf import).

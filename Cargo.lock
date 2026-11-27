@@ -558,6 +558,7 @@ dependencies = [
  "bytemuck",
  "glyphon",
  "log",
+ "naga",
  "scene",
  "wgpu",
  "winit",

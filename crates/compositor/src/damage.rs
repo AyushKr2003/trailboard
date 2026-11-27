@@ -136,6 +136,14 @@ pub(crate) fn page_copy_from(shape: &Shape, color: [f32; 4], tex: (u32, u32), ho
     (fits && hole[2] > 0 && hole[3] > 0).then_some([sx as u32, sy as u32])
 }
 
+/// Whether the inside of this page quad (clear of its corners, as
+/// [`cover`] gives it) can be drawn by `fs_page`: its texels unchanged and
+/// unblended. White and opaque, and spanning no more than its texture (past
+/// it `fs_quad` repeats the left column).
+pub(crate) fn page_plain(shape: &Shape, color: [f32; 4]) -> bool {
+    matches!(*shape, Shape::Page { extent, .. } if extent[0] <= 1.0 + 1e-3 && extent[1] <= 1.0 + 1e-3) && color == [1.0; 4]
+}
+
 /// The overlap of two px rects (x, y, w, h); empty (w or h 0) if none.
 pub(crate) fn intersect_px(a: [u32; 4], b: [u32; 4]) -> [u32; 4] {
     let (x0, y0) = (a[0].max(b[0]), a[1].max(b[1]));
@@ -289,6 +297,16 @@ mod tests {
         let crop = page(Rect::new(0.0, 0.0, 400.0, 600.0), [0.5, 1.0]);
         assert_eq!(page_copy_from(&crop, [1.0; 4], (800, 600), [5, 5, 390, 590]), Some([5, 5]));
         assert_eq!(page_copy_from(&Shape::Rect { rect: Rect::new(0.0, 0.0, 10.0, 10.0), radius: 0.0 }, [1.0; 4], (10, 10), [0, 0, 10, 10]), None);
+    }
+
+    #[test]
+    fn a_white_page_inside_its_texture_is_plain() {
+        let page = |extent| Shape::Page { rect: Rect::new(0.5, 0.0, 300.0, 200.0), radius: 8.0, square: 0, extent };
+        assert!(page_plain(&page([1.0, 1.0]), [1.0; 4]));
+        assert!(page_plain(&page([0.6, 0.9]), [1.0; 4]), "scaled or cropped");
+        assert!(!page_plain(&page([1.2, 1.0]), [1.0; 4]), "the left column repeats");
+        assert!(!page_plain(&page([1.0, 1.0]), [0.72, 0.72, 0.74, 1.0]), "dimmed");
+        assert!(!page_plain(&Shape::Rect { rect: Rect::new(0.0, 0.0, 1.0, 1.0), radius: 0.0 }, [1.0; 4]));
     }
 
     #[test]

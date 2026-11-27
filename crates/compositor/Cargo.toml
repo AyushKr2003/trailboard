@@ -11,3 +11,7 @@ log = "0.4.35"
 scene = { version = "0.3.0", path = "../scene" }
 wgpu = "30"
 winit = "0.30"
+
+[dev-dependencies]
+# Checks shader.wgsl in `cargo test` (wgpu only does at start-up).
+naga = { version = "30", features = ["wgsl-in"] }

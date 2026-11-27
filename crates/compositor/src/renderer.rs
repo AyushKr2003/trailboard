@@ -11,7 +11,7 @@ use glyphon::{
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
-use crate::{clamp_px, cover, cut_px, frame_key, page_copy_from, scissor_px, screen_damage, union_px, Background, Layer, Shape, LINE};
+use crate::{clamp_px, cover, cut_px, frame_key, page_copy_from, page_plain, scissor_px, screen_damage, union_px, Background, Layer, Shape, LINE};
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 
@@ -57,6 +57,8 @@ pub struct Renderer {
     config: wgpu::SurfaceConfiguration,
     bg_pipeline: wgpu::RenderPipeline,
     quad_pipeline: wgpu::RenderPipeline,
+    /// `fs_page`, unblended: the inside of an opaque page ([`page_plain`]).
+    page_pipeline: wgpu::RenderPipeline,
     globals_buf: wgpu::Buffer,
     globals_bg: wgpu::BindGroup,
     tex_layout: wgpu::BindGroupLayout,
@@ -80,6 +82,9 @@ pub struct Renderer {
     /// Screen pixels filled by copying a page in rather than shading it
     /// ([`page_copy_from`]), since the start.
     pub copied_px: u64,
+    /// Screen pixels of page insides drawn plainly ([`page_plain`]), since
+    /// the start.
+    pub plain_px: u64,
     /// The last frame presented was laid out differently from the one shown
     /// before it (not only page pixels changed): something may be moving.
     pub relaid: bool,
@@ -278,6 +283,36 @@ impl Renderer {
             multiview_mask: None,
             cache: None,
         });
+        // The inside of an opaque page: written as is, no blending.
+        let opaque = [Some(wgpu::ColorTargetState { format: FORMAT, blend: None, write_mask: wgpu::ColorWrites::ALL })];
+        let page_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("page insides"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_quad"),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Instance>() as u64,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &ATTRS,
+                })],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_page"),
+                targets: &opaque,
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("page"),
@@ -323,6 +358,7 @@ impl Renderer {
             config,
             bg_pipeline,
             quad_pipeline,
+            page_pipeline,
             globals_buf,
             globals_bg,
             tex_layout,
@@ -340,6 +376,7 @@ impl Renderer {
             presented: 0,
             skipped: 0,
             copied_px: 0,
+            plain_px: 0,
             relaid: true,
             partial: 0,
             uploaded: 0,
@@ -747,7 +784,15 @@ impl Renderer {
                 );
             })
         });
-        self.copied_px += copied.map_or(0, |()| covered.map_or(0, |(_, _, h)| h[2] as u64 * h[3] as u64));
+        let hole_px = covered.map_or(0, |(_, _, h)| h[2] as u64 * h[3] as u64);
+        self.copied_px += copied.map_or(0, |()| hole_px);
+        // Else that page's inside, if plain, is drawn by `fs_page`.
+        let plain = covered.filter(|_| copied.is_none()).and_then(|(_, inst, _)| {
+            let q = layers.iter().flat_map(|l| &l.quads).nth(inst as usize)?;
+            let page = self.pages.get(&q.texture?)?;
+            page_plain(&q.shape, q.color).then_some((&page.bind_group, inst))
+        });
+        self.plain_px += plain.map_or(0, |_| hole_px);
         {
             // Partly: the last frame stays and everything is drawn again
             // inside the scissor, the background first (opaque), as a whole
@@ -768,7 +813,7 @@ impl Renderer {
                 Some((layer, inst, hole)) => {
                     let mut v: Vec<_> = cut_px(area, hole).into_iter().map(|r| (r, None)).collect();
                     // A copied page is there already: draw from above it.
-                    v.push((hole, Some((layer, inst + u32::from(copied.is_some())))));
+                    v.push((hole, Some((layer, inst + u32::from(copied.is_some() || plain.is_some())))));
                     v
                 }
                 None => vec![(area, None)],
@@ -779,6 +824,14 @@ impl Renderer {
                 }
                 pass.set_scissor_rect(x, y, w, h);
                 let (first_layer, first_inst) = from.unwrap_or((0, 0));
+                // The inside of a page that wasn't copied, drawn plainly.
+                if let (Some(_), Some((group, inst)), Some(buf)) = (from, plain, &instance_buf) {
+                    pass.set_pipeline(&self.page_pipeline);
+                    pass.set_bind_group(0, &self.globals_bg, &[]);
+                    pass.set_bind_group(1, group, &[]);
+                    pass.set_vertex_buffer(0, buf.slice(..));
+                    pass.draw(0..4, inst..inst + 1);
+                }
                 if from.is_none() {
                     pass.set_bind_group(0, &self.globals_bg, &[]);
                     pass.set_bind_group(1, &self.white, &[]);
@@ -842,4 +895,19 @@ pub(crate) fn make_tex_bind_group(
             wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
         ],
     })
+}
+
+#[cfg(test)]
+mod tests {
+    /// wgpu only checks the shader when the window opens: check it here.
+    #[test]
+    fn the_shader_is_valid_wgsl() {
+        let module = naga::front::wgsl::parse_str(include_str!("shader.wgsl")).unwrap_or_else(|e| panic!("{}", e.emit_to_string(include_str!("shader.wgsl"))));
+        naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty())
+            .validate(&module)
+            .unwrap_or_else(|e| panic!("{e:?}"));
+        for entry in ["vs_bg", "fs_bg", "vs_quad", "fs_quad", "fs_page"] {
+            assert!(module.entry_points.iter().any(|e| e.name == entry), "{entry}");
+        }
+    }
 }

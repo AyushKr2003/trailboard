@@ -1500,6 +1500,7 @@ impl App {
             skipped: r.skipped,
             render: r.render_time,
             copied_px: r.copied_px,
+            plain_px: r.plain_px,
         };
         if let Some(line) = p.tick(Instant::now(), t) {
             log::info!("{line}");

@@ -122,6 +122,14 @@ fn vs_quad(@builtin(vertex_index) vi: u32, i: Inst) -> VOut {
     return o;
 }
 
+// The inside of an opaque white page, clear of its corners and edge
+// (`damage::page_plain`): its texels as they are, drawn without blending.
+// What `fs_quad` gives there, for less work a pixel on a software renderer.
+@fragment
+fn fs_page(v: VOut) -> @location(0) vec4f {
+    return textureSampleLevel(tex, samp, v.uv, 0.0);
+}
+
 fn sd_round_rect(p: vec2f, half: vec2f, r: f32) -> f32 {
     let q = abs(p) - half + vec2f(r);
     return length(max(q, vec2f(0.0))) + min(max(q.x, q.y), 0.0) - r;

@@ -17,6 +17,8 @@ pub struct Totals {
     pub render: Duration,
     /// Screen pixels filled by copying a page in rather than shading it.
     pub copied_px: u64,
+    /// Screen pixels of page insides drawn plainly (no blending).
+    pub plain_px: u64,
 }
 
 pub struct PerfLog {
@@ -61,7 +63,7 @@ fn line(span: Duration, a: &Totals, b: &Totals) -> String {
     let avg_ms = if presented > 0 { render.as_secs_f64() * 1e3 / presented as f64 } else { 0.0 };
     format!(
         // Page copies last, in Mpx (a unit the bench's parser skips).
-        "perf: paints {:.1}/s copied {:.1} MB/s uploaded {:.1} MB/s presented {:.1}/s (partial {:.1}/s) skipped {:.1}/s render {:.1} ms/frame, {:.0} % of the time, pages copied in {:.1} Mpx a second",
+        "perf: paints {:.1}/s copied {:.1} MB/s uploaded {:.1} MB/s presented {:.1}/s (partial {:.1}/s) skipped {:.1}/s render {:.1} ms/frame, {:.0} % of the time, pages copied in {:.1} Mpx a second, drawn plainly {:.1} Mpx a second",
         per(a.paints, b.paints),
         mb(a.copied, b.copied),
         mb(a.uploaded, b.uploaded),
@@ -71,6 +73,7 @@ fn line(span: Duration, a: &Totals, b: &Totals) -> String {
         avg_ms,
         render.as_secs_f64() / s * 100.0,
         per(a.copied_px, b.copied_px) / 1e6,
+        per(a.plain_px, b.plain_px) / 1e6,
     )
 }
 
@@ -92,7 +95,7 @@ mod tests {
     fn logs_once_a_second_with_rates() {
         let t0 = Instant::now();
         let mut p = PerfLog::new(t0);
-        let t = Totals { paints: 60, copied: 60 * 8_000_000, uploaded: 30 * 8_000_000, presented: 30, partial: 10, skipped: 5, render: Duration::from_millis(300), copied_px: 62_000_000 };
+        let t = Totals { paints: 60, copied: 60 * 8_000_000, uploaded: 30 * 8_000_000, presented: 30, partial: 10, skipped: 5, render: Duration::from_millis(300), copied_px: 62_000_000, plain_px: 0 };
         assert_eq!(p.tick(t0 + Duration::from_millis(500), t), None);
         let l = p.tick(t0 + Duration::from_secs(2), t).unwrap();
         assert!(l.contains("paints 30.0/s"), "{l}");

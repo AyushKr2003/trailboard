@@ -1167,6 +1167,15 @@ loaded by Trailboard and Ref A in every case.
     camera did it (see §7, "First fit uses the requested window size").
     Those runs are left out above; read every run's `copied` (≈140 MB/s
     usual, ≈240 big) before taking medians until it's fixed.
+    **Fixed 2026-11-27** (the owner: "do all"): `App::opening_fit` keeps
+    the opening cards' rect and the fitted camera; `refit_opening` on
+    each `Resized` fits again while the camera is still that one (no goal,
+    no Solo); any click, wheel or key drops it. Checked on Hyprland (the
+    log says "opening fit redone for a 1920×1080 window", the cards fill
+    the window's width). **So from here on the bench's card fills the
+    window** (≈1892 px, 8 MB paints, more than `PARTIAL_MAX` of the
+    window: full frames again): step 6's numbers so far were mostly on the
+    smaller card, and 6f measures both again on the new size.
   - ✅ **6e. Draw less.** Raise `PARTIAL_MAX` (try 0.9) so a large playing
     card redraws only its own rect; and/or skip the background shader
     under opaque cards. Check no seams (screenshots), as for the partial
@@ -1811,20 +1820,7 @@ the stack; gi on the settings page misses its `input type=search`.
 Open problems waiting for a decision or a session. Move an entry into its
 milestone when it is taken up, and delete it here when it is fixed.
 
-- **First fit uses the requested window size** (found 2026-11-27, M16
-  6d). `App::resumed` fits the camera to the opening cards with
-  `self.viewport()` straight after `create_window`, i.e. the requested
-  1440×900. When the window manager gives it another size (CI's
-  1920×1080, a tiling WM), the fit is wrong if the resize lands after
-  the fit (the usual case in CI: the card is 1424 px wide in a 1920 px
-  window), right if it lands before (the card fills the window). So the
-  bench's card size depends on a race: 3 of 12 video runs got the big
-  card, with 8 MB paints and no partial frames (~350 % instead of
-  ~170 %). Fix: redo the opening fit on the first `Resized` if the
-  camera hasn't been moved since; then the bench always gets the big
-  card, so its numbers will step up once and step 6 should be compared
-  again on it (or have the bench fix the card size). Owner's call when:
-  it changes what every later bench run measures.
+None open.
 
 ## 8. Future ideas
 

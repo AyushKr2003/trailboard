@@ -482,6 +482,10 @@ pub struct App {
     camera: Camera,
     /// Camera we're gliding toward (fit / Solo).
     camera_goal: Option<Camera>,
+    /// The cards the opening camera was fitted to, and that camera: until
+    /// the camera moves or input comes, a resize fits them again (the window
+    /// manager's size arrives after the first fit, at the requested one).
+    opening_fit: Option<(Rect, Camera)>,
     /// Wheel and touchpad scrolling inside a page, and flings (`scene::scroll`):
     /// to card, at view px.
     page_scroll: scene::scroll::Scroller<(NodeId, i32, i32)>,
@@ -987,6 +991,7 @@ impl App {
             scene: Scene::new(),
             camera: Camera::default(),
             camera_goal: None,
+            opening_fit: None,
             page_scroll: Default::default(),
             board_pan: Default::default(),
             cards: HashMap::new(),
@@ -1739,6 +1744,30 @@ impl App {
         let (r, css) = self.page_view(id)?;
         let k = r.w / css.x.max(1e-3);
         Some(Rect::new(r.x + p.x * k, r.y + p.y * k, p.w * k, p.h * k))
+    }
+
+    /// The camera that shows `r` (the opening cards) in the window.
+    fn opening_camera(&self, r: Rect) -> Camera {
+        let mut goal = Camera::fit(r, self.viewport(), self.scale(), 8.0 * self.scale());
+        goal.zoom = goal.zoom.min(2.0);
+        goal
+    }
+
+    /// After a resize, fit the opening cards to the window's real size, as
+    /// long as nothing has moved the camera since they were first fitted.
+    fn refit_opening(&mut self) {
+        let Some((r, fitted)) = self.opening_fit else { return };
+        if self.camera != fitted || self.camera_goal.is_some() || self.read.is_some() {
+            self.opening_fit = None;
+            return;
+        }
+        let goal = self.opening_camera(r);
+        if goal != fitted {
+            log::info!("opening fit redone for a {:.0}×{:.0} window", self.viewport().x, self.viewport().y);
+            self.camera = goal;
+            self.opening_fit = Some((r, goal));
+            self.camera_moved();
+        }
     }
 
     fn camera_moved(&mut self) {
@@ -12606,9 +12635,8 @@ impl ApplicationHandler for App {
         if !restored {
             let shown = [last, guide].into_iter().flatten().filter_map(|id| self.scene.node(id)).map(|n| n.frame()).reduce(|a, b| a.union(&b));
             if let Some(r) = shown {
-                let mut goal = Camera::fit(r, self.viewport(), self.scale(), 8.0 * self.scale());
-                goal.zoom = goal.zoom.min(2.0);
-                self.camera = goal;
+                self.camera = self.opening_camera(r);
+                self.opening_fit = Some((r, self.camera));
                 // `ensure_visible` on the new page left a goal of its own.
                 self.camera_goal = None;
             }
@@ -12619,6 +12647,9 @@ impl ApplicationHandler for App {
         if !matches!(event, WindowEvent::RedrawRequested) {
             self.event_seen = true;
         }
+        if matches!(event, WindowEvent::MouseInput { .. } | WindowEvent::MouseWheel { .. } | WindowEvent::KeyboardInput { .. }) {
+            self.opening_fit = None;
+        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
@@ -12627,6 +12658,7 @@ impl ApplicationHandler for App {
                 }
                 // The window may have moved to another monitor.
                 self.update_card_size();
+                self.refit_opening();
             }
             WindowEvent::ScaleFactorChanged { .. } => self.camera_moved(),
             WindowEvent::ModifiersChanged(m) => self.mods = m.state(),

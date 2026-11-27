@@ -201,6 +201,12 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
 
 ### Fixed
 
+- **Pages opened at start fill the window the window manager gives.**
+  The opening view was fitted to the size Trailboard asked for, so when
+  a tiling window manager made the window bigger, the cards stayed
+  sized for the smaller one. It is fitted again when the real size
+  arrives, unless you've already moved the view.
+
 - **HEVC on laptops with an NVIDIA GPU.** When NVIDIA's driver held the
   first render node, Chromium found no hardware video decoder: HEVC didn't
   play at all and H.264, VP9 and AV1 fell back to the processor.

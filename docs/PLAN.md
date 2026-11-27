@@ -1266,6 +1266,32 @@ loaded by Trailboard and Ref A in every case.
     today's path (no GPU, Windows, an import failure). For CI's numbers
     the next lever would be drawing a page shown at 1:1 as a plain copy
     instead of a filtered, rounded quad; not in step 6, noted here only.
+
+    **CI result** (run 45987313397, perf-6e 09d3b77, all five cases, 3
+    runs each, medians; every run had the full-window card: `copied`
+    ≈249 MB/s in each video run, so the race is gone):
+
+    | Case (CPU) | Trailboard | main / renderer / gpu | Chrome | ÷ Chrome | perf |
+    |---|---|---|---|---|---|
+    | video-h264 (Xeon 6975P-C) | 268 % | 244 / 19 / 5 % | 35.1 % | 7.6× | 30 fps, 21 ms/frame, 64 % |
+    | video-av1 (Xeon 6975P-C) | 260 % | 237 / 19 / 4 % | 35.4 % | 7.3× | 30 fps, 21 ms/frame, 63 % |
+    | video-vp9 (Xeon Platinum 8370C) | 345 % | 307 / 32 / 6 % | 63.4 % | 5.4× | **25 fps**, 34 ms/frame, 84 % |
+    | pan (Xeon Platinum 8573C) | 354 % | 351 % main | — | — | 39 fps, 23 ms/frame |
+    | idle / still (Xeon 6975P-C) | 2.8 / 0.6 % | | 0.6 / 0.3 % | | idle copies 1 MB/s |
+
+    Screenshots checked: every video filling the window and playing,
+    clean card corner, the pan moving, the still board drawn. *Read:*
+    with the card the size of the window every video frame is a full
+    frame again (0 partial; the page is more than `PARTIAL_MAX` of the
+    window), so the cost is drawing ~2 M pixels on llvmpipe each frame;
+    on the slower vp9 runner the loop drops to 25 fps. These can't be set
+    against master's 8–9× directly: master's runs mostly had the smaller
+    card (the race). **The step's goal (≤ 2× Chrome in CI) is not met**;
+    what's left in CI is drawing the page itself (the 1:1 copy idea
+    above), and on a GPU the copies (dmabuf). Pan: 354 % at 39 fps
+    (352 % at 53 fps before; the cards are bigger now).
+    **Laptop:** not run yet (`scripts/bench.py --note "step 6"`, the
+    owner's machine); 6f stays 🟡 until it is, or the owner drops it.
   - ⬜ **6g. Merge `perf-6e` into `master`** (owner, 2026-11-27: only
     after 6d, 6b and 6f are done, not step by step). All of step 6 lives on
     the branch `perf-6e` until then. Before merging: `cargo test`,
@@ -1540,11 +1566,13 @@ findings and a dmabuf recommendation are written in 6f; numbers wait for
 the joint test. Verified: unit tests, clippy, local e2e with screenshots
 (typing, popup, counter, scroll; `chrome://gpu` with and without the
 knob; the opening refit on Hyprland), both CI runs' screenshots. The
-owner pushes (the session's permission check refuses `git push`). **Next
-up (with the owner, "we test all together"):** push `perf-6e`, delete
-`origin/perf-6b-try`, the CI run and the laptop run listed in 6f; write
-the numbers into 6f and the M16 table; the owner decides dmabuf's place;
-then 6g (merge).
+owner pushes (the session's permission check refuses `git push`). Then the joint CI run
+(45987313397, all five cases, owner pushed and dispatched): results in
+6f; video 5.4–7.6× Chrome with the full-window card, the ≤ 2× goal not
+met. **Next up (owner's calls):** the laptop run for 6f (or drop it);
+dmabuf's place as a milestone; whether to try the 1:1 page copy for CI
+inside M16 or leave it; then 6g (merge `perf-6e` into `master`: the push
+starts the full ~1 h bench, its result the new baseline).
 
 **Session before:** 2026-11-27 (fifty-first): read master run 45845659696
 (it confirms 6a's split on vp9, h264 and AV1); **M16 step 6e done** on

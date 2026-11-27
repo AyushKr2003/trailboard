@@ -1,13 +1,17 @@
 //! Persistence.
 
-use super::*;
+use std::time::{Duration, Instant};
+
+use storage::spaces;
+
+use super::{App, Drag};
 
 impl App {
-    pub(super) fn board_path(&self) -> std::path::PathBuf {
+    pub(crate) fn board_path(&self) -> std::path::PathBuf {
         spaces::space_board_path(&self.data_dir, self.spaces.active)
     }
 
-    pub(super) fn save(&mut self) {
+    pub(crate) fn save(&mut self) {
         if self.renderer.is_none() || !self.persist {
             return; // never initialized; don't clobber a saved board with an empty one
         }
@@ -22,7 +26,7 @@ impl App {
     }
 
     /// Jump lists and marks, if they changed.
-    pub(super) fn save_places(&mut self) {
+    pub(crate) fn save_places(&mut self) {
         if !self.places_dirty || !self.persist {
             return;
         }
@@ -32,7 +36,7 @@ impl App {
         }
     }
 
-    pub(super) fn save_index(&self) {
+    pub(crate) fn save_index(&self) {
         if self.persist
             && let Err(e) = spaces::save_index(&self.data_dir, &self.spaces)
         {
@@ -40,14 +44,14 @@ impl App {
         }
     }
 
-    pub(super) fn autosave(&mut self) {
+    pub(crate) fn autosave(&mut self) {
         if (self.dirty || self.places_dirty) && self.last_save.elapsed() > Duration::from_secs(3) && matches!(self.drag, Drag::None) {
             self.save();
         }
     }
 
     /// Open the space index and load the active space. Returns false when it has no cards.
-    pub(super) fn restore(&mut self) -> bool {
+    pub(crate) fn restore(&mut self) -> bool {
         match spaces::open_spaces(&self.data_dir) {
             Ok(idx) => self.spaces = idx,
             Err(e) => {
@@ -66,13 +70,13 @@ impl App {
         self.load_board()
     }
 
-    pub(super) fn is_private(&self) -> bool {
+    pub(crate) fn is_private(&self) -> bool {
         self.spaces.active_entry().private
     }
 
     /// Before the active space's pages open: a private space gets its cookie
     /// jar (the one it had this session, or a new one) and its page zooms.
-    pub(super) fn enter_privacy(&mut self, jar: Option<web::Jar>, zooms: Option<std::collections::BTreeMap<String, f64>>) {
+    pub(crate) fn enter_privacy(&mut self, jar: Option<web::Jar>, zooms: Option<std::collections::BTreeMap<String, f64>>) {
         if !self.is_private() {
             self.jar = None;
             self.zooms.borrow_mut().private = None;
@@ -88,7 +92,7 @@ impl App {
     }
 
     /// Load the active space's board into the (empty) scene. Returns false when it has no cards.
-    pub(super) fn load_board(&mut self) -> bool {
+    pub(crate) fn load_board(&mut self) -> bool {
         if !self.persist {
             return false;
         }

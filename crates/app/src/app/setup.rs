@@ -1,6 +1,23 @@
 //! Creating the app, and resetting a space's live state.
 
-use super::*;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
+use std::time::Instant;
+
+use scene::dock;
+use scene::keys;
+use scene::settings::Settings;
+use scene::userkeys;
+use scene::{Camera, History, motion, Scene, Selection, Vec2};
+use storage::spaces::SpaceIndex;
+use web::SpawnBeside;
+use winit::keyboard::ModifiersState;
+
+use crate::dev::script::Script;
+use crate::page::clipboard::Clipboard;
+use crate::ui::theme::Theme;
+use super::{Anims, App, Drag, Hit, ICON_KEY, max_live_from_env, PageKeys, SiteIcon};
 
 impl App {
     pub fn new(initial_urls: Vec<String>, data_dir: std::path::PathBuf, settings: Settings) -> Self {
@@ -140,7 +157,7 @@ impl App {
             sandbox: None,
             anim: Anims::default(),
             label_fades: crate::ui::chrome::Fades::default(),
-            photo: crate::ui::backdrop::Photo::default(),
+            photo: crate::board::backdrop::Photo::default(),
             wallpaper: None,
             wallpaper_checked: None,
             photo_files: Vec::new(),
@@ -187,7 +204,7 @@ impl App {
                     motion::set_slow(k);
                 }
                 let still = crate::system::desktop::reduced_motion();
-                crate::pages::welcome::set_still(still);
+                crate::builtin::welcome::set_still(still);
                 still
             },
             glides: motion::Glides::default(),

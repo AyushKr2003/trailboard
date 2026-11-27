@@ -1,9 +1,16 @@
 //! Events from pages.
 
-use super::*;
+use std::time::Instant;
+
+use scene::{NodeId, Rect};
+use web::WebEvent;
+
+use crate::ui::omnibox::Target;
+use crate::ui::palette;
+use super::{App, Drag, Hit, ICON_KEY, KEY_ID_BITS, now_ms, PageKeys, Preview, PREVIEW_KEY, SiteIcon, TEXT_SETTLE, THUMBS_PER_FRAME};
 
 impl App {
-    pub(super) fn handle_web_events(&mut self) {
+    pub(crate) fn handle_web_events(&mut self) {
         for ev in web::drain_events() {
             match ev {
                 WebEvent::Relaunch { args, cwd } => self.relaunched(&args, &cwd),
@@ -162,7 +169,7 @@ impl App {
                     {
                         continue;
                     }
-                    let Some(action) = self.node_of(page).and(crate::pages::welcome::action(&action)) else {
+                    let Some(action) = self.node_of(page).and(crate::builtin::welcome::action(&action)) else {
                         log::warn!("app page {page} asked for unknown action {action:?}");
                         continue;
                     };
@@ -220,7 +227,7 @@ impl App {
     }
 
     /// Asks pages whose text is due (loaded and settled) for it, for history.
-    pub(super) fn read_due_texts(&mut self) {
+    pub(crate) fn read_due_texts(&mut self) {
         if self.text_due.is_empty() {
             return;
         }
@@ -242,7 +249,7 @@ impl App {
     }
 
     /// Keeps a page's text in the history index. Returns whether it was kept.
-    pub(super) fn record_visit(&mut self, url: &str, title: &str, text: &str) -> bool {
+    pub(crate) fn record_visit(&mut self, url: &str, title: &str, text: &str) -> bool {
         if self.is_private() || !self.settings.history {
             return false;
         }
@@ -263,7 +270,7 @@ impl App {
 
     /// Keeps what card `id` shows as the thumbnail of `url`, the page just
     /// recorded in history.
-    pub(super) fn save_thumb(&mut self, id: NodeId, url: &str) {
+    pub(crate) fn save_thumb(&mut self, id: NodeId, url: &str) {
         let Some(card) = self.cards.get(&id) else { return };
         let started = Instant::now();
         let thumb = {
@@ -287,7 +294,7 @@ impl App {
     }
 
     /// The thumbnail history keeps for `url`, decoded.
-    pub(super) fn load_thumb(&self, url: &str) -> Option<storage::thumbs::Thumb> {
+    pub(crate) fn load_thumb(&self, url: &str) -> Option<storage::thumbs::Thumb> {
         let jpeg = match self.page_index.as_ref()?.thumb(url) {
             Ok(j) => j?,
             Err(e) => {
@@ -304,7 +311,7 @@ impl App {
 
     /// Uploads the thumbnail of `url` as the palette's preview, if it isn't
     /// already. Returns its size, or `None` when there's nothing to show.
-    pub(super) fn load_preview(&mut self, url: Option<String>) -> Option<(u32, u32)> {
+    pub(crate) fn load_preview(&mut self, url: Option<String>) -> Option<(u32, u32)> {
         let url = url?;
         if self.preview.as_ref().is_none_or(|p| p.url != url) {
             let size = self.load_thumb(&url).and_then(|t| {
@@ -321,7 +328,7 @@ impl App {
 
     /// The page a palette row would show in the preview: a history page, or
     /// a closed card's.
-    pub(super) fn preview_url(&self, row: &palette::Row) -> Option<String> {
+    pub(crate) fn preview_url(&self, row: &palette::Row) -> Option<String> {
         if let Some(url) = &row.history {
             return Some(url.clone());
         }
@@ -336,7 +343,7 @@ impl App {
     /// Gives sleeping cards on screen that have no picture (restored after a
     /// restart, or back from another space) their page's thumbnail, dimmed
     /// like a snapshot, a few per frame. Each card is looked up once.
-    pub(super) fn load_sleeping_thumbs(&mut self) {
+    pub(crate) fn load_sleeping_thumbs(&mut self) {
         if self.page_index.is_none() || self.read.is_some() {
             return;
         }
@@ -370,7 +377,7 @@ impl App {
     }
 
     /// Keeps `pixels` as the icon of `page_url`'s site, saving it when it is new.
-    pub(super) fn set_icon(&mut self, page_url: &str, width: u32, height: u32, pixels: Vec<u8>) {
+    pub(crate) fn set_icon(&mut self, page_url: &str, width: u32, height: u32, pixels: Vec<u8>) {
         let Some(site) = scene::icon::site(page_url) else { return };
         let Some(icon) = storage::icons::Icon::new(width, height, pixels) else {
             log::warn!("icon for {site}: unusable size {width}x{height}");
@@ -407,7 +414,7 @@ impl App {
     }
 
     /// The texture key of `url`'s site icon, if there is one.
-    pub(super) fn icon_key(&self, url: &str) -> Option<u64> {
+    pub(crate) fn icon_key(&self, url: &str) -> Option<u64> {
         let key = self.icons.get(&scene::icon::site(url)?)?.key;
         self.renderer.as_ref().is_some_and(|r| r.has_page(key)).then_some(key)
     }

@@ -1,13 +1,11 @@
-//! What the app draws over the board: chrome, panels, menus, the palette.
+//! What the app draws over the board: chrome, theme, icons, the HUD, menus, the address box, the palette, messages.
 
-pub mod backdrop;
 pub mod chrome;
-pub mod hints;
 pub mod hud;
 pub mod icons;
 pub mod menu;
+pub(crate) mod messages;
 pub mod omnibox;
 pub mod palette;
-pub mod pathfield;
-pub mod sidebar;
+mod palette_actions;
 pub mod theme;

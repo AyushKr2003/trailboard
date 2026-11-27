@@ -1,9 +1,22 @@
 //! Input.
 
-use super::*;
+use std::time::{Duration, Instant};
+
+use scene::dock;
+use scene::keys::{self, Outcome};
+use scene::userkeys::{self, Mode as KeyMode};
+use scene::{Node, NodeId, Rect, selection, Vec2};
+use web::MouseButton as WebButton;
+use winit::event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase};
+use winit::keyboard::{KeyCode, NamedKey};
+
+use crate::keyboard::keymap::{self, KeyIn};
+use crate::ui::omnibox::{Omnibox, Target};
+use crate::ui::palette::{self, Item};
+use super::{App, Confirm, cursor_icon, DOCK_GAP, Drag, Hit, home_path, MIN_CARD, PageKeys, RESIZE_GRIP, WHEEL_LINE};
 
 impl App {
-    pub(super) fn hit(&self, screen: Vec2) -> Hit {
+    pub(crate) fn hit(&self, screen: Vec2) -> Hit {
         if let Some(id) = self.read {
             return if self.read_layout().content.contains(screen) { self.content_hit(id, screen) } else { Hit::ReadBar(id) };
         }
@@ -57,7 +70,7 @@ impl App {
         self.content_hit(id, screen)
     }
 
-    pub(super) fn mouse_input(&mut self, state: ElementState, button: MouseButton) {
+    pub(crate) fn mouse_input(&mut self, state: ElementState, button: MouseButton) {
         let p = self.cursor;
         let mods = keymap::modifiers(self.mods);
         if state == ElementState::Pressed {
@@ -426,7 +439,7 @@ impl App {
         }
     }
 
-    pub(super) fn cursor_moved(&mut self, p: Vec2) {
+    pub(crate) fn cursor_moved(&mut self, p: Vec2) {
         self.pointer_in = true;
         if let Some(m) = self.menu.as_mut()
             && m.rect.contains(p)
@@ -586,7 +599,7 @@ impl App {
         }
     }
 
-    pub(super) fn set_cursor(&self, cursor: web::Cursor) {
+    pub(crate) fn set_cursor(&self, cursor: web::Cursor) {
         let Some(w) = self.window() else { return };
         match cursor_icon(cursor) {
             Some(icon) => {
@@ -597,7 +610,7 @@ impl App {
         }
     }
 
-    pub(super) fn wheel(&mut self, delta: MouseScrollDelta, phase: TouchPhase) {
+    pub(crate) fn wheel(&mut self, delta: MouseScrollDelta, phase: TouchPhase) {
         let (dx, dy, lines) = match delta {
             MouseScrollDelta::LineDelta(x, y) => (x, y, true),
             MouseScrollDelta::PixelDelta(p) => (p.x as f32, p.y as f32, false),
@@ -629,7 +642,7 @@ impl App {
             let rows = if lines {
                 -dy * 3.0
             } else {
-                -dy / (crate::ui::sidebar::ROW_H * self.ui())
+                -dy / (crate::trails::panel::ROW_H * self.ui())
             };
             self.sidebar.scroll = panel.scroll_by(self.sidebar.scroll, rows.round() as isize);
             return;
@@ -712,7 +725,7 @@ impl App {
 
     /// This frame's part of a wheel glide or touchpad fling on the board.
     /// Runs every frame, busy or not: the touchpad's fling speed is timed by it.
-    pub(super) fn step_board_pan(&mut self, dt: f32) {
+    pub(crate) fn step_board_pan(&mut self, dt: f32) {
         // The camera is going somewhere else, or the board is off screen.
         if self.board_pan.busy() && (self.camera_goal.is_some() || self.read.is_some()) {
             self.board_pan.stop();
@@ -725,17 +738,17 @@ impl App {
     }
 
     /// Shows the shortcut sheet, from the top with no filter.
-    pub(super) fn show_hints(&mut self) {
+    pub(crate) fn show_hints(&mut self) {
         self.hints = true;
-        self.sheet = crate::ui::hints::Sheet::open(self.still);
-        self.sheet_sections = crate::ui::hints::sections(&self.keys);
+        self.sheet = crate::keyboard::key_sheet::Sheet::open(self.still);
+        self.sheet_sections = crate::keyboard::key_sheet::sections(&self.keys);
         log::info!("hints shown");
     }
 
     /// A key while the shortcut sheet shows: typing filters it, the arrows,
     /// Page keys and Home/End scroll it, Esc clears the filter and then
     /// closes it, as do ? and F1. Other keys do nothing.
-    pub(super) fn sheet_key(&mut self, ev: &KeyIn, chord: bool) {
+    pub(crate) fn sheet_key(&mut self, ev: &KeyIn, chord: bool) {
         let sh = &mut self.sheet;
         let close = |app: &mut Self| {
             app.hints = false;
@@ -763,7 +776,7 @@ impl App {
         }
     }
 
-    pub(super) fn key(&mut self, ev: KeyIn) {
+    pub(crate) fn key(&mut self, ev: KeyIn) {
         let pressed = ev.pressed;
         let ctrl = self.mods.control_key();
         let shift = self.mods.shift_key();
@@ -896,7 +909,7 @@ impl App {
             }
             // A file chooser's path: Tab completes the last part.
             if matches!(ob.target, Target::Files(_)) && !ctrl && !alt && ev.named == Some(NamedKey::Tab) {
-                match crate::ui::pathfield::complete(&ob.text, &home_path(), crate::ui::pathfield::read_dir) {
+                match crate::page::pathfield::complete(&ob.text, &home_path(), crate::page::pathfield::read_dir) {
                     Some(t) => ob.set(&t),
                     None => log::debug!("files: nothing to complete for {:?}", ob.text),
                 }
@@ -1468,12 +1481,12 @@ impl App {
         }
     }
 
-    pub(super) fn drag_is_idle(&self) -> bool {
+    pub(crate) fn drag_is_idle(&self) -> bool {
         matches!(self.drag, Drag::None)
     }
 
     /// The selection band being drawn, in world units.
-    pub(super) fn band(&self) -> Option<Rect> {
+    pub(crate) fn band(&self) -> Option<Rect> {
         match self.drag {
             Drag::Band { anchor } => Some(Rect::from_corners(anchor, self.to_world(self.cursor))),
             _ => None,

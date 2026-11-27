@@ -1,6 +1,19 @@
 //! The window's event loop: winit calls in here.
 
-use super::*;
+use std::sync::Arc;
+
+use compositor::Renderer;
+use scene::Vec2;
+use storage::spaces;
+use winit::application::ApplicationHandler;
+use winit::event::WindowEvent;
+use winit::event_loop::ActiveEventLoop;
+use winit::keyboard::ModifiersState;
+use winit::platform::wayland::WindowAttributesExtWayland;
+use winit::window::{Window, WindowId};
+
+use crate::keyboard::keymap::KeyIn;
+use super::{App, Hit};
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {

@@ -1,15 +1,21 @@
 //! Look.
 
-use super::*;
+use scene::jump::Before;
+use scene::{NodeId, placement, Vec2};
+use storage::spaces;
+
+use crate::system::desktop::Desktop;
+use crate::ui::theme::Theme;
+use super::{App, Confirm};
 
 impl App {
     /// Window scale times the desktop's text size: overlays are laid out in this.
-    pub(super) fn ui(&self) -> f32 {
+    pub(crate) fn ui(&self) -> f32 {
         self.scale() * self.theme.text_scale
     }
 
     /// Start following the desktop's look (once the window exists).
-    pub(super) fn start_desktop(&mut self) {
+    pub(crate) fn start_desktop(&mut self) {
         let d = Desktop::new(crate::ui::theme::state_dir(), crate::ui::theme::user_shell_toml(), true);
         let t = d.read(&self.theme);
         self.desktop = Some(d);
@@ -17,7 +23,7 @@ impl App {
     }
 
     /// Tells pages light or dark, from the theme and the *Page colours* setting.
-    pub(super) fn apply_page_scheme(&mut self) {
+    pub(crate) fn apply_page_scheme(&mut self) {
         let dark = self.settings.page_colours.dark(self.theme.light());
         if self.page_scheme != Some(dark) {
             log::info!("pages: {}", if dark { "dark" } else { "light" });
@@ -29,7 +35,7 @@ impl App {
         }
     }
 
-    pub(super) fn set_theme(&mut self, mut t: Theme) {
+    pub(crate) fn set_theme(&mut self, mut t: Theme) {
         t.rounding = self.settings.corner_radius(t.hyprland);
         log::info!(
             "theme: {} accent={:?} background={:?} rounding={} text-scale={:.2}",
@@ -49,7 +55,7 @@ impl App {
         self.menu = None;
     }
 
-    pub(super) fn follow_desktop(&mut self) {
+    pub(crate) fn follow_desktop(&mut self) {
         self.check_wallpaper(false);
         let before = self.desktop.as_ref().and_then(Desktop::full_window);
         if let Some(t) = self.desktop.as_mut().and_then(|d| d.poll(&self.theme)) {
@@ -62,7 +68,7 @@ impl App {
 
     /// New cards take the shape of a full window on an empty workspace
     /// (from Hyprland), else of the monitor the window is on, else 16:9.
-    pub(super) fn update_card_size(&mut self) {
+    pub(crate) fn update_card_size(&mut self) {
         let full = self.desktop.as_ref().and_then(Desktop::full_window).map(|(w, h)| Vec2::new(w, h));
         // Wayland names the window's monitor only once it is shown: until
         // then, the first monitor.
@@ -78,7 +84,7 @@ impl App {
     }
 
     /// Ctrl+Shift+W: delete the space, asking first unless it is empty.
-    pub(super) fn ask_delete_space(&mut self) {
+    pub(crate) fn ask_delete_space(&mut self) {
         let e = self.spaces.active_entry();
         if self.spaces.spaces.len() < 2 {
             self.toast(format!("{} is the only space; it can't be deleted", e.name));
@@ -92,7 +98,7 @@ impl App {
         }
     }
 
-    pub(super) fn delete_space(&mut self) {
+    pub(crate) fn delete_space(&mut self) {
         self.confirm = None;
         let gone = self.spaces.active;
         let name = self.spaces.active_entry().name.clone();

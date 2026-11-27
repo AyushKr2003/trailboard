@@ -2,9 +2,13 @@
 //! board; links open beside the page they came from.
 
 mod app;
+mod board;
+mod builtin;
 mod dev;
-mod pages;
+mod keyboard;
+mod page;
 mod system;
+mod trails;
 mod ui;
 
 use dev::perf;

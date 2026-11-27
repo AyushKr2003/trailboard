@@ -1,9 +1,25 @@
 //! Drawing.
 
-use super::*;
+use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
+
+use compositor::{Background, Layer, Quad, Renderer, Shape};
+use scene::dock;
+use scene::keys::Outcome;
+use scene::settings::self as prefs;
+use scene::userkeys;
+use scene::{Edge, motion, Node, NodeId, read, Rect, selection, Vec2};
+
+use crate::dev::script::Script;
+use crate::keyboard::keymap;
+use crate::system::desktop::Desktop;
+use crate::ui::omnibox::Target;
+use crate::ui::palette::{self, Command, Item};
+use crate::ui::theme::{rgb, text_on};
+use super::{anim_key, App, ARRANGE_HELP, BAR_BTN, BAR_CLOSE_MIN, BAR_GAP, BAR_H, BAR_NAV_MIN, Confirm, dock_key, DockParts, Drag, Hit, IDLE_TICK, LABELS_ALL_BELOW, menu_layer, page_key, PageKeys, PREFIX_PANEL_AFTER, PREVIEW_KEY, ReadMorph, SCROLL_FLASH, stack_step_px};
 
 impl App {
-    pub(super) fn draw(&mut self) {
+    pub(crate) fn draw(&mut self) {
         let scale = self.scale();
         let vp = self.viewport();
         let k = self.camera.pixels_per_unit(scale);
@@ -59,7 +75,7 @@ impl App {
         let photo = self.board_photo();
         let update = self.photo.update(photo.as_deref(), (vp.x.max(0.0) as u32, vp.y.max(0.0) as u32));
         if let (Some(t), Some(r)) = (update.upload, self.renderer.as_mut()) {
-            r.update_page(crate::ui::backdrop::TEXTURE, t.width, t.height, &t.pixels, self.photo.serial);
+            r.update_page(crate::board::backdrop::TEXTURE, t.width, t.height, &t.pixels, self.photo.serial);
         }
         if let Some((p, e)) = update.failed {
             let name = p.file_name().map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().to_string());
@@ -105,7 +121,7 @@ impl App {
             l.quads.push(Quad {
                 shape: Shape::Rect { rect: Rect::new(0.0, 0.0, vp.x, vp.y), radius: 0.0 },
                 color: [dim, dim, dim, 1.0],
-                texture: Some(crate::ui::backdrop::TEXTURE),
+                texture: Some(crate::board::backdrop::TEXTURE),
             });
             layers.push(l);
         }
@@ -749,11 +765,11 @@ impl App {
                 .filter_map(|id| Some((id, self.icon_key(&self.scene.node(id)?.url)?)))
                 .collect();
             let icon = |n: &scene::Node| icons.get(&n.id).copied();
-            let chips: Vec<crate::ui::sidebar::SpaceChip> = self
+            let chips: Vec<crate::trails::panel::SpaceChip> = self
                 .spaces
                 .spaces
                 .iter()
-                .map(|e| crate::ui::sidebar::SpaceChip { name: e.name.clone(), colour: e.tint.as_deref().map(|t| th.color(t)), private: e.private })
+                .map(|e| crate::trails::panel::SpaceChip { name: e.name.clone(), colour: e.tint.as_deref().map(|t| th.color(t)), private: e.private })
                 .collect();
             let space = self.spaces.active_entry().name.clone();
             // What the head shows of the current card.
@@ -763,16 +779,16 @@ impl App {
                 .map(|(n, c)| {
                     let web = c.is_some_and(|c| c.page.kind() == web::PageKind::Web);
                     let addressed = !n.is_note() && n.url != scene::note::START_URL;
-                    crate::ui::sidebar::Current {
+                    crate::trails::panel::Current {
                         web,
                         can_back: c.is_some_and(|c| c.can_back),
                         can_forward: c.is_some_and(|c| c.can_forward),
-                        host: if addressed { crate::ui::sidebar::pill_host(&n.url) } else { String::new() },
+                        host: if addressed { crate::trails::panel::pill_host(&n.url) } else { String::new() },
                         secure: n.url.starts_with("https:"),
                     }
                 })
                 .unwrap_or_default();
-            let marks = crate::ui::sidebar::View {
+            let marks = crate::trails::panel::View {
                 scroll: self.sidebar.scroll,
                 sel: if keys { self.sidebar.index(&rows) } else { None },
                 hover: self.sidebar_hover,
@@ -790,7 +806,7 @@ impl App {
             let came = self.anim.sidebar.update(Some(0), Instant::now());
             if let Some(r) = self.renderer.as_mut() {
                 self.sidebar_motion.still = self.still;
-                let mut l = crate::ui::sidebar::layer(r, &panel, &rows, &marks, &self.scene, &th, ui, &mut self.sidebar_motion);
+                let mut l = crate::trails::panel::layer(r, &panel, &rows, &marks, &self.scene, &th, ui, &mut self.sidebar_motion);
                 if !self.still {
                     self.sidebar_last = Some((l.clone(), panel.rect.right()));
                 }
@@ -1129,7 +1145,7 @@ impl App {
         if self.hints
             && let Some(r) = self.renderer.as_mut()
         {
-            for mut l in crate::ui::hints::layers(r, ui, screen, &th, &mut self.sheet, &self.sheet_sections, self.cursor) {
+            for mut l in crate::keyboard::key_sheet::layers(r, ui, screen, &th, &mut self.sheet, &self.sheet_sections, self.cursor) {
                 crate::ui::chrome::fade(&mut l, came, Vec2::new(0.0, 0.0));
                 layers.push(l);
             }
@@ -1169,7 +1185,7 @@ impl App {
     /// shrinking back: the board dims behind it and its corners square off
     /// as it fills the window. The page's pixels keep
     /// their own scale (`read::morph`), so nothing stretches on the way.
-    pub(super) fn read_morph_layer(&mut self, m: ReadMorph) -> Option<Layer> {
+    pub(crate) fn read_morph_layer(&mut self, m: ReadMorph) -> Option<Layer> {
         let n = self.scene.node(m.id)?;
         let (header, content) = (self.to_screen_rect(n.header()), self.to_screen_rect(n.rect));
         let card_css = self.card_css(n);
@@ -1209,7 +1225,7 @@ impl App {
 
     /// Card `id`'s docked inspector and the divider before it.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn dock_layer(&self, l: &mut Layer, id: NodeId, parts: &DockParts, side: dock::Side, radius: f32, focused: bool, hot: bool) {
+    pub(crate) fn dock_layer(&self, l: &mut Layer, id: NodeId, parts: &DockParts, side: dock::Side, radius: f32, focused: bool, hot: bool) {
         let th = &self.theme;
         let scale = self.scale();
         let key = dock_key(self.epoch, id);
@@ -1238,7 +1254,7 @@ impl App {
     }
 
     /// Solo: card `id`'s page across the whole window.
-    pub(super) fn read_layer(&mut self, id: NodeId) -> Layer {
+    pub(crate) fn read_layer(&mut self, id: NodeId) -> Layer {
         let th = self.theme.clone();
         let scale = self.scale();
         let lay = self.read_layout();
@@ -1279,7 +1295,7 @@ impl App {
     /// loses something.
     /// What can follow a half-typed sequence (`g`, `;`, `m`), once it has
     /// waited [`PREFIX_PANEL_AFTER`]: the next keys and what they do.
-    pub(super) fn prefix_rows(&self) -> Vec<(String, String)> {
+    pub(crate) fn prefix_rows(&self) -> Vec<(String, String)> {
         let Some(at) = self.pending.since() else { return Vec::new() };
         if at.elapsed() < PREFIX_PANEL_AFTER && self.prefix_asked != Some(at) {
             return Vec::new();
@@ -1296,7 +1312,7 @@ impl App {
 
     /// A panel of `rows` (keys, what they do) with its bottom at `bottom`:
     /// its left edge at `left`, else centred on `mid_x`.
-    pub(super) fn prefix_panel(&mut self, rows: &[(String, String)], left: Option<f32>, mid_x: f32, bottom: f32) -> (Layer, f32) {
+    pub(crate) fn prefix_panel(&mut self, rows: &[(String, String)], left: Option<f32>, mid_x: f32, bottom: f32) -> (Layer, f32) {
         const MAX_ROWS: usize = 14;
         let th = &self.theme;
         let ui = self.scale() * th.text_scale;
@@ -1336,7 +1352,7 @@ impl App {
 
     /// An entered card's mode and what is half-typed in it (*Page · section
     /// 2.1 · 40% · 5*), for the corner chip or the window title.
-    pub(super) fn mode_text(&self) -> Option<String> {
+    pub(crate) fn mode_text(&self) -> Option<String> {
         if !self.entered() || self.link_hints.is_some() {
             return None;
         }
@@ -1357,7 +1373,7 @@ impl App {
     }
 
     /// What `;` hints' labels do (*Hints · copy a link*), while they are up.
-    pub(super) fn hints_text(&self) -> Option<String> {
+    pub(crate) fn hints_text(&self) -> Option<String> {
         let lh = self.link_hints.as_ref().filter(|h| h.hints.is_some())?;
         let kind = lh.kind?;
         if self.omnibox.is_some() {
@@ -1373,7 +1389,7 @@ impl App {
     /// The window's title: the mode (or what hints do) and the entered
     /// card's title, else just the app's name. With nothing drawn over the
     /// page (`mode-label` Ring), this is where the mode is read, in Solo too.
-    pub(super) fn title_text(&self) -> String {
+    pub(crate) fn title_text(&self) -> String {
         let card = self.focused.filter(|_| self.entered()).and_then(|id| self.scene.node(id)).map(|n| n.title.trim()).filter(|t| !t.is_empty());
         match (self.hints_text().or_else(|| self.mode_text()), card) {
             (Some(m), Some(t)) => format!("{m} — {t}"),
@@ -1383,7 +1399,7 @@ impl App {
     }
 
     /// Sets the window title when it has changed (`App::title_text`).
-    pub(super) fn update_title(&mut self) {
+    pub(crate) fn update_title(&mut self) {
         let want = self.title_text();
         if want != self.title_shown
             && let Some(w) = self.window()
@@ -1393,7 +1409,7 @@ impl App {
         }
     }
 
-    pub(super) fn message(&mut self, text: &str, mid_x: f32, bottom: f32, warn: bool) -> Layer {
+    pub(crate) fn message(&mut self, text: &str, mid_x: f32, bottom: f32, warn: bool) -> Layer {
         let th = &self.theme;
         let ui = self.scale() * th.text_scale;
         let size = crate::ui::chrome::type_::BODY * ui;
@@ -1415,7 +1431,7 @@ impl App {
     }
 
     /// Sends this frame's part of a touchpad fling to its page.
-    pub(super) fn step_page_scroll(&mut self, dt: f32) {
+    pub(crate) fn step_page_scroll(&mut self, dt: f32) {
         let Some(((id, x, y), d)) = self.page_scroll.step(dt) else { return };
         match self.cards.get(&id) {
             Some(card) => card.page.mouse_wheel(x, y, keymap::modifiers(self.mods), d.x as i32, d.y as i32, true),

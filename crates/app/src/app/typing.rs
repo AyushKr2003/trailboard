@@ -1,11 +1,16 @@
 //! Typing keys.
 
-use super::*;
+use std::time::{Duration, Instant};
+
+use scene::NodeId;
+use scene::keys::Action as KeyAction;
+
+use super::{App, Editing};
 
 impl App {
     /// Insert mode's own keys (`keys::insert`): the field in your editor,
     /// the primary selection pasted.
-    pub(super) fn insert_action(&mut self, action: KeyAction) {
+    pub(crate) fn insert_action(&mut self, action: KeyAction) {
         let Some(id) = self.focused.filter(|_| self.entered()) else { return };
         match action {
             KeyAction::PastePrimary => match self.clipboard.primary().filter(|t| !t.is_empty()) {
@@ -49,7 +54,7 @@ impl App {
     }
 
     /// A page's answer about the field being edited.
-    pub(super) fn field_report(&mut self, node: NodeId, report: web::field::Report) {
+    pub(crate) fn field_report(&mut self, node: NodeId, report: web::field::Report) {
         use web::field::Report;
         let Some(e) = self.editing.as_mut().filter(|e| e.node == node) else { return };
         match report {
@@ -74,15 +79,15 @@ impl App {
     }
 
     /// The field's text came: it goes to a private file and the editor starts on it.
-    pub(super) fn start_editor(&mut self, text: String) {
+    pub(crate) fn start_editor(&mut self, text: String) {
         use std::os::unix::process::CommandExt;
         let Some(e) = self.editing.as_mut() else { return };
-        let file = crate::system::editor::file_for(e.token);
-        if let Err(err) = crate::system::editor::write_private(&file, &text) {
+        let file = crate::page::editor::file_for(e.token);
+        if let Err(err) = crate::page::editor::write_private(&file, &text) {
             self.editing = None;
             return self.toast(format!("Can't write the text for your editor: {err}"));
         }
-        let Some(words) = crate::system::editor::command(&file, |n| std::env::var(n).ok(), crate::system::editor::on_path) else {
+        let Some(words) = crate::page::editor::command(&file, |n| std::env::var(n).ok(), crate::page::editor::on_path) else {
             let _ = std::fs::remove_file(&file);
             self.editing = None;
             return self.toast("No terminal for your editor · set TRAILBOARD_EDITOR to a command");
@@ -116,7 +121,7 @@ impl App {
     /// Each frame: when the editor ends, or (if it handed the file to an
     /// editor already running and returned at once) when the file is saved,
     /// the text goes back into the field.
-    pub(super) fn tend_editor(&mut self) {
+    pub(crate) fn tend_editor(&mut self) {
         const ANSWER: Duration = Duration::from_secs(3);
         const HANDED_OFF: Duration = Duration::from_secs(2);
         let Some(e) = self.editing.as_mut() else { return };
@@ -156,7 +161,7 @@ impl App {
         if !done {
             return;
         }
-        let text = std::fs::read_to_string(&file).map(|t| crate::system::editor::saved_text(&t)).unwrap_or_else(|_| e.original.clone());
+        let text = std::fs::read_to_string(&file).map(|t| crate::page::editor::saved_text(&t)).unwrap_or_else(|_| e.original.clone());
         if text == e.original {
             let _ = std::fs::remove_file(&file);
             self.editing = None;

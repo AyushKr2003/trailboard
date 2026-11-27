@@ -88,198 +88,167 @@
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use compositor::{Background, Layer, Quad, Renderer, Shape, Text};
+use compositor::{Layer, Renderer};
 use scene::arrange::Arrange;
 use scene::caret;
 use scene::dock;
 use scene::hint;
-use scene::jump::{self, Before, BoardSpot, ScrollSpot};
-use scene::keys::{self, Action as KeyAction, Outcome};
-use scene::nav::{self, Dir};
-use scene::pagezoom::{self, SiteZooms};
+use scene::jump::{self, Before, ScrollSpot};
+use scene::keys;
+use scene::pagezoom::SiteZooms;
 use scene::scrolltarget;
-use scene::userkeys::{self, Mode as KeyMode, Step};
-use scene::settings::{self as prefs, Settings};
-use scene::liveness::Awake;
-use scene::{liveness, motion, placement, read, selection, tidy, Camera, Change, Edge, History, Node, NodeId, Rect, Scene, Selection, TrailStep, Vec2};
-use storage::spaces::{self, SpaceId, SpaceIndex};
-use web::{MouseButton as WebButton, Page, SpawnBeside, WebEvent};
-use winit::application::ApplicationHandler;
-use web::menu::{MenuAction, MenuItem};
-use web::EditCommand;
-use winit::dpi::{PhysicalPosition, PhysicalSize};
-use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent};
-use winit::event_loop::ActiveEventLoop;
-use winit::keyboard::{KeyCode, ModifiersState, NamedKey};
-use winit::platform::wayland::WindowAttributesExtWayland;
-use winit::window::{CursorIcon, Window, WindowId};
+use scene::settings::Settings;
+use scene::userkeys;
+use scene::{Camera, Edge, History, motion, Node, NodeId, read, Rect, Scene, Selection, Vec2};
+use storage::spaces::{SpaceId, SpaceIndex};
+use web::{MouseButton as WebButton, Page, SpawnBeside};
+use winit::event::MouseButton;
+use winit::keyboard::ModifiersState;
+use winit::window::CursorIcon;
 
-use crate::system::clipboard::{Clipboard, Paste};
+use crate::board::camera::Gather;
+use crate::board::spaces::Session;
+use crate::dev::script::Script;
+use crate::keyboard::jumps::SectionAsk;
+use crate::keyboard::jumps::SpotAsk;
+use crate::keyboard::page_nav::CaretCard;
+use crate::keyboard::scroll_sections::ScrollFlash;
+use crate::page::clipboard::Clipboard;
+use crate::page::dialogs::PageDialog;
+use crate::page::downloads::SaveAs;
+use crate::page::editor::Editing;
+use crate::page::file_chooser::Choosing;
+use crate::page::inspector::Dock;
+use crate::page::inspector::DockParts;
 use crate::system::desktop::Desktop;
-use crate::system::launch;
-use crate::ui::theme::{rgb, text_on, Theme};
-use crate::system::keymap::{self, KeyIn};
+use crate::trails::joins::CardPick;
 use crate::ui::menu::{self, ContextMenu, Entry};
-use crate::ui::omnibox::{self, Omnibox, Target};
-use crate::ui::palette::{self, Command, Item};
-use crate::dev::script::{Cmd, Script};
-use crate::ui::sidebar::Panel;
+use crate::ui::messages::LaterLine;
+use crate::ui::omnibox::Omnibox;
+use crate::ui::palette;
+use crate::ui::theme::{rgb, Theme};
 
-mod arranging;
-mod board_bg;
-mod camera;
-mod cards;
-mod clipboard_ime;
-mod cookies;
-mod dialogs;
-mod downloads;
 mod drawing;
-mod file_chooser;
-mod find_zoom;
 mod geometry;
 mod input;
-mod inspector;
-mod jumps_marks;
-mod link_hints;
 mod look;
-mod messages;
 mod page_events;
-mod page_extras;
-mod palette_ui;
-mod permissions;
 mod persist;
-mod scripting;
-mod scroll_sections;
 mod setup;
-mod side_panel;
-mod space_ops;
-mod trails;
 mod typing;
-mod user_keys;
 mod window_events;
 
-const MIN_CARD: f32 = 240.0;
+pub(crate) const MIN_CARD: f32 = 240.0;
 /// How long a half-typed sequence waits before the panel of what can
 /// follow it shows (typed quickly, `gg` never shows it).
-const PREFIX_PANEL_AFTER: Duration = Duration::from_millis(400);
+pub(crate) const PREFIX_PANEL_AFTER: Duration = Duration::from_millis(400);
 /// The longest the event loop sleeps with nothing scheduled (see `App::next_deadline`).
-pub const IDLE_TICK: Duration = Duration::from_millis(250);
+pub(crate) const IDLE_TICK: Duration = Duration::from_millis(250);
 /// How long after a page loads (or retitles itself) its text is read for history.
-const TEXT_SETTLE: Duration = Duration::from_millis(1200);
+pub(crate) const TEXT_SETTLE: Duration = Duration::from_millis(1200);
 /// How long the outline around a newly chosen scroll section shows.
-const SCROLL_FLASH: Duration = Duration::from_millis(900);
+pub(crate) const SCROLL_FLASH: Duration = Duration::from_millis(900);
 /// One keyboard move or resize step (M, then h/j/k/l), in logical px on screen.
-const ARRANGE_STEP: f32 = 40.0;
+pub(crate) const ARRANGE_STEP: f32 = 40.0;
 /// The fine step with Ctrl.
-const ARRANGE_FINE: f32 = 8.0;
-const ARRANGE_HELP: &str = "Moving · h j k l move · Shift resize · Ctrl fine · Enter done · Esc cancel";
-const RESIZE_GRIP: f32 = 18.0;
+pub(crate) const ARRANGE_FINE: f32 = 8.0;
+pub(crate) const ARRANGE_HELP: &str = "Moving · h j k l move · Shift resize · Ctrl fine · Enter done · Esc cancel";
+pub(crate) const RESIZE_GRIP: f32 = 18.0;
 /// A card's name sits on a label above it, the same size on screen at any
 /// zoom: its site's icon and title, and under the pointer (or on the current
 /// card) its buttons. The label is the card's handle: drag it to move the
 /// card. Sizes in px, times the UI scale.
-const BAR_H: f32 = 26.0;
+pub(crate) const BAR_H: f32 = 26.0;
 /// Between the label and the card.
-const BAR_GAP: f32 = 6.0;
+pub(crate) const BAR_GAP: f32 = 6.0;
 /// Width of a label button (close, reload, forward, back).
-const BAR_BTN: f32 = 24.0;
+pub(crate) const BAR_BTN: f32 = 24.0;
 /// A card narrower than this on screen has no room for back, forward and
 /// reload on its label; narrower than `BAR_CLOSE_MIN`, none for close either.
-const BAR_NAV_MIN: f32 = 280.0;
-const BAR_CLOSE_MIN: f32 = 96.0;
+pub(crate) const BAR_NAV_MIN: f32 = 280.0;
+pub(crate) const BAR_CLOSE_MIN: f32 = 96.0;
 /// Below this zoom every card shows its label (landmarks on a far-out
 /// board); above it only the current card, the one under the pointer and
 /// selected ones do.
-const LABELS_ALL_BELOW: f32 = 0.45;
+pub(crate) const LABELS_ALL_BELOW: f32 = 0.45;
 /// Height of the Solo title bar, in overlay px (scaled by `ui()`).
 /// None: the page fills the whole window (Tab or Esc goes back).
-const READ_BAR: f32 = 0.0;
+pub(crate) const READ_BAR: f32 = 0.0;
 
 /// A card moving between the board and Solo (`scene::read::morph`).
 #[derive(Debug, Clone, Copy)]
-struct ReadMorph {
-    id: NodeId,
+pub(crate) struct ReadMorph {
+    pub(crate) id: NodeId,
     /// Growing into Solo (else shrinking back to its place on the board).
-    entering: bool,
-    start: Instant,
+    pub(crate) entering: bool,
+    pub(crate) start: Instant,
 }
 
 impl ReadMorph {
     /// How far into Solo the card is: 0 on the board, 1 filling the window.
-    fn progress(&self) -> f32 {
+    pub(crate) fn progress(&self) -> f32 {
         let t = crate::ui::chrome::ease_out(self.start.elapsed().as_secs_f32() * 1000.0 / read::MORPH_MS as f32);
         if self.entering { t } else { 1.0 - t }
     }
 
-    fn done(&self) -> bool {
+    pub(crate) fn done(&self) -> bool {
         self.start.elapsed() >= Duration::from_millis(read::MORPH_MS)
     }
 }
 /// How long a toast stays on screen.
-const TOAST_FOR: Duration = Duration::from_millis(1800);
+pub(crate) const TOAST_FOR: Duration = Duration::from_millis(1800);
 /// Bits of a page key that hold the card id; the space epoch sits above them.
-const KEY_ID_BITS: u32 = 40;
+pub(crate) const KEY_ID_BITS: u32 = 40;
 
 /// Texture keys of site icons: this bit set, so they never meet a page key.
-const ICON_KEY: u64 = 1 << 63;
+pub(crate) const ICON_KEY: u64 = 1 << 63;
 /// Texture key of the page preview beside the palette's list.
-const PREVIEW_KEY: u64 = 1 << 62;
+pub(crate) const PREVIEW_KEY: u64 = 1 << 62;
 /// Sleeping cards given their page's thumbnail per frame, at most (each is a
 /// database read and a JPEG decode).
-const THUMBS_PER_FRAME: usize = 4;
+pub(crate) const THUMBS_PER_FRAME: usize = 4;
 
 /// The page preview beside the palette's list: whose it is, and its size
 /// once uploaded as [`PREVIEW_KEY`] (`None` when the page has no thumbnail).
-struct Preview {
-    url: String,
-    size: Option<(u32, u32)>,
+pub(crate) struct Preview {
+    pub(crate) url: String,
+    pub(crate) size: Option<(u32, u32)>,
 }
 
 /// A site's icon, uploaded as texture `key` whenever `serial` changes.
-struct SiteIcon {
-    key: u64,
-    serial: u64,
-    icon: storage::icons::Icon,
+pub(crate) struct SiteIcon {
+    pub(crate) key: u64,
+    pub(crate) serial: u64,
+    pub(crate) icon: storage::icons::Icon,
     /// Written under `icons/` (not when only a private space has seen it).
-    saved: bool,
+    pub(crate) saved: bool,
 }
 
 /// Browser and texture key for card `id` while `epoch` is current.
-fn page_key(epoch: u64, id: NodeId) -> u64 {
+pub(crate) fn page_key(epoch: u64, id: NodeId) -> u64 {
     (epoch << KEY_ID_BITS) | id.0
 }
 
 /// Set in a page key for the inspector docked in that card (`App::docks`).
-const DOCK_BIT: u64 = 1 << (KEY_ID_BITS - 1);
+pub(crate) const DOCK_BIT: u64 = 1 << (KEY_ID_BITS - 1);
 
 /// Browser and texture key for the inspector docked in card `id`.
-fn dock_key(epoch: u64, id: NodeId) -> u64 {
+pub(crate) fn dock_key(epoch: u64, id: NodeId) -> u64 {
     page_key(epoch, id) | DOCK_BIT
 }
 
 /// A wheel notch in the docked inspector, px.
-const WHEEL_LINE: f32 = 100.0;
+pub(crate) const WHEEL_LINE: f32 = 100.0;
 
 /// Width of the divider between a page and its docked inspector, CSS px.
-const DOCK_GAP: f32 = 6.0;
-
-/// Per-space state that lives only for this session.
-#[derive(Default)]
-struct Session {
-    history: History,
-    closed: Vec<(Node, Vec<Edge>)>,
-    /// A private space's cookie jar and page zooms, kept while the app runs.
-    jar: Option<web::Jar>,
-    zooms: Option<std::collections::BTreeMap<String, f64>>,
-}
+pub(crate) const DOCK_GAP: f32 = 6.0;
 
 #[derive(Debug, Clone, Copy)]
-enum Drag {
+pub(crate) enum Drag {
     None,
     Pan { last: Vec2 },
     /// Title-bar drag of `id`; `App::group` holds the start rects of every card it moves.
@@ -299,40 +268,23 @@ enum Drag {
     Join { id: NodeId, keep: bool, link: bool },
 }
 
-/// Picking a card by its letters: the card to join a trail of (`a`,
-/// `:join`, Ctrl+K), `cards` joining the trail of the target chosen among
-/// `targets` (the other cards in view, in reading order); or, with `cut`
-/// (`Shift+A` on a card of two or more lines), which of `cards[0]`'s
-/// lines to cut, `targets` being the cards at their other ends.
-struct CardPick {
-    /// Keep the joining trail's colour (Ctrl+K's *keeping its colour*);
-    /// Shift on the last letter does it too.
-    keep: bool,
-    cut: bool,
-    /// Link `cards` to the target (`gl`) instead of joining its trail.
-    link: bool,
-    cards: Vec<NodeId>,
-    targets: Vec<NodeId>,
-    hints: hint::Hints,
-}
-
 /// Link hints on card `id`: its visible links (rects in the page view's CSS
 /// px) and their labels, `None` until the page has answered.
 /// A press on a trail's header row in the sidebar (`App::sidebar_press`).
 #[derive(Debug, Clone, Copy)]
-struct SidebarPress {
+pub(crate) struct SidebarPress {
     /// The trail, by its first card.
-    head: NodeId,
-    at: Vec2,
+    pub(crate) head: NodeId,
+    pub(crate) at: Vec2,
     /// Moved far enough to be a drag rather than a click.
-    dragging: bool,
+    pub(crate) dragging: bool,
     /// Where the trail would go among its part's trails if let go now.
-    to: Option<usize>,
+    pub(crate) to: Option<usize>,
 }
 
 /// Where an entered card's keys go (M12). Board mode is no card entered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PageKeys {
+pub(crate) enum PageKeys {
     /// Our page keys first (`scene::keys::page`); keys that type nothing go on.
     Page,
     /// Every key to the page; Esc back to Page.
@@ -344,7 +296,7 @@ enum PageKeys {
 }
 
 impl PageKeys {
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             PageKeys::Page => "Page",
             PageKeys::Insert => "Insert",
@@ -354,568 +306,434 @@ impl PageKeys {
     }
 }
 
-/// A `:later` line waiting to run.
-struct LaterLine {
-    /// Stays the same while it waits (the messages list's row).
-    id: u64,
-    at: Instant,
-    line: String,
-    /// The hint's link it had (`{hint-url}`).
-    hint_url: Option<String>,
-}
-
-/// Caret / Visual mode's card (`App::caret`).
-#[derive(Debug, Clone, Copy)]
-struct CaretCard {
-    id: NodeId,
-    copy: bool,
-}
-
-struct LinkHints {
-    id: NodeId,
+pub(crate) struct LinkHints {
+    pub(crate) id: NodeId,
     /// Follow a link in the same card (Page mode's f) instead of beside it.
-    here: bool,
+    pub(crate) here: bool,
     /// `;` hints: what choosing a label does instead of following it.
-    kind: Option<hint::Kind>,
+    pub(crate) kind: Option<hint::Kind>,
     /// Labels already chosen while `kind` keeps the labels up (`;m`).
-    chosen: Vec<usize>,
+    pub(crate) chosen: Vec<usize>,
     /// `:hint`: the command line a chosen link runs (`{hint-url}`).
-    line: Option<String>,
-    links: Vec<(Rect, web::links::Action)>,
+    pub(crate) line: Option<String>,
+    pub(crate) links: Vec<(Rect, web::links::Action)>,
     /// `s`: labels on the page's scroll sections instead of its links
     /// (section number, where it is in the view's CSS px), in label order.
-    sections: Vec<(u32, Rect)>,
-    hints: Option<hint::Hints>,
+    pub(crate) sections: Vec<(u32, Rect)>,
+    pub(crate) hints: Option<hint::Hints>,
 }
 
-/// Why a card's scroll sections were asked for (M12 step 3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SectionAsk {
-    /// `s`: label them.
-    Label,
-    /// `]s` / `[s`: step to the next / previous one.
-    Step(bool),
-    /// `S`: step out to the one around the target.
-    Out,
-    /// Only to name them in the mode pill.
-    Name,
-}
-
-/// Why a card's scroll spot was asked for (M12 step 9).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SpotAsk {
-    /// `m` then a lower-case letter: keep it as that mark.
-    Mark(char),
-    /// A jump to a mark starts: keep it for `''`.
-    Before,
-}
-
-/// A brief outline around the section a key just chose or scrolled.
-struct ScrollFlash {
-    id: NodeId,
-    section: u32,
-    /// In the view's CSS px.
-    rect: Rect,
-    at: Instant,
-}
-
-struct Card {
-    page: Page,
-    loading: bool,
+pub(crate) struct Card {
+    pub(crate) page: Page,
+    pub(crate) loading: bool,
     /// The page has history to go back / forward to (its title bar's arrows).
-    can_back: bool,
-    can_forward: bool,
-    hidden: bool,
+    pub(crate) can_back: bool,
+    pub(crate) can_forward: bool,
+    pub(crate) hidden: bool,
     /// Cursor the page asked for, shown while the pointer is over its content.
-    cursor: web::Cursor,
+    pub(crate) cursor: web::Cursor,
     /// Frames a second last asked of the page (`sync_pages`).
-    fps: i32,
+    pub(crate) fps: i32,
     /// The page holds its focus (an *Always active* card).
-    held: bool,
+    pub(crate) held: bool,
 }
 
 /// What a card's page last said about its media (`WebEvent::Media`).
 #[derive(Debug, Clone, Copy)]
-struct Media {
-    playing: bool,
+pub(crate) struct Media {
+    pub(crate) playing: bool,
     /// When it last stopped playing; `None` while playing.
-    stopped: Option<Instant>,
+    pub(crate) stopped: Option<Instant>,
 }
 
 /// Frames a second for a page that keeps running off screen without being
 /// seen (media in an *Auto* or *Keep awake* card): enough to keep it going,
 /// little to pay for.
-const UNSEEN_FPS: i32 = 4;
+pub(crate) const UNSEEN_FPS: i32 = 4;
 /// Frames a second for a page in view, or an *Always active* one.
-const FULL_FPS: i32 = 60;
-
-/// A docked card's parts on screen: the page and the inspector (screen
-/// rect, CSS size each) and the divider between them.
-struct DockParts {
-    page: (Rect, Vec2),
-    divider: Rect,
-    inspector: (Rect, Vec2),
-}
-
-/// The page inspector docked in a card, beside or below its page (`App::docks`).
-struct Dock {
-    page: Page,
-    side: dock::Side,
-    /// The inspector's share of the card (`scene::dock::split`).
-    share: f32,
-    hidden: bool,
-    /// Cursor the inspector asked for, shown while the pointer is over it.
-    cursor: web::Cursor,
-}
-
-/// A card of a trail being folded, on its way to its sheet behind the
-/// stack's front. The model has it in the stack (hidden) already; only the
-/// drawing moves.
-#[derive(Debug, Clone, Copy)]
-struct Gather {
-    id: NodeId,
-    /// The stack's front card.
-    front: NodeId,
-    /// Which sheet behind the front it becomes (`motion::slot_behind`).
-    slot: usize,
-    /// Its frame and content rect where it was (world units).
-    frame: Rect,
-    content: Rect,
-    start: Instant,
-}
+pub(crate) const FULL_FPS: i32 = 60;
 
 /// The gap between a stack's sheets on screen, px: it follows the zoom but
 /// stays a few px, so a stack still reads when zoomed far out.
-fn stack_step_px(k: f32, scale: f32) -> f32 {
+pub(crate) fn stack_step_px(k: f32, scale: f32) -> f32 {
     (12.0 * k).max(5.0 * scale)
 }
 
 /// Appear animations of the overlays.
 #[derive(Default)]
-struct Anims {
-    tip: crate::ui::chrome::Appear,
-    omnibox: crate::ui::chrome::Appear,
-    menu: crate::ui::chrome::Appear,
-    toast: crate::ui::chrome::Appear,
-    question: crate::ui::chrome::Appear,
-    sheet: crate::ui::chrome::Appear,
-    sidebar: crate::ui::chrome::Appear,
-    welcome: crate::ui::chrome::Appear,
+pub(crate) struct Anims {
+    pub(crate) tip: crate::ui::chrome::Appear,
+    pub(crate) omnibox: crate::ui::chrome::Appear,
+    pub(crate) menu: crate::ui::chrome::Appear,
+    pub(crate) toast: crate::ui::chrome::Appear,
+    pub(crate) question: crate::ui::chrome::Appear,
+    pub(crate) sheet: crate::ui::chrome::Appear,
+    pub(crate) sidebar: crate::ui::chrome::Appear,
+    pub(crate) welcome: crate::ui::chrome::Appear,
 }
 
 /// A small hash for telling one overlay's content from the next.
-fn anim_key<T: std::hash::Hash>(v: T) -> u64 {
+pub(crate) fn anim_key<T: std::hash::Hash>(v: T) -> u64 {
     use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
     BuildHasherDefault::<DefaultHasher>::default().hash_one(v)
 }
 
-pub struct App {
-    renderer: Option<Renderer>,
-    scene: Scene,
-    camera: Camera,
+pub(crate) struct App {
+    pub(crate) renderer: Option<Renderer>,
+    pub(crate) scene: Scene,
+    pub(crate) camera: Camera,
     /// Camera we're gliding toward (fit / Solo).
-    camera_goal: Option<Camera>,
+    pub(crate) camera_goal: Option<Camera>,
     /// The cards the opening camera was fitted to, and that camera: until
     /// the camera moves or input comes, a resize fits them again (the window
     /// manager's size arrives after the first fit, at the requested one).
-    opening_fit: Option<(Rect, Camera)>,
+    pub(crate) opening_fit: Option<(Rect, Camera)>,
     /// Wheel and touchpad scrolling inside a page, and flings (`scene::scroll`):
     /// to card, at view px.
-    page_scroll: scene::scroll::Scroller<(NodeId, i32, i32)>,
+    pub(crate) page_scroll: scene::scroll::Scroller<(NodeId, i32, i32)>,
     /// Wheel and touchpad panning of the board: glides and flings (`scene::scroll::Pan`).
-    board_pan: scene::scroll::Pan,
+    pub(crate) board_pan: scene::scroll::Pan,
     /// Live browsers. A card in the scene but not here is asleep.
-    cards: HashMap<NodeId, Card>,
+    pub(crate) cards: HashMap<NodeId, Card>,
     /// Inspector cards and the card each inspects. An inspector lives only
     /// while both run (`check_inspectors`); it never sleeps and is never saved.
-    inspectors: HashMap<NodeId, NodeId>,
+    pub(crate) inspectors: HashMap<NodeId, NodeId>,
     /// Inspectors docked in their page's card, by card. Like inspector
     /// cards they live only while their page does and are never saved.
-    docks: HashMap<NodeId, Dock>,
+    pub(crate) docks: HashMap<NodeId, Dock>,
     /// The keys go to the focused card's docked inspector, not its page.
-    dock_keys: bool,
+    pub(crate) dock_keys: bool,
     /// Where the next docked inspector opens (the side used last).
-    dock_side: dock::Side,
-    max_live: usize,
+    pub(crate) dock_side: dock::Side,
+    pub(crate) max_live: usize,
     /// The user's settings (Ctrl+,), saved in `settings.json`.
-    settings: Settings,
+    pub(crate) settings: Settings,
     /// Ad and tracker blocking: filter lists and the sites allowed.
-    blocking: crate::system::blocking::Blocking,
+    pub(crate) blocking: crate::system::blocking::Blocking,
     /// `TRAILBOARD_MAX_LIVE` set the live-page cap for this run (until the setting changes).
-    live_from_env: bool,
+    pub(crate) live_from_env: bool,
     /// Recency of use per card (larger is more recent), for choosing which cards sleep.
-    used: HashMap<NodeId, u64>,
+    pub(crate) used: HashMap<NodeId, u64>,
     /// What each live card's page says about its media, for keeping it awake.
-    media: HashMap<NodeId, Media>,
+    pub(crate) media: HashMap<NodeId, Media>,
     /// The card a media control was last sent to, and when: only its
     /// answer, soon after, becomes a toast.
-    media_asked: Option<(NodeId, Instant)>,
+    pub(crate) media_asked: Option<(NodeId, Instant)>,
     /// "Can't play" messages shown: card, kind, page address (once each).
-    media_told: HashSet<(NodeId, scene::media::Trouble, String)>,
+    pub(crate) media_told: HashSet<(NodeId, scene::media::Trouble, String)>,
     /// The card whose page is in full screen, shown in Solo, and the card
     /// Solo had before (`None`: the board), to go back to after.
-    page_full: Option<(NodeId, Option<NodeId>)>,
-    use_clock: u64,
-    focused: Option<NodeId>,
+    pub(crate) page_full: Option<(NodeId, Option<NodeId>)>,
+    pub(crate) use_clock: u64,
+    pub(crate) focused: Option<NodeId>,
     /// The card current before `focused`, for Ctrl+^ (this space's).
-    alt_card: Option<NodeId>,
+    pub(crate) alt_card: Option<NodeId>,
     /// Closed cards for Ctrl+Shift+T, newest last.
-    closed: Vec<(Node, Vec<Edge>)>,
-    history: History,
-    selection: Selection,
+    pub(crate) closed: Vec<(Node, Vec<Edge>)>,
+    pub(crate) history: History,
+    pub(crate) selection: Selection,
     /// Cards moved by the current title-bar drag, with their start rects.
-    group: Vec<(NodeId, Rect)>,
+    pub(crate) group: Vec<(NodeId, Rect)>,
     /// The last click landed inside the focused page, so its keys (incl. Ctrl+Z) go there.
-    keys_in_page: bool,
+    pub(crate) keys_in_page: bool,
     /// Every mode's key bindings (`scene::keys`, M12), with the key
     /// file's and `:bind`'s (`scene::userkeys`, step 10).
-    keys: userkeys::Keys,
+    pub(crate) keys: userkeys::Keys,
     /// The `?` sheet's sections, built from `keys` when it opens.
-    sheet_sections: Vec<crate::ui::hints::Section>,
+    pub(crate) sheet_sections: Vec<crate::keyboard::key_sheet::Section>,
     /// A count or sequence typed toward a binding (`5j`).
-    pending: keys::Pending,
+    pub(crate) pending: keys::Pending,
     /// Where an entered card's keys go.
-    page_keys: PageKeys,
+    pub(crate) page_keys: PageKeys,
     /// Ctrl+G during a half-typed sequence: the time it began, so the list
     /// of what can follow shows until it ends (`mode-label` Ring).
-    prefix_asked: Option<Instant>,
+    pub(crate) prefix_asked: Option<Instant>,
     /// What the window title says now (`App::update_title`).
-    title_shown: String,
+    pub(crate) title_shown: String,
     /// The card Caret / Visual mode is in, and whether a copy was asked
     /// for (only then is a copy from the page taken).
-    caret: Option<CaretCard>,
+    pub(crate) caret: Option<CaretCard>,
     /// Keys pressed in Page mode that went on to the page, so their release does too.
-    forwarded: HashSet<i32>,
-    omnibox: Option<Omnibox>,
+    pub(crate) forwarded: HashSet<i32>,
+    pub(crate) omnibox: Option<Omnibox>,
     /// Lines run on the `:` command line, newest first (`storage::commands`).
-    recent_commands: scene::command::Recent,
+    pub(crate) recent_commands: scene::command::Recent,
     /// The last line run on the command line this session (private spaces
     /// too), for `.`.
-    last_line: Option<String>,
+    pub(crate) last_line: Option<String>,
     /// `:later` lines waiting: when, the chain, the hint's link it had.
-    later: Vec<LaterLine>,
+    pub(crate) later: Vec<LaterLine>,
     /// The last `LaterLine::id` given.
-    later_ids: u64,
+    pub(crate) later_ids: u64,
     /// Every toast this session, for `:messages`.
-    messages: scene::messages::Messages,
+    pub(crate) messages: scene::messages::Messages,
     /// Every space's jump list and marks (`scene::jump`, `storage::jumps`).
-    places: jump::Places,
-    places_dirty: bool,
+    pub(crate) places: jump::Places,
+    pub(crate) places_dirty: bool,
     /// Ctrl+o / Ctrl+i are moving: the card gone to isn't a new visit.
-    jumping: bool,
+    pub(crate) jumping: bool,
     /// Where the last jump left from (`''`).
-    before: Option<Before>,
+    pub(crate) before: Option<Before>,
     /// A scroll spot asked of a card's page, and what for.
-    spot_ask: Option<(NodeId, SpotAsk)>,
+    pub(crate) spot_ask: Option<(NodeId, SpotAsk)>,
     /// A mark's scroll spot to go to once the card's page has loaded.
-    restore_due: HashMap<NodeId, ScrollSpot>,
+    pub(crate) restore_due: HashMap<NodeId, ScrollSpot>,
     /// Saved pages (`scene::saved`, `storage::saved`).
-    saved_pages: scene::saved::Saved,
-    menu: Option<ContextMenu>,
+    pub(crate) saved_pages: scene::saved::Saved,
+    pub(crate) menu: Option<ContextMenu>,
     /// Where the title-bar shields were drawn last frame (screen px, with a
     /// little room around them), for clicks.
-    shields: Vec<(NodeId, Rect)>,
+    pub(crate) shields: Vec<(NodeId, Rect)>,
     /// Where the trail tags were drawn last frame (screen px), in draw
     /// order, for clicks: a click on one names its trail.
-    tags: Vec<(NodeId, Rect)>,
+    pub(crate) tags: Vec<(NodeId, Rect)>,
     /// The shortcut sheet (`?`) is showing.
-    hints: bool,
+    pub(crate) hints: bool,
     /// Its filter and scroll.
-    sheet: crate::ui::hints::Sheet,
+    pub(crate) sheet: crate::keyboard::key_sheet::Sheet,
     /// The sidebar's rows arriving and its tab gliding (`sidebar::Motion`).
-    sidebar_motion: crate::ui::sidebar::Motion,
+    pub(crate) sidebar_motion: crate::trails::panel::Motion,
     /// Link hints (`f`) on a card's page: asked for, or showing labels.
-    link_hints: Option<LinkHints>,
+    pub(crate) link_hints: Option<LinkHints>,
     /// Picking a card by its letters to join its trail (M15).
-    card_pick: Option<CardPick>,
+    pub(crate) card_pick: Option<CardPick>,
     /// Each card's chosen scroll section (`web::scroll`); a card not here
     /// scrolls the automatic pick. Forgotten when its page navigates.
-    scroll_targets: HashMap<NodeId, u32>,
+    pub(crate) scroll_targets: HashMap<NodeId, u32>,
     /// The sections a card reported last, for naming them in the pill.
-    sections: HashMap<NodeId, Vec<scrolltarget::Section>>,
+    pub(crate) sections: HashMap<NodeId, Vec<scrolltarget::Section>>,
     /// A section list asked of a card, and what for.
-    section_ask: Option<(NodeId, SectionAsk)>,
+    pub(crate) section_ask: Option<(NodeId, SectionAsk)>,
     /// `]]` / `[[` asked of a card's page: the card, and next (true) or previous.
-    pager_ask: Option<(NodeId, bool)>,
+    pub(crate) pager_ask: Option<(NodeId, bool)>,
     /// What the last scroll key moved, for the mode pill (`section 2.1 · 40%`):
     /// the card, the section, and what to say after its name.
-    scroll_note: Option<(NodeId, u32, String)>,
-    scroll_flash: Option<ScrollFlash>,
+    pub(crate) scroll_note: Option<(NodeId, u32, String)>,
+    pub(crate) scroll_flash: Option<ScrollFlash>,
     /// Moving or resizing the current card from the keyboard (M).
-    arrange: Option<Arrange>,
+    pub(crate) arrange: Option<Arrange>,
     /// Solo: this card fills the window (see `scene::read`).
-    read: Option<NodeId>,
+    pub(crate) read: Option<NodeId>,
     /// The card growing into Solo or shrinking back to the board.
-    read_morph: Option<ReadMorph>,
+    pub(crate) read_morph: Option<ReadMorph>,
     /// The CSS size each live card's last uploaded frame was laid out at, so
     /// a frame from before a resize is drawn at its own size, not stretched.
-    page_css: HashMap<NodeId, (f32, f32)>,
+    pub(crate) page_css: HashMap<NodeId, (f32, f32)>,
     /// The same for each docked inspector.
-    dock_css: HashMap<NodeId, (f32, f32)>,
+    pub(crate) dock_css: HashMap<NodeId, (f32, f32)>,
     /// The trails sidebar (Ctrl+B): collapsed groups, highlight and scroll.
-    sidebar: scene::sidebar::Sidebar,
-    sidebar_open: bool,
+    pub(crate) sidebar: scene::sidebar::Sidebar,
+    pub(crate) sidebar_open: bool,
     /// The sidebar has the keys (j/k move its highlight).
-    sidebar_keys: bool,
+    pub(crate) sidebar_keys: bool,
     /// Index of the sidebar's highlight when last seen, for a row that goes away.
-    sidebar_at: Option<usize>,
+    pub(crate) sidebar_at: Option<usize>,
     /// Sidebar row under the pointer.
-    sidebar_hover: Option<usize>,
+    pub(crate) sidebar_hover: Option<usize>,
     /// A press on a trail's header in the sidebar: a click toggles the group,
     /// a drag moves the trail.
-    sidebar_press: Option<SidebarPress>,
+    pub(crate) sidebar_press: Option<SidebarPress>,
     /// The last click that toggled a trail's header, for a double-click
     /// (which names the trail instead).
-    sidebar_toggled: Option<(Instant, NodeId)>,
+    pub(crate) sidebar_toggled: Option<(Instant, NodeId)>,
     /// The sidebar was opened by the pointer on the window's edge, and goes
     /// when the pointer leaves it (`sidebar::Peek`).
-    sidebar_peek: bool,
-    peek: crate::ui::sidebar::Peek,
+    pub(crate) sidebar_peek: bool,
+    pub(crate) peek: crate::trails::panel::Peek,
     /// The space chip under the pointer in the sidebar's foot.
-    sidebar_spot: Option<crate::ui::sidebar::Spot>,
+    pub(crate) sidebar_spot: Option<crate::trails::panel::Spot>,
     /// The current mouse press started inside the context menu.
-    menu_pressed: bool,
-    clipboard: Clipboard,
+    pub(crate) menu_pressed: bool,
+    pub(crate) clipboard: Clipboard,
     /// IME input is enabled on the window.
-    ime_allowed: bool,
+    pub(crate) ime_allowed: bool,
     /// Page with an IME composition in progress.
-    ime_page: Option<NodeId>,
+    pub(crate) ime_page: Option<NodeId>,
     /// Last IME candidate-window area sent to the window (screen px).
-    ime_area: Option<[i32; 4]>,
-    spawn_beside: SpawnBeside,
-    drag: Drag,
-    cursor: Vec2,
-    mods: ModifiersState,
-    last_click: Option<(Instant, Vec2, MouseButton)>,
-    click_count: i32,
+    pub(crate) ime_area: Option<[i32; 4]>,
+    pub(crate) spawn_beside: SpawnBeside,
+    pub(crate) drag: Drag,
+    pub(crate) cursor: Vec2,
+    pub(crate) mods: ModifiersState,
+    pub(crate) last_click: Option<(Instant, Vec2, MouseButton)>,
+    pub(crate) click_count: i32,
     /// When the camera last changed (used to re-rasterize pages at the settled zoom).
-    camera_changed: Instant,
-    page_scale: f32,
+    pub(crate) camera_changed: Instant,
+    pub(crate) page_scale: f32,
     /// Pages asked for on the command line, opened once the window exists.
-    initial_urls: Vec<String>,
-    started: Instant,
-    script: Option<Script>,
+    pub(crate) initial_urls: Vec<String>,
+    pub(crate) started: Instant,
+    pub(crate) script: Option<Script>,
     pub quit: bool,
     /// The last draw presented a new frame: something may still be moving,
     /// so the loop draws again at the display's rate.
-    frame_changed: bool,
+    pub(crate) frame_changed: bool,
     /// A window event came since the loop last asked ([`App::take_event`]).
-    event_seen: bool,
+    pub(crate) event_seen: bool,
     /// Present every frame, as before frames were compared (`TRAILBOARD_REDRAW=always`).
     pub always_redraw: bool,
     /// `TRAILBOARD_PERF`: the cost of drawing, logged once a second.
     pub perf: Option<crate::dev::perf::PerfLog>,
-    data_dir: std::path::PathBuf,
-    spaces: SpaceIndex,
+    pub(crate) data_dir: std::path::PathBuf,
+    pub(crate) spaces: SpaceIndex,
     /// False when the space index could not be read safely; nothing is saved then.
-    persist: bool,
+    pub(crate) persist: bool,
     /// Bumped on every space switch; part of each page's key, so late events and
     /// textures from the previous space's pages never land on this space's cards.
-    epoch: u64,
+    pub(crate) epoch: u64,
     /// Undo history and closed cards of spaces not on screen (this session only).
-    sessions: HashMap<SpaceId, Session>,
+    pub(crate) sessions: HashMap<SpaceId, Session>,
     /// The cookie jar of the active space when it is private.
-    jar: Option<web::Jar>,
+    pub(crate) jar: Option<web::Jar>,
     /// Short message at the top of the window, until it expires.
     /// Message and when it goes.
-    toast: Option<(String, Instant)>,
+    pub(crate) toast: Option<(String, Instant)>,
     /// How Chromium's sandbox confines pages, once `note_sandbox` is told.
-    sandbox: Option<web::sandbox::Sandbox>,
+    pub(crate) sandbox: Option<web::sandbox::Sandbox>,
     /// How far each overlay has come in (see `chrome::Appear`).
-    anim: Anims,
+    pub(crate) anim: Anims,
     /// Cards' labels fading in and out (quiet labels).
-    label_fades: crate::ui::chrome::Fades,
+    pub(crate) label_fades: crate::ui::chrome::Fades,
     /// The board's photo (*Board background: Photo*), read off the main thread.
-    photo: crate::ui::backdrop::Photo,
+    pub(crate) photo: crate::board::backdrop::Photo,
     /// The desktop's wallpaper file, looked up now and then (`backdrop::desktop_wallpaper`).
-    wallpaper: Option<PathBuf>,
-    wallpaper_checked: Option<Instant>,
+    pub(crate) wallpaper: Option<PathBuf>,
+    pub(crate) wallpaper_checked: Option<Instant>,
     /// Pictures the photo list offers, found when it opens.
-    photo_files: Vec<PathBuf>,
+    pub(crate) photo_files: Vec<PathBuf>,
     /// Waiting for Enter to do something that can't be undone.
-    confirm: Option<Confirm>,
+    pub(crate) confirm: Option<Confirm>,
     /// Board changed since the last save.
-    dirty: bool,
-    last_save: Instant,
+    pub(crate) dirty: bool,
+    pub(crate) last_save: Instant,
     /// The Omarchy look in effect, and what follows the desktop for changes.
-    theme: Theme,
-    desktop: Option<Desktop>,
+    pub(crate) theme: Theme,
+    pub(crate) desktop: Option<Desktop>,
     /// Page colour scheme last sent to pages (dark).
-    page_scheme: Option<bool>,
+    pub(crate) page_scheme: Option<bool>,
     /// The note "Add to note" adds to: the one last focused, edited or made.
-    note_target: Option<NodeId>,
+    pub(crate) note_target: Option<NodeId>,
     /// Files saved as Markdown this session, per space and note (`None`: the
     /// whole board), so saving again overwrites them.
-    saved: HashMap<(SpaceId, Option<NodeId>), std::path::PathBuf>,
+    pub(crate) saved: HashMap<(SpaceId, Option<NodeId>), std::path::PathBuf>,
     /// Page zoom per site (Ctrl +/−/0), shared with `web` (`web::set_page_zoom`).
-    zooms: Rc<RefCell<SiteZooms>>,
+    pub(crate) zooms: Rc<RefCell<SiteZooms>>,
     /// Site icons by `scene::icon::site`, for every space, saved under `icons/`.
-    icons: HashMap<String, SiteIcon>,
+    pub(crate) icons: HashMap<String, SiteIcon>,
     /// The start page's pins and parts, shared by every space (`start.json`).
-    start_page: scene::startpage::StartPage,
+    pub(crate) start_page: scene::startpage::StartPage,
     /// Whether the pointer is over the window (for the zoomed-out name label).
-    pointer_in: bool,
+    pub(crate) pointer_in: bool,
     /// The page find in page last searched (to stop it when the bar closes).
-    finding: Option<NodeId>,
+    pub(crate) finding: Option<NodeId>,
     /// Find in page's last result: matches and the active one (1-based).
-    found: Option<(i32, i32)>,
+    pub(crate) found: Option<(i32, i32)>,
     /// What find in page last looked for; the bar opens with it.
-    last_find: String,
+    pub(crate) last_find: String,
     /// The last search went up the page (`?`): n goes up too, N down.
-    find_back: bool,
+    pub(crate) find_back: bool,
     /// The card whose page still shows find marks (after n / N, or the
     /// bar closing on a match); Esc clears them before doing anything else.
-    find_marks: Option<NodeId>,
+    pub(crate) find_marks: Option<NodeId>,
     /// When the Menu key (or Shift+F10) asked a page for its menu: the menu
     /// that answers opens with its first item highlighted.
-    menu_by_key: Option<Instant>,
+    pub(crate) menu_by_key: Option<Instant>,
     /// The history index (`page-text.db`); `None` if it could not be opened.
-    page_index: Option<storage::pagetext::PageIndex>,
+    pub(crate) page_index: Option<storage::pagetext::PageIndex>,
     /// Cards whose page text is due to be read for history, and when.
-    text_due: HashMap<NodeId, Instant>,
+    pub(crate) text_due: HashMap<NodeId, Instant>,
     /// The last history search (query, results), as the palette asks often.
-    visits_cache: RefCell<VisitsCache>,
+    pub(crate) visits_cache: RefCell<VisitsCache>,
     /// The palette's page preview, and a serial for its uploads.
-    preview: Option<Preview>,
-    preview_serial: u64,
+    pub(crate) preview: Option<Preview>,
+    pub(crate) preview_serial: u64,
     /// Page keys of sleeping cards already looked up for a thumbnail.
-    thumb_tried: HashSet<u64>,
+    pub(crate) thumb_tried: HashSet<u64>,
     /// Downloads (Ctrl+J), saved in `downloads.json`.
-    downloads: scene::download::Downloads,
+    pub(crate) downloads: scene::download::Downloads,
     /// Chromium's id of each running download → (list key, page key).
-    download_ids: HashMap<u32, (u64, u64)>,
+    pub(crate) download_ids: HashMap<u32, (u64, u64)>,
     /// Pages put to sleep or closed while downloading: kept alive (off
     /// screen, unrendered) until their downloads end, since Chromium only
     /// reports a download to the page that started it.
-    parked: Vec<Page>,
+    pub(crate) parked: Vec<Page>,
     /// JavaScript, images and cookies per site (page menu, `:site`, `tj`…),
     /// saved in `sites.json`.
-    sites: scene::sitesettings::SiteSettings,
+    pub(crate) sites: scene::sitesettings::SiteSettings,
     /// The same, for this run only (`:site-session`, `tJ`…); wins over `sites`.
-    sites_session: scene::sitesettings::SiteSettings,
+    pub(crate) sites_session: scene::sitesettings::SiteSettings,
     /// The controls over the board, as laid out last frame (for the pointer).
-    hud: crate::ui::hud::Hud,
+    pub(crate) hud: crate::ui::hud::Hud,
     /// The control under the pointer, and since when (for its tooltip).
-    hud_hover: Option<(crate::ui::hud::Control, Instant)>,
+    pub(crate) hud_hover: Option<(crate::ui::hud::Control, Instant)>,
     /// The left button is held on a control.
-    hud_down: bool,
+    pub(crate) hud_down: bool,
     /// The control whose menu is open.
-    hud_open: Option<crate::ui::hud::Control>,
+    pub(crate) hud_open: Option<crate::ui::hud::Control>,
     /// The size of a new card, shaped like the screen (`placement::card_size`).
-    card_size: Vec2,
+    pub(crate) card_size: Vec2,
     /// What the pointer is over on the board (a label's buttons light up).
-    hover: Hit,
+    pub(crate) hover: Hit,
     /// Where each card's label was drawn last frame (screen px), in draw
     /// order, and the buttons on them, for the pointer.
-    bars: Vec<(NodeId, Rect)>,
-    bar_buttons: Vec<(Hit, Rect)>,
+    pub(crate) bars: Vec<(NodeId, Rect)>,
+    pub(crate) bar_buttons: Vec<(Hit, Rect)>,
     /// The buttons of the guidance drawn last frame (an empty board's
     /// welcome, a view with no card in it), and what each does.
-    nudge: Vec<(Rect, crate::ui::hud::Go)>,
+    pub(crate) nudge: Vec<(Rect, crate::ui::hud::Go)>,
     /// The desktop asks for less motion (`desktop::reduced_motion`): cards,
     /// spaces, Solo and the sidebar change without animating.
-    still: bool,
+    pub(crate) still: bool,
     /// Cards gliding to new places or growing in (`scene::motion`).
-    glides: motion::Glides,
+    pub(crate) glides: motion::Glides,
     /// Closed cards shrinking away: the card as it was, its page's texture
     /// (removed once it is gone), and since when.
-    ghosts: Vec<(Node, u64, Instant)>,
+    pub(crate) ghosts: Vec<(Node, u64, Instant)>,
     /// Trail lines just made by a join, drawing in from their source, and
     /// lines just cut by a leave, fading out; since when (M15).
-    edges_in: Vec<(Edge, Instant)>,
-    edges_out: Vec<(Edge, Instant)>,
+    pub(crate) edges_in: Vec<(Edge, Instant)>,
+    pub(crate) edges_out: Vec<(Edge, Instant)>,
     /// Cards of a trail being folded, each sliding onto its sheet behind the
     /// stack's front (`motion::folding`).
-    gathers: Vec<Gather>,
+    pub(crate) gathers: Vec<Gather>,
     /// A space switch under way: since when, the side the board slides in
     /// from (±1), and the backdrop colours of the space it left.
-    space_in: Option<(Instant, f32, [f32; 4], [f32; 4])>,
+    pub(crate) space_in: Option<(Instant, f32, [f32; 4], [f32; 4])>,
     /// The sidebar as last drawn and its right edge, to slide it out once
     /// it is hidden; and since when it has been sliding.
-    sidebar_last: Option<(Layer, f32)>,
-    sidebar_out: Option<Instant>,
+    pub(crate) sidebar_last: Option<(Layer, f32)>,
+    pub(crate) sidebar_out: Option<Instant>,
     /// A download waiting for the user to say where it goes (`Target::SaveAs`).
-    save_as: Option<SaveAs>,
+    pub(crate) save_as: Option<SaveAs>,
     /// Sites asking for a permission, waiting for Enter (allow) or Esc; the
     /// first is the question showing (`Confirm::Permission`).
-    asks: Vec<Ask>,
+    pub(crate) asks: Vec<Ask>,
     /// Pages' own dialogs (alert, confirm, prompt, leave), shown after any
     /// permission question; the first is the one showing.
-    dialogs: Vec<PageDialog>,
+    pub(crate) dialogs: Vec<PageDialog>,
     /// A page's file chooser waiting for a path (`Target::Files`).
-    choosing: Option<Choosing>,
+    pub(crate) choosing: Option<Choosing>,
     /// The folder last chosen from, where the next file chooser starts.
-    files_dir: Option<std::path::PathBuf>,
+    pub(crate) files_dir: Option<std::path::PathBuf>,
     /// Ctrl+e in a field: waiting for its text, then for the editor.
-    editing: Option<Editing>,
+    pub(crate) editing: Option<Editing>,
     /// The last token given to a field read (`web::field`).
-    field_token: u64,
-}
-
-/// A page's dialog waiting for the user.
-struct PageDialog {
-    id: u64,
-    node: NodeId,
-    kind: web::dialog::Kind,
-    site: String,
-    message: String,
-    /// A prompt's text to start with.
-    default: String,
-    /// It has been put in front of the user.
-    shown: bool,
-}
-
-/// A page's file chooser waiting for a path.
-struct Choosing {
-    id: u64,
-    mode: web::dialog::FileMode,
-    /// The types the page wants (`.pdf`, `image/*`).
-    accept: Vec<String>,
-    /// The name Chromium suggests when saving.
-    name: String,
-}
-
-/// A text field being edited in the user's editor (`Ctrl+e`).
-struct Editing {
-    node: NodeId,
-    /// The frame the field is in and the token it was read under.
-    frame: String,
-    token: u64,
-    /// The field's text as it was read.
-    original: String,
-    /// The file the editor has (once the text came).
-    file: Option<std::path::PathBuf>,
-    /// The editor (or its terminal) while it runs.
-    child: Option<std::process::Child>,
-    /// When the editor started, or the last step was taken.
-    since: Instant,
-    /// The file's time when written, to see the editor save it.
-    written: Option<std::time::SystemTime>,
-    /// The new text was sent to the page; waiting for its answer.
-    sent: bool,
-}
-
-/// A download waiting for a path (*Save downloads to: Ask each time*).
-struct SaveAs {
-    id: u32,
-    page: u64,
-    url: String,
-    blank: bool,
+    pub(crate) field_token: u64,
 }
 
 /// A site's permission request waiting for the user.
-struct Ask {
-    id: u64,
-    origin: String,
-    kinds: Vec<web::permission::Kind>,
+pub(crate) struct Ask {
+    pub(crate) id: u64,
+    pub(crate) origin: String,
+    pub(crate) kinds: Vec<web::permission::Kind>,
 }
 
 /// Last history search (history view or palette, query, results).
-type VisitsCache = Option<(bool, String, Vec<storage::pagetext::Visit>)>;
+pub(crate) type VisitsCache = Option<(bool, String, Vec<storage::pagetext::Visit>)>;
 
 /// History pages matching `query`, cached per query: for the history view
 /// (`browse`, newest first) or the palette (best first).
-fn visits_for(
+pub(crate) fn visits_for(
     index: &Option<storage::pagetext::PageIndex>,
     cache: &RefCell<VisitsCache>,
     query: &str,
@@ -944,7 +762,7 @@ fn visits_for(
 
 /// Something that waits for Enter, as it can't be undone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Confirm {
+pub(crate) enum Confirm {
     DeleteSpace,
     /// Close every card but this one (co).
     CloseOthers(NodeId),
@@ -958,12 +776,12 @@ enum Confirm {
 }
 
 /// The desktop's locale (`en_IN.UTF-8`): `LC_ALL`, `LC_MESSAGES` or `LANG`.
-pub fn system_locale() -> String {
+pub(crate) fn system_locale() -> String {
     ["LC_ALL", "LC_MESSAGES", "LANG"].iter().find_map(|v| std::env::var(v).ok().filter(|l| !l.is_empty())).unwrap_or_default()
 }
 
 /// Local time in ms for a UTC time in ms (the zone's offset then).
-fn local_ms(utc_ms: i64) -> i64 {
+pub(crate) fn local_ms(utc_ms: i64) -> i64 {
     use chrono::{Local, Offset, TimeZone};
     let offset = Local.timestamp_millis_opt(utc_ms).single().map_or(0, |d| d.offset().fix().local_minus_utc());
     utc_ms + i64::from(offset) * 1000
@@ -971,7 +789,7 @@ fn local_ms(utc_ms: i64) -> i64 {
 
 /// Opens a file or folder in the desktop's app for it (`xdg-open`, or
 /// `TRAILBOARD_OPENER` for tests), without waiting for it.
-fn open_externally(path: &str) {
+pub(crate) fn open_externally(path: &str) {
     let opener = std::env::var("TRAILBOARD_OPENER").ok().filter(|o| !o.is_empty()).unwrap_or_else(|| "xdg-open".into());
     let path = path.to_string();
     std::thread::spawn(move || {
@@ -988,17 +806,17 @@ fn open_externally(path: &str) {
     });
 }
 
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
 }
 
 /// `path` with the home folder written as `~`.
 /// The home folder (`$HOME`).
-fn home_path() -> std::path::PathBuf {
+pub(crate) fn home_path() -> std::path::PathBuf {
     std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default()
 }
 
-fn home_relative(path: &std::path::Path) -> String {
+pub(crate) fn home_relative(path: &std::path::Path) -> String {
     match std::env::var_os("HOME").map(std::path::PathBuf::from) {
         Some(home) if home.as_os_str().len() > 1 => match path.strip_prefix(&home) {
             Ok(rest) => format!("~/{}", rest.display()),
@@ -1008,11 +826,11 @@ fn home_relative(path: &std::path::Path) -> String {
     }
 }
 
-fn menu_labels(items: &[Entry]) -> Vec<&str> {
+pub(crate) fn menu_labels(items: &[Entry]) -> Vec<&str> {
     items.iter().map(Entry::label).collect()
 }
 
-fn menu_layer(r: &mut Renderer, m: &ContextMenu, ui: f32, th: &Theme) -> Layer {
+pub(crate) fn menu_layer(r: &mut Renderer, m: &ContextMenu, ui: f32, th: &Theme) -> Layer {
     let mut l = Layer::default();
     let radius = th.radius(ui / th.text_scale);
     let small = th.small_radius(ui / th.text_scale);
@@ -1062,7 +880,7 @@ fn menu_layer(r: &mut Renderer, m: &ContextMenu, ui: f32, th: &Theme) -> Layer {
 }
 
 /// Window cursor for a page cursor; `None` hides it.
-fn cursor_icon(c: web::Cursor) -> Option<CursorIcon> {
+pub(crate) fn cursor_icon(c: web::Cursor) -> Option<CursorIcon> {
     use web::Cursor as C;
     Some(match c {
         C::Default => CursorIcon::Default,
@@ -1104,7 +922,7 @@ fn cursor_icon(c: web::Cursor) -> Option<CursorIcon> {
 }
 
 /// `TRAILBOARD_MAX_LIVE`, if set: it overrides the *Pages kept awake* setting for this run.
-fn max_live_from_env() -> Option<usize> {
+pub(crate) fn max_live_from_env() -> Option<usize> {
     match std::env::var("TRAILBOARD_MAX_LIVE").ok().map(|v| v.trim().parse::<usize>()) {
         None => None,
         Some(Ok(n)) if n >= 1 => Some(n),
@@ -1116,7 +934,7 @@ fn max_live_from_env() -> Option<usize> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum Hit {
+pub(crate) enum Hit {
     Board,
     /// A card's docked inspector, and the divider before it.
     Inspector(NodeId),
@@ -1149,7 +967,7 @@ enum Hit {
 }
 
 impl Hit {
-    fn id(&self) -> Option<NodeId> {
+    pub(crate) fn id(&self) -> Option<NodeId> {
         match *self {
             Hit::Board => None,
             Hit::Header(id) | Hit::Close(id) | Hit::Back(id) | Hit::Forward(id) | Hit::Reload(id) | Hit::Grip(id) | Hit::Content(id) | Hit::ReadBar(id) | Hit::Badge(id) | Hit::Shield(id) | Hit::Tag(id) => Some(id),

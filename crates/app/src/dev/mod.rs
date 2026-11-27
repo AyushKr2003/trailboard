@@ -2,4 +2,5 @@
 
 pub mod memstat;
 pub mod perf;
+mod runner;
 pub mod script;

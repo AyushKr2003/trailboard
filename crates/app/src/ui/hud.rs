@@ -16,7 +16,7 @@ use scene::{Rect, Vec2};
 use crate::ui::chrome::{self, Lift, Press, type_};
 use crate::ui::icons::{self, Icon};
 use crate::ui::palette::Command;
-use crate::ui::theme::{Rgb, Theme, rgb};
+use crate::ui::theme::{Rgb, rgb, Theme};
 
 /// Something on the board's chrome that can be pressed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

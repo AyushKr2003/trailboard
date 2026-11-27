@@ -2,53 +2,36 @@
 
 Written by the bench workflow after every run. Chart: <https://ayushkr2003.github.io/trailboard/>
 
-## Bench: Trailboard 8ad3a04 against 1 browsers
+## Bench: Trailboard d95458b against 1 browsers
 
-20261127-1615 · 3 runs each, medians · each case on its own runner · [workflow run](https://github.com/AyushKr2003/trailboard/actions/runs/46031642472)
+20261127-1631 · 3 runs each, medians · each case on its own runner · [workflow run](https://github.com/AyushKr2003/trailboard/actions/runs/46034126404)
 
-✅ No regression against earlier runs on the same CPU.
+✅ No regression against earlier runs on the same CPU (not checked, no earlier run on their CPU: pan).
 
 Not run, by design (see browsers.toml): gnome-web (video-vp9, video-av1, video-h264).
 
-### still
-
-Runner: 4 × AMD EPYC 9V74 80-Core Processor, 15 GB; compared with 20261127-1538-9501932-46026446381.
-
-| Program | Engine | Memory (PSS) | Peak | CPU % of a core | Processes | Start | Change (same CPU) |
-|---|---|---|---|---|---|---|---|
-| **trailboard** | Blink (CEF) | 712 MB | 730 MB | 0.3 | 14 | 0.23 s | mem +1%, CPU +50% |
-| chrome | Blink | 570 MB | 628 MB | 0.4 | 18 | 0.35 s | mem +2%, CPU +33% |
-
 ### video-vp9
 
-Runner: 4 × AMD EPYC 7763 64-Core Processor, 15 GB; compared with 20261127-1348-5aa154c-46010069445.
+Runner: 4 × Intel(R) Xeon(R) 6975P-C, 15 GB; compared with 20261127-1223-5aa154c-45998021086.
 
 | Program | Engine | Memory (PSS) | Peak | CPU % of a core | Processes | Start | Change (same CPU) |
 |---|---|---|---|---|---|---|---|
-| **trailboard** | Blink (CEF) | 639 MB | 640 MB | 349.4 | 9 | 0.24 s | mem +1%, CPU -1% |
-| chrome | Blink | 523 MB | 586 MB | 47.9 | 13 | 0.35 s | mem +5%, CPU -1% |
-
-### video-h264
-
-Runner: 4 × INTEL(R) XEON(R) PLATINUM 8573C, 15 GB; compared with 20261126-1507-e1edf21-45845659696.
-
-| Program | Engine | Memory (PSS) | Peak | CPU % of a core | Processes | Start | Change (same CPU) |
-|---|---|---|---|---|---|---|---|
-| **trailboard** | Blink (CEF) | 662 MB | 665 MB | 328.7 | 9 | 0.23 s | mem +5%, CPU -8% |
-| chrome | Blink | 545 MB | 608 MB | 43.7 | 12 | 0.35 s | mem +6%, CPU -4% |
+| **trailboard** | Blink (CEF) | 624 MB | 629 MB | 224.0 | 9 | 0.22 s | mem +0%, CPU -17% |
+| chrome | Blink | 523 MB | 585 MB | 39.5 | 12 | 0.23 s | mem +6%, CPU -2% |
 
 ### pan
 
-Runner: 4 × AMD EPYC 9V74 80-Core Processor, 15 GB; compared with 20261126-1507-e1edf21-45845659696.
+Runner: 4 × Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz, 15 GB; no earlier run on this CPU to compare with.
 
 | Program | Engine | Memory (PSS) | Peak | CPU % of a core | Processes | Start | Change (same CPU) |
 |---|---|---|---|---|---|---|---|
-| **trailboard** | Blink (CEF) | 822 MB | 830 MB | 361.4 | 14 | 0.23 s | mem +4%, CPU -4% |
+| **trailboard** | Blink (CEF) | 795 MB | 801 MB | 351.2 | 14 | 0.23 s |  |
 
 ## Trailboard over time (newest first)
 
 | Run | Trailboard | idle mem / CPU | still mem / CPU | video-vp9 mem / CPU | video-av1 mem / CPU | video-h264 mem / CPU | pan mem / CPU |
 |---|---|---|---|---|---|---|---|
+| [20261127-1631-d](https://github.com/AyushKr2003/trailboard/actions/runs/46034126404) | `d95458b` | – | – | 624 MB / 224.0 % | – | – | 795 MB / 351.2 % |
 | [20261127-1615-8](https://github.com/AyushKr2003/trailboard/actions/runs/46031642472) | `8ad3a04` | – | 712 MB / 0.3 % | 639 MB / 349.4 % | – | 662 MB / 328.7 % | 822 MB / 361.4 % |
 | [20261127-1554-a](https://github.com/AyushKr2003/trailboard/actions/runs/46028826700) | `a2d9617` | 583 MB / 0.2 % | 712 MB / 0.3 % | 631 MB / 228.6 % | 659 MB / 266.7 % | 644 MB / 256.8 % | 805 MB / 355.3 % |
 | [20261127-1538-9](https://github.com/AyushKr2003/trailboard/actions/runs/46026446381) | `9501932` | 595 MB / 0.9 % | 703 MB / 0.2 % | – | – | 644 MB / 288.5 % | – |

@@ -182,6 +182,10 @@ pub struct Renderer {
     /// value means only page pixels can differ. `None` while the canvas
     /// doesn't hold the last frame.
     last_layout: Option<u64>,
+    /// The same, of the last frame presented, on the canvas or not: when a
+    /// frame keeps it (only page pixels changed, a video playing), the
+    /// canvas is worth keeping even in motion, so later frames can be partial.
+    shown_layout: Option<u64>,
     /// When the last frame was presented: frames in quick succession (video,
     /// panning) are drawn straight to the screen, skipping the canvas copy.
     last_present: Option<std::time::Instant>,
@@ -423,6 +427,7 @@ impl Renderer {
             can_copy,
             canvas: None,
             last_layout: None,
+            shown_layout: None,
             last_present: None,
             page_damage: HashMap::new(),
         })
@@ -513,9 +518,11 @@ impl Renderer {
             wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         );
         self.uploaded += w as u64 * h as u64 * 4;
-        let whole = [x, y, w, h] == [0, 0, width, height];
+        // A new texture (a resize) may show anywhere: the whole frame. All of
+        // an old one changing (a video filling its page) is still only where
+        // the page shows.
         let entry = self.page_damage.entry(key).or_insert(Some([x, y, 0, 0]));
-        *entry = match (*entry, whole) {
+        *entry = match (*entry, needs_new) {
             (Some(old), false) => Some(union_px(old, [x, y, w, h])),
             _ => None,
         };
@@ -765,8 +772,9 @@ impl Renderer {
         let size = wgpu::Extent3d { width: self.config.width, height: self.config.height, depth_or_array_layers: 1 };
         let now = std::time::Instant::now();
         let moving = self.last_present.is_some_and(|t| now - t < MOTION_GAP);
-        // The canvas is kept up to date at rest, or when drawing on it partly.
-        let use_canvas = self.can_copy && (scissor.is_some() || !moving);
+        // The canvas is kept up to date at rest, when drawing on it partly,
+        // or when only page pixels changed (so the next frame can be partial).
+        let use_canvas = self.can_copy && (scissor.is_some() || !moving || self.shown_layout == Some(layout));
         let fresh = use_canvas && self.canvas.as_ref().is_none_or(|c| c.size() != size);
         if fresh {
             self.canvas = Some(self.device.create_texture(&wgpu::TextureDescriptor {
@@ -860,6 +868,7 @@ impl Renderer {
         self.queue.present(frame);
         self.last_frame = Some(key);
         self.last_layout = use_canvas.then_some(layout);
+        self.shown_layout = Some(layout);
         self.last_present = Some(now);
         self.presented += 1;
         self.partial += u64::from(scissor.is_some());

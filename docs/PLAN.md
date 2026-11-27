@@ -1107,10 +1107,27 @@ loaded by Trailboard and Ref A in every case.
     canvas gain as well. Unit tests `frames_start_at_the_page_hiding_the_most`,
     `cut_leaves_strips_round_the_hole`; clippy clean. Decision: no new
     `perf` field (run.py's parser expects the current count); partial/s
-    already shows (1). **To measure:** push `perf-6e`, dispatch on it
-    and on master (cases video-vp9, video-h264, idle, still, pan;
-    trailboard, chrome), compare same CPU model; check the screenshots
-    for seams at a card's corners and edges.
+    already shows (1).
+    **First measurement** (2026-11-27; master run 45970171546 vs perf-6e
+    run 45971592897; medians of 3, same CPU model only):
+
+    | Case (CPU) | master | perf-6e (occlusion) |
+    |---|---|---|
+    | video-h264 (EPYC 7763) | 368 %, 38.3 ms/frame, 23.7 fps | 351 %, 29.8 ms/frame, 30 fps |
+    | pan (Xeon 6975P-C) | 366 %, 26.6 ms/frame, 35 fps | 349 %, 17.2 ms/frame, 52 fps |
+
+    (vp9 ran on different CPUs: 304 % → 209 %, not comparable.) The
+    occlusion cuts a frame by ~22–35 %, and the loop now keeps up with
+    the video's 30 fps; total CPU barely moves because the loop draws
+    more frames. Screenshots right (card corners, ring, overlapping cards
+    in still). **But 0 partial frames still:** a video filling its page
+    repaints the whole texture, which `update_page_part` recorded as
+    `None` (draw the whole window), and a full frame in motion skipped
+    the canvas, so the next one couldn't be partial either. Fixed: only a
+    new texture (resize) means `None`; whole-page damage is the page's
+    rect; and the canvas is used when the frame's layout equals the last
+    one shown (`shown_layout`: only page pixels changed), even in motion.
+    **To measure next:** the same two-run comparison on the fix.
   - **6f. Report.** Update the table at the top of M16 with CI and
     laptop numbers; decide with the owner whether dmabuf paint
     (`on_accelerated_paint`, §5) becomes its own milestone.

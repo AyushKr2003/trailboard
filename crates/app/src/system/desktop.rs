@@ -20,6 +20,7 @@ use std::process::Command;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
 
+use notify::event::{AccessKind, AccessMode, EventKind};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::ui::theme::{self, Theme};
@@ -56,7 +57,7 @@ impl Desktop {
         let watcher = {
             let tx = tx.clone();
             notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-                if res.is_ok() {
+                if res.is_ok_and(|e| changes_files(&e.kind)) {
                     let _ = tx.send(Event::Files);
                     web::wake();
                 }
@@ -143,6 +144,14 @@ impl Desktop {
         }
         next.filter(|t| t != current)
     }
+}
+
+/// Whether a watched path's event can change what it holds. Opening and
+/// reading don't: reading the theme (`Desktop::read`) opens the files it
+/// watches, and counting that as a change re-read them every 80 ms, waking
+/// the app for a frame each time.
+fn changes_files(kind: &EventKind) -> bool {
+    !matches!(kind, EventKind::Access(a) if *a != AccessKind::Close(AccessMode::Write))
 }
 
 fn nearest_existing(p: &Path) -> PathBuf {
@@ -293,6 +302,18 @@ fn follow_hyprland(tx: Sender<Event>, hyprctl: &Path, socket: &Path) {
 
 #[cfg(test)]
 mod tests {
+    use notify::event::{AccessKind, AccessMode, CreateKind, EventKind, ModifyKind};
+
+    #[test]
+    fn reading_the_theme_is_no_change() {
+        assert!(!super::changes_files(&EventKind::Access(AccessKind::Open(AccessMode::Any))));
+        assert!(!super::changes_files(&EventKind::Access(AccessKind::Close(AccessMode::Read))));
+        assert!(!super::changes_files(&EventKind::Access(AccessKind::Read)));
+        assert!(super::changes_files(&EventKind::Access(AccessKind::Close(AccessMode::Write))));
+        assert!(super::changes_files(&EventKind::Modify(ModifyKind::Any)));
+        assert!(super::changes_files(&EventKind::Create(CreateKind::File)));
+    }
+
     #[test]
     fn hyprland_animations_switch() {
         assert_eq!(super::parse_animations(r#"{"option": "animations:enabled", "int": 0, "set": true}"#), Some(false));

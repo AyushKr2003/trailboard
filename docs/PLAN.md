@@ -1553,7 +1553,24 @@ screenshot check for visual changes.
 
 ## 6. Handoff (updated at the end of every session)
 
-**Last session:** 2026-11-27 (fifty-fifth): **PB1 steps 1–2** (video),
+**Last session:** 2026-11-27 (fifty-sixth): **real-GPU check, then the
+skipped frames**, owner: "you can test it in real gpu in this pc … in
+half", then "your way". Local harness (scratchpad `gputest.py`: the
+saved 1080p page, a half-screen window on the current workspace, CPU from
+`/proc` by executable, since Chromium moves its browser process into a
+scope of its own): video on the iGPU is 1.6× Chromium (15.3 vs 9.6 %),
+our render 0.5 ms a frame, PB1's copy and plain pipeline neutral there
+(BUGS.md PB1). Merged `perf-copy` into `master` (fast-forward, pushed),
+branch `perf-skips`. Temporary logging (reverted) found the ~17 skipped
+frames a second: the desktop theme watcher counted its own reads as
+changes, an 80 ms loop at idle too. Fixed (`desktop::changes_files`,
+unit-tested). Verified: clippy, all tests, local runs (video and idle,
+before and after: skipped 16–20/s → 0, idle main 0.75 → 0.3 %). Not
+verified on CI (no Omarchy theme there, so nothing to see). **Next up:**
+the owner merges `perf-skips`; then dmabuf (PB1 (4)), measured locally,
+or PB2's overdraw on CI.
+
+**Session before:** 2026-11-27 (fifty-fifth): **PB1 steps 1–2** (video),
 asked by the owner ("merge it in main and start the next step"): merged
 `perf-idle` into `master` (fast-forward, pushed), then branch
 `perf-copy`. Done: `damage::page_copy_from` (unit-tested: white,
@@ -1578,7 +1595,7 @@ model), render 16.7 ms a frame (was 20.8); vp9 5.7×; plain path 59.5
 Mpx/s; screenshots fine. **Next up:** the owner merges `perf-copy`; the
 exact-scale question (BUGS.md PB1) is theirs; else PB2's overdraw.
 
-**Session before:** 2026-11-27 (fifty-fourth): **BUGS.md research, then
+**Earlier:** 2026-11-27 (fifty-fourth): **BUGS.md research, then
 PB3 (idle)**, asked by the owner ("do a intensive research what way is
 best", then "yes go on" and "write this into docs/BUGS.md"). Research,
 from the code and the web: PB1's lever is copying a page shown at 1:1

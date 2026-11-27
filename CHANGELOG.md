@@ -222,6 +222,11 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
 
 ### Fixed
 
+- **On Omarchy, Trailboard no longer re-reads the desktop theme twelve
+  times a second.** Reading the theme files looked to it like the theme
+  changing, so it read them again 80 ms later, for as long as it ran,
+  building a frame each time. Idle CPU on a laptop drops by about half.
+
 - **Pages opened at start fill the window the window manager gives.**
   The opening view was fitted to the size Trailboard asked for, so when
   a tiling window manager made the window bigger, the cards stayed

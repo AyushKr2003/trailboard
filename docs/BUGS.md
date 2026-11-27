@@ -172,7 +172,19 @@ is left on a GPU: Chromium's GPU process reading each frame back for
 video's dirty rects), and **~17 frames a second built and skipped as
 unchanged while the video plays**: something bumps `web::activity()`
 without new pixels. Next: find that (cheap, main thread); then dmabuf,
-which removes the readback and both copies. The CI ratio (6.7×) is
+which removes the readback and both copies.
+
+**Found and fixed (branch `perf-skips`):** not the video at all. The
+desktop watcher (`system/desktop.rs`) counted inotify's *open* and *read*
+events on the Omarchy theme files as changes, and reading the theme
+opens them: a loop re-reading the theme every 80 ms (its debounce) for as
+long as Trailboard ran, each time with `web::wake()`, a frame built and
+skipped. It ran at idle too, on any Omarchy desktop; CI has no theme to
+watch, so the bench never saw it. Now only events that can change a file
+count (`changes_files`, unit-tested; `blocking` already did this).
+Measured locally (iGPU, half screen, 2 runs each): video skipped 16/s →
+0, main process 8.8 → 8.1 %; idle skipped 20/s → 0, main 0.75 → 0.3 %,
+total 1.15 → 0.85 %. The CI ratio (6.7×) is
 software rendering; users with a GPU see ~1.6×.
 
 ## PB2. Panning the board costs 3.5 cores 🔴

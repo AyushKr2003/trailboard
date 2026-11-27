@@ -103,6 +103,9 @@ fn main() -> ExitCode {
     if let Some(node) = web::render_node_override() {
         log::info!("video decoding on {node}: the first render node is NVIDIA's, which has no VA-API");
     }
+    if let Some(args) = web::extra_cef_args() {
+        log::info!("TRAILBOARD_CEF_ARGS added: {args}");
+    }
     if engine.sandbox().is_on() {
         log::info!("{}", engine.sandbox().describe());
     } else {

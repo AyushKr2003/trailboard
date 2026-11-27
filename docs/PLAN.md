@@ -1069,7 +1069,7 @@ loaded by Trailboard and Ref A in every case.
     once a second in the video case: page paints/s, bytes uploaded/s,
     frames presented/s (full vs partial), and time in `render`. Put the
     first breakdown here before changing code.
-  - ⬜ **6b. CEF compositing switches** (after 6d, owner 2026-11-27).
+  - 🟡 **6b. CEF compositing switches** (after 6d, owner 2026-11-27; knob done, CI A/B to do).
     Without accelerated paint, Chromium composites on the GPU process
     and reads the frame back; `--disable-gpu-compositing` makes it
     composite in software straight into the paint buffer. Add an
@@ -1092,6 +1092,19 @@ loaded by Trailboard and Ref A in every case.
     shows a win, keep it as an env knob, or the default only when the
     adapter is software (wgpu `AdapterInfo::device_type == Cpu`), and
     ask the owner to check VA-API on the laptop themselves.
+    **Knob done 2026-11-27:** `TRAILBOARD_CEF_ARGS` (`web::extra_switches`,
+    unit-tested; dashes optional, `name=value` kept), browser process
+    only; the logger starts after CEF, so the switches are kept in
+    `web::extra_cef_args()` and `main` logs "TRAILBOARD_CEF_ARGS added:
+    …". Checked here: with `--disable-gpu-compositing`, `chrome://gpu` in
+    a card says Compositing "Software only" and lists the switch on its
+    command line (without: "Hardware accelerated"); Video Decode still
+    says "Hardware accelerated" on the laptop's iGPU (a report only, not
+    a playback check). Zygote-forked children keep the zygote's command
+    line, so `/proc/*/cmdline` can't show it. **To do:** the CI A/B: a
+    throwaway commit on `perf-6e` that sets the variable when unset (in
+    `main` before the engine starts), a run of the 6d cases, then revert
+    it; compare with the 6d run on the same CPU (or ÷ Chrome).
   - ⏭ **6c. Frame rate.** Skipped (2026-11-27): CEF already paints at
     the video's 30/s (6e's runs), so there is nothing to cut. Check whether a 30 fps video makes CEF paint at
     60/s (6a's paints/s). If so, try `windowless_frame_rate` 30 for a

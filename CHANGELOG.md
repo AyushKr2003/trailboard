@@ -87,6 +87,9 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
   copied and uploaded, frames presented and how many were partial, time
   in the renderer). The CI benchmark turns it on and also splits CPU by
   process kind (main, GPU, renderer…).
+- **`TRAILBOARD_CEF_ARGS`**, a debug knob: extra engine switches,
+  separated by spaces (e.g. `TRAILBOARD_CEF_ARGS=--disable-gpu-compositing`),
+  to try one without a rebuild. The start log lists what it added.
 
 ### Changed
 

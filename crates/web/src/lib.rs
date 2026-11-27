@@ -454,6 +454,23 @@ wrap_app! {
             // grey bar with arrow buttons on every card. They take no width
             // from the page. Pages that style their own scrollbars keep them.
             cl.append_switch_with_value(Some(&"enable-features".into()), Some(&"OverlayScrollbar".into()));
+            // A debug knob for trying engine switches without a rebuild
+            // (e.g. `--disable-gpu-compositing`); child processes get the
+            // ones they need from the browser process.
+            if browser {
+                let extra = std::env::var("TRAILBOARD_CEF_ARGS").unwrap_or_default();
+                let mut added = Vec::new();
+                for (name, value) in extra_switches(&extra) {
+                    match &value {
+                        Some(v) => cl.append_switch_with_value(Some(&name.as_str().into()), Some(&v.as_str().into())),
+                        None => cl.append_switch(Some(&name.as_str().into())),
+                    }
+                    added.push(format!("--{name}{}", value.map(|v| format!("={v}")).unwrap_or_default()));
+                }
+                if !added.is_empty() {
+                    let _ = EXTRA_ARGS.set(added.join(" "));
+                }
+            }
         }
 
         fn browser_process_handler(&self) -> Option<BrowserProcessHandler> {
@@ -509,6 +526,12 @@ pub fn engine_version() -> &'static str {
 }
 
 static RENDER_NODE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+static EXTRA_ARGS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// The switches `TRAILBOARD_CEF_ARGS` added, if any; for the start log.
+pub fn extra_cef_args() -> Option<&'static str> {
+    EXTRA_ARGS.get().map(String::as_str)
+}
 
 /// The render node Trailboard pointed Chromium's video decoding at, when it
 /// did (see `render_node`); for the start log.
@@ -637,6 +660,21 @@ impl Engine {
 // ---------------------------------------------------------------------------
 // Pages
 // ---------------------------------------------------------------------------
+
+/// The switches in `TRAILBOARD_CEF_ARGS`: whitespace-separated `--name` or
+/// `--name=value` (the dashes are optional), as (name, value).
+fn extra_switches(s: &str) -> Vec<(String, Option<String>)> {
+    s.split_whitespace()
+        .filter_map(|w| {
+            let w = w.trim_start_matches('-');
+            let (name, value) = match w.split_once('=') {
+                Some((n, v)) => (n, Some(v.to_string())),
+                None => (w, None),
+            };
+            (!name.is_empty()).then(|| (name.to_string(), value))
+        })
+        .collect()
+}
 
 /// Latest painted frame of a page, BGRA8, tightly packed.
 #[derive(Default)]
@@ -2296,7 +2334,17 @@ pub mod flags {
 
 #[cfg(test)]
 mod tests {
-    use super::{IRect, PaintFrame, DAMAGE_KEPT};
+    use super::{extra_switches, IRect, PaintFrame, DAMAGE_KEPT};
+
+    #[test]
+    fn extra_switches_reads_names_and_values() {
+        let s = |n: &str, v: Option<&str>| (n.to_string(), v.map(str::to_string));
+        assert_eq!(
+            extra_switches("  --disable-gpu-compositing\t--use-gl=angle disable-gpu -- --=x"),
+            vec![s("disable-gpu-compositing", None), s("use-gl", Some("angle")), s("disable-gpu", None)]
+        );
+        assert!(extra_switches("").is_empty());
+    }
 
     fn r(x: i32, y: i32, w: i32, h: i32) -> IRect {
         IRect { x, y, w, h }

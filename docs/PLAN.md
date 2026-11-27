@@ -1232,9 +1232,40 @@ loaded by Trailboard and Ref A in every case.
     here. The main process is still ~135 % while `render` is only ~38 % of
     the main thread's time: llvmpipe's worker threads, the canvas copy, and
     the `on_paint` copy plus upload (6d). Next: 6d, then 6b.
-  - ⬜ **6f. Report.** Update the table at the top of M16 with CI and
+  - 🟡 **6f. Report.** Update the table at the top of M16 with CI and
     laptop numbers; decide with the owner whether dmabuf paint
     (`on_accelerated_paint`, §5) becomes its own milestone.
+    **Started 2026-11-27; numbers to come from one joint test with the
+    owner** ("do all and then we test all together"):
+    (1) CI, all five Trailboard cases on `perf-6e` at its head (also 6g's
+    pre-merge run): `gh workflow run bench.yml --ref bench -f ref=perf-6e
+    -f cases=all -f only=trailboard,chrome -f runs=3 -f save=false`.
+    With the opening-fit fix the video card fills the window, so expect
+    video near the ~350 % of the big-card runs (full frames: the page is
+    more than `PARTIAL_MAX` of the window), against Chrome's video at the
+    same full-window size: the fairer comparison, and the new reference.
+    (2) Laptop, owner present: `scripts/bench.py --note "step 6"`
+    (Trailboard only, release build), compared with Baseline 2.
+
+    *What step 6 found, for the report:* on a software renderer (CI) the
+    cost is our own drawing, per pixel: ~13 ms a frame for a 1425×800
+    card, ~30 ms for one filling 1920×1080; partial frames and
+    occlusion (6e) cut what is drawn round the page, not the page itself.
+    Copying (6d) and Chromium's compositing (6b) were never the cost
+    there. On a real GPU (the laptop) drawing is cheap and the copies
+    are what's left: 8 MB a paint out of CEF's buffer, then again into a
+    texture, 30 times a second for a 1080p video.
+
+    *dmabuf paint, recommendation:* **yes, its own milestone**, after the
+    owner picks its place against M17 (Windows). `on_accelerated_paint`
+    hands a dmabuf of each frame; importing it into wgpu (Vulkan
+    `VK_EXT_external_memory_dma_buf` through wgpu-hal, no public wgpu API
+    for it) drops both copies and the upload. It helps only with a GPU:
+    CI (llvmpipe) won't show it, so it needs laptop measurements, which
+    the CI-only rule doesn't allow today; and it needs a fallback to
+    today's path (no GPU, Windows, an import failure). For CI's numbers
+    the next lever would be drawing a page shown at 1:1 as a plain copy
+    instead of a filtered, rounded quad; not in step 6, noted here only.
   - ⬜ **6g. Merge `perf-6e` into `master`** (owner, 2026-11-27: only
     after 6d, 6b and 6f are done, not step by step). All of step 6 lives on
     the branch `perf-6e` until then. Before merging: `cargo test`,
@@ -1497,21 +1528,23 @@ screenshot check for visual changes.
 ## 6. Handoff (updated at the end of every session)
 
 **Last session:** 2026-11-27 (fifty-second): **M16 steps 6d and 6b
-done** on `perf-6e`. 6d: `on_paint` copies only the dirty rects
-(`popup::copy_dirty`); idle copies 14× less, video unchanged, CPU within
-noise (run 45981644696). 6b: `TRAILBOARD_CEF_ARGS` debug knob;
-`--disable-gpu-compositing` changed nothing in CI (run 45983554997 on
-the throwaway branch `perf-6b-try`), so no default changes. Found a
-startup race that decides the bench's card size (§7, "First fit uses the
-requested window size"). Verified: unit tests, clippy, local e2e with
-screenshots (typing, popup, counter, scroll; `chrome://gpu` with and
-without the knob), both CI runs' screenshots. The owner pushed and
-dispatched (the session's permission check refused `git push`). Not
-verified: the laptop (CI-only rule). **Next up:** delete `perf-6b-try`
-(local and origin); decide on the §7 race (fix it before 6f so the
-final table is measured on one card size?); then 6f (needs the owner:
-laptop numbers via `scripts/bench.py --note "step 6"`, and whether
-dmabuf paint becomes a milestone), then 6g (merge).
+done** on `perf-6e`, plus a fix, and 6f started. 6d: `on_paint` copies
+only the dirty rects (`popup::copy_dirty`); idle copies 14× less, video
+unchanged, CPU within noise (run 45981644696). 6b: `TRAILBOARD_CEF_ARGS`
+debug knob; `--disable-gpu-compositing` changed nothing in CI (run
+45983554997 on the throwaway branch `perf-6b-try`, deleted locally), so
+no default changes. Fix (cf665f3): the opening cards are fitted again
+when the window gets its real size; it was a race that decided the
+bench's card size (3 of 12 video runs had the full-window card). 6f: the
+findings and a dmabuf recommendation are written in 6f; numbers wait for
+the joint test. Verified: unit tests, clippy, local e2e with screenshots
+(typing, popup, counter, scroll; `chrome://gpu` with and without the
+knob; the opening refit on Hyprland), both CI runs' screenshots. The
+owner pushes (the session's permission check refuses `git push`). **Next
+up (with the owner, "we test all together"):** push `perf-6e`, delete
+`origin/perf-6b-try`, the CI run and the laptop run listed in 6f; write
+the numbers into 6f and the M16 table; the owner decides dmabuf's place;
+then 6g (merge).
 
 **Session before:** 2026-11-27 (fifty-first): read master run 45845659696
 (it confirms 6a's split on vp9, h264 and AV1); **M16 step 6e done** on

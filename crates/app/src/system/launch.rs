@@ -228,8 +228,8 @@ mod tests {
     /// `scripts/install-cef.sh` and the Arch PKGBUILD.
     #[test]
     fn engine_pins_agree() {
-        let script = include_str!("../../../scripts/install-cef.sh");
-        let pkgbuild = include_str!("../../../packaging/arch/PKGBUILD");
+        let script = include_str!("../../../../scripts/install-cef.sh");
+        let pkgbuild = include_str!("../../../../packaging/arch/PKGBUILD");
         let built = web::engine_version();
         let (major, minor, patch) = web::built_engine_version();
         let tag = format!("cef-{major}.{minor}.{patch}-media");

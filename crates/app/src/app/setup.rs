@@ -43,7 +43,7 @@ impl App {
             dock_keys: false,
             dock_side: dock::Side::default(),
             max_live: live_env.unwrap_or(settings.live_pages),
-            blocking: crate::blocking::Blocking::start(data_dir.clone(), settings.block_ads),
+            blocking: crate::system::blocking::Blocking::start(data_dir.clone(), settings.block_ads),
             settings,
             live_from_env: live_env.is_some(),
             used: HashMap::new(),
@@ -139,8 +139,8 @@ impl App {
             toast: None,
             sandbox: None,
             anim: Anims::default(),
-            label_fades: crate::chrome::Fades::default(),
-            photo: crate::backdrop::Photo::default(),
+            label_fades: crate::ui::chrome::Fades::default(),
+            photo: crate::ui::backdrop::Photo::default(),
             wallpaper: None,
             wallpaper_checked: None,
             photo_files: Vec::new(),
@@ -173,7 +173,7 @@ impl App {
             parked: Vec::new(),
             sites,
             sites_session: Default::default(),
-            hud: crate::hud::Hud::default(),
+            hud: crate::ui::hud::Hud::default(),
             hud_hover: None,
             hud_down: false,
             hud_open: None,
@@ -186,8 +186,8 @@ impl App {
                 if let Some(k) = std::env::var("TRAILBOARD_SLOW_MOTION").ok().and_then(|v| v.parse::<f32>().ok()) {
                     motion::set_slow(k);
                 }
-                let still = crate::desktop::reduced_motion();
-                crate::welcome::set_still(still);
+                let still = crate::system::desktop::reduced_motion();
+                crate::pages::welcome::set_still(still);
                 still
             },
             glides: motion::Glides::default(),

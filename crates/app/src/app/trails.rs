@@ -299,14 +299,14 @@ impl App {
         let th = &self.theme;
         let ui = self.ui();
         let scale = self.scale();
-        let size = crate::chrome::type_::TITLE * ui;
+        let size = crate::ui::chrome::type_::TITLE * ui;
         let (pad, bh) = (size * 0.45, size * 1.6);
         let typed_n = cp.hints.typed.chars().count();
         let radius = th.small_radius(scale);
         let mut l = Layer::default();
         for &c in &cp.cards {
             if let Some(n) = self.scene.node(c).filter(|_| !self.scene.is_hidden(c)) {
-                crate::chrome::outline(&mut l, self.to_screen_rect(n.frame()), radius, (2.0 * ui).max(1.5), rgb(th.marked(), 0.9));
+                crate::ui::chrome::outline(&mut l, self.to_screen_rect(n.frame()), radius, (2.0 * ui).max(1.5), rgb(th.marked(), 0.9));
             }
         }
         let mut items = Vec::new();
@@ -324,7 +324,7 @@ impl App {
         let screen = Rect::new(0.0, 0.0, self.viewport().x, self.viewport().y);
         let r = self.renderer.as_mut()?;
         for (frame, head, tail) in items {
-            crate::chrome::outline(&mut l, frame, radius, (1.5 * ui).max(1.0), rgb(th.accent(), 0.55));
+            crate::ui::chrome::outline(&mut l, frame, radius, (1.5 * ui).max(1.0), rgb(th.accent(), 0.55));
             let head_w = r.measure(&head, size, true);
             let w = head_w + r.measure(&tail, size, true) + pad * 2.0;
             let c = frame.center();
@@ -362,7 +362,7 @@ impl App {
         let outline = ((2.0 * self.ui()).max(1.5), rgb(th.marked(), 0.9));
         for &(g, _) in &self.group {
             if let Some(n) = self.scene.node(g) {
-                crate::chrome::outline(&mut l, self.to_screen_rect(n.frame()), radius, outline.0, outline.1);
+                crate::ui::chrome::outline(&mut l, self.to_screen_rect(n.frame()), radius, outline.0, outline.1);
             }
         }
         let card = self.to_screen_rect(self.scene.node(id)?.frame());
@@ -373,7 +373,7 @@ impl App {
             Some(t) => {
                 let tf = self.to_screen_rect(t.frame());
                 let colour = self.scene.trail_mark(t.id).colour.map_or(th.accent(), |c| th.color(&c));
-                crate::chrome::outline(&mut l, tf, radius, outline.0 * 1.5, rgb(colour, 0.95));
+                crate::ui::chrome::outline(&mut l, tf, radius, outline.0 * 1.5, rgb(colour, 0.95));
                 if link {
                     // A link leaves the card where it is: a dashed line to it.
                     let (a, b) = if card.x >= tf.right() {
@@ -394,8 +394,8 @@ impl App {
                 let own = self.scene.node(id).and_then(|n| n.trail.colour.clone()).filter(|_| keep && self.scene.followers(id).len() > 1);
                 let colour = own.map_or(colour, |c| th.color(&c));
                 let corner = th.card_corner(k, scale, lf.w, lf.h);
-                crate::chrome::fill(&mut l, lf, corner, rgb(colour, 0.14));
-                crate::chrome::outline(&mut l, lf, corner, outline.0, rgb(colour, 0.8));
+                crate::ui::chrome::fill(&mut l, lf, corner, rgb(colour, 0.14));
+                crate::ui::chrome::outline(&mut l, lf, corner, outline.0, rgb(colour, 0.8));
                 (Vec2::new(tf.right(), row(tf)), Vec2::new(lf.x, row(lf)), colour)
             }
             None => {
@@ -422,7 +422,7 @@ impl App {
         }
         let d = (7.0 * k).clamp(3.0 * scale, 8.0 * scale);
         for p in [from, to] {
-            crate::chrome::fill(&mut l, Rect::new(p.x - d / 2.0, p.y - d / 2.0, d, d), d / 2.0, rgb(colour, 1.0));
+            crate::ui::chrome::fill(&mut l, Rect::new(p.x - d / 2.0, p.y - d / 2.0, d, d), d / 2.0, rgb(colour, 1.0));
         }
         l
     }
@@ -688,16 +688,16 @@ impl App {
 
     /// The icon of an awake mode: a ring for *Auto* and *Keep awake*, a
     /// solid disc for *Always active* (docs/DESIGN.md, "Awake mark").
-    pub(super) fn awake_icon(mode: Awake) -> crate::icons::Icon {
+    pub(super) fn awake_icon(mode: Awake) -> crate::ui::icons::Icon {
         match mode {
-            Awake::Auto | Awake::Keep => crate::icons::Icon::AwakeRing,
-            Awake::Active => crate::icons::Icon::AwakeDisc,
+            Awake::Auto | Awake::Keep => crate::ui::icons::Icon::AwakeRing,
+            Awake::Active => crate::ui::icons::Icon::AwakeDisc,
         }
     }
 
     /// The colour of an awake mode's mark; `None` for *Auto*, drawn like the
     /// other buttons.
-    pub(super) fn awake_colour(th: &crate::theme::Theme, mode: Awake) -> Option<crate::theme::Rgb> {
+    pub(super) fn awake_colour(th: &crate::ui::theme::Theme, mode: Awake) -> Option<crate::ui::theme::Rgb> {
         match mode {
             Awake::Auto => None,
             Awake::Keep => Some(th.awake_keep()),

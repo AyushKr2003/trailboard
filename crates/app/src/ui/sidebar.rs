@@ -27,9 +27,9 @@ use compositor::{Layer, Quad, Renderer, Shape, Text};
 use scene::sidebar::{Group, Row};
 use scene::{Node, NodeId, Rect, Scene, Vec2};
 
-use crate::chrome::{self, Lift, Press, type_};
-use crate::icons::{self, Icon};
-use crate::theme::{Rgb, Theme, blend, rgb, shade};
+use crate::ui::chrome::{self, Lift, Press, type_};
+use crate::ui::icons::{self, Icon};
+use crate::ui::theme::{Rgb, Theme, blend, rgb, shade};
 
 /// Sizes in logical px; multiplied by the UI scale.
 pub const WIDTH: f32 = 288.0;

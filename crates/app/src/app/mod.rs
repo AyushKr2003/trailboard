@@ -119,16 +119,16 @@ use winit::keyboard::{KeyCode, ModifiersState, NamedKey};
 use winit::platform::wayland::WindowAttributesExtWayland;
 use winit::window::{CursorIcon, Window, WindowId};
 
-use crate::clipboard::{Clipboard, Paste};
-use crate::desktop::Desktop;
-use crate::launch;
-use crate::theme::{rgb, text_on, Theme};
-use crate::keymap::{self, KeyIn};
-use crate::menu::{self, ContextMenu, Entry};
-use crate::omnibox::{self, Omnibox, Target};
-use crate::palette::{self, Command, Item};
-use crate::script::{Cmd, Script};
-use crate::sidebar::Panel;
+use crate::system::clipboard::{Clipboard, Paste};
+use crate::system::desktop::Desktop;
+use crate::system::launch;
+use crate::ui::theme::{rgb, text_on, Theme};
+use crate::system::keymap::{self, KeyIn};
+use crate::ui::menu::{self, ContextMenu, Entry};
+use crate::ui::omnibox::{self, Omnibox, Target};
+use crate::ui::palette::{self, Command, Item};
+use crate::dev::script::{Cmd, Script};
+use crate::ui::sidebar::Panel;
 
 mod arranging;
 mod board_bg;
@@ -212,7 +212,7 @@ struct ReadMorph {
 impl ReadMorph {
     /// How far into Solo the card is: 0 on the board, 1 filling the window.
     fn progress(&self) -> f32 {
-        let t = crate::chrome::ease_out(self.start.elapsed().as_secs_f32() * 1000.0 / read::MORPH_MS as f32);
+        let t = crate::ui::chrome::ease_out(self.start.elapsed().as_secs_f32() * 1000.0 / read::MORPH_MS as f32);
         if self.entering { t } else { 1.0 - t }
     }
 
@@ -493,14 +493,14 @@ fn stack_step_px(k: f32, scale: f32) -> f32 {
 /// Appear animations of the overlays.
 #[derive(Default)]
 struct Anims {
-    tip: crate::chrome::Appear,
-    omnibox: crate::chrome::Appear,
-    menu: crate::chrome::Appear,
-    toast: crate::chrome::Appear,
-    question: crate::chrome::Appear,
-    sheet: crate::chrome::Appear,
-    sidebar: crate::chrome::Appear,
-    welcome: crate::chrome::Appear,
+    tip: crate::ui::chrome::Appear,
+    omnibox: crate::ui::chrome::Appear,
+    menu: crate::ui::chrome::Appear,
+    toast: crate::ui::chrome::Appear,
+    question: crate::ui::chrome::Appear,
+    sheet: crate::ui::chrome::Appear,
+    sidebar: crate::ui::chrome::Appear,
+    welcome: crate::ui::chrome::Appear,
 }
 
 /// A small hash for telling one overlay's content from the next.
@@ -540,7 +540,7 @@ pub struct App {
     /// The user's settings (Ctrl+,), saved in `settings.json`.
     settings: Settings,
     /// Ad and tracker blocking: filter lists and the sites allowed.
-    blocking: crate::blocking::Blocking,
+    blocking: crate::system::blocking::Blocking,
     /// `TRAILBOARD_MAX_LIVE` set the live-page cap for this run (until the setting changes).
     live_from_env: bool,
     /// Recency of use per card (larger is more recent), for choosing which cards sleep.
@@ -571,7 +571,7 @@ pub struct App {
     /// file's and `:bind`'s (`scene::userkeys`, step 10).
     keys: userkeys::Keys,
     /// The `?` sheet's sections, built from `keys` when it opens.
-    sheet_sections: Vec<crate::hints::Section>,
+    sheet_sections: Vec<crate::ui::hints::Section>,
     /// A count or sequence typed toward a binding (`5j`).
     pending: keys::Pending,
     /// Where an entered card's keys go.
@@ -621,9 +621,9 @@ pub struct App {
     /// The shortcut sheet (`?`) is showing.
     hints: bool,
     /// Its filter and scroll.
-    sheet: crate::hints::Sheet,
+    sheet: crate::ui::hints::Sheet,
     /// The sidebar's rows arriving and its tab gliding (`sidebar::Motion`).
-    sidebar_motion: crate::sidebar::Motion,
+    sidebar_motion: crate::ui::sidebar::Motion,
     /// Link hints (`f`) on a card's page: asked for, or showing labels.
     link_hints: Option<LinkHints>,
     /// Picking a card by its letters to join its trail (M15).
@@ -670,9 +670,9 @@ pub struct App {
     /// The sidebar was opened by the pointer on the window's edge, and goes
     /// when the pointer leaves it (`sidebar::Peek`).
     sidebar_peek: bool,
-    peek: crate::sidebar::Peek,
+    peek: crate::ui::sidebar::Peek,
     /// The space chip under the pointer in the sidebar's foot.
-    sidebar_spot: Option<crate::sidebar::Spot>,
+    sidebar_spot: Option<crate::ui::sidebar::Spot>,
     /// The current mouse press started inside the context menu.
     menu_pressed: bool,
     clipboard: Clipboard,
@@ -704,7 +704,7 @@ pub struct App {
     /// Present every frame, as before frames were compared (`TRAILBOARD_REDRAW=always`).
     pub always_redraw: bool,
     /// `TRAILBOARD_PERF`: the cost of drawing, logged once a second.
-    pub perf: Option<crate::perf::PerfLog>,
+    pub perf: Option<crate::dev::perf::PerfLog>,
     data_dir: std::path::PathBuf,
     spaces: SpaceIndex,
     /// False when the space index could not be read safely; nothing is saved then.
@@ -724,9 +724,9 @@ pub struct App {
     /// How far each overlay has come in (see `chrome::Appear`).
     anim: Anims,
     /// Cards' labels fading in and out (quiet labels).
-    label_fades: crate::chrome::Fades,
+    label_fades: crate::ui::chrome::Fades,
     /// The board's photo (*Board background: Photo*), read off the main thread.
-    photo: crate::backdrop::Photo,
+    photo: crate::ui::backdrop::Photo,
     /// The desktop's wallpaper file, looked up now and then (`backdrop::desktop_wallpaper`).
     wallpaper: Option<PathBuf>,
     wallpaper_checked: Option<Instant>,
@@ -794,13 +794,13 @@ pub struct App {
     /// The same, for this run only (`:site-session`, `tJ`…); wins over `sites`.
     sites_session: scene::sitesettings::SiteSettings,
     /// The controls over the board, as laid out last frame (for the pointer).
-    hud: crate::hud::Hud,
+    hud: crate::ui::hud::Hud,
     /// The control under the pointer, and since when (for its tooltip).
-    hud_hover: Option<(crate::hud::Control, Instant)>,
+    hud_hover: Option<(crate::ui::hud::Control, Instant)>,
     /// The left button is held on a control.
     hud_down: bool,
     /// The control whose menu is open.
-    hud_open: Option<crate::hud::Control>,
+    hud_open: Option<crate::ui::hud::Control>,
     /// The size of a new card, shaped like the screen (`placement::card_size`).
     card_size: Vec2,
     /// What the pointer is over on the board (a label's buttons light up).
@@ -811,7 +811,7 @@ pub struct App {
     bar_buttons: Vec<(Hit, Rect)>,
     /// The buttons of the guidance drawn last frame (an empty board's
     /// welcome, a view with no card in it), and what each does.
-    nudge: Vec<(Rect, crate::hud::Go)>,
+    nudge: Vec<(Rect, crate::ui::hud::Go)>,
     /// The desktop asks for less motion (`desktop::reduced_motion`): cards,
     /// spaces, Solo and the sidebar change without animating.
     still: bool,
@@ -1016,18 +1016,18 @@ fn menu_layer(r: &mut Renderer, m: &ContextMenu, ui: f32, th: &Theme) -> Layer {
     let mut l = Layer::default();
     let radius = th.radius(ui / th.text_scale);
     let small = th.small_radius(ui / th.text_scale);
-    crate::chrome::panel(&mut l, m.rect, radius, th, ui, crate::chrome::Lift::Mid, th.panel());
+    crate::ui::chrome::panel(&mut l, m.rect, radius, th, ui, crate::ui::chrome::Lift::Mid, th.panel());
     let size = menu::FONT * ui;
-    let ksize = crate::chrome::type_::CAPTION * ui;
+    let ksize = crate::ui::chrome::type_::CAPTION * ui;
     for (i, (item, row)) in m.items.iter().zip(&m.rows).enumerate() {
         if item.is_separator() {
-            let line = crate::chrome::hair(ui);
-            crate::chrome::fill(&mut l, Rect::new(m.rect.x + line, (row.center().y - line / 2.0).round(), m.rect.w - 2.0 * line, line), 0.0, rgb(th.line(), 1.0));
+            let line = crate::ui::chrome::hair(ui);
+            crate::ui::chrome::fill(&mut l, Rect::new(m.rect.x + line, (row.center().y - line / 2.0).round(), m.rect.w - 2.0 * line, line), 0.0, rgb(th.line(), 1.0));
             continue;
         }
         let hot = m.hover == Some(i);
         if hot {
-            crate::chrome::fill(&mut l, *row, small, rgb(th.active(), 1.0));
+            crate::ui::chrome::fill(&mut l, *row, small, rgb(th.active(), 1.0));
         }
         let mid = row.center().y;
         // The lead column: the row's icon, or a tick on the card in front
@@ -1040,23 +1040,23 @@ fn menu_layer(r: &mut Renderer, m: &ContextMenu, ui: f32, th: &Theme) -> Layer {
                     (true, true) => th.text(),
                     (true, false) => th.text2(),
                 };
-                crate::icons::draw(&mut l, r, icon, icon_x, mid, 16.0 * ui, rgb(ink, 1.0));
+                crate::ui::icons::draw(&mut l, r, icon, icon_x, mid, 16.0 * ui, rgb(ink, 1.0));
             }
-            None if item.is_current() => crate::icons::draw(&mut l, r, crate::icons::Icon::Check, icon_x, mid, 14.0 * ui, rgb(th.accent_text(), 1.0)),
+            None if item.is_current() => crate::ui::icons::draw(&mut l, r, crate::ui::icons::Icon::Check, icon_x, mid, 14.0 * ui, rgb(th.accent_text(), 1.0)),
             None => {}
         }
         let mut right = row.right() - 8.0 * ui;
-        if let Some(keys) = crate::chrome::keycaps(item.keys()) {
+        if let Some(keys) = crate::ui::chrome::keycaps(item.keys()) {
             let widths: Vec<f32> = keys.iter().map(|k| r.measure(k, ksize, false)).collect();
-            right = crate::chrome::draw_keycaps(&mut l, &keys, &widths, right, mid, ksize, th, ui, *row) - 12.0 * ui;
+            right = crate::ui::chrome::draw_keycaps(&mut l, &keys, &widths, right, mid, ksize, th, ui, *row) - 12.0 * ui;
         }
         let x = row.x + (menu::TEXT_PAD - menu::PAD) * ui;
         let ink = match (item.is_enabled(), hot) {
             (false, _) => th.text3(),
             (true, true) => th.text(),
-            (true, false) => crate::theme::blend(th.text(), th.text2(), 0.35),
+            (true, false) => crate::ui::theme::blend(th.text(), th.text2(), 0.35),
         };
-        crate::chrome::text(&mut l, item.label(), x, mid, size, rgb(ink, 1.0), Rect::new(x, row.y, (right - x).max(1.0), row.h), item.is_current());
+        crate::ui::chrome::text(&mut l, item.label(), x, mid, size, rgb(ink, 1.0), Rect::new(x, row.y, (right - x).max(1.0), row.h), item.is_current());
     }
     l
 }

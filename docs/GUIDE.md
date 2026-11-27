@@ -300,7 +300,7 @@ TRAILBOARD_SCRIPT=path cargo run -p trailboard -- URL   # scripted end-to-end ru
 
 `TRAILBOARD_SCRIPT` drives the real input handlers (`click x y`, `pclick card x y`,
 `key ctrl+c`, `type text`, `ime-commit text`, `menuclick label`, `badgeclick id`, `wheel`, `fit`,
-`open URL`, `wait ms`, `log`, `quit`); see `crates/app/src/script.rs`.
+`open URL`, `wait ms`, `log`, `quit`); see `crates/app/src/dev/script.rs`.
 `TRAILBOARD_SLOW_MOTION=8` makes every board motion 8 times slower, to
 screenshot one halfway.
 

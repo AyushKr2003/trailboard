@@ -174,7 +174,7 @@ impl App {
 
     /// The board's two colours behind the cards: the space's mood, or its
     /// flat colour twice for *Plain*.
-    pub(super) fn backdrop_colours(&self) -> (crate::theme::Rgb, crate::theme::Rgb) {
+    pub(super) fn backdrop_colours(&self) -> (crate::ui::theme::Rgb, crate::ui::theme::Rgb) {
         let tint = self.spaces.active_entry().tint.clone();
         match self.settings.backdrop {
             prefs::Backdrop::Plain => (self.theme.board(tint.as_deref()), self.theme.board(tint.as_deref())),

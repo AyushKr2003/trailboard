@@ -23,9 +23,9 @@ use scene::{Node, NodeId, Rect, Scene, Vec2};
 use storage::pagetext::Visit;
 use storage::spaces::{SpaceId, SpaceIndex};
 
-use crate::chrome::{self, type_};
-use crate::icons::{self, Icon};
-use crate::theme::{rgb, Theme};
+use crate::ui::chrome::{self, type_};
+use crate::ui::icons::{self, Icon};
+use crate::ui::theme::{rgb, Theme};
 
 /// Board actions the palette can run, each with the keys that also do it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -160,15 +160,15 @@ impl App {
 
     pub(super) fn layout_menu(&mut self, id: NodeId, items: Vec<Entry>, anchor: Vec2) -> ContextMenu {
         let scale = self.ui();
-        let ksize = crate::chrome::type_::CAPTION * scale;
+        let ksize = crate::ui::chrome::type_::CAPTION * scale;
         let label_w = match self.renderer.as_mut() {
             Some(r) => items
                 .iter()
                 .filter(|e| !e.is_separator())
                 .map(|e| {
-                    let keys = crate::chrome::keycaps(e.keys()).unwrap_or_default();
+                    let keys = crate::ui::chrome::keycaps(e.keys()).unwrap_or_default();
                     let widths: Vec<f32> = keys.iter().map(|k| r.measure(k, ksize, false)).collect();
-                    let kw = if keys.is_empty() { 0.0 } else { crate::chrome::keycaps_width(&widths, ksize) + 24.0 * scale };
+                    let kw = if keys.is_empty() { 0.0 } else { crate::ui::chrome::keycaps_width(&widths, ksize) + 24.0 * scale };
                     r.measure(e.label(), menu::FONT * scale, e.is_current()) + kw
                 })
                 .fold(0.0, f32::max),
@@ -178,8 +178,8 @@ impl App {
     }
 
     /// A press on one of the board's own controls.
-    pub(super) fn hud_press(&mut self, c: crate::hud::Control) {
-        use crate::hud::Control;
+    pub(super) fn hud_press(&mut self, c: crate::ui::hud::Control) {
+        use crate::ui::hud::Control;
         log::info!("control: {c:?}");
         self.keys_in_page = false;
         match c {
@@ -223,7 +223,7 @@ impl App {
         self.menu_pressed = false;
     }
 
-    pub(super) fn open_hud_menu(&mut self, c: crate::hud::Control, items: Vec<Entry>) {
+    pub(super) fn open_hud_menu(&mut self, c: crate::ui::hud::Control, items: Vec<Entry>) {
         if self.hud_open == Some(c) && self.menu.is_some() {
             self.menu = None;
             self.hud_open = None;

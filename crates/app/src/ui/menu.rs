@@ -7,8 +7,8 @@ use scene::{NodeId, Rect, Vec2};
 use storage::spaces::SpaceId;
 use web::menu::{MenuAction, MenuItem};
 
-use crate::icons::Icon;
-use crate::palette::Command;
+use crate::ui::icons::Icon;
+use crate::ui::palette::Command;
 
 /// The card a menu of the board's own controls belongs to: none.
 pub const NO_CARD: NodeId = NodeId(u64::MAX);
@@ -79,7 +79,7 @@ impl Entry {
     /// (stack members, spaces, spelling fixes) keep the column for the tick.
     pub fn icon(&self) -> Option<Icon> {
         match self {
-            Entry::Command { cmd, .. } => Some(crate::palette::command_icon(*cmd)),
+            Entry::Command { cmd, .. } => Some(crate::ui::palette::command_icon(*cmd)),
             Entry::Unfold => Some(Icon::Expand),
             Entry::Page(MenuItem::Action { action, label, .. }) => Some(match action {
                 MenuAction::OpenBeside(_) => Icon::Trail,
@@ -115,7 +115,7 @@ impl Entry {
 
     /// A command's row, labelled and keyed as in the palette.
     pub fn command(cmd: Command) -> Entry {
-        let info = crate::palette::COMMANDS.iter().find(|i| i.cmd == cmd).expect("every command is listed");
+        let info = crate::ui::palette::COMMANDS.iter().find(|i| i.cmd == cmd).expect("every command is listed");
         Entry::Command { cmd, label: info.label, keys: info.keys }
     }
 

@@ -13,9 +13,9 @@
 
 use scene::settings::{Key, Settings};
 
-use crate::note::percent_encode;
-use crate::palette::Command;
-use crate::theme::Theme;
+use crate::pages::note::percent_encode;
+use crate::ui::palette::Command;
+use crate::ui::theme::Theme;
 
 const PAGE: &str = include_str!("settings.html");
 
@@ -199,7 +199,7 @@ pub fn data(s: &Settings, notes: &[(Key, String)], facts: &[(&str, String, Strin
 pub fn page_url(th: &Theme, data: &str) -> String {
     let html = PAGE
         .replacen("__PREFIX__", &web::js_string(web::APP_ACTION), 1)
-        .replacen("__THEME__", &crate::welcome::colors(th), 1)
+        .replacen("__THEME__", &crate::pages::welcome::colors(th), 1)
         .replacen("__DATA__", data, 1);
     format!("data:text/html;charset=utf-8,{}", percent_encode(&html))
 }
@@ -243,10 +243,10 @@ mod tests {
         let url = page_url(&Theme::default(), &d);
         assert!(!url.contains("__DATA__") && !url.contains("__THEME__") && !url.contains("__PREFIX__"));
         for msg in PAGE.split("act(\"").skip(1).filter_map(|s| s.split('"').next()) {
-            assert!([SET, PROXY, CORNER_RADIUS, RUN, KEYWORD_SET, KEYWORD_REMOVE, KEYWORD_RESET, crate::start::GUIDE].contains(&msg), "unknown message {msg}");
+            assert!([SET, PROXY, CORNER_RADIUS, RUN, KEYWORD_SET, KEYWORD_REMOVE, KEYWORD_RESET, crate::pages::start::GUIDE].contains(&msg), "unknown message {msg}");
         }
         let rounded = Theme { rounding: 10.0, ..Theme::default() };
-        assert!(crate::welcome::colors(&rounded).contains("\"radius\":\"10px\""), "pages follow the corners in use");
+        assert!(crate::pages::welcome::colors(&rounded).contains("\"radius\":\"10px\""), "pages follow the corners in use");
         assert!(d.contains("\"cornerRadius\":10") && d.contains("\"key\":\"corners\""), "{d}");
         assert_eq!(parse_set("block_ads=off"), Some((Key::BlockAds, "off")));
         assert_eq!(parse_set("nope=off"), None);

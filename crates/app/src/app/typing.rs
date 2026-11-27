@@ -77,12 +77,12 @@ impl App {
     pub(super) fn start_editor(&mut self, text: String) {
         use std::os::unix::process::CommandExt;
         let Some(e) = self.editing.as_mut() else { return };
-        let file = crate::editor::file_for(e.token);
-        if let Err(err) = crate::editor::write_private(&file, &text) {
+        let file = crate::system::editor::file_for(e.token);
+        if let Err(err) = crate::system::editor::write_private(&file, &text) {
             self.editing = None;
             return self.toast(format!("Can't write the text for your editor: {err}"));
         }
-        let Some(words) = crate::editor::command(&file, |n| std::env::var(n).ok(), crate::editor::on_path) else {
+        let Some(words) = crate::system::editor::command(&file, |n| std::env::var(n).ok(), crate::system::editor::on_path) else {
             let _ = std::fs::remove_file(&file);
             self.editing = None;
             return self.toast("No terminal for your editor · set TRAILBOARD_EDITOR to a command");
@@ -156,7 +156,7 @@ impl App {
         if !done {
             return;
         }
-        let text = std::fs::read_to_string(&file).map(|t| crate::editor::saved_text(&t)).unwrap_or_else(|_| e.original.clone());
+        let text = std::fs::read_to_string(&file).map(|t| crate::system::editor::saved_text(&t)).unwrap_or_else(|_| e.original.clone());
         if text == e.original {
             let _ = std::fs::remove_file(&file);
             self.editing = None;

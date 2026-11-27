@@ -1,7 +1,7 @@
 //! The note editor page: our own HTML (`note.html`) with the note's text and
 //! the theme's colours filled in, loaded into a note card as a `data:` URL.
 
-use crate::theme::{Rgb, Theme, mix};
+use crate::ui::theme::{Rgb, Theme, mix};
 
 /// Size of a new sticky note's content, world units.
 pub const STICKY_W: f32 = 280.0;

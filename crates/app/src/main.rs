@@ -2,32 +2,13 @@
 //! board; links open beside the page they came from.
 
 mod app;
-mod backdrop;
-mod blocking;
-mod chrome;
-mod clipboard;
-mod crash;
-mod desktop;
-mod editor;
-mod engines;
-mod hints;
-mod hud;
-mod icons;
-mod keymap;
-mod launch;
-mod memstat;
-mod menu;
-mod note;
-mod omnibox;
-mod palette;
-mod pathfield;
-mod perf;
-mod script;
-mod settings_page;
-mod sidebar;
-mod start;
-mod theme;
-mod welcome;
+mod dev;
+mod pages;
+mod system;
+mod ui;
+
+use dev::perf;
+use system::{crash, launch};
 
 use std::path::PathBuf;
 use std::process::ExitCode;

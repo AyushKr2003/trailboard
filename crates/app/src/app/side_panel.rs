@@ -6,7 +6,7 @@ impl App {
     /// The sidebar's rows and where they go.
     pub(super) fn sidebar_layout(&mut self) -> (Vec<scene::sidebar::Row>, Panel) {
         let rows = self.sidebar.rows(&self.scene);
-        let panel = Panel::new(self.viewport(), self.ui(), &crate::sidebar::slots(&rows));
+        let panel = Panel::new(self.viewport(), self.ui(), &crate::ui::sidebar::slots(&rows));
         (rows, panel)
     }
 
@@ -23,14 +23,14 @@ impl App {
         let reach = self.sidebar_rect().inflate(24.0 * self.ui());
         let near = self.pointer_in && (reach.contains(self.cursor) || self.cursor.x <= reach.right()) || self.sidebar_press.is_some() || self.menu.is_some();
         match self.peek.update(Instant::now(), self.pointer_in, at_edge, near, self.sidebar_open, self.sidebar_peek) {
-            Some(crate::sidebar::PeekAct::Open) => {
+            Some(crate::ui::sidebar::PeekAct::Open) => {
                 self.sidebar_open = true;
                 self.sidebar_peek = true;
                 self.sidebar_keys = false;
                 self.sidebar_scroll_to_sel();
                 log::info!("sidebar peek");
             }
-            Some(crate::sidebar::PeekAct::Close) => self.close_sidebar(),
+            Some(crate::ui::sidebar::PeekAct::Close) => self.close_sidebar(),
             None => {}
         }
     }

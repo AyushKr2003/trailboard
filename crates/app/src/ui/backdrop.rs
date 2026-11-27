@@ -17,7 +17,7 @@ pub const TEXTURE: u64 = 1 << 60;
 /// The desktop's wallpaper as Omarchy has it now (a link under its state
 /// folder), if there is one this module can read.
 pub fn desktop_wallpaper() -> Option<PathBuf> {
-    let p = std::fs::canonicalize(crate::theme::state_dir().join("background")).ok()?;
+    let p = std::fs::canonicalize(crate::ui::theme::state_dir().join("background")).ok()?;
     (p.is_file() && storage::photo::is_picture(&p)).then_some(p)
 }
 
@@ -27,7 +27,7 @@ pub fn picture_dirs() -> Vec<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
     let pictures = std::env::var_os("XDG_PICTURES_DIR").map(PathBuf::from).unwrap_or_else(|| home.join("Pictures"));
     vec![
-        crate::theme::state_dir().join("theme/backgrounds"),
+        crate::ui::theme::state_dir().join("theme/backgrounds"),
         home.join(".config/omarchy/backgrounds"),
         pictures.join("Wallpapers"),
         pictures.join("wallpapers"),

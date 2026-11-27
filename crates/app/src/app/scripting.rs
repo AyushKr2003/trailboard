@@ -310,7 +310,7 @@ impl App {
                     let mib = |b: u64| b as f64 / (1024.0 * 1024.0);
                     log::info!(
                         "script mem: {} live {} frames {} {:.1} MiB textures {} {:.1} MiB",
-                        crate::memstat::summary(), self.cards.len(), frames, mib(frame_bytes), textures, mib(texture_bytes)
+                        crate::dev::memstat::summary(), self.cards.len(), frames, mib(frame_bytes), textures, mib(texture_bytes)
                     );
                 }
                 Cmd::Zooms => {

@@ -462,7 +462,7 @@ impl App {
         if button != MouseButton::Left {
             return;
         }
-        use crate::sidebar::Spot;
+        use crate::ui::sidebar::Spot;
         let (rows, panel) = self.sidebar_layout();
         let n = self.spaces.spaces.len();
         let closable = |i: usize| matches!(rows.get(i), Some(Row::Card { .. }));

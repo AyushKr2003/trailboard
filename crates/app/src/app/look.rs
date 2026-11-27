@@ -10,7 +10,7 @@ impl App {
 
     /// Start following the desktop's look (once the window exists).
     pub(super) fn start_desktop(&mut self) {
-        let d = Desktop::new(crate::theme::state_dir(), crate::theme::user_shell_toml(), true);
+        let d = Desktop::new(crate::ui::theme::state_dir(), crate::ui::theme::user_shell_toml(), true);
         let t = d.read(&self.theme);
         self.desktop = Some(d);
         self.set_theme(t);

@@ -162,7 +162,7 @@ impl App {
                     {
                         continue;
                     }
-                    let Some(action) = self.node_of(page).and(crate::welcome::action(&action)) else {
+                    let Some(action) = self.node_of(page).and(crate::pages::welcome::action(&action)) else {
                         log::warn!("app page {page} asked for unknown action {action:?}");
                         continue;
                     };

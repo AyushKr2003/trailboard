@@ -18,9 +18,9 @@ impl App {
         let name = suggested.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let dir = self.files_dir.clone().filter(|d| d.is_dir()).unwrap_or_else(|| home.clone());
         let start = if suggested.is_absolute() && mode == web::dialog::FileMode::Save {
-            crate::pathfield::shorten(suggested, &home)
+            crate::ui::pathfield::shorten(suggested, &home)
         } else {
-            let mut t = crate::pathfield::shorten(&dir, &home);
+            let mut t = crate::ui::pathfield::shorten(&dir, &home);
             if !t.ends_with('/') {
                 t.push('/');
             }
@@ -51,13 +51,13 @@ impl App {
             ob.select_all = false;
             this.omnibox = Some(ob);
         };
-        let Some(path) = crate::pathfield::expand(text, &home) else {
+        let Some(path) = crate::ui::pathfield::expand(text, &home) else {
             return again(self, "Give a full path, like ~/Documents/file.pdf".to_string());
         };
-        let shown = crate::pathfield::shorten(&path, &home);
+        let shown = crate::ui::pathfield::shorten(&path, &home);
         let paths: Vec<std::path::PathBuf> = match mode {
             FileMode::Open | FileMode::OpenMany => {
-                let picked = crate::pathfield::pick(&path, crate::pathfield::read_dir);
+                let picked = crate::ui::pathfield::pick(&path, crate::ui::pathfield::read_dir);
                 if picked.is_empty() {
                     return again(self, format!("No files fit {shown}"));
                 }
@@ -68,7 +68,7 @@ impl App {
                     return again(self, format!("{shown} is a folder · Tab lists what is in it"));
                 }
                 if let Some(missing) = picked.iter().find(|p| !p.is_file()) {
-                    return again(self, format!("No file {}", crate::pathfield::shorten(missing, &home)));
+                    return again(self, format!("No file {}", crate::ui::pathfield::shorten(missing, &home)));
                 }
                 picked
             }
@@ -77,7 +77,7 @@ impl App {
             FileMode::Save => {
                 let p = if path.is_dir() { path.join(if name.is_empty() { "download" } else { &name }) } else { path };
                 if !p.parent().is_some_and(|d| d.is_dir()) {
-                    return again(self, format!("No folder for {}", crate::pathfield::shorten(&p, &home)));
+                    return again(self, format!("No folder for {}", crate::ui::pathfield::shorten(&p, &home)));
                 }
                 vec![p]
             }

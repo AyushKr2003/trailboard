@@ -193,8 +193,8 @@ impl App {
                     self.hud_down = true;
                     self.omnibox = None;
                     match go {
-                        crate::hud::Go::Command(cmd) => self.run_command(cmd),
-                        crate::hud::Go::Palette => self.open_palette(),
+                        crate::ui::hud::Go::Command(cmd) => self.run_command(cmd),
+                        crate::ui::hud::Go::Palette => self.open_palette(),
                     }
                     return;
                 }
@@ -629,7 +629,7 @@ impl App {
             let rows = if lines {
                 -dy * 3.0
             } else {
-                -dy / (crate::sidebar::ROW_H * self.ui())
+                -dy / (crate::ui::sidebar::ROW_H * self.ui())
             };
             self.sidebar.scroll = panel.scroll_by(self.sidebar.scroll, rows.round() as isize);
             return;
@@ -727,8 +727,8 @@ impl App {
     /// Shows the shortcut sheet, from the top with no filter.
     pub(super) fn show_hints(&mut self) {
         self.hints = true;
-        self.sheet = crate::hints::Sheet::open(self.still);
-        self.sheet_sections = crate::hints::sections(&self.keys);
+        self.sheet = crate::ui::hints::Sheet::open(self.still);
+        self.sheet_sections = crate::ui::hints::sections(&self.keys);
         log::info!("hints shown");
     }
 
@@ -896,7 +896,7 @@ impl App {
             }
             // A file chooser's path: Tab completes the last part.
             if matches!(ob.target, Target::Files(_)) && !ctrl && !alt && ev.named == Some(NamedKey::Tab) {
-                match crate::pathfield::complete(&ob.text, &home_path(), crate::pathfield::read_dir) {
+                match crate::ui::pathfield::complete(&ob.text, &home_path(), crate::ui::pathfield::read_dir) {
                     Some(t) => ob.set(&t),
                     None => log::debug!("files: nothing to complete for {:?}", ob.text),
                 }

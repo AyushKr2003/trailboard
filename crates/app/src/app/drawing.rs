@@ -59,7 +59,7 @@ impl App {
         let photo = self.board_photo();
         let update = self.photo.update(photo.as_deref(), (vp.x.max(0.0) as u32, vp.y.max(0.0) as u32));
         if let (Some(t), Some(r)) = (update.upload, self.renderer.as_mut()) {
-            r.update_page(crate::backdrop::TEXTURE, t.width, t.height, &t.pixels, self.photo.serial);
+            r.update_page(crate::ui::backdrop::TEXTURE, t.width, t.height, &t.pixels, self.photo.serial);
         }
         if let Some((p, e)) = update.failed {
             let name = p.file_name().map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().to_string());
@@ -105,11 +105,11 @@ impl App {
             l.quads.push(Quad {
                 shape: Shape::Rect { rect: Rect::new(0.0, 0.0, vp.x, vp.y), radius: 0.0 },
                 color: [dim, dim, dim, 1.0],
-                texture: Some(crate::backdrop::TEXTURE),
+                texture: Some(crate::ui::backdrop::TEXTURE),
             });
             layers.push(l);
         }
-        let line = crate::chrome::hair(scale);
+        let line = crate::ui::chrome::hair(scale);
         // What the pointer is over lights up, unless something else has the pointer.
         let hover = if matches!(self.drag, Drag::None) && self.menu.is_none() && self.omnibox.is_none() && !self.hints && self.pointer_in {
             self.hover
@@ -196,7 +196,7 @@ impl App {
             let d = (7.0 * k).clamp(3.0 * scale, 8.0 * scale);
             let ends: &[[f32; 2]] = if grow < 1.0 { &[p0] } else { &[p0, p3] };
             for p in ends {
-                crate::chrome::fill(&mut edges, Rect::new(p[0] - d / 2.0, p[1] - d / 2.0, d, d), d / 2.0, rgb(colour, fade));
+                crate::ui::chrome::fill(&mut edges, Rect::new(p[0] - d / 2.0, p[1] - d / 2.0, d, d), d / 2.0, rgb(colour, fade));
             }
         }
         layers.push(edges);
@@ -239,8 +239,8 @@ impl App {
             let has_tex = self.renderer.as_ref().is_some_and(|rd| rd.has_page(key));
             let mut l = Layer::default();
             l.quads.push(Quad { shape: Shape::Shadow { rect: frame.translate(Vec2::new(0.0, 6.0 * k)), radius, blur: (20.0 * k).max(2.0) }, color: th.shadow(0.24), texture: None });
-            crate::chrome::fill(&mut l, frame, radius, rgb(th.card(false), 1.0));
-            crate::chrome::outline(&mut l, frame, radius, line, rgb(th.line_strong(), 1.0));
+            crate::ui::chrome::fill(&mut l, frame, radius, rgb(th.card(false), 1.0));
+            crate::ui::chrome::outline(&mut l, frame, radius, line, rgb(th.line_strong(), 1.0));
             if page > 0.0 {
                 l.quads.push(Quad {
                     shape: Shape::Rect { rect: content, radius },
@@ -285,8 +285,8 @@ impl App {
             if self.glides.unfolding(n.id, now) {
                 let mut sheet = Layer::default();
                 sheet.quads.push(Quad { shape: Shape::Shadow { rect: frame.translate(Vec2::new(0.0, 6.0 * k)), radius, blur: (20.0 * k).max(2.0) }, color: th.shadow(0.24), texture: None });
-                crate::chrome::fill(&mut sheet, frame, radius, rgb(th.card(false), 1.0));
-                crate::chrome::outline(&mut sheet, frame, radius, line, rgb(th.line_strong(), 1.0));
+                crate::ui::chrome::fill(&mut sheet, frame, radius, rgb(th.card(false), 1.0));
+                crate::ui::chrome::outline(&mut sheet, frame, radius, line, rgb(th.line_strong(), 1.0));
                 layers.push(sheet);
             }
             let mut l = Layer::default();
@@ -309,8 +309,8 @@ impl App {
                 }
                 for i in (1..=behind).rev().filter(|i| !arriving.contains(i)) {
                     let back = frame.translate(Vec2::new(step * i as f32, step * i as f32));
-                    crate::chrome::fill(&mut l, back, radius, rgb(th.card(false), 1.0));
-                    crate::chrome::outline(&mut l, back, radius, line, rgb(th.line_strong(), 1.0));
+                    crate::ui::chrome::fill(&mut l, back, radius, rgb(th.card(false), 1.0));
+                    crate::ui::chrome::outline(&mut l, back, radius, line, rgb(th.line_strong(), 1.0));
                 }
             }
             // One light from above: a wide, soft shadow around the card and a
@@ -333,7 +333,7 @@ impl App {
                 });
             }
             // A sticky note's frame is its strip, in its colour.
-            crate::chrome::fill(&mut l, frame, radius, rgb(sticky.map_or_else(|| th.card(focused), |c| th.sticky_strip(c, focused)), 1.0));
+            crate::ui::chrome::fill(&mut l, frame, radius, rgb(sticky.map_or_else(|| th.card(focused), |c| th.sticky_strip(c, focused)), 1.0));
             let key = page_key(epoch, n.id);
             let has_tex = self.renderer.as_ref().is_some_and(|r| r.has_page(key));
             // With a docked inspector the page takes its part of the card.
@@ -386,14 +386,14 @@ impl App {
                         texture: Some(key),
                     });
                 } else if let Some(r) = self.renderer.as_mut() {
-                    crate::icons::draw(&mut l, r, crate::icons::Icon::Moon, content.center().x, top + s / 2.0, s * 0.7, rgb(th.text3(), 1.0));
+                    crate::ui::icons::draw(&mut l, r, crate::ui::icons::Icon::Moon, content.center().x, top + s / 2.0, s * 0.7, rgb(th.text3(), 1.0));
                 }
                 if size >= 9.0 {
                     let title = if n.title.trim().is_empty() { palette::host(&n.url).to_string() } else { n.title.trim().to_string() };
                     let room = content.w - 24.0 * k;
                     let w = self.renderer.as_mut().map_or(room, |r| r.measure(&title, size, false)).min(room);
                     let clip = Rect::new(content.center().x - w / 2.0, top + s + gap - size, w, size * 2.0);
-                    crate::chrome::text(&mut l, title, clip.x, top + s + gap + size / 2.0, size, rgb(th.text2(), 1.0), clip, false);
+                    crate::ui::chrome::text(&mut l, title, clip.x, top + s + gap + size / 2.0, size, rgb(th.text2(), 1.0), clip, false);
                 }
             }
             if sticky.is_none() {
@@ -401,7 +401,7 @@ impl App {
                 // the page's own edge too (a white page on a light board);
                 // a step stronger under the pointer.
                 let edge = if hovered && !focused { th.line_strong() } else { th.line() };
-                crate::chrome::outline(&mut l, frame, radius, line, rgb(edge, 1.0));
+                crate::ui::chrome::outline(&mut l, frame, radius, line, rgb(edge, 1.0));
             }
             // Loading: a bar gliding along the card's top edge.
             if sticky.is_none() && card.is_some_and(|c| c.loading) {
@@ -412,16 +412,16 @@ impl App {
                 let x = frame.x - w + (frame.w + w) * t;
                 let (x0, x1) = (x.max(frame.x + radius), (x + w).min(frame.right() - radius));
                 if x1 > x0 {
-                    crate::chrome::fill(&mut l, Rect::new(x0, frame.y, x1 - x0, 2.0 * scale.max(1.0)), 0.0, rgb(th.accent(), 1.0));
+                    crate::ui::chrome::fill(&mut l, Rect::new(x0, frame.y, x1 - x0, 2.0 * scale.max(1.0)), 0.0, rgb(th.accent(), 1.0));
                 }
             }
             // The corner that resizes shows itself under the pointer.
             if hover == Hit::Grip(n.id) {
                 let s = 14.0 * scale;
                 let at = Rect::new(content.right() - s - 3.0 * scale, content.bottom() - s - 3.0 * scale, s, s);
-                crate::chrome::fill(&mut l, at.inflate(2.0 * scale), th.small_radius(scale), rgb(th.panel(), 0.92));
+                crate::ui::chrome::fill(&mut l, at.inflate(2.0 * scale), th.small_radius(scale), rgb(th.panel(), 0.92));
                 if let Some(r) = self.renderer.as_mut() {
-                    crate::icons::draw_scaled(&mut l, r, crate::icons::Icon::Grip, at, rgb(th.text(), 1.0));
+                    crate::ui::icons::draw_scaled(&mut l, r, crate::ui::icons::Icon::Grip, at, rgb(th.text(), 1.0));
                 }
             }
             // Rings sit outside the frame: the selection's, then the current
@@ -434,12 +434,12 @@ impl App {
                 let alpha = if typing || arranging { 1.0 } else { 0.8 };
                 // An entered card's ring says where its keys go.
                 let colour = if typing && !arranging { th.keys_ring(self.ring_keys()) } else { th.accent() };
-                crate::chrome::outline(&mut l, frame.inflate(ring_w), if radius > 0.0 { radius + ring_w } else { 0.0 }, ring_w, rgb(colour, alpha));
+                crate::ui::chrome::outline(&mut l, frame.inflate(ring_w), if radius > 0.0 { radius + ring_w } else { 0.0 }, ring_w, rgb(colour, alpha));
             }
             if selected {
                 let w = 2.0 * scale.max(1.0);
                 let m = ring_w + w + scale.max(1.0);
-                crate::chrome::outline(&mut l, frame.inflate(m), if radius > 0.0 { radius + m } else { 0.0 }, w, rgb(th.marked(), 1.0));
+                crate::ui::chrome::outline(&mut l, frame.inflate(m), if radius > 0.0 { radius + m } else { 0.0 }, w, rgb(th.marked(), 1.0));
             }
 
             // The label above the card, left to right: a stack's size, a
@@ -457,8 +457,8 @@ impl App {
                 let text = len.to_string();
                 let tw = self.renderer.as_mut().map_or(size * 0.6, |r| r.measure(&text, size, true));
                 let over = hover == Hit::Badge(n.id);
-                crate::chrome::fill(&mut l, pill, if th.rounding > 0.0 { pill.h / 2.0 } else { 0.0 }, rgb(if over { th.accent() } else { th.text() }, 1.0));
-                crate::chrome::text(&mut l, text, pill.x + (pill.w - tw) / 2.0, pill.center().y, size, rgb(if over { th.accent_foreground() } else { th.panel() }, 1.0), pill, true);
+                crate::ui::chrome::fill(&mut l, pill, if th.rounding > 0.0 { pill.h / 2.0 } else { 0.0 }, rgb(if over { th.accent() } else { th.text() }, 1.0));
+                crate::ui::chrome::text(&mut l, text, pill.x + (pill.w - tw) / 2.0, pill.center().y, size, rgb(if over { th.accent_foreground() } else { th.panel() }, 1.0), pill, true);
                 lead = pill.right() + 6.0 * ui - frame.x;
             }
             // A marked trail's name before its first card's own, in the
@@ -473,11 +473,11 @@ impl App {
                 let w = if name.is_empty() { h } else { (tw + 2.0 * pad).min((frame.w - lead).max(h)) };
                 let tag = Rect::new(frame.x + lead, (mid - h / 2.0).round(), w, h);
                 let round = if th.rounding > 0.0 || name.is_empty() { h / 2.0 } else { 0.0 };
-                let face = if hover == Hit::Tag(n.id) { crate::theme::blend(colour, text_on(colour), 0.12) } else { colour };
-                crate::chrome::fill(&mut l, if name.is_empty() { tag.inflate(-4.0 * ui) } else { tag }, round, rgb(face, 1.0));
+                let face = if hover == Hit::Tag(n.id) { crate::ui::theme::blend(colour, text_on(colour), 0.12) } else { colour };
+                crate::ui::chrome::fill(&mut l, if name.is_empty() { tag.inflate(-4.0 * ui) } else { tag }, round, rgb(face, 1.0));
                 self.tags.push((n.id, tag));
                 if !name.is_empty() {
-                    crate::chrome::text(&mut l, name, tag.x + pad, tag.center().y, size, rgb(text_on(colour), 1.0), tag.inflate(-pad * 0.5), true);
+                    crate::ui::chrome::text(&mut l, name, tag.x + pad, tag.center().y, size, rgb(text_on(colour), 1.0), tag.inflate(-pad * 0.5), true);
                 }
                 lead += w + 8.0 * ui;
             }
@@ -496,11 +496,11 @@ impl App {
                     // Close always; back, forward and reload on a live web
                     // page whose card is wide enough on screen.
                     let btn = BAR_BTN * ui;
-                    let mut buttons: Vec<(Hit, crate::icons::Icon, bool)> = vec![(Hit::Close(n.id), crate::icons::Icon::Close, true)];
+                    let mut buttons: Vec<(Hit, crate::ui::icons::Icon, bool)> = vec![(Hit::Close(n.id), crate::ui::icons::Icon::Close, true)];
                     if let Some(c) = card.filter(|c| c.page.kind() == web::PageKind::Web && frame.w >= BAR_NAV_MIN * ui) {
-                        buttons.push((Hit::Reload(n.id), crate::icons::Icon::Reload, true));
-                        buttons.push((Hit::Forward(n.id), crate::icons::Icon::Forward, c.can_forward));
-                        buttons.push((Hit::Back(n.id), crate::icons::Icon::Back, c.can_back));
+                        buttons.push((Hit::Reload(n.id), crate::ui::icons::Icon::Reload, true));
+                        buttons.push((Hit::Forward(n.id), crate::ui::icons::Icon::Forward, c.can_forward));
+                        buttons.push((Hit::Back(n.id), crate::ui::icons::Icon::Back, c.can_back));
                     }
                     // The card's awake mode, a button that cycles it, and
                     // while it plays media a speaker that mutes it.
@@ -509,26 +509,26 @@ impl App {
                     if awake_button && frame.w >= BAR_NAV_MIN * ui {
                         buttons.push((Hit::Awake(n.id), Self::awake_icon(n.awake), true));
                         if let Some(c) = card.filter(|c| self.media.get(&n.id).is_some_and(|m| m.playing) || c.page.muted()) {
-                            let icon = if c.page.muted() { crate::icons::Icon::SpeakerOff } else { crate::icons::Icon::Speaker };
+                            let icon = if c.page.muted() { crate::ui::icons::Icon::SpeakerOff } else { crate::ui::icons::Icon::Speaker };
                             buttons.push((Hit::Mute(n.id), icon, true));
                         }
                     }
                     // A docked inspector: to the other side, or to a card
                     // of its own; an inspector card: back into its page's.
                     if self.docks.contains_key(&n.id) && frame.w >= BAR_NAV_MIN * ui {
-                        buttons.push((Hit::Undock(n.id), crate::icons::Icon::Trail, true));
-                        buttons.push((Hit::DockSide(n.id), crate::icons::Icon::Sidebar, true));
+                        buttons.push((Hit::Undock(n.id), crate::ui::icons::Icon::Trail, true));
+                        buttons.push((Hit::DockSide(n.id), crate::ui::icons::Icon::Sidebar, true));
                     }
                     if self.inspectors.contains_key(&n.id) {
-                        buttons.push((Hit::Redock(n.id), crate::icons::Icon::Sidebar, true));
+                        buttons.push((Hit::Redock(n.id), crate::ui::icons::Icon::Sidebar, true));
                     }
                     for (hit, icon, enabled) in buttons {
                         let cell = Rect::new(right - btn, bar.y, btn, bar.h);
                         right -= btn;
                         let hot = hover == hit && enabled;
                         if hot {
-                            let face = if hit == Hit::Close(n.id) { crate::theme::blend(th.panel(), th.danger(), 0.32) } else { th.active() };
-                            crate::chrome::fill(&mut l, cell.inflate(-ui), small, rgb(face, 1.0));
+                            let face = if hit == Hit::Close(n.id) { crate::ui::theme::blend(th.panel(), th.danger(), 0.32) } else { th.active() };
+                            crate::ui::chrome::fill(&mut l, cell.inflate(-ui), small, rgb(face, 1.0));
                         }
                         let ink = match (enabled, hot) {
                             (false, _) => rgb(th.text3(), 0.55),
@@ -544,7 +544,7 @@ impl App {
                             self.bar_buttons.push((hit, cell));
                         }
                         if let Some(r) = self.renderer.as_mut() {
-                            crate::icons::draw(&mut l, r, icon, cell.center().x, mid, 14.0 * ui, ink);
+                            crate::ui::icons::draw(&mut l, r, icon, cell.center().x, mid, 14.0 * ui, ink);
                         }
                     }
                     right -= 4.0 * ui;
@@ -566,13 +566,13 @@ impl App {
                             self.shields.push((n.id, cell));
                             let over = hover == Hit::Shield(n.id);
                             if over {
-                                crate::chrome::fill(&mut l, cell.inflate(-ui), small, rgb(th.active(), 1.0));
+                                crate::ui::chrome::fill(&mut l, cell.inflate(-ui), small, rgb(th.active(), 1.0));
                             }
                             let ink = rgb(if over { th.text() } else { th.text2() }, 1.0);
                             if let Some(r) = self.renderer.as_mut() {
-                                crate::icons::draw(&mut l, r, crate::icons::Icon::Shield, cell.x + 5.0 * ui + s / 2.0, mid, s, ink);
+                                crate::ui::icons::draw(&mut l, r, crate::ui::icons::Icon::Shield, cell.x + 5.0 * ui + s / 2.0, mid, s, ink);
                             }
-                            crate::chrome::text(&mut l, count, cell.x + 5.0 * ui + s + 3.0 * ui, mid, size, ink, cell, true);
+                            crate::ui::chrome::text(&mut l, count, cell.x + 5.0 * ui + s + 3.0 * ui, mid, size, ink, cell, true);
                             right = cell.x - 4.0 * ui;
                         }
                     }
@@ -582,18 +582,18 @@ impl App {
                     // sleeping card a moon.
                     let mut marks = Vec::new();
                     if let Some(c) = card.filter(|c| self.media.get(&n.id).is_some_and(|m| m.playing) || c.page.muted()) {
-                        let icon = if c.page.muted() { crate::icons::Icon::SpeakerOff } else { crate::icons::Icon::Speaker };
+                        let icon = if c.page.muted() { crate::ui::icons::Icon::SpeakerOff } else { crate::ui::icons::Icon::Speaker };
                         marks.push((icon, rgb(th.text2(), 1.0)));
                     }
                     if !n.awake.is_auto() {
                         let c = Self::awake_colour(&th, n.awake).unwrap_or_else(|| th.text2());
                         marks.push((Self::awake_icon(n.awake), rgb(c, 1.0)));
                     } else if asleep {
-                        marks.push((crate::icons::Icon::Moon, rgb(th.text3(), 1.0)));
+                        marks.push((crate::ui::icons::Icon::Moon, rgb(th.text3(), 1.0)));
                     }
                     for (icon, ink) in marks {
                         if let Some(r) = self.renderer.as_mut() {
-                            crate::icons::draw(&mut l, r, icon, right - 8.0 * ui, mid, 13.0 * ui, ink);
+                            crate::ui::icons::draw(&mut l, r, icon, right - 8.0 * ui, mid, 13.0 * ui, ink);
                         }
                         right -= 20.0 * ui;
                     }
@@ -626,7 +626,7 @@ impl App {
                 };
                 let room = (right - 6.0 * ui - x).max(1.0);
                 let tw = self.renderer.as_mut().map_or(room, |r| r.measure(&title, size, focused)).min(room);
-                crate::chrome::text(&mut l, title, x, mid, size, rgb(ink, 1.0), Rect::new(x, bar.y, room, bar.h), focused);
+                crate::ui::chrome::text(&mut l, title, x, mid, size, rgb(ink, 1.0), Rect::new(x, bar.y, room, bar.h), focused);
                 // Where the page is from, quietly, after the title of the card
                 // in hand: a title can say anything, the address can't.
                 let host = palette::host(&n.url);
@@ -635,7 +635,7 @@ impl App {
                     let hw = self.renderer.as_mut().map_or(0.0, |r| r.measure(host, hs, false));
                     let hx = x + tw + 10.0 * ui;
                     if hx + hw <= right - 6.0 * ui {
-                        crate::chrome::text(&mut l, host, hx, mid, hs, rgb(th.text3(), 1.0), bar, false);
+                        crate::ui::chrome::text(&mut l, host, hx, mid, hs, rgb(th.text3(), 1.0), bar, false);
                     }
                 }
                 if photo_on {
@@ -646,17 +646,17 @@ impl App {
                     let sheet = Rect::new(label_x0 - 7.0 * ui, bar.y + 2.0 * ui, end - label_x0 + 7.0 * ui, bar.h - 4.0 * ui);
                     let round = if th.rounding > 0.0 { sheet.h / 2.0 } else { 0.0 };
                     let mut back = Layer::default();
-                    crate::chrome::fill(&mut back, sheet, round, rgb(th.panel(), 0.82));
+                    crate::ui::chrome::fill(&mut back, sheet, round, rgb(th.panel(), 0.82));
                     l.quads.splice(label_from.0..label_from.0, back.quads);
                 }
             }
             if label_alpha < 1.0 {
-                let ease = crate::chrome::ease_out(label_alpha);
+                let ease = crate::ui::chrome::ease_out(label_alpha);
                 l.quads[label_from.0..].iter_mut().for_each(|q| q.color[3] *= ease);
                 l.texts[label_from.1..].iter_mut().for_each(|t| t.color[3] *= ease);
             }
             if let Some((_, a)) = glide.filter(|g| g.1 < 1.0) {
-                crate::chrome::fade(&mut l, a, Vec2::new(0.0, 0.0));
+                crate::ui::chrome::fade(&mut l, a, Vec2::new(0.0, 0.0));
             }
             layers.push(l);
         }
@@ -700,7 +700,7 @@ impl App {
         if let (Some(t), Some((_, dir, ..))) = (space_t, self.space_in) {
             let shift = Vec2::new(dir * motion::SPACE_SLIDE * ui * (1.0 - t), 0.0);
             for l in &mut layers[board_from..] {
-                crate::chrome::fade(l, t, shift);
+                crate::ui::chrome::fade(l, t, shift);
             }
         }
 
@@ -730,8 +730,8 @@ impl App {
         if let Some(b) = band {
             let r = self.to_screen_rect(b);
             let mut l = Layer::default();
-            crate::chrome::fill(&mut l, r, 0.0, rgb(th.marked(), 0.10));
-            crate::chrome::outline(&mut l, r, 0.0, line, rgb(th.marked(), 0.9));
+            crate::ui::chrome::fill(&mut l, r, 0.0, rgb(th.marked(), 0.10));
+            crate::ui::chrome::outline(&mut l, r, 0.0, line, rgb(th.marked(), 0.9));
             layers.push(l);
         }
 
@@ -749,11 +749,11 @@ impl App {
                 .filter_map(|id| Some((id, self.icon_key(&self.scene.node(id)?.url)?)))
                 .collect();
             let icon = |n: &scene::Node| icons.get(&n.id).copied();
-            let chips: Vec<crate::sidebar::SpaceChip> = self
+            let chips: Vec<crate::ui::sidebar::SpaceChip> = self
                 .spaces
                 .spaces
                 .iter()
-                .map(|e| crate::sidebar::SpaceChip { name: e.name.clone(), colour: e.tint.as_deref().map(|t| th.color(t)), private: e.private })
+                .map(|e| crate::ui::sidebar::SpaceChip { name: e.name.clone(), colour: e.tint.as_deref().map(|t| th.color(t)), private: e.private })
                 .collect();
             let space = self.spaces.active_entry().name.clone();
             // What the head shows of the current card.
@@ -763,16 +763,16 @@ impl App {
                 .map(|(n, c)| {
                     let web = c.is_some_and(|c| c.page.kind() == web::PageKind::Web);
                     let addressed = !n.is_note() && n.url != scene::note::START_URL;
-                    crate::sidebar::Current {
+                    crate::ui::sidebar::Current {
                         web,
                         can_back: c.is_some_and(|c| c.can_back),
                         can_forward: c.is_some_and(|c| c.can_forward),
-                        host: if addressed { crate::sidebar::pill_host(&n.url) } else { String::new() },
+                        host: if addressed { crate::ui::sidebar::pill_host(&n.url) } else { String::new() },
                         secure: n.url.starts_with("https:"),
                     }
                 })
                 .unwrap_or_default();
-            let marks = crate::sidebar::View {
+            let marks = crate::ui::sidebar::View {
                 scroll: self.sidebar.scroll,
                 sel: if keys { self.sidebar.index(&rows) } else { None },
                 hover: self.sidebar_hover,
@@ -790,12 +790,12 @@ impl App {
             let came = self.anim.sidebar.update(Some(0), Instant::now());
             if let Some(r) = self.renderer.as_mut() {
                 self.sidebar_motion.still = self.still;
-                let mut l = crate::sidebar::layer(r, &panel, &rows, &marks, &self.scene, &th, ui, &mut self.sidebar_motion);
+                let mut l = crate::ui::sidebar::layer(r, &panel, &rows, &marks, &self.scene, &th, ui, &mut self.sidebar_motion);
                 if !self.still {
                     self.sidebar_last = Some((l.clone(), panel.rect.right()));
                 }
                 // Slides in from past the window's left edge, settling quickly.
-                crate::chrome::fade(&mut l, 0.5 + 0.5 * came, Vec2::new(-panel.rect.right() * 0.6 * (1.0 - came), 0.0));
+                crate::ui::chrome::fade(&mut l, 0.5 + 0.5 * came, Vec2::new(-panel.rect.right() * 0.6 * (1.0 - came), 0.0));
                 layers.push(l);
             }
             self.sidebar_out = None;
@@ -812,7 +812,7 @@ impl App {
                 if t < 1.0 {
                     let e = motion::ease_out(t);
                     let mut l = l.clone();
-                    crate::chrome::fade(&mut l, 1.0 - e, Vec2::new(-right * 0.6 * e, 0.0));
+                    crate::ui::chrome::fade(&mut l, 1.0 - e, Vec2::new(-right * 0.6 * e, 0.0));
                     layers.push(l);
                 } else {
                     self.sidebar_last = None;
@@ -831,13 +831,13 @@ impl App {
         if chrome_shown {
             let entry = self.spaces.active_entry();
             let (space, private, swatch) = (entry.name.clone(), entry.private, th.swatch(tint.as_deref()));
-            let space_w = self.renderer.as_mut().map_or(80.0, |r| r.measure(&space, crate::chrome::type_::BODY * ui, true));
+            let space_w = self.renderer.as_mut().map_or(80.0, |r| r.measure(&space, crate::ui::chrome::type_::BODY * ui, true));
             // The panel can be turned off in the settings (*Show the space panel*).
             // The open sidebar carries the space's name and its own buttons.
-            self.hud = if self.settings.space_panel && !self.sidebar_shown() { crate::hud::layout(vp, ui, sidebar_w, space_w) } else { crate::hud::Hud::default() };
+            self.hud = if self.settings.space_panel && !self.sidebar_shown() { crate::ui::hud::layout(vp, ui, sidebar_w, space_w) } else { crate::ui::hud::Hud::default() };
             let free = self.menu.is_none() && self.omnibox.is_none() && !self.hints && self.confirm.is_none();
             let hud_hover = self.hud_hover.filter(|_| free && self.pointer_in);
-            let view = crate::hud::View {
+            let view = crate::ui::hud::View {
                 space: &space,
                 swatch,
                 private,
@@ -848,7 +848,7 @@ impl App {
             };
             let mid_x = sidebar_w + (vp.x - sidebar_w) / 2.0;
             if let Some(r) = self.renderer.as_mut() {
-                layers.push(crate::hud::layer(r, &self.hud, &view, &th, ui));
+                layers.push(crate::ui::hud::layer(r, &self.hud, &view, &th, ui));
                 // Guidance where the board has nothing to show: an empty
                 // board says how to start; a view with no card in it (the
                 // board is somewhere else) offers the way back.
@@ -856,7 +856,7 @@ impl App {
                 let empty = self.scene.is_empty() && self.omnibox.is_none() && self.ghosts.is_empty();
                 let came = self.anim.welcome.update(empty.then(|| anim_key(entry.id.0)), Instant::now());
                 if empty {
-                    let wv = crate::hud::WelcomeView {
+                    let wv = crate::ui::hud::WelcomeView {
                         space: &space,
                         swatch,
                         private,
@@ -865,19 +865,19 @@ impl App {
                         down: self.hud_down,
                     };
                     let area = Rect::new(sidebar_w, 0.0, (vp.x - sidebar_w).max(0.0), vp.y);
-                    let (mut l, buttons) = crate::hud::welcome(r, &wv, area, &th, ui);
-                    crate::chrome::arrive(&mut l, came, 8.0 * ui);
+                    let (mut l, buttons) = crate::ui::hud::welcome(r, &wv, area, &th, ui);
+                    crate::ui::chrome::arrive(&mut l, came, 8.0 * ui);
                     layers.push(l);
                     self.nudge = buttons;
                 } else if !self.scene.is_empty() && !in_view && !board_hidden && self.camera_goal.is_none() && matches!(self.drag, Drag::None) {
                     let bottom = vp.y - 16.0 * ui;
-                    let probe = crate::hud::nudge(r, "No cards in view.", "Fit everything", "Shift+F", mid_x, bottom, false, &th, ui).1;
-                    let (l, button) = crate::hud::nudge(r, "No cards in view.", "Fit everything", "Shift+F", mid_x, bottom, hot(probe), &th, ui);
+                    let probe = crate::ui::hud::nudge(r, "No cards in view.", "Fit everything", "Shift+F", mid_x, bottom, false, &th, ui).1;
+                    let (l, button) = crate::ui::hud::nudge(r, "No cards in view.", "Fit everything", "Shift+F", mid_x, bottom, hot(probe), &th, ui);
                     layers.push(l);
-                    self.nudge = vec![(button, crate::hud::Go::Command(Command::Fit))];
+                    self.nudge = vec![(button, crate::ui::hud::Go::Command(Command::Fit))];
                 }
             }
-            tip_shown = hud_hover.filter(|(_, since)| !self.hud_down && since.elapsed() >= crate::hud::TIP_DWELL).map(|(c, _)| c);
+            tip_shown = hud_hover.filter(|(_, since)| !self.hud_down && since.elapsed() >= crate::ui::hud::TIP_DWELL).map(|(c, _)| c);
         }
 
         let shown = self.omnibox.as_ref().map(|ob| anim_key(std::mem::discriminant(&ob.target)));
@@ -886,7 +886,7 @@ impl App {
             // The lists are centred sheets over everything; a lone box (a
             // name, an address, find) sits clear of an open sidebar.
             let r = if ob.target.is_list() { palette::field_rect(vp, ui) } else { palette::field_rect_from(vp, ui, sidebar_w) };
-            use crate::icons::Icon;
+            use crate::ui::icons::Icon;
             let (icon, placeholder, hint): (Icon, &str, &[(&str, &str)]) = match ob.target {
                 Target::RenameSpace => (Icon::Board, "Space name", &[("Enter", "Rename")]),
                 Target::NameTrail(_) => (Icon::Trail, "Trail name (empty to clear)", &[("Enter", "Name")]),
@@ -975,7 +975,7 @@ impl App {
             let mut fading: Vec<Layer> = Vec::new();
             if list.is_some() {
                 // The veil only fades; the sheet also slides into place.
-                layers.push(crate::chrome::scrim(screen, &th, came));
+                layers.push(crate::ui::chrome::scrim(screen, &th, came));
             }
             let mut l = Layer::default();
             let radius = th.radius(scale);
@@ -983,10 +983,10 @@ impl App {
                 Some((_, panel, _)) => Rect::new(r.x, r.y, r.w, panel.foot.bottom() - r.y),
                 None => r,
             };
-            crate::chrome::panel(&mut l, sheet, radius, &th, ui, crate::chrome::Lift::High, th.panel());
+            crate::ui::chrome::panel(&mut l, sheet, radius, &th, ui, crate::ui::chrome::Lift::High, th.panel());
             if list.is_some() {
                 // A hairline between the field and its results.
-                crate::chrome::fill(&mut l, Rect::new(r.x + line, r.bottom() - line, r.w - 2.0 * line, line), 0.0, rgb(th.line(), 1.0));
+                crate::ui::chrome::fill(&mut l, Rect::new(r.x + line, r.bottom() - line, r.w - 2.0 * line, line), 0.0, rgb(th.line(), 1.0));
             }
             fading.push(l);
             if let Some(rd) = self.renderer.as_mut() {
@@ -1027,7 +1027,7 @@ impl App {
                 }
             }
             for mut l in fading {
-                crate::chrome::arrive(&mut l, came, 6.0 * ui);
+                crate::ui::chrome::arrive(&mut l, came, 6.0 * ui);
                 layers.push(l);
             }
         }
@@ -1038,7 +1038,7 @@ impl App {
         let came = self.anim.menu.update(self.menu.as_ref().map(|m| anim_key((m.rect.x as i32, m.rect.y as i32))), Instant::now());
         if let (Some(m), Some(r)) = (&self.menu, self.renderer.as_mut()) {
             let mut l = menu_layer(r, m, ui, &th);
-            crate::chrome::arrive(&mut l, came, 4.0 * ui);
+            crate::ui::chrome::arrive(&mut l, came, 4.0 * ui);
             layers.push(l);
         }
 
@@ -1046,7 +1046,7 @@ impl App {
         // while arranging by keyboard, then whatever was just said.
         let mid_x = sidebar_w + (vp.x - sidebar_w) / 2.0;
         let mut bottom = vp.y - 16.0 * ui;
-        if self.nudge.iter().any(|(_, g)| *g == crate::hud::Go::Command(Command::Fit)) {
+        if self.nudge.iter().any(|(_, g)| *g == crate::ui::hud::Go::Command(Command::Fit)) {
             bottom -= 52.0 * ui;
         }
         if self.arrange.is_some() && self.omnibox.is_none() {
@@ -1103,7 +1103,7 @@ impl App {
             let radius = th.radius(scale);
             if let Some(rd) = self.renderer.as_mut() {
                 let (mut l, _) = palette::question_layer(rd, top, &title, &message, hints, &th, ui, radius);
-                crate::chrome::arrive(&mut l, came, 6.0 * ui);
+                crate::ui::chrome::arrive(&mut l, came, 6.0 * ui);
                 layers.push(l);
             }
         }
@@ -1115,7 +1115,7 @@ impl App {
                 let came = self.anim.toast.update(Some(anim_key(&msg)), Instant::now());
                 let mut l = self.message(&msg, mid_x, bottom, warn);
                 // It rises into place.
-                crate::chrome::arrive(&mut l, came, -8.0 * ui);
+                crate::ui::chrome::arrive(&mut l, came, -8.0 * ui);
                 layers.push(l);
             } else {
                 self.toast = None;
@@ -1129,8 +1129,8 @@ impl App {
         if self.hints
             && let Some(r) = self.renderer.as_mut()
         {
-            for mut l in crate::hints::layers(r, ui, screen, &th, &mut self.sheet, &self.sheet_sections, self.cursor) {
-                crate::chrome::fade(&mut l, came, Vec2::new(0.0, 0.0));
+            for mut l in crate::ui::hints::layers(r, ui, screen, &th, &mut self.sheet, &self.sheet_sections, self.cursor) {
+                crate::ui::chrome::fade(&mut l, came, Vec2::new(0.0, 0.0));
                 layers.push(l);
             }
         }
@@ -1138,9 +1138,9 @@ impl App {
         // The name and key of the control the pointer rests on.
         let came = self.anim.tip.update(tip_shown.map(anim_key), Instant::now());
         if let (Some(c), Some(r)) = (tip_shown, self.renderer.as_mut())
-            && let Some(mut l) = crate::hud::tip(r, &self.hud, c, vp, &th, ui)
+            && let Some(mut l) = crate::ui::hud::tip(r, &self.hud, c, vp, &th, ui)
         {
-            crate::chrome::fade(&mut l, came, Vec2::new(0.0, 0.0));
+            crate::ui::chrome::fade(&mut l, came, Vec2::new(0.0, 0.0));
             layers.push(l);
         }
 
@@ -1149,7 +1149,7 @@ impl App {
             self.frame_changed = r.render(bg, &layers);
             if let Some(p) = self.perf.as_mut() {
                 let (paints, copied) = web::paint_stats();
-                let t = crate::perf::Totals {
+                let t = crate::dev::perf::Totals {
                     paints,
                     copied,
                     uploaded: r.uploaded,
@@ -1228,13 +1228,13 @@ impl App {
         // The divider: the card's own colour with a line down its middle,
         // the accent while it is under the pointer or dragged.
         let d = parts.divider;
-        crate::chrome::fill(l, d, 0.0, rgb(th.card(focused), 1.0));
+        crate::ui::chrome::fill(l, d, 0.0, rgb(th.card(focused), 1.0));
         let w = if hot { 2.0 * scale } else { scale.max(1.0) };
         let line = match side {
             dock::Side::Right => Rect::new(d.center().x - w / 2.0, d.y, w, d.h),
             dock::Side::Bottom => Rect::new(d.x, d.center().y - w / 2.0, d.w, w),
         };
-        crate::chrome::fill(l, line, 0.0, rgb(if hot { th.accent() } else { th.line_strong() }, 1.0));
+        crate::ui::chrome::fill(l, line, 0.0, rgb(if hot { th.accent() } else { th.line_strong() }, 1.0));
     }
 
     /// Solo: card `id`'s page across the whole window.
@@ -1300,7 +1300,7 @@ impl App {
         const MAX_ROWS: usize = 14;
         let th = &self.theme;
         let ui = self.scale() * th.text_scale;
-        let size = crate::chrome::type_::BODY * ui;
+        let size = crate::ui::chrome::type_::BODY * ui;
         let (pad, line, gap) = (14.0 * ui, size * 1.9, 18.0 * ui);
         let vp = self.viewport();
         let more = rows.len().saturating_sub(MAX_ROWS);
@@ -1319,17 +1319,17 @@ impl App {
         let r = Rect::new(x.round(), (bottom - h).round(), w.round(), h.round());
         let th = &self.theme;
         let mut l = Layer::default();
-        crate::chrome::panel_edged(&mut l, r, th.radius(self.scale()), th, ui, crate::chrome::Lift::High, th.panel(), crate::chrome::edge(th), crate::chrome::hair(ui));
+        crate::ui::chrome::panel_edged(&mut l, r, th.radius(self.scale()), th, ui, crate::ui::chrome::Lift::High, th.panel(), crate::ui::chrome::edge(th), crate::ui::chrome::hair(ui));
         let top = r.y + pad * 0.6;
         let dx = r.x + pad + kw + gap;
         let dclip = Rect::new(dx, r.y, (r.right() - pad - dx).max(1.0), r.h);
         for (i, (k, d)) in shown.iter().enumerate() {
             let mid = top + line * (i as f32 + 0.5);
-            crate::chrome::text(&mut l, k.clone(), r.x + pad, mid, size, rgb(th.text(), 1.0), Rect::new(r.x + pad, r.y, kw + 1.0, r.h), true);
-            crate::chrome::text(&mut l, d.clone(), dx, mid, size, rgb(th.text2(), 1.0), dclip, false);
+            crate::ui::chrome::text(&mut l, k.clone(), r.x + pad, mid, size, rgb(th.text(), 1.0), Rect::new(r.x + pad, r.y, kw + 1.0, r.h), true);
+            crate::ui::chrome::text(&mut l, d.clone(), dx, mid, size, rgb(th.text2(), 1.0), dclip, false);
         }
         if let Some(t) = more_text {
-            crate::chrome::text(&mut l, t, r.x + pad, top + line * (shown.len() as f32 + 0.5), size, rgb(th.text3(), 1.0), r, false);
+            crate::ui::chrome::text(&mut l, t, r.x + pad, top + line * (shown.len() as f32 + 0.5), size, rgb(th.text3(), 1.0), r, false);
         }
         (l, r.h)
     }
@@ -1396,7 +1396,7 @@ impl App {
     pub(super) fn message(&mut self, text: &str, mid_x: f32, bottom: f32, warn: bool) -> Layer {
         let th = &self.theme;
         let ui = self.scale() * th.text_scale;
-        let size = crate::chrome::type_::BODY * ui;
+        let size = crate::ui::chrome::type_::BODY * ui;
         // The palette's and menus' sheet: same fill, edge, corners and a
         // high lift, so it reads over cards as well as over the board.
         let (pad, h) = (16.0 * ui, 40.0 * ui);
@@ -1406,11 +1406,11 @@ impl App {
         let w = (tw + 2.0 * pad).min(max_w);
         let r = Rect::new((mid_x - w / 2.0).clamp(16.0 * ui, (vp.x - w - 16.0 * ui).max(16.0 * ui)).round(), (bottom - h).round(), w.round(), h);
         let mut l = Layer::default();
-        let (rim, bw) = if warn { (th.danger(), (1.5 * ui).max(1.0)) } else { (crate::chrome::edge(th), crate::chrome::hair(ui)) };
-        crate::chrome::panel_edged(&mut l, r, th.radius(self.scale()), th, ui, crate::chrome::Lift::High, th.panel(), rim, bw);
+        let (rim, bw) = if warn { (th.danger(), (1.5 * ui).max(1.0)) } else { (crate::ui::chrome::edge(th), crate::ui::chrome::hair(ui)) };
+        crate::ui::chrome::panel_edged(&mut l, r, th.radius(self.scale()), th, ui, crate::ui::chrome::Lift::High, th.panel(), rim, bw);
         let clip = Rect::new(r.x + pad, r.y, (r.w - 2.0 * pad).max(1.0), r.h);
         let shown = self.renderer.as_mut().map_or_else(|| text.to_string(), |rd| rd.ellipsize(text, size, false, clip.w));
-        crate::chrome::text(&mut l, shown, r.x + pad, r.center().y, size, rgb(th.text(), 1.0), clip, false);
+        crate::ui::chrome::text(&mut l, shown, r.x + pad, r.center().y, size, rgb(th.text(), 1.0), clip, false);
         l
     }
 
@@ -1511,7 +1511,7 @@ impl App {
         let saving = (self.dirty || self.places_dirty).then(|| self.last_save + Duration::from_secs(3) + Duration::from_millis(1));
         let candidates = [
             self.toast.as_ref().map(|(_, at)| *at),
-            self.hud_hover.map(|(_, since)| since + crate::hud::TIP_DWELL),
+            self.hud_hover.map(|(_, since)| since + crate::ui::hud::TIP_DWELL),
             self.pending.deadline(),
             self.pending.since().map(|at| at + PREFIX_PANEL_AFTER),
             self.peek.deadline(),

@@ -344,7 +344,7 @@ impl App {
             let label = Vec2::new(longest * size * 0.75 + pad * 2.0, bh);
             for (i, r) in rects.iter().enumerate() {
                 if h.shown(i) {
-                    crate::chrome::outline(&mut l, r.inflate(-scale), radius, (1.5 * ui).max(1.0), rgb(th.accent(), 0.55));
+                    crate::ui::chrome::outline(&mut l, r.inflate(-scale), radius, (1.5 * ui).max(1.0), rgb(th.accent(), 0.55));
                 }
             }
             (rects.len() == lh.sections.len()).then(|| scrolltarget::label_spots(&rects, label, view))
@@ -408,7 +408,7 @@ impl App {
         let ui = self.ui();
         let mut l = Layer::default();
         let radius = self.theme.small_radius(self.scale());
-        crate::chrome::outline(&mut l, rect, radius, (2.0 * ui).max(1.5), rgb(self.theme.accent(), alpha));
+        crate::ui::chrome::outline(&mut l, rect, radius, (2.0 * ui).max(1.5), rgb(self.theme.accent(), alpha));
         Some(l)
     }
 }

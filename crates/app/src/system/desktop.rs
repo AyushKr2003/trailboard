@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
-use crate::theme::{self, Theme};
+use crate::ui::theme::{self, Theme};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {

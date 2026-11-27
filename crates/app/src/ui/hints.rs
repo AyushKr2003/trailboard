@@ -24,7 +24,7 @@ use scene::{Rect, Vec2};
 
 use scene::userkeys;
 
-use crate::theme::{rgb, Theme};
+use crate::ui::theme::{rgb, Theme};
 
 /// A section: its title, then (keys, what they do) rows. In keys, " · "
 /// separates alternatives, " then " keys one after another, and "+" keys
@@ -425,7 +425,7 @@ pub fn runs(text: &str, filter: &str) -> Vec<(std::ops::Range<usize>, bool)> {
 /// seconds after the list arrived; `quick` after a filter change.
 fn rise(k: usize, t: f32, quick: bool) -> f32 {
     let (step, dur) = if quick { (0.008, 0.14) } else { (0.016, 0.22) };
-    crate::chrome::ease_out((t - k.min(16) as f32 * step) / dur)
+    crate::ui::chrome::ease_out((t - k.min(16) as f32 * step) / dur)
 }
 
 /// The sheet over `screen`, as layers: the panel, the scrolling sections,
@@ -435,13 +435,13 @@ fn rise(k: usize, t: f32, quick: bool) -> f32 {
 pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mut Sheet, all: &[Section], pointer: Vec2) -> Vec<Layer> {
     let ui = scale;
     let radius = th.radius(ui / th.text_scale);
-    let size = crate::chrome::type_::BODY * ui;
-    let ks = crate::chrome::type_::CAPTION * ui; // keycap text
+    let size = crate::ui::chrome::type_::BODY * ui;
+    let ks = crate::ui::chrome::type_::CAPTION * ui; // keycap text
     let line = (size * 2.25).max(ks * 1.7 + 8.0 * ui);
     let pad = 24.0 * ui;
     let gap = 28.0 * ui; // between columns
     let section_gap = line * 0.8;
-    let title_size = crate::chrome::type_::TITLE * ui;
+    let title_size = crate::ui::chrome::type_::TITLE * ui;
     let fg = th.text();
     let dim = th.text2();
 
@@ -449,7 +449,7 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
 
     // Each row's keys, measured once.
     let chip_w = |r: &mut Renderer, c: &Chip| match c {
-        Chip::Cap(k) => crate::chrome::keycaps_width(&[r.measure(k, ks, false)], ks),
+        Chip::Cap(k) => crate::ui::chrome::keycaps_width(&[r.measure(k, ks, false)], ks),
         Chip::Word(w) => r.measure(w, ks, false),
     };
     let chip_gap = ks * 0.4;
@@ -525,8 +525,8 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
 
     // The panel.
     let mut base = Layer::default();
-    base.quads.extend(crate::chrome::scrim(screen, th, 1.0).quads);
-    crate::chrome::panel(&mut base, panel, radius, th, ui, crate::chrome::Lift::High, th.panel());
+    base.quads.extend(crate::ui::chrome::scrim(screen, th, 1.0).quads);
+    crate::ui::chrome::panel(&mut base, panel, radius, th, ui, crate::ui::chrome::Lift::High, th.panel());
 
     // The sections, scrolled; each heading and row rises into place in turn.
     let mut rows_l = Layer::default();
@@ -534,10 +534,10 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
     let top = body.y + 4.0 * ui - sheet.scroll;
     let mut col_y = vec![0.0f32; cols];
     let mut starts = Vec::with_capacity(sections.len()); // where each section starts, content px
-    let hair = crate::chrome::hair(ui);
+    let hair = crate::ui::chrome::hair(ui);
     let mut k = 0usize; // items drawn, for the stagger
     let push = |rows_l: &mut Layer, mut item: Layer, a: f32| {
-        crate::chrome::fade(&mut item, a, Vec2::new(0.0, 8.0 * ui * (1.0 - a)));
+        crate::ui::chrome::fade(&mut item, a, Vec2::new(0.0, 8.0 * ui * (1.0 - a)));
         rows_l.quads.extend(item.quads);
         rows_l.texts.extend(item.texts);
     };
@@ -556,7 +556,7 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
         let clip = Rect::new(x - 8.0 * ui, body.y, col_w + 8.0 * ui, body.h);
         // A section's name: small spaced capitals, quiet; it only groups.
         let mut item = Layer::default();
-        crate::chrome::spaced(&mut item, r, &name.to_uppercase(), x, y0 + line / 2.0 + 3.0 * ui, ks, rgb(th.text2(), 1.0), clip);
+        crate::ui::chrome::spaced(&mut item, r, &name.to_uppercase(), x, y0 + line / 2.0 + 3.0 * ui, ks, rgb(th.text2(), 1.0), clip);
         push(&mut rows_l, item, came(k));
         k += 1;
         for (j, (_, desc)) in rows.iter().enumerate() {
@@ -569,7 +569,7 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
             let mid = ry + line / 2.0;
             let row = Rect::new(x - 8.0 * ui, ry, col_w + 16.0 * ui, line);
             if row.contains(pointer) && body.contains(pointer) {
-                crate::chrome::fill(&mut item, row, th.small_radius(ui / th.text_scale), rgb(hover, 1.0));
+                crate::ui::chrome::fill(&mut item, row, th.small_radius(ui / th.text_scale), rgb(hover, 1.0));
             }
             // A hairline between rows, from the section's title down.
             item.quads.push(Quad {
@@ -598,8 +598,8 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
                 match chip {
                     Chip::Cap(key) => {
                         let kw = r.measure(key, ks, false);
-                        let right = cx + crate::chrome::keycaps_width(&[kw], ks);
-                        crate::chrome::draw_keycaps(&mut item, &[key], &[kw], right, mid, ks, th, ui, clip);
+                        let right = cx + crate::ui::chrome::keycaps_width(&[kw], ks);
+                        crate::ui::chrome::draw_keycaps(&mut item, &[key], &[kw], right, mid, ks, th, ui, clip);
                         cx = right + chip_gap;
                     }
                     Chip::Word(wd) => {
@@ -627,7 +627,7 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
     fill(&mut top_l, Shape::Rect { rect: Rect::new(panel.x, panel.y, w, header_h), radius });
     fill(&mut top_l, Shape::Rect { rect: Rect::new(panel.x, panel.y + radius, w, (header_h - radius).max(0.0)), radius: 0.0 });
     fill(&mut top_l, Shape::RoundBottom { rect: Rect::new(panel.x, body.bottom(), w, panel.bottom() - body.bottom()), radius });
-    crate::chrome::outline(&mut top_l, panel, radius, hair, rgb(th.line(), 1.0));
+    crate::ui::chrome::outline(&mut top_l, panel, radius, hair, rgb(th.line(), 1.0));
     let inner = panel.inflate(-pad);
     let ty = panel.y + pad;
     top_l.texts.push(text("Keyboard shortcuts", inner.x, ty, title_size, rgb(fg, 1.0), true, inner));
@@ -637,15 +637,15 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
     let esc_w = r.measure("Esc", ks, false);
     let title_mid = ty + title_size * 1.3 / 2.0;
     top_l.texts.push(text(close, inner.right() - close_w, title_mid - ks * 1.3 / 2.0, ks, rgb(dim, 1.0), false, inner));
-    crate::chrome::draw_keycaps(&mut top_l, &["Esc"], &[esc_w], inner.right() - close_w - chip_gap, title_mid, ks, th, ui, inner);
+    crate::ui::chrome::draw_keycaps(&mut top_l, &["Esc"], &[esc_w], inner.right() - close_w - chip_gap, title_mid, ks, th, ui, inner);
 
     // The filter field.
     let field = Rect::new(inner.x, ty + title_size * 1.3 + 14.0 * ui, inner.w, field_h);
     let rim = if sheet.filter.is_empty() { th.line_strong() } else { th.accent_text() };
     let small = th.small_radius(ui / th.text_scale);
-    crate::chrome::fill(&mut top_l, field, small, rgb(th.well(), 1.0));
-    crate::chrome::outline(&mut top_l, field, small, hair, rgb(rim, 1.0));
-    crate::icons::draw(&mut top_l, r, crate::icons::Icon::Search, field.x + 18.0 * ui, field.center().y, 14.0 * ui, rgb(th.text2(), 1.0));
+    crate::ui::chrome::fill(&mut top_l, field, small, rgb(th.well(), 1.0));
+    crate::ui::chrome::outline(&mut top_l, field, small, hair, rgb(rim, 1.0));
+    crate::ui::icons::draw(&mut top_l, r, crate::ui::icons::Icon::Search, field.x + 18.0 * ui, field.center().y, 14.0 * ui, rgb(th.text2(), 1.0));
     let fpad = 34.0 * ui;
     let fy = field.y + (field_h - size * 1.3) / 2.0;
     let total: usize = sections.iter().map(|(_, r)| r.len()).sum();
@@ -713,8 +713,8 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
         let last = mid(n - 1).min(body.bottom() - stop_h / 2.0);
         let bead_y = (mid(0) + f * stop_h).min(last);
         let mut rail_l = Layer::default();
-        crate::chrome::fill(&mut rail_l, Rect::new(tx - lw / 2.0, mid(0), lw, (last - mid(0)).max(0.0)), 0.0, rgb(th.line(), 1.0));
-        crate::chrome::fill(&mut rail_l, Rect::new(tx - lw / 2.0, mid(0), lw, (bead_y - mid(0)).max(0.0)), 0.0, rgb(th.accent(), 1.0));
+        crate::ui::chrome::fill(&mut rail_l, Rect::new(tx - lw / 2.0, mid(0), lw, (last - mid(0)).max(0.0)), 0.0, rgb(th.line(), 1.0));
+        crate::ui::chrome::fill(&mut rail_l, Rect::new(tx - lw / 2.0, mid(0), lw, (bead_y - mid(0)).max(0.0)), 0.0, rgb(th.accent(), 1.0));
         let clip = Rect::new(rx, body.y, rail_w, body.h);
         for (i, (name, rows)) in sections.iter().enumerate() {
             let m = mid(i);
@@ -728,15 +728,15 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
             let current = i == (f + 0.001).floor() as usize;
             let hovered = stop.contains(pointer);
             if hovered {
-                crate::chrome::fill(&mut item, Rect::new(rx + 14.0 * ui, stop.y + 2.0 * ui, rail_w - 14.0 * ui, stop_h - 4.0 * ui), th.small_radius(ui / th.text_scale), rgb(hover, 1.0));
+                crate::ui::chrome::fill(&mut item, Rect::new(rx + 14.0 * ui, stop.y + 2.0 * ui, rail_w - 14.0 * ui, stop_h - 4.0 * ui), th.small_radius(ui / th.text_scale), rgb(hover, 1.0));
             }
             // The stop: a small dot, filled once passed.
             let d = 6.0 * ui;
             let dot = Rect::new(tx - d / 2.0, m - d / 2.0, d, d);
             let passed = (i as f32) < f - 0.001;
-            crate::chrome::fill(&mut item, dot, d / 2.0, rgb(if passed { th.accent() } else { th.panel() }, 1.0));
-            crate::chrome::outline(&mut item, dot, d / 2.0, lw, rgb(if passed { th.accent() } else { th.line_strong() }, 1.0));
-            let nx = rx + 22.0 * ui + 3.0 * ui * crate::chrome::ease_out(near);
+            crate::ui::chrome::fill(&mut item, dot, d / 2.0, rgb(if passed { th.accent() } else { th.panel() }, 1.0));
+            crate::ui::chrome::outline(&mut item, dot, d / 2.0, lw, rgb(if passed { th.accent() } else { th.line_strong() }, 1.0));
+            let nx = rx + 22.0 * ui + 3.0 * ui * crate::ui::chrome::ease_out(near);
             let colour = if current || hovered { fg } else { th.text2() };
             let count = if sheet.filter.trim().is_empty() { String::new() } else { rows.len().to_string() };
             let cw = if count.is_empty() { 0.0 } else { r.measure(&count, ks, false) + 8.0 * ui };
@@ -746,15 +746,15 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
                 item.texts.push(text(&count, rx + rail_w - cw + 8.0 * ui, m - ks * 1.3 / 2.0, ks, rgb(th.text3(), 1.0), false, clip));
             }
             let a = if sheet.still { 1.0 } else { rise(i, since, quick) };
-            crate::chrome::fade(&mut item, a, Vec2::new(-6.0 * ui * (1.0 - a), 0.0));
+            crate::ui::chrome::fade(&mut item, a, Vec2::new(-6.0 * ui * (1.0 - a), 0.0));
             rail_l.quads.extend(item.quads);
             rail_l.texts.extend(item.texts);
         }
         // The bead, ringed in the panel's colour so it sits on the trail.
         let bd = 10.0 * ui;
         let ring = Rect::new(tx - bd / 2.0 - 2.5 * ui, bead_y - bd / 2.0 - 2.5 * ui, bd + 5.0 * ui, bd + 5.0 * ui);
-        crate::chrome::fill(&mut rail_l, ring, ring.w / 2.0, rgb(th.panel(), 1.0));
-        crate::chrome::fill(&mut rail_l, Rect::new(tx - bd / 2.0, bead_y - bd / 2.0, bd, bd), bd / 2.0, rgb(th.accent(), 1.0));
+        crate::ui::chrome::fill(&mut rail_l, ring, ring.w / 2.0, rgb(th.panel(), 1.0));
+        crate::ui::chrome::fill(&mut rail_l, Rect::new(tx - bd / 2.0, bead_y - bd / 2.0, bd, bd), bd / 2.0, rgb(th.accent(), 1.0));
         top_l.quads.extend(rail_l.quads);
         top_l.texts.extend(rail_l.texts);
 
@@ -769,8 +769,8 @@ pub fn layers(r: &mut Renderer, scale: f32, screen: Rect, th: &Theme, sheet: &mu
                 let band = band.translate(Vec2::new(0.0, push_up));
                 let bclip = Rect::new(band.x, body.y, band.w, line);
                 let mut dock = Layer::default();
-                crate::chrome::fill(&mut dock, band, 0.0, rgb(th.panel(), 1.0));
-                crate::chrome::spaced(&mut dock, r, &sections[i].0.to_uppercase(), x0, band.y + line / 2.0 + 3.0 * ui, ks, rgb(th.text2(), 1.0), bclip);
+                crate::ui::chrome::fill(&mut dock, band, 0.0, rgb(th.panel(), 1.0));
+                crate::ui::chrome::spaced(&mut dock, r, &sections[i].0.to_uppercase(), x0, band.y + line / 2.0 + 3.0 * ui, ks, rgb(th.text2(), 1.0), bclip);
                 dock.quads.push(Quad { shape: Shape::Rect { rect: Rect::new(band.x, band.bottom() - hair, band.w, hair), radius: 0.0 }, color: rgb(th.divider(), 1.0), texture: None });
                 for q in &mut dock.quads {
                     if let Shape::Rect { rect, .. } = &mut q.shape {

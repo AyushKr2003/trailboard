@@ -45,33 +45,33 @@ impl App {
         let css = self.card_css(n);
         let (url, kind) = match &n.note {
             Some(text) => (
-                crate::note::page_url(text, &self.theme, n.sticky.as_deref()),
+                crate::pages::note::page_url(text, &self.theme, n.sticky.as_deref()),
                 web::PageKind::Note,
             ),
             None if n.url == scene::note::WELCOME_URL => {
-                (crate::welcome::page_url(&self.theme), web::PageKind::App)
+                (crate::pages::welcome::page_url(&self.theme), web::PageKind::App)
             }
             None if n.url == scene::note::ENGINES_URL => (
-                crate::engines::page_url(&self.theme, self.settings.search),
+                crate::pages::engines::page_url(&self.theme, self.settings.search),
                 web::PageKind::App,
             ),
             None if n.url == scene::note::START_URL => {
                 // A private space shows no history.
                 let visits = match (&self.page_index, self.is_private()) {
-                    (Some(index), false) => index.recent(4 * crate::start::RECENT).unwrap_or_default(),
+                    (Some(index), false) => index.recent(4 * crate::pages::start::RECENT).unwrap_or_default(),
                     _ => Vec::new(),
                 };
-                let mut recent = crate::start::recent(&visits);
+                let mut recent = crate::pages::start::recent(&visits);
                 if let Some(index) = &self.page_index {
                     for r in &mut recent {
-                        r.thumb = index.thumb(&r.url).ok().flatten().map(|j| crate::start::data_url("image/jpeg", &j));
+                        r.thumb = index.thumb(&r.url).ok().flatten().map(|j| crate::pages::start::data_url("image/jpeg", &j));
                     }
                 }
                 let icons = self.start_icons(&recent);
-                (crate::start::page_url(&self.theme, self.settings.search, &self.start_page, &recent, &icons), web::PageKind::App)
+                (crate::pages::start::page_url(&self.theme, self.settings.search, &self.start_page, &recent, &icons), web::PageKind::App)
             }
             None if n.url == scene::note::SETTINGS_URL => (
-                crate::settings_page::page_url(&self.theme, &self.settings_data()),
+                crate::pages::settings_page::page_url(&self.theme, &self.settings_data()),
                 web::PageKind::App,
             ),
             None => (n.url.clone(), web::PageKind::Web),
@@ -160,11 +160,11 @@ impl App {
     /// A message from a start page or the search engine guide (card `id`).
     /// Returns whether it was one of theirs.
     pub(super) fn engine_page_action(&mut self, id: NodeId, action: &str) -> bool {
-        if let Some(input) = action.strip_prefix(crate::start::GO) {
+        if let Some(input) = action.strip_prefix(crate::pages::start::GO) {
             if self.is_start(id) {
                 self.start_go(id, input);
             }
-        } else if let Some(url) = action.strip_prefix(crate::start::BESIDE) {
+        } else if let Some(url) = action.strip_prefix(crate::pages::start::BESIDE) {
             // Like a link opened in a new card: beside the start page,
             // joined to it by a trail, which keeps its place.
             if self.is_start(id) && scene::startpage::pinnable(url)
@@ -173,14 +173,14 @@ impl App {
                 log::info!("start page {}: opened {url} beside it as card {}", id.0, new.0);
                 self.ensure_visible(new);
             }
-        } else if let Some(engine) = action.strip_prefix(crate::start::ENGINE) {
+        } else if let Some(engine) = action.strip_prefix(crate::pages::start::ENGINE) {
             match prefs::SearchEngine::from_id(engine) {
                 Some(e) => self.set_engine(e),
                 None => log::warn!("unknown search engine {engine:?}"),
             }
-        } else if action == crate::start::GUIDE {
+        } else if action == crate::pages::start::GUIDE {
             self.show_engines(id);
-        } else if let Some(json) = action.strip_prefix(crate::start::SAVE) {
+        } else if let Some(json) = action.strip_prefix(crate::pages::start::SAVE) {
             match storage::start::from_json(json) {
                 Some(start) => self.set_start_page(id, start),
                 None => log::warn!("start page {}: unreadable {json:?}", id.0),
@@ -192,9 +192,9 @@ impl App {
     }
 
     /// The icons a start page shows: its pinned sites' and `recent` pages'.
-    pub(super) fn start_icons(&self, recent: &[crate::start::Recent]) -> crate::start::Icons {
+    pub(super) fn start_icons(&self, recent: &[crate::pages::start::Recent]) -> crate::pages::start::Icons {
         let urls = self.start_page.pins().map(|p| p.url.as_str()).chain(recent.iter().map(|r| r.url.as_str()));
-        crate::start::icons(urls, |site| self.icons.get(site).map(|i| i.icon.png()))
+        crate::pages::start::icons(urls, |site| self.icons.get(site).map(|i| i.icon.png()))
     }
 
     /// Start page `from` changed the pins or parts: keep them, and show
@@ -219,7 +219,7 @@ impl App {
             log::warn!("start page: saving: {e}");
             self.toast("Couldn't save the start page");
         }
-        let script = crate::start::state_script(&self.start_page, &self.start_icons(&[]));
+        let script = crate::pages::start::state_script(&self.start_page, &self.start_icons(&[]));
         for (id, card) in &self.cards {
             if *id != from && self.is_start(*id) && card.page.kind() == web::PageKind::App {
                 card.page.run_script(&script);
@@ -240,7 +240,7 @@ impl App {
 
     /// Tells live start pages and the guide which engine is in use.
     pub(super) fn engine_changed(&self) {
-        let script = crate::engines::engine_script(self.settings.search);
+        let script = crate::pages::engines::engine_script(self.settings.search);
         for (id, card) in &self.cards {
             let ours = self.scene.node(*id).is_some_and(|n| n.url == scene::note::START_URL || n.url == scene::note::ENGINES_URL);
             if ours && card.page.kind() == web::PageKind::App {
@@ -270,8 +270,8 @@ impl App {
     }
 
     /// A button on the welcome page: the same as its keys.
-    pub(super) fn welcome_action(&mut self, action: crate::welcome::Action) {
-        use crate::welcome::Action;
+    pub(super) fn welcome_action(&mut self, action: crate::pages::welcome::Action) {
+        use crate::pages::welcome::Action;
         self.keys_in_page = false; // the board's own UI takes over
         match action {
             Action::NewCard => self.run_command(Command::NewCard),
@@ -316,7 +316,7 @@ impl App {
 
     /// Shift+N: a new, empty sticky note in the middle of the view, ready to type in.
     pub(super) fn new_sticky_at_center(&mut self) -> NodeId {
-        let (w, h) = (crate::note::STICKY_W, crate::note::STICKY_H);
+        let (w, h) = (crate::pages::note::STICKY_W, crate::pages::note::STICKY_H);
         let rect = placement::free_near(&self.scene, self.camera.center, w, h);
         let id = self.scene.add_sticky(rect, "");
         self.create_page(id);
@@ -361,9 +361,9 @@ impl App {
     pub(super) fn recolour_note(&self, id: NodeId) {
         let (Some(n), Some(c)) = (self.scene.node(id), self.cards.get(&id)) else { return };
         if n.is_note() && c.page.kind() == web::PageKind::Note {
-            c.page.run_script(&crate::note::theme_script(&self.theme, n.sticky.as_deref()));
+            c.page.run_script(&crate::pages::note::theme_script(&self.theme, n.sticky.as_deref()));
         } else if c.page.kind() == web::PageKind::App {
-            c.page.run_script(&crate::welcome::theme_script(&self.theme));
+            c.page.run_script(&crate::pages::welcome::theme_script(&self.theme));
         }
     }
 
@@ -406,7 +406,7 @@ impl App {
                 let text = scene::note::append(&old, &quote);
                 self.scene.set_note(t, text.clone());
                 if let Some(c) = self.cards.get(&t) {
-                    c.page.run_script(&crate::note::set_text_script(&text));
+                    c.page.run_script(&crate::pages::note::set_text_script(&text));
                 }
                 t
             }
@@ -699,8 +699,8 @@ impl App {
     }
 
     /// The entered card's mode as its ring shows it (`Theme::keys_ring`).
-    pub(super) fn ring_keys(&self) -> crate::theme::Keys {
-        use crate::theme::Keys;
+    pub(super) fn ring_keys(&self) -> crate::ui::theme::Keys {
+        use crate::ui::theme::Keys;
         match self.page_keys {
             PageKeys::Page => Keys::Page,
             PageKeys::Insert => Keys::Insert,
@@ -826,7 +826,7 @@ impl App {
         if let Some(c) = self.cards.get(&id) {
             c.page.set_focus(true);
             if self.scene.node(id).is_some_and(Node::is_note) {
-                c.page.run_script(crate::note::EDIT_SCRIPT);
+                c.page.run_script(crate::pages::note::EDIT_SCRIPT);
             }
         }
         log::info!("entered card {}", id.0);

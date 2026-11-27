@@ -5,7 +5,7 @@ infinite board; links open beside their source. Read [README.md](README.md) and 
 use, [docs/PLAN.md](docs/PLAN.md) for milestones and status, and
 its §7 (known bugs) and §8 (later ideas).
 Interface rules (colour levels, text strengths, type scale, icons) are in
-[docs/DESIGN.md](docs/DESIGN.md): use `theme.rs` tokens and `chrome.rs`
+[docs/DESIGN.md](docs/DESIGN.md): use `ui/theme.rs` tokens and `ui/chrome.rs`
 helpers, never ad-hoc colours or sizes.
 
 ## Clean-room rule
@@ -45,7 +45,7 @@ cargo clippy                    # must be warning-free
 ```
 
 End-to-end: `TRAILBOARD_SCRIPT=file XDG_DATA_HOME=/tmp/x cargo run -p trailboard -- URL`.
-The script commands live in `crates/app/src/script.rs`. Use an isolated `XDG_DATA_HOME`
+The script commands live in `crates/app/src/dev/script.rs`. Use an isolated `XDG_DATA_HOME`
 so tests never touch the user's real board.
 
 On this Hyprland 0.57 machine, `ydotool` doesn't reach windows and `wtype` remaps

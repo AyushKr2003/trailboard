@@ -1,9 +1,10 @@
 # Trailboard: interface design
 
-How the interface is put together, and why. Code: `crates/app/src/theme.rs`
-(colour), `chrome.rs` (surfaces, type, keycaps, tooltips), `icons.rs`,
-`hud.rs` (the one on-screen control), and the drawing in `app.rs`,
-`palette.rs`, `sidebar.rs`, `hints.rs`.
+How the interface is put together, and why. Code: `crates/app/src/ui/`:
+`theme.rs` (colour), `chrome.rs` (surfaces, type, keycaps, tooltips),
+`icons.rs`, `hud.rs` (the one on-screen control), `palette.rs`,
+`sidebar.rs`, `hints.rs`; and the board's drawing in
+`crates/app/src/app/drawing.rs`.
 
 ## Principles
 

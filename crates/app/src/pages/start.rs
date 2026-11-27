@@ -17,8 +17,8 @@ use std::collections::BTreeMap;
 use scene::settings::SearchEngine;
 use scene::startpage::StartPage;
 
-use crate::note::percent_encode;
-use crate::theme::Theme;
+use crate::pages::note::percent_encode;
+use crate::ui::theme::Theme;
 
 const PAGE: &str = include_str!("start.html");
 
@@ -96,8 +96,8 @@ pub fn page_url(th: &Theme, engine: SearchEngine, start: &StartPage, recent: &[R
     // The titles go in last, so nothing in them is taken for a placeholder.
     let html = PAGE
         .replacen("__PREFIX__", &q(web::APP_ACTION), 1)
-        .replacen("__THEME__", &crate::welcome::colors(th), 1)
-        .replacen("__DATA__", &crate::engines::data(engine), 1)
+        .replacen("__THEME__", &crate::pages::welcome::colors(th), 1)
+        .replacen("__DATA__", &crate::pages::engines::data(engine), 1)
         .replacen("__STATE__", &state(start, icons), 1)
         .replacen("__RECENT__", &format!("[{}]", list.join(",")), 1);
     format!("data:text/html;charset=utf-8,{}", percent_encode(&html))

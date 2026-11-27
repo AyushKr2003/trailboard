@@ -19,7 +19,7 @@ impl App {
             return;
         }
         self.wallpaper_checked = Some(Instant::now());
-        let w = crate::backdrop::desktop_wallpaper();
+        let w = crate::ui::backdrop::desktop_wallpaper();
         if w != self.wallpaper {
             log::info!("desktop wallpaper: {w:?}");
             self.wallpaper = w;
@@ -41,7 +41,7 @@ impl App {
         self.link_hints = None;
         self.finish_arrange(true);
         self.check_wallpaper(true);
-        self.photo_files = storage::photo::pictures(&crate::backdrop::picture_dirs(), 400);
+        self.photo_files = storage::photo::pictures(&crate::ui::backdrop::picture_dirs(), 400);
         self.omnibox = Some(Omnibox::new("", Target::Photo));
         log::info!("photo list open: {} pictures, wallpaper {:?}", self.photo_files.len(), self.wallpaper);
     }
@@ -125,12 +125,12 @@ impl App {
             .iter()
             .map(|s| ("Sandbox", s.summary().to_string(), s.explain().to_string()))
             .collect();
-        crate::settings_page::data(&shown, &notes, &facts)
+        crate::pages::settings_page::data(&shown, &notes, &facts)
     }
 
     /// Shows live settings pages the settings as they are now.
     pub(super) fn settings_changed(&self) {
-        let script = crate::settings_page::data_script(&self.settings_data());
+        let script = crate::pages::settings_page::data_script(&self.settings_data());
         for (id, card) in &self.cards {
             let ours = self
                 .scene
@@ -144,7 +144,7 @@ impl App {
 
     /// A message from the settings page (card `id`). Returns whether it was one of its.
     pub(super) fn settings_page_action(&mut self, id: NodeId, action: &str) -> bool {
-        use crate::settings_page as sp;
+        use crate::pages::settings_page as sp;
         if !self
             .scene
             .node(id)
@@ -181,7 +181,7 @@ impl App {
                 }
                 None => log::warn!("settings page: unknown command {name:?}"),
             }
-        } else if action == crate::start::GUIDE {
+        } else if action == crate::pages::start::GUIDE {
             self.show_engines(id);
         } else {
             return false;

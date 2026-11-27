@@ -3,8 +3,8 @@
 //! colours filled in, like a note. Its buttons ask for app commands by name
 //! (`web::APP_ACTION`); [`action`] says which names exist.
 
-use crate::note::{hex, percent_encode};
-use crate::theme::{Rgb, Theme, mix};
+use crate::pages::note::{hex, percent_encode};
+use crate::ui::theme::{Rgb, Theme, mix};
 
 const PAGE: &str = include_str!("welcome.html");
 

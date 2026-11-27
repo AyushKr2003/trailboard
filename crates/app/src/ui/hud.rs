@@ -13,10 +13,10 @@ use std::time::Duration;
 use compositor::{Layer, Renderer};
 use scene::{Rect, Vec2};
 
-use crate::chrome::{self, Lift, Press, type_};
-use crate::icons::{self, Icon};
-use crate::palette::Command;
-use crate::theme::{Rgb, Theme, rgb};
+use crate::ui::chrome::{self, Lift, Press, type_};
+use crate::ui::icons::{self, Icon};
+use crate::ui::palette::Command;
+use crate::ui::theme::{Rgb, Theme, rgb};
 
 /// Something on the board's chrome that can be pressed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

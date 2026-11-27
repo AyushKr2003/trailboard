@@ -6,7 +6,7 @@ use std::backtrace::Backtrace;
 use std::path::{Path, PathBuf};
 
 pub fn install(data_dir: PathBuf, cef_dir: &Path) {
-    let version = crate::launch::version_line(cef_dir);
+    let version = crate::system::launch::version_line(cef_dir);
     let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         default(info);

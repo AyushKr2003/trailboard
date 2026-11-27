@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 use compositor::{Layer, Quad, Renderer, Shape, Text};
 use scene::{Rect, Vec2};
 
-use crate::icons::{self, Icon};
-use crate::theme::{Rgb, Theme, rgb};
+use crate::ui::icons::{self, Icon};
+use crate::ui::theme::{Rgb, Theme, rgb};
 
 /// The type scale, in logical px (multiply by the UI scale). Every text in
 /// the chrome is one of these.

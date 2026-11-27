@@ -8,8 +8,8 @@
 
 use scene::settings::SearchEngine;
 
-use crate::note::percent_encode;
-use crate::theme::Theme;
+use crate::pages::note::percent_encode;
+use crate::ui::theme::Theme;
 
 const PAGE: &str = include_str!("engines.html");
 
@@ -268,7 +268,7 @@ pub(crate) fn data(current: SearchEngine) -> String {
 pub fn fill(page: &str, th: &Theme, engine: SearchEngine) -> String {
     let html = page
         .replacen("__PREFIX__", &web::js_string(web::APP_ACTION), 1)
-        .replacen("__THEME__", &crate::welcome::colors(th), 1)
+        .replacen("__THEME__", &crate::pages::welcome::colors(th), 1)
         .replacen("__DATA__", &data(engine), 1);
     format!("data:text/html;charset=utf-8,{}", percent_encode(&html))
 }

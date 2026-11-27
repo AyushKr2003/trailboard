@@ -154,7 +154,7 @@ only.
 **Goal.** No reference browser has a board, so compare with ourselves:
 halve it (≤ 175 %), keeping the motion smooth in the screenshots.
 
-## PB3. Idle: 4× Chrome's CPU, with nothing happening 🟡 (fix written, to measure)
+## PB3. Idle: 2.3× Chrome's CPU, with nothing happening 🟡 (half done)
 
 **Seen.** `idle` (start card only, EPYC 9V74): 2.4 % CPU, 2.0 % of it in the
 main process, against Chrome's 0.6 % (0.4 % in its browser process).
@@ -191,9 +191,27 @@ where only page pixels changed. The start page rests its caret after
 10 s without a key, click or focus (`caret-animation: manual`, Chromium
 139+): it stays shown, steady, as on the desktop.
 
-**Next to try.** A CI run (`cases=idle,still only=trailboard,chrome`):
-skipped frames should be ~1/s and paints ~0 after 10 s. If idle is
-still above 1 %, log each CEF paint's dirty rect to see what else moves.
+**Measured** (run 46023384146, `perf-idle` `e6fe8cc`, Trailboard ÷ Chrome
+in the same job): idle 1.4 % vs 0.6 % (**2.3×**, was 4.0×), paints
+1.7/s → 0, skipped 5/s → 1; still 0.6 % vs 0.3 % (2.0×, was 2.7×),
+skipped 4/s → 1. Video-h264 unchanged (260.8 % vs 33.9 %), but its 30
+skipped frames a second are gone.
+
+**Second step (uncommitted, to measure).** What still woke us: CEF's pump
+fallback (`MAX_PUMP_DELAY` 33 ms: every pump set the next one 33 ms on,
+so an idle app woke ~30×/s and ran all of `tick`), the 250 ms poll and
+the 1 s frame. Now: the pump fallback is 250 ms (CEF schedules its own
+work; the fallback is a net); what `tick` polls has its own time
+(`App::next_poll`: a field out in an editor, the user's filter list
+settling, a stopped video's grace, the desktop wallpaper only while the
+board follows it, the perf line), with `IDLE_TICK` 1 s as the net; a
+wallpaper change asks for a draw; `IDLE_DRAW` is 5 s, a net too. The
+`TRAILBOARD_PERF` line is written from `tick`, so it keeps coming once a
+second without drawing (its rates are over the real span).
+
+**Next to try.** Measure (`cases=idle,still,video-h264`), checking video
+still plays (a missed pump would show there). If idle is still over 1 %,
+try the pump fallback at 1 s, and see what CEF schedules at rest.
 
 **Goal.** Idle ≤ 1 % and still ≤ 0.5 %, near Chrome.
 

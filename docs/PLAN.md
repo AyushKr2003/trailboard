@@ -1572,9 +1572,18 @@ after 10 s is the desktop's own default, so not asked. Verified: build,
 clippy clean, all unit tests. **Not verified:** no e2e or screenshot run
 (the owner's PC is in use: CI only), so toasts, wallpaper changes,
 animations ending and video after the change are unchecked by eye.
-**Next up:** a CI run of `idle,still,video-h264` (Trailboard and Chrome)
-on a throwaway branch to measure PB3 and check video didn't regress;
-then PB1 (1–2).
+Committed on `perf-idle` (28a1ff6, e6fe8cc) and measured in run
+46023384146: idle 2.4 → 1.4 % (2.3× Chrome, was 4×), still 0.8 → 0.6 %,
+video unchanged; numbers in BUGS.md PB3. Then PB3's rest, asked by the
+owner ("rest pb3 on this branch"): CEF's pump fallback 33 → 250 ms (it
+woke idle 30×/s), `App::next_poll` for what `tick` polls (editor,
+filter list, media grace, wallpaper while followed, perf line),
+`IDLE_TICK` 1 s and `IDLE_DRAW` 5 s as nets, the perf line written from
+`tick`. Decided: 250 ms, not 1 s, for the pump net until a bench shows
+nothing relies on it. Verified: build, clippy, unit tests; not run
+locally (CI only). **Next up:** a CI run of `idle,still,video-h264`
+(video must still play); then the owner merges `perf-idle`; then PB1
+(1–2).
 
 **Session before:** 2026-11-27 (fifty-third): **code layout**, asked by
 the owner ("work on the folder structure", then "still app folder has

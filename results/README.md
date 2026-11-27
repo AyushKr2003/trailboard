@@ -2,88 +2,89 @@
 
 Written by the bench workflow after every run. Chart: <https://ayushkr2003.github.io/trailboard/>
 
-## Bench: Trailboard 7248406 against 5 browsers
+## Bench: Trailboard 576f9ed against 5 browsers
 
-20261127-1712 · 3 runs each, medians · each case on its own runner · [workflow run](https://github.com/AyushKr2003/trailboard/actions/runs/46039758109)
+20261127-1738 · 3 runs each, medians · each case on its own runner · [workflow run](https://github.com/AyushKr2003/trailboard/actions/runs/46043186873)
 
-✅ No regression against earlier runs on the same CPU.
+✅ No regression against earlier runs on the same CPU (not checked, no earlier run on their CPU: still).
 
 Not run, by design (see browsers.toml): gnome-web (video-vp9, video-av1, video-h264).
 
 ### idle
 
-Runner: 4 × Intel(R) Xeon(R) 6975P-C, 15 GB; compared with 20261127-1554-a2d9617-46028826700.
+Runner: 4 × Intel(R) Xeon(R) 6975P-C, 15 GB; compared with 20261127-1712-7248406-46039758109.
 
 | Program | Engine | Memory (PSS) | Peak | CPU % of a core | Processes | Start | Change (same CPU) |
 |---|---|---|---|---|---|---|---|
-| **trailboard** | Blink (CEF) | 594 MB | 595 MB | 0.9 | 9 | 0.21 s | mem +2%, CPU +350% |
-| falkon | Blink (Qt WebEngine) | 402 MB | 402 MB | 9.6 | 5 | 0.21 s | mem -1%, CPU -1% |
-| gnome-web | WebKit | 433 MB | 436 MB | 0.0 | 8 | 0.31 s | mem -0% |
-| chrome | Blink | 438 MB | 496 MB | 0.6 | 12 | 0.22 s | mem +0%, CPU -14% |
-| brave | Blink | 468 MB | 484 MB | 0.9 | 12 | 0.32 s | mem +3%, CPU +6% |
-| firefox | Gecko | 742 MB | 849 MB | 4.7 | 10 | 0.82 s | mem -1%, CPU +16% |
+| **trailboard** | Blink (CEF) | 585 MB | 586 MB | 0.8 | 9 | 0.21 s | mem -2%, CPU -11% |
+| falkon | Blink (Qt WebEngine) | 392 MB | 399 MB | 9.9 | 5 | 0.21 s | mem -2%, CPU +3% |
+| gnome-web | WebKit | 434 MB | 437 MB | 0.0 | 8 | 0.31 s | mem +0% |
+| chrome | Blink | 437 MB | 497 MB | 0.6 | 12 | 0.22 s | mem -0%, CPU +0% |
+| brave | Blink | 467 MB | 482 MB | 0.8 | 12 | 0.32 s | mem -0%, CPU -11% |
+| firefox | Gecko | 750 MB | 847 MB | 3.3 | 10 | 0.83 s | mem +1%, CPU -30% |
 
 ### still
 
-Runner: 4 × AMD EPYC 7763 64-Core Processor, 15 GB; compared with 20261127-1121-879f0c2-45989683312.
+Runner: 4 × INTEL(R) XEON(R) PLATINUM 8573C, 15 GB; no earlier run on this CPU to compare with.
 
 | Program | Engine | Memory (PSS) | Peak | CPU % of a core | Processes | Start | Change (same CPU) |
 |---|---|---|---|---|---|---|---|
-| **trailboard** | Blink (CEF) | 700 MB | 703 MB | 0.3 | 14 | 0.32 s | mem -1%, CPU -57% |
-| falkon | Blink (Qt WebEngine) | 425 MB | 443 MB | 0.2 | 5 | 0.32 s | mem -1%, CPU -33% |
-| chrome | Blink | 534 MB | 590 MB | 0.4 | 18 | 0.45 s | mem +0%, CPU +0% |
-| brave | Blink | 559 MB | 586 MB | 0.1 | 17 | 0.44 s | mem -0%, CPU +0% |
-| firefox | Gecko | 804 MB | 883 MB | 7.4 | 16 | 1.27 s | mem -0%, CPU +45% |
-| gnome-web | WebKit | 938 MB | 1107 MB | 0.1 | 38 | 0.42 s | mem -0%, CPU -50% |
+| **trailboard** | Blink (CEF) | 703 MB | 715 MB | 0.3 | 14 | 0.21 s |  |
+| falkon | Blink (Qt WebEngine) | 432 MB | 449 MB | 0.1 | 5 | 0.21 s |  |
+| chrome | Blink | 531 MB | 590 MB | 0.3 | 18 | 0.32 s |  |
+| brave | Blink | 564 MB | 582 MB | 0.1 | 17 | 0.33 s |  |
+| firefox | Gecko | 815 MB | 895 MB | 3.8 | 16 | 1.03 s |  |
+| gnome-web | WebKit | 1012 MB | 1254 MB | 0.0 | 38 | 0.42 s |  |
 
 ### video-vp9
 
-Runner: 4 × Intel(R) Xeon(R) 6975P-C, 15 GB; compared with 20261127-1631-d95458b-46034126404.
+Runner: 4 × Intel(R) Xeon(R) 6975P-C, 15 GB; compared with 20261127-1712-7248406-46039758109.
 
 | Program | Engine | Memory (PSS) | Peak | CPU % of a core | Processes | Start | Change (same CPU) |
 |---|---|---|---|---|---|---|---|
-| **trailboard** | Blink (CEF) | 625 MB | 626 MB | 220.1 | 9 | 0.21 s | mem +0%, CPU -2% |
-| falkon | Blink (Qt WebEngine) | 490 MB | 496 MB | 185.0 | 5 | 0.21 s |  |
-| chrome | Blink | 495 MB | 555 MB | 37.7 | 12 | 0.22 s | mem -5%, CPU -5% |
-| brave | Blink | 514 MB | 522 MB | 37.1 | 12 | 0.32 s |  |
-| firefox | Gecko | 828 MB | 913 MB | 47.3 | 11 | 0.83 s |  |
+| **trailboard** | Blink (CEF) | 617 MB | 621 MB | 226.4 | 9 | 0.21 s | mem -1%, CPU +3% |
+| falkon | Blink (Qt WebEngine) | 496 MB | 500 MB | 197.3 | 5 | 0.21 s | mem +1%, CPU +7% |
+| chrome | Blink | 498 MB | 557 MB | 40.0 | 12 | 0.32 s | mem +1%, CPU +6% |
+| brave | Blink | 519 MB | 526 MB | 38.5 | 12 | 0.32 s | mem +1%, CPU +4% |
+| firefox | Gecko | 834 MB | 908 MB | 47.7 | 11 | 0.83 s | mem +1%, CPU +1% |
 
 ### video-av1
 
-Runner: 4 × Intel(R) Xeon(R) 6975P-C, 15 GB; compared with 20261127-1554-a2d9617-46028826700.
+Runner: 4 × Intel(R) Xeon(R) 6975P-C, 15 GB; compared with 20261127-1712-7248406-46039758109.
 
 | Program | Engine | Memory (PSS) | Peak | CPU % of a core | Processes | Start | Change (same CPU) |
 |---|---|---|---|---|---|---|---|
-| **trailboard** | Blink (CEF) | 657 MB | 659 MB | 218.8 | 9 | 0.21 s | mem -0%, CPU -18% |
-| chrome | Blink | 530 MB | 589 MB | 34.3 | 12 | 0.32 s | mem +0%, CPU -6% |
-| brave | Blink | 550 MB | 554 MB | 33.0 | 12 | 0.32 s | mem -0%, CPU -7% |
-| falkon | Blink (Qt WebEngine) | 586 MB | 618 MB | 183.6 | 5 | 0.21 s | mem -4%, CPU -2% |
-| firefox | Gecko | 877 MB | 948 MB | 49.6 | 11 | 0.82 s | mem +1%, CPU -2% |
+| **trailboard** | Blink (CEF) | 649 MB | 663 MB | 224.0 | 9 | 0.21 s | mem -1%, CPU +2% |
+| chrome | Blink | 532 MB | 589 MB | 36.0 | 12 | 0.34 s | mem +0%, CPU +5% |
+| brave | Blink | 553 MB | 554 MB | 35.0 | 12 | 0.33 s | mem +1%, CPU +6% |
+| falkon | Blink (Qt WebEngine) | 602 MB | 626 MB | 189.2 | 5 | 0.21 s | mem +3%, CPU +3% |
+| firefox | Gecko | 870 MB | 951 MB | 50.4 | 11 | 0.83 s | mem -1%, CPU +2% |
 
 ### video-h264
 
-Runner: 4 × Intel(R) Xeon(R) 6975P-C, 15 GB; compared with 20261127-1631-d95458b-46034126404.
+Runner: 4 × Intel(R) Xeon(R) 6975P-C, 15 GB; compared with 20261127-1712-7248406-46039758109.
 
 | Program | Engine | Memory (PSS) | Peak | CPU % of a core | Processes | Start | Change (same CPU) |
 |---|---|---|---|---|---|---|---|
-| **trailboard** | Blink (CEF) | 652 MB | 653 MB | 221.2 | 9 | 0.21 s | mem +0%, CPU +5% |
-| falkon | Blink (Qt WebEngine) | 507 MB | 513 MB | 182.3 | 5 | 0.21 s |  |
-| chrome | Blink | 518 MB | 579 MB | 35.2 | 12 | 0.23 s | mem -5%, CPU +11% |
-| brave | Blink | 537 MB | 543 MB | 32.8 | 12 | 0.32 s |  |
-| firefox | Gecko | 842 MB | 918 MB | 47.4 | 11 | 0.83 s |  |
+| **trailboard** | Blink (CEF) | 633 MB | 636 MB | 219.0 | 9 | 0.21 s | mem -3%, CPU -1% |
+| falkon | Blink (Qt WebEngine) | 512 MB | 513 MB | 179.9 | 5 | 0.21 s | mem +1%, CPU -1% |
+| chrome | Blink | 518 MB | 581 MB | 34.2 | 12 | 0.22 s | mem +0%, CPU -3% |
+| brave | Blink | 540 MB | 543 MB | 33.2 | 12 | 0.32 s | mem +1%, CPU +1% |
+| firefox | Gecko | 839 MB | 927 MB | 47.7 | 11 | 0.83 s | mem -0%, CPU +1% |
 
 ### pan
 
-Runner: 4 × Intel(R) Xeon(R) 6975P-C, 15 GB; compared with 20261127-1348-5aa154c-46010069445.
+Runner: 4 × AMD EPYC 7763 64-Core Processor, 15 GB; compared with 20261126-0418-ea5b59f-45754226156.
 
 | Program | Engine | Memory (PSS) | Peak | CPU % of a core | Processes | Start | Change (same CPU) |
 |---|---|---|---|---|---|---|---|
-| **trailboard** | Blink (CEF) | 805 MB | 812 MB | 335.3 | 14 | 0.22 s | mem -1%, CPU -4% |
+| **trailboard** | Blink (CEF) | 817 MB | 827 MB | 342.1 | 14 | 0.36 s | mem +11%, CPU -4% |
 
 ## Trailboard over time (newest first)
 
 | Run | Trailboard | idle mem / CPU | still mem / CPU | video-vp9 mem / CPU | video-av1 mem / CPU | video-h264 mem / CPU | pan mem / CPU |
 |---|---|---|---|---|---|---|---|
+| [20261127-1738-5](https://github.com/AyushKr2003/trailboard/actions/runs/46043186873) | `576f9ed` | 585 MB / 0.8 % | 703 MB / 0.3 % | 617 MB / 226.4 % | 649 MB / 224.0 % | 633 MB / 219.0 % | 817 MB / 342.1 % |
 | [20261127-1712-7](https://github.com/AyushKr2003/trailboard/actions/runs/46039758109) | `7248406` | 594 MB / 0.9 % | 700 MB / 0.3 % | 625 MB / 220.1 % | 657 MB / 218.8 % | 652 MB / 221.2 % | 805 MB / 335.3 % |
 | [20261127-1631-d](https://github.com/AyushKr2003/trailboard/actions/runs/46034126404) | `d95458b` | – | – | 624 MB / 224.0 % | – | 651 MB / 211.0 % | 795 MB / 351.2 % |
 | [20261127-1615-8](https://github.com/AyushKr2003/trailboard/actions/runs/46031642472) | `8ad3a04` | – | 712 MB / 0.3 % | 639 MB / 349.4 % | – | 662 MB / 328.7 % | 822 MB / 361.4 % |

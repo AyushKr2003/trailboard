@@ -1,9 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
-  <!-- Symbolic (one-colour) Trailboard mark: the key of the app icon, as its
-       outline, and its legend: a page, a trail turning at rounded right
-       angles, and the page it opened. -->
-  <rect x="1.25" y="1.25" width="13.5" height="13.5" rx="3.5" fill="none" stroke="#2e3436" stroke-width="1.5"/>
-  <rect x="4" y="4" width="3.5" height="3" rx="1" fill="#2e3436"/>
-  <path d="M7.5 5.5h.5a1 1 0 0 1 1 1v2a1 1 0 0 0 1 1" fill="none" stroke="#2e3436" stroke-width="1.2" stroke-linecap="round"/>
-  <rect x="9.6" y="8.2" width="2.6" height="3.4" rx=".9" fill="#2e3436"/>
+  <!-- Symbolic (one-colour) Trailboard mark: the app icon's trail of five
+       pages stepping down the board, each joined to the page it opened. -->
+  <g fill="#2e3436">
+    <rect x="0.5" y="0.5" width="4" height="4" rx="1"/>
+    <rect x="6" y="0.5" width="4" height="4" rx="1"/>
+    <rect x="6" y="6" width="4" height="4" rx="1"/>
+    <rect x="11.5" y="6" width="4" height="4" rx="1"/>
+    <rect x="11.5" y="11.5" width="4" height="4" rx="1"/>
+    <path d="M4.5 2h1.5v1h-1.5zM7.5 4.5h1v1.5h-1zM10 7.5h1.5v1h-1.5zM13 10h1v1.5h-1z"/>
+  </g>
 </svg>

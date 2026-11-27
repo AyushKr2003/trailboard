@@ -1,47 +1,27 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
   <title>Trailboard</title>
-  <desc>A keyboard key seen from a little above, its top dished. Its legend: a page, a trail that leaves its side and turns at rounded right angles, and the page it opened, in amber, glowing softly on the dark key.</desc>
-  <defs>
-    <!-- The skirt: lit from above, darker toward the front edge. -->
-    <linearGradient id="skirt" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#353a47"/><stop offset=".55" stop-color="#23262f"/><stop offset="1" stop-color="#121419"/>
-    </linearGradient>
-    <!-- The skirt's sides turn away from the light. -->
-    <linearGradient id="sides" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#000" stop-opacity=".25"/><stop offset=".12" stop-color="#000" stop-opacity="0"/>
-      <stop offset=".88" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".25"/>
-    </linearGradient>
-    <linearGradient id="top" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#454a58"/><stop offset="1" stop-color="#30343f"/>
-    </linearGradient>
-    <!-- The dish: a shallow hollow, shaded at its top edge, lit at its bottom. -->
-    <radialGradient id="dish" cx=".5" cy=".38" r=".7">
-      <stop offset="0" stop-color="#3d4250"/><stop offset=".75" stop-color="#2f333d"/><stop offset="1" stop-color="#282b34"/>
-    </radialGradient>
-    <linearGradient id="lip" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#000" stop-opacity=".25"/><stop offset=".18" stop-color="#000" stop-opacity="0"/>
-      <stop offset=".9" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#fff" stop-opacity=".12"/>
-    </linearGradient>
-    <filter id="contact" x="-20%" y="-20%" width="140%" height="150%">
-      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#000000" flood-opacity=".35"/>
-      <feDropShadow dx="0" dy="24" stdDeviation="22" flood-color="#000000" flood-opacity=".22"/>
-    </filter>
-    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="7" result="b"/><feColorMatrix in="b" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 .7 0" result="s"/><feMerge><feMergeNode in="s"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-  </defs>
-  <!-- The key's body. -->
-  <g filter="url(#contact)">
-    <rect x="40" y="44" width="432" height="436" rx="100" fill="url(#skirt)"/>
-  </g>
-  <rect x="40" y="44" width="432" height="436" rx="100" fill="url(#sides)"/>
-  <!-- Its top, set back from the front so the skirt shows below it. -->
-  <rect x="74" y="56" width="364" height="364" rx="76" fill="url(#top)"/>
-  <path d="M150 58.5H362" stroke="#fff" stroke-opacity=".25" stroke-width="3" stroke-linecap="round"/>
-  <rect x="94" y="72" width="324" height="324" rx="62" fill="url(#dish)"/>
-  <rect x="94" y="72" width="324" height="324" rx="62" fill="url(#lip)"/>
-  <!-- The legend, centred in the dish. -->
-  <g filter="url(#glow)">
-    <rect x="148" y="146" width="100" height="80" rx="22" fill="#eef0f6"/>
-    <path d="M248 186H272A24 24 0 0 1 296 210V264A24 24 0 0 0 320 288" fill="none" stroke="#ffb020" stroke-width="16" stroke-linecap="round"/>
-    <rect x="304" y="250" width="66" height="76" rx="20" fill="#ffb020"/>
+  <desc>A trail of five pages stepping down a board, each joined to the page it opened. The pages are drawn as loading skeletons, each a different kind of page; the first is pale, the rest take the default theme's blue, magenta, orange and yellow.</desc>
+  <!-- No filters or masks: launchers that draw SVG without them (Qt) see the same icon. -->
+  <g transform="translate(256 256) scale(1.16) translate(-256 -256)">
+    <!-- The trail: each step in the colour of the page it leads to. -->
+    <path d="M144 144L256 144" stroke="#7aa2f7" stroke-width="32"/>
+    <path d="M256 144L256 256" stroke="#bb9af7" stroke-width="32"/>
+    <path d="M256 256L368 256" stroke="#ff9e64" stroke-width="32"/>
+    <path d="M368 256L368 368" stroke="#ffd60a" stroke-width="32"/>
+    <!-- Picture page: a header bar and a large picture. -->
+    <rect x="96" y="96" width="96" height="96" rx="24" fill="#a9b1d6"/>
+    <g fill="#63687d"><rect x="112" y="112" width="64" height="10" rx="5"/><rect x="112" y="130" width="64" height="46" rx="8"/></g>
+    <!-- Article: a heading and lines of text. -->
+    <rect x="208" y="96" width="96" height="96" rx="24" fill="#7aa2f7"/>
+    <g fill="#536ea8"><rect x="226" y="118" width="60" height="12" rx="6"/><rect x="226" y="140" width="44" height="10" rx="5"/><rect x="226" y="158" width="52" height="10" rx="5"/></g>
+    <!-- Profile: a round portrait, a name and text. -->
+    <rect x="208" y="208" width="96" height="96" rx="24" fill="#bb9af7"/>
+    <g fill="#7f69a8"><circle cx="238" cy="240" r="12"/><rect x="258" y="232" width="30" height="8" rx="4"/><rect x="226" y="266" width="60" height="9" rx="4"/><rect x="226" y="280" width="44" height="9" rx="4"/></g>
+    <!-- Gallery: a grid of four tiles. -->
+    <rect x="320" y="208" width="96" height="96" rx="24" fill="#ff9e64"/>
+    <g fill="#ad6b44"><rect x="336" y="224" width="28" height="28" rx="7"/><rect x="372" y="224" width="28" height="28" rx="7"/><rect x="336" y="260" width="28" height="28" rx="7"/><rect x="372" y="260" width="28" height="28" rx="7"/></g>
+    <!-- Image with a caption. -->
+    <rect x="320" y="320" width="96" height="96" rx="24" fill="#ffd60a"/>
+    <g fill="#ad9207"><rect x="336" y="336" width="64" height="32" rx="8"/><rect x="336" y="378" width="60" height="9" rx="4"/><rect x="336" y="392" width="40" height="9" rx="4"/></g>
   </g>
 </svg>

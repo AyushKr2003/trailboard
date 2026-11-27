@@ -93,6 +93,11 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
 
 ### Changed
 
+- **A new mark.** The app icon is now a trail of five pages stepping down
+  the board, each a skeleton of a different kind of page, in the default
+  theme's colours (blue-grey, blue, magenta, orange, yellow). No key behind
+  it any more. The one-colour icon and the welcome page's mark follow it.
+
 - **Much less CPU when nothing moves.** The window now sleeps until a
   page paints, input comes, or a timer is due, instead of redrawing at
   the display's rate all the time, and a frame that would look the same
@@ -194,10 +199,6 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
   rounded like the cards' corners and follow the *Corners* setting
   (square corners, square turns). The sidebar's trails and the welcome
   page's drawn board turn the same way.
-
-- **A new mark.** The app icon, its one-colour version and the welcome
-  page's mark are now a dark keyboard key whose legend is a page, a trail
-  turning at rounded right angles, and the page it opened, glowing amber.
 
 ### Fixed
 

@@ -95,24 +95,30 @@ tests check it stays inside its box at every size.
 
 ## The mark
 
-A keyboard key, seen from a little above, in charcoal: its skirt shows most
-at the front, its top is dished. Its legend is what Trailboard does, drawn
-in the board's own geometry: a page, a trail that leaves its side and turns
-at rounded right angles, and the page it opened, in amber with a soft glow.
-A key, because Trailboard is driven from the keyboard; a trail between
-pages, because that is what it keeps.
+A trail of five pages stepping down the board, each joined to the page it
+opened by a short straight line: what Trailboard keeps, drawn in the
+board's own geometry. There is no tile or key behind it; the pages stand
+on whatever is under them. Each page is a loading skeleton of a different
+kind of page (a picture page, an article, a profile, a gallery, an image
+with a caption), so the trail reads as many different pages, not copies.
 
-- App icon (`share/trailboard.svg`): the key and its legend, with a soft
-  contact shadow. The glow is a filter; a renderer without filters draws
-  the legend without it.
-- Symbolic (`trailboard-symbolic.svg`, 16 px, one colour): the key's
-  outline and the legend.
-- The welcome page's mark: the same key at 26 px, in its own colours (not
-  the theme's), so the mark looks the same everywhere.
+Colours are the default theme's: the first page `#a9b1d6` (a blue-grey
+that reads on dark and light backgrounds alike), then blue, magenta,
+orange and the accent yellow. Each step of the trail takes the colour of
+the page it leads to; a skeleton's bars are its page's colour, darker.
 
-Chosen by the owner on 2026-11-22 after seven rounds of studies (flat
-marks of trails, letters and pages, then visual styles; the keycap and
-frosted glass styles were the ones liked, and the dark key, "K2", won).
+- App icon (`share/trailboard.svg`): the skeleton pages. No filters or
+  masks, so launchers that draw SVG without them (Qt) see the same icon.
+- Symbolic (`trailboard-symbolic.svg`, 16 px, one colour): the five pages
+  plain, on a 4 px grid, joined.
+- The welcome page's mark: the pages plain at 26 px, in their own colours
+  (not the theme's), so the mark looks the same everywhere. Skeletons only
+  show from about 48 px; below that they are noise.
+
+Chosen by the owner on 2026-11-27 ("L"), replacing the dark key ("K2") of
+2026-11-22: the owner asked for no key behind the mark, picked the path
+of pages on a board from a fresh round, then its five-page path-only form,
+the default theme's colours as a rainbow trail, and skeleton pages.
 
 ## Motion
 

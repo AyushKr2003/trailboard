@@ -1,8 +1,7 @@
 //! Page navigation extras.
 
-use scene::caret;
 use scene::keys::{self, Action as KeyAction};
-use scene::{NodeId, Rect};
+use scene::{caret, NodeId, Rect};
 
 use crate::app::{App, PageKeys};
 use crate::ui::omnibox::{Omnibox, Target};

@@ -1,6 +1,11 @@
 //! The state a page shares with its CEF handlers: size, scale, frame, popup.
 
-use crate::*;
+use std::cell::RefCell;
+
+use cef::*;
+
+use crate::popup::{self, IRect};
+use crate::{cosmetic, inspector, javascript_on, media, note_activity, page_zoom, PageKind, PaintFrame, send_dev_tools};
 
 pub(crate) struct Shared {
     pub(crate) key: u64,
@@ -162,5 +167,19 @@ impl Shared {
         }
         f.bump(None);
         note_activity();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zoom_level_matches_chromium_factor() {
+        for s in [0.5f32, 1.0, 1.25, 2.0] {
+            let factor = 1.2f64.powf(zoom_level_for(s));
+            assert!((factor - s as f64).abs() < 1e-9, "{s}: {factor}");
+        }
+        assert_eq!(zoom_level_for(1.0), 0.0);
     }
 }

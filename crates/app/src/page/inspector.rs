@@ -2,9 +2,7 @@
 
 use std::time::Instant;
 
-use scene::Vec2;
-use scene::dock;
-use scene::{motion, NodeId, Rect};
+use scene::{dock, motion, NodeId, Rect, Vec2};
 use web::Page;
 
 use crate::app::{App, Card, DOCK_GAP, dock_key, Drag, FULL_FPS, PageKeys};

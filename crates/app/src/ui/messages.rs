@@ -3,12 +3,10 @@
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
-use scene::hint;
-use scene::jump;
 use scene::keys::{self, Action as KeyAction};
 use scene::liveness::Awake;
 use scene::userkeys::{self, Step};
-use scene::{Node, NodeId, read};
+use scene::{hint, jump, Node, NodeId, read};
 
 use crate::app::{App, local_ms, now_ms, PageKeys};
 use crate::ui::omnibox::{Omnibox, Target};

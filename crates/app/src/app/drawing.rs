@@ -4,11 +4,9 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use compositor::{Background, Layer, Quad, Renderer, Shape};
-use scene::dock;
 use scene::keys::Outcome;
 use scene::settings::self as prefs;
-use scene::userkeys;
-use scene::{Edge, motion, Node, NodeId, read, Rect, selection, Vec2};
+use scene::{dock, Edge, motion, Node, NodeId, read, Rect, selection, userkeys, Vec2};
 
 use crate::dev::script::Script;
 use crate::keyboard::keymap;

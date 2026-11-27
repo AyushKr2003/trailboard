@@ -1,10 +1,9 @@
 //! Jumps, marks, saved pages.
 
-use scene::caret;
 use scene::jump::{self, Before, BoardSpot, ScrollSpot};
 use scene::keys::Action as KeyAction;
 use scene::nav::{self, Dir};
-use scene::{Node, NodeId};
+use scene::{caret, Node, NodeId};
 
 use crate::app::{App, Confirm, now_ms, PageKeys};
 use crate::ui::omnibox::{Omnibox, Target};

@@ -29,7 +29,7 @@ use adblock::Engine as Rules;
 use adblock::lists::{FilterSet, ParseOptions, RuleTypes};
 use cef::*;
 
-use crate::{WebEvent, emit};
+use crate::{emit, WebEvent};
 
 /// Whether blocking is off on the page at a URL (a site the user allowed).
 type Allowed = Box<dyn Fn(&str) -> bool + Send + Sync>;

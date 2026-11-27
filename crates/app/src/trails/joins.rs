@@ -4,10 +4,8 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use compositor::{Layer, Quad, Shape, Text};
-use scene::dock;
-use scene::hint;
-use scene::liveness::Awake;
-use scene::{Camera, Edge, liveness, NodeId, read, Rect, Vec2};
+use scene::liveness::{self, Awake};
+use scene::{Camera, dock, Edge, hint, NodeId, read, Rect, Vec2};
 use winit::keyboard::NamedKey;
 
 use crate::app::{App, Card, DOCK_GAP, Drag, FULL_FPS, Media, PageKeys, ReadMorph, stack_step_px, UNSEEN_FPS};

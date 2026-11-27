@@ -1,6 +1,11 @@
 //! Starting and stopping CEF: the process handlers, command-line switches, engine versions.
 
-use crate::*;
+use std::path::Path;
+use std::sync::atomic::Ordering;
+
+use cef::{*, args::Args};
+
+use crate::{emit, epoch, MAX_PUMP_DELAY, nanos_at, prefs, PUMP_DUE, render_node, sandbox, schedule_pump, WebEvent};
 
 wrap_app! {
     struct TrailApp;
@@ -249,4 +254,27 @@ pub(crate) fn extra_switches(s: &str) -> Vec<(String, Option<String>)> {
             (!name.is_empty()).then(|| (name.to_string(), value))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extra_switches_reads_names_and_values() {
+        let s = |n: &str, v: Option<&str>| (n.to_string(), v.map(str::to_string));
+        assert_eq!(
+            extra_switches("  --disable-gpu-compositing\t--use-gl=angle disable-gpu -- --=x"),
+            vec![s("disable-gpu-compositing", None), s("use-gl", Some("angle")), s("disable-gpu", None)]
+        );
+        assert!(extra_switches("").is_empty());
+    }
+
+    /// The engine the tests load is the one at `CEF_PATH`, which the build
+    /// already checked is this version (`cef-dll-sys` reads its archive.json).
+    #[test]
+    fn the_loaded_engine_reports_its_version() {
+        assert_eq!(loaded_engine_version(), built_engine_version());
+        assert!(built_engine_version().0 > 100);
+    }
 }

@@ -3,8 +3,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use scene::dock;
-use scene::{Camera, Node, NodeId, read, Rect, Vec2};
+use scene::{Camera, dock, Node, NodeId, read, Rect, Vec2};
 use winit::window::Window;
 
 use super::{App, DOCK_GAP, DockParts, Hit, READ_BAR};

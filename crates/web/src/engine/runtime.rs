@@ -1,6 +1,12 @@
 //! When to pump CEF, waking the app, paint counters, and the process-wide lookups pages consult (colour scheme, JavaScript, zoom, DevTools ids).
 
-use crate::*;
+use std::cell::RefCell;
+use std::rc::Rc as StdRc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use cef::*;
+
+use crate::{EVENTS, WebEvent};
 
 /// The longest CEF goes unpumped even when it asked for nothing (CEF's own
 /// external-pump sample does the same: some work is never scheduled).

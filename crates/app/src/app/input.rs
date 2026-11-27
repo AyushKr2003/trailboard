@@ -2,10 +2,9 @@
 
 use std::time::{Duration, Instant};
 
-use scene::dock;
 use scene::keys::{self, Outcome};
 use scene::userkeys::{self, Mode as KeyMode};
-use scene::{Node, NodeId, Rect, selection, Vec2};
+use scene::{dock, Node, NodeId, Rect, selection, Vec2};
 use web::MouseButton as WebButton;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase};
 use winit::keyboard::{KeyCode, NamedKey};

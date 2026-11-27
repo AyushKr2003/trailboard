@@ -2,9 +2,7 @@
 
 use std::time::Instant;
 
-use scene::hint;
-use scene::scrolltarget;
-use scene::{NodeId, Rect};
+use scene::{hint, NodeId, Rect, scrolltarget};
 
 use crate::app::{App, LinkHints, PageKeys, SCROLL_FLASH};
 use crate::keyboard::jumps::SectionAsk;

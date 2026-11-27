@@ -1,6 +1,23 @@
 //! One live web page (`Page`) and what the app can ask of it; cookie jars; small helpers.
 
-use crate::*;
+pub mod caret;
+pub mod dialog;
+pub mod download;
+pub mod field;
+pub mod focus;
+pub mod inspector;
+pub mod links;
+pub mod media;
+pub mod menu;
+pub mod pager;
+pub mod permission;
+pub mod scroll;
+pub mod text;
+
+use cef::*;
+use std::rc::Rc as StdRc;
+use crate::{DARK, EditCommand, keys, PageClient, PageDisplay, PageDownloads, PageFind, PageKind, PageLife, PageLoad, PageMenu, PageRender, PageRequests, PaintFrame, PopupState, PRECISE_SCROLL, prefs, send_dev_tools, Shared, shield};
+use std::cell::RefCell;
 
 /// One live web page, rendered off screen.
 pub struct Page {
@@ -668,4 +685,22 @@ pub mod flags {
     pub const LEFT_MOUSE: u32 = 1 << 4;
     pub const MIDDLE_MOUSE: u32 = 1 << 5;
     pub const RIGHT_MOUSE: u32 = 1 << 6;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn js_strings_are_escaped() {
+        assert_eq!(js_string("a\"b\\c\nd"), r#""a\"b\\c\nd""#);
+        assert_eq!(js_string("</script>\u{2028}"), r#""\u003c/script\u003e\u2028""#);
+        assert_eq!(js_string("\u{1}é😀"), "\"\\u0001é😀\"");
+    }
+
+    #[test]
+    fn utf16_lengths() {
+        assert_eq!(utf16_len("aé"), 2);
+        assert_eq!(utf16_len("😀"), 2);
+    }
 }

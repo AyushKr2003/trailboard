@@ -1,6 +1,10 @@
 //! What pages tell the app (`WebEvent`), and the page kinds, cursors and edit commands that go with it.
 
-use crate::*;
+use std::cell::RefCell;
+
+use cef::*;
+
+use crate::{caret, dialog, download, field, focus, links, menu, note_activity, pager, permission, scroll};
 
 /// Something a page asked the app to do. Drained once per frame with [`drain_events`].
 #[derive(Debug, Clone)]

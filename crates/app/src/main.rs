@@ -13,11 +13,9 @@ mod ui;
 
 use dev::perf;
 use system::{crash, launch};
-
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Instant;
-
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::platform::pump_events::{EventLoopExtPumpEvents, PumpStatus};
 

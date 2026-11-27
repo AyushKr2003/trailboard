@@ -1,7 +1,6 @@
 //! The end-to-end script runner (`TRAILBOARD_SCRIPT`).
 
-use scene::pagezoom;
-use scene::{NodeId, Rect, Vec2};
+use scene::{NodeId, pagezoom, Rect, Vec2};
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, TouchPhase};
 use winit::keyboard::ModifiersState;

@@ -3,9 +3,8 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use scene::pagezoom;
 use scene::settings::{self as prefs, Settings};
-use scene::{NodeId, placement};
+use scene::{NodeId, pagezoom, placement};
 
 use crate::app::{App, PageKeys, system_locale};
 use crate::ui::omnibox::{Omnibox, Target};

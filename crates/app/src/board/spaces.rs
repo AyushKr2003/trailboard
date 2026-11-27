@@ -3,11 +3,8 @@
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
-use scene::Edge;
-use scene::History;
-use scene::Node;
 use scene::settings::self as prefs;
-use scene::{Camera, NodeId, Scene};
+use scene::{Camera, Edge, History, Node, NodeId, Scene};
 use storage::spaces::SpaceId;
 
 use crate::app::{App, DOCK_BIT, Drag, KEY_ID_BITS, now_ms, page_key, TOAST_FOR};

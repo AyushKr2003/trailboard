@@ -5,11 +5,8 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Instant;
 
-use scene::dock;
-use scene::keys;
 use scene::settings::Settings;
-use scene::userkeys;
-use scene::{Camera, History, motion, Scene, Selection, Vec2};
+use scene::{Camera, dock, History, keys, motion, Scene, Selection, userkeys, Vec2};
 use storage::spaces::SpaceIndex;
 use web::SpawnBeside;
 use winit::keyboard::ModifiersState;

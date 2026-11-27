@@ -2,8 +2,7 @@
 
 use std::time::Duration;
 
-use scene::keys;
-use scene::{Node, NodeId, Rect, Vec2};
+use scene::{keys, Node, NodeId, Rect, Vec2};
 use web::EditCommand;
 use web::menu::{MenuAction, MenuItem};
 use winit::dpi::{PhysicalPosition, PhysicalSize};

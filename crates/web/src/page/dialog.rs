@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 use cef::*;
 
-use crate::{WebEvent, emit};
+use crate::{emit, WebEvent};
 
 /// Which dialog a page shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

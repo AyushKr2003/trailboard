@@ -1,7 +1,6 @@
 //! Page dialogs.
 
-use scene::NodeId;
-use scene::pagezoom;
+use scene::{NodeId, pagezoom};
 
 use crate::app::{App, Confirm};
 use crate::ui::omnibox::{Omnibox, Target};

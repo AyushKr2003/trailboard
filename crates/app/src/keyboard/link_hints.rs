@@ -3,9 +3,7 @@
 use std::time::Instant;
 
 use compositor::{Layer, Quad, Shape, Text};
-use scene::hint;
-use scene::scrolltarget;
-use scene::{NodeId, Rect, Vec2};
+use scene::{hint, NodeId, Rect, scrolltarget, Vec2};
 use web::MouseButton as WebButton;
 use winit::keyboard::NamedKey;
 

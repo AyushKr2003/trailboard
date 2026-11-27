@@ -1,6 +1,7 @@
 //! A page's painted pixels (`PaintFrame`) and what changed in them.
 
-use crate::*;
+
+use crate::popup::{self, IRect};
 
 /// Latest painted frame of a page, BGRA8, tightly packed.
 #[derive(Default)]
@@ -65,4 +66,66 @@ pub fn paint_css(px: (u32, u32), recent: &[((i32, i32), f32)]) -> (f32, f32) {
     }
     let s = recent.first().map_or(1.0, |r| r.1).max(0.01);
     (px.0 as f32 / s, px.1 as f32 / s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn r(x: i32, y: i32, w: i32, h: i32) -> IRect {
+        IRect { x, y, w, h }
+    }
+
+    fn frame() -> PaintFrame {
+        PaintFrame { width: 100, height: 50, ..Default::default() }
+    }
+
+    #[test]
+    fn changed_since_unions_the_paints_after_a_serial() {
+        let mut f = frame();
+        f.bump(Some(r(10, 10, 2, 16))); // 1: a caret
+        f.bump(Some(r(40, 5, 10, 10))); // 2
+        f.bump(Some(r(0, 30, 5, 5))); // 3
+        assert_eq!(f.changed_since(3), Some(IRect::default()), "nothing new");
+        assert_eq!(f.changed_since(2), Some(r(0, 30, 5, 5)));
+        assert_eq!(f.changed_since(1), Some(r(0, 5, 50, 30)));
+        assert_eq!(f.changed_since(0), Some(r(0, 5, 50, 30)));
+    }
+
+    #[test]
+    fn changed_since_is_clamped_to_the_frame() {
+        let mut f = frame();
+        f.bump(Some(r(-5, 40, 200, 30)));
+        assert_eq!(f.changed_since(0), Some(r(0, 40, 100, 10)));
+    }
+
+    #[test]
+    fn changed_since_doesnt_know_after_a_whole_frame_change_or_when_too_far_behind() {
+        let mut f = frame();
+        f.bump(Some(r(1, 1, 1, 1)));
+        f.bump(None); // a popup, a resize
+        f.bump(Some(r(1, 1, 1, 1)));
+        assert_eq!(f.changed_since(0), None);
+        assert_eq!(f.changed_since(1), None);
+        assert_eq!(f.changed_since(2), Some(r(1, 1, 1, 1)));
+        for _ in 0..DAMAGE_KEPT {
+            f.bump(Some(r(1, 1, 1, 1)));
+        }
+        assert_eq!(f.changed_since(2), None, "serial 3 is forgotten");
+        assert_eq!(f.changed_since(3), Some(r(1, 1, 1, 1)));
+    }
+
+    #[test]
+    fn a_paint_is_matched_to_the_view_size_it_was_laid_out_at() {
+        // Card 1024×720 at 0.5, then read at 1440×866 at 2.
+        let recent = [((1440, 866), 2.0), ((1024, 720), 0.5)];
+        assert_eq!(paint_css((2880, 1732), &recent), (1440.0, 866.0));
+        // The old paint, still showing after the resize.
+        assert_eq!(paint_css((512, 360), &recent), (1024.0, 720.0));
+        // Rounding is tolerated.
+        assert_eq!(paint_css((513, 360), &recent), (1024.0, 720.0));
+        // Unknown: the pixels over the newest scale.
+        assert_eq!(paint_css((800, 600), &recent), (400.0, 300.0));
+        assert_eq!(paint_css((10, 10), &[]), (10.0, 10.0));
+    }
 }

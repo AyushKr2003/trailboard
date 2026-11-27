@@ -20,8 +20,7 @@
 use std::time::Instant;
 
 use compositor::{Layer, Quad, Renderer, Shape, Text};
-use scene::userkeys;
-use scene::{Rect, Vec2};
+use scene::{Rect, userkeys, Vec2};
 
 use crate::ui::theme::{rgb, Theme};
 

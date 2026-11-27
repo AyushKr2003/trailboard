@@ -26,8 +26,8 @@
 //! ([`set_do_not_track`]) and images ([`set_images`]).
 
 use std::cell::RefCell;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use cef::*;
 

@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use cef::*;
 
-use crate::{WebEvent, emit};
+use crate::{emit, WebEvent};
 
 /// What a site asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

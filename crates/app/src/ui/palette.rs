@@ -12,14 +12,11 @@
 use std::collections::{HashMap, HashSet};
 
 use compositor::{Layer, Quad, Renderer, Shape, Text};
-use scene::command;
 use scene::download::{self, Downloads, State};
-use scene::pagetext;
 use scene::palette::{self, Candidate};
 use scene::search::Resolved;
 use scene::settings::Settings;
-use scene::userkeys;
-use scene::{Node, NodeId, Rect, Scene, Vec2};
+use scene::{command, Node, NodeId, pagetext, Rect, Scene, userkeys, Vec2};
 use storage::pagetext::Visit;
 use storage::spaces::{SpaceId, SpaceIndex};
 

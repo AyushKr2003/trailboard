@@ -2,12 +2,11 @@
 
 use std::time::Instant;
 
-use scene::caret;
 use scene::jump::Before;
 use scene::keys::{self, Action as KeyAction};
 use scene::nav::{self, Dir};
 use scene::settings::self as prefs;
-use scene::{Change, Edge, motion, Node, NodeId, placement, read, Rect, Vec2};
+use scene::{caret, Change, Edge, motion, Node, NodeId, placement, read, Rect, Vec2};
 use web::Page;
 
 use crate::app::{App, Card, FULL_FPS, home_relative, PageKeys};

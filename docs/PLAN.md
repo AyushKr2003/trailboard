@@ -1088,11 +1088,11 @@ loaded by Trailboard and Ref A in every case.
     already there). Keeps the CEF → app rule (no app code in CEF
     callbacks). Removing this copy altogether (handing CEF's buffer to
     the renderer) would break that rule: owner's call, ask first.
-  - 🟡 **6e. Draw less.** Raise `PARTIAL_MAX` (try 0.9) so a large playing
+  - ✅ **6e. Draw less.** Raise `PARTIAL_MAX` (try 0.9) so a large playing
     card redraws only its own rect; and/or skip the background shader
     under opaque cards. Check no seams (screenshots), as for the partial
     redraw.
-    **Code done 2026-11-27, uncommitted, not yet measured.** Master run
+    **Done 2026-11-27, on branch `perf-6e` (not merged).** Master run
     45845659696 (e1edf21) confirmed 6a on all three codecs: main process
     318–341 % of 359–367 %, `render` 86–91 % of the time, 0 partial
     frames; the card is ~1425×800 of 1920×1080 (55 %, just over 0.5).
@@ -1127,7 +1127,23 @@ loaded by Trailboard and Ref A in every case.
     new texture (resize) means `None`; whole-page damage is the page's
     rect; and the canvas is used when the frame's layout equals the last
     one shown (`shown_layout`: only page pixels changed), even in motion.
-    **To measure next:** the same two-run comparison on the fix.
+    **Result** (perf-6e run 45973419447, both video cases on Xeon
+    6975P-C): every video frame partial (30/30 a second), 12.7–13.1
+    ms/frame, `render` 38–39 % of the time.
+
+    | Case | master (45970171546) | perf-6e final | Chrome, same job |
+    |---|---|---|---|
+    | video-vp9 | 304 % (9.3× Chrome) | **174 %** (209 % before the fix, same CPU) | 40.5 % → 4.3× |
+    | video-h264 | 368 % (8.1× Chrome) | **165 %** | 33.9 % → 4.9× |
+    | pan | 366 % | 352 % (more frames: 35 → 53/s) | — |
+    | idle / still | 2.8 % / 0.7 % | 3.0 % / 0.6 % | 0.7 % / 0.3 % |
+
+    Video roughly halved; the goal (≤ 2× Chrome) isn't met yet. The
+    screenshots are right (card corners, ring, edges, overlapping cards).
+    CEF paints at the video's 30/s, not 60, so **6c has little to win**
+    here. The main process is still ~135 % while `render` is only ~38 % of
+    the main thread's time: llvmpipe's worker threads, the canvas copy, and
+    the `on_paint` copy plus upload (6d). Next: 6d, then 6b.
   - **6f. Report.** Update the table at the top of M16 with CI and
     laptop numbers; decide with the owner whether dmabuf paint
     (`on_accelerated_paint`, §5) becomes its own milestone.
@@ -1367,13 +1383,18 @@ screenshot check for visual changes.
 ## 6. Handoff (updated at the end of every session)
 
 **Last session:** 2026-11-27 (fifty-first): read master run 45845659696
-(it confirms 6a's split on vp9, h264 and AV1); **M16 step 6e written**
-(occlusion under opaque pages + `PARTIAL_MAX` 0.9, see 6e), unit-tested,
-clippy clean, **uncommitted on `master`**. Pushing `perf-6e` and
-dispatching the bench was blocked by this session's permission check,
-so it waits for the owner. **Next up:** commit to `perf-6e`, push,
-dispatch the two runs in 6e's "To measure", read them (CPU, partial/s,
-render ms, screenshots for seams); then 6c.
+(it confirms 6a's split on vp9, h264 and AV1); **M16 step 6e done** on
+branch `perf-6e` (pushed, not merged): no drawing under opaque pages,
+`PARTIAL_MAX` 0.9, a page repainted whole still redrawn only where it
+shows, and the canvas kept while only page pixels change. **Video CPU in
+CI roughly halved** (vp9 304 → 174 %, h264 368 → 165 %; ~4.5× Chrome,
+was ~9×); idle, still and pan no worse (table in 6e). Verified: unit
+tests, clippy, three CI runs (45970171546 master, 45971592897 and
+45973419447 perf-6e) with screenshots checked. Not verified: the laptop
+(owner: CI only), a docked inspector or Solo by eye. **Next up:** owner
+to say whether `perf-6e` merges into master; then 6d (copy less in
+`on_paint`), then 6b; 6c looks moot (CEF paints at 30/s for a 30 fps
+video).
 
 **Session before:** 2026-11-26 (fiftieth): **M16 step 6a done**; the
 breakdown is in 6a: ~92 % of the main thread is `Renderer::render`

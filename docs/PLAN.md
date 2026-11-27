@@ -1581,9 +1581,13 @@ filter list, media grace, wallpaper while followed, perf line),
 `IDLE_TICK` 1 s and `IDLE_DRAW` 5 s as nets, the perf line written from
 `tick`. Decided: 250 ms, not 1 s, for the pump net until a bench shows
 nothing relies on it. Verified: build, clippy, unit tests; not run
-locally (CI only). **Next up:** a CI run of `idle,still,video-h264`
-(video must still play); then the owner merges `perf-idle`; then PB1
-(1–2).
+locally (CI only). Measured (run 46026446381, Trailboard ÷ Chrome in the
+same job): **idle 0.9 % vs 0.6 % (1.5×; was 2.4 %, 4×), still 0.2 % vs
+0.3 % (below Chrome; was 0.8 %)**, 0 skipped frames and 0 paints at rest;
+video-h264 plays 3/3, 288.5 % vs 36.3 % (7.9×, the same ratio as
+before, on an EPYC 9V74), so the 250 ms pump net delayed nothing seen.
+PB3's goal is met, so it left BUGS.md. **Next up:** the owner merges
+`perf-idle`; then PB1 (1–2).
 
 **Session before:** 2026-11-27 (fifty-third): **code layout**, asked by
 the owner ("work on the folder structure", then "still app folder has

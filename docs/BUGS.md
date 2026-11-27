@@ -7,7 +7,9 @@ first is the biggest gap. Move an entry into its milestone in
 
 **Research:** 2026-11-27, against the code at `3053e6f`; each PB's
 "Next to try" is in the order to take it up. Suggested order across
-them: PB3, PB1 (1–2), PB2 (1–3), PB4 (1–3), then dmabuf.
+them: PB1 (1–2), PB2 (1–3), PB4 (1–3), then dmabuf. (PB3, idle, was
+fixed on `perf-idle`: idle 0.9 % vs Chrome's 0.6 %, still 0.2 % vs 0.3 %,
+run 46026446381; the story is in PLAN.md's Handoff.)
 
 **Source:** bench run [46010069445](https://github.com/AyushKr2003/trailboard/actions/runs/46010069445)
 (2026-11-27, Trailboard `5aa154c`, all six cases, 3 runs each, medians).
@@ -153,67 +155,6 @@ only.
 
 **Goal.** No reference browser has a board, so compare with ourselves:
 halve it (≤ 175 %), keeping the motion smooth in the screenshots.
-
-## PB3. Idle: 2.3× Chrome's CPU, with nothing happening 🟡 (half done)
-
-**Seen.** `idle` (start card only, EPYC 9V74): 2.4 % CPU, 2.0 % of it in the
-main process, against Chrome's 0.6 % (0.4 % in its browser process).
-Trailboard's counters: **1.7 page paints/s**, 1.7 frames presented/s (all
-partial, 3 ms each), and **5 renders/s skipped as unchanged**. In `still`
-(no paints at all) there are still **4 renders/s skipped**, and 0.7 % CPU.
-
-**Cause (to find).** Two things wake us when nothing changes:
-1. Something on the start card repaints ~1.7×/s. A blinking caret in a
-   focused text field is the first suspect (blinks are ~2/s); an animation
-   or a timer on the page is the other.
-2. The main loop asks for a frame ~4–5×/s that turns out unchanged
-   (`renderer.rs:500`, `skipped`). Something requests redraws on a timer
-   (HUD, hover, a clock, a pending save, `pump` scheduling) instead of only
-   on change.
-
-**Found (2026-11-27).**
-1. The 4 skipped renders a second were `IDLE_TICK`: the loop asked for a
-   frame at every 250 ms wake (`now >= deadline`, `next_deadline` never
-   later than `IDLE_TICK`), built every layer and threw it away.
-2. Every presented frame asked for one more (`animating()` was "the last
-   frame was new"), so each caret paint cost a second, skipped, build.
-3. The start page's field has `autofocus`: Chromium blinks its caret
-   ~2×/s. (The clock's digit roll adds ~37 frames once a minute.)
-
-**Done (uncommitted, to measure on CI).** The loop still wakes every
-`IDLE_TICK` for the timers `tick` polls, but draws by itself only every
-`IDLE_DRAW` (1 s; the draw polls the wallpaper and a decoding board
-photo). `web::wake()` (background threads handing something over) now
-counts as activity, so it draws at once; CEF's pump scheduling only
-wakes. A toast asks for a draw (`draw_wanted`). The loop keeps drawing
-only after a frame laid out anew (`Renderer::relaid`), not after one
-where only page pixels changed. The start page rests its caret after
-10 s without a key, click or focus (`caret-animation: manual`, Chromium
-139+): it stays shown, steady, as on the desktop.
-
-**Measured** (run 46023384146, `perf-idle` `e6fe8cc`, Trailboard ÷ Chrome
-in the same job): idle 1.4 % vs 0.6 % (**2.3×**, was 4.0×), paints
-1.7/s → 0, skipped 5/s → 1; still 0.6 % vs 0.3 % (2.0×, was 2.7×),
-skipped 4/s → 1. Video-h264 unchanged (260.8 % vs 33.9 %), but its 30
-skipped frames a second are gone.
-
-**Second step (uncommitted, to measure).** What still woke us: CEF's pump
-fallback (`MAX_PUMP_DELAY` 33 ms: every pump set the next one 33 ms on,
-so an idle app woke ~30×/s and ran all of `tick`), the 250 ms poll and
-the 1 s frame. Now: the pump fallback is 250 ms (CEF schedules its own
-work; the fallback is a net); what `tick` polls has its own time
-(`App::next_poll`: a field out in an editor, the user's filter list
-settling, a stopped video's grace, the desktop wallpaper only while the
-board follows it, the perf line), with `IDLE_TICK` 1 s as the net; a
-wallpaper change asks for a draw; `IDLE_DRAW` is 5 s, a net too. The
-`TRAILBOARD_PERF` line is written from `tick`, so it keeps coming once a
-second without drawing (its rates are over the real span).
-
-**Next to try.** Measure (`cases=idle,still,video-h264`), checking video
-still plays (a missed pump would show there). If idle is still over 1 %,
-try the pump fallback at 1 s, and see what CEF schedules at rest.
-
-**Goal.** Idle ≤ 1 % and still ≤ 0.5 %, near Chrome.
 
 ## PB4. About 150 MB more memory than Chrome 🟡
 

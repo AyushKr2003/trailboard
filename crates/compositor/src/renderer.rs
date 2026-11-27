@@ -77,6 +77,9 @@ pub struct Renderer {
     /// Frames presented and frames skipped as unchanged, since the start.
     pub presented: u64,
     pub skipped: u64,
+    /// The last frame presented was laid out differently from the one shown
+    /// before it (not only page pixels changed): something may be moving.
+    pub relaid: bool,
     /// Of `presented`, the frames redrawn only where page pixels changed.
     pub partial: u64,
     /// Page pixel bytes handed to the GPU, and the time spent in
@@ -333,6 +336,7 @@ impl Renderer {
             always_present: false,
             presented: 0,
             skipped: 0,
+            relaid: true,
             partial: 0,
             uploaded: 0,
             render_time: std::time::Duration::ZERO,
@@ -780,6 +784,7 @@ impl Renderer {
         self.queue.present(frame);
         self.last_frame = Some(key);
         self.last_layout = use_canvas.then_some(layout);
+        self.relaid = self.shown_layout != Some(layout);
         self.shown_layout = Some(layout);
         self.last_present = Some(now);
         self.presented += 1;

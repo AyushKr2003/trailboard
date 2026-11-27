@@ -14,7 +14,7 @@ use crate::system::desktop::Desktop;
 use crate::ui::omnibox::Target;
 use crate::ui::palette::{self, Command, Item};
 use crate::ui::theme::{rgb, text_on};
-use super::{anim_key, App, ARRANGE_HELP, BAR_BTN, BAR_CLOSE_MIN, BAR_GAP, BAR_H, BAR_NAV_MIN, Confirm, dock_key, DockParts, Drag, Hit, IDLE_TICK, LABELS_ALL_BELOW, menu_layer, page_key, PageKeys, PREFIX_PANEL_AFTER, PREVIEW_KEY, ReadMorph, SCROLL_FLASH, stack_step_px};
+use super::{anim_key, App, ARRANGE_HELP, BAR_BTN, BAR_CLOSE_MIN, BAR_GAP, BAR_H, BAR_NAV_MIN, Confirm, dock_key, DockParts, Drag, Hit, IDLE_DRAW, LABELS_ALL_BELOW, menu_layer, page_key, PageKeys, PREFIX_PANEL_AFTER, PREVIEW_KEY, ReadMorph, SCROLL_FLASH, stack_step_px};
 
 impl App {
     pub(crate) fn draw(&mut self) {
@@ -1160,7 +1160,7 @@ impl App {
 
         if let Some(r) = self.renderer.as_mut() {
             r.always_present = self.always_redraw;
-            self.frame_changed = r.render(bg, &layers);
+            self.frame_changed = r.render(bg, &layers) && r.relaid;
             if let Some(p) = self.perf.as_mut() {
                 let (paints, copied) = web::paint_stats();
                 let t = crate::dev::perf::Totals {
@@ -1500,9 +1500,14 @@ impl App {
         self.sync_ime();
     }
 
-    /// Whether the last frame drawn was new (something is moving).
+    /// Whether the last frame drawn was laid out anew (something is moving).
     pub fn animating(&self) -> bool {
         self.frame_changed
+    }
+
+    /// Whether something asked for a draw outside an event since last asked.
+    pub fn take_draw_wanted(&mut self) -> bool {
+        std::mem::take(&mut self.draw_wanted)
     }
 
     /// Whether a window event (input, resize, focus…) came since last asked.
@@ -1518,9 +1523,8 @@ impl App {
 
     /// The next time something changes without input or a page painting: a
     /// timer that shows or hides something, or one [`App::tick`] polls. The
-    /// loop sleeps until then at most, and never longer than [`IDLE_TICK`],
-    /// which keeps the rarer polled timers (dialogs, blocking-list refresh,
-    /// media going quiet) running.
+    /// loop draws by then at most, and never later than [`IDLE_DRAW`]
+    /// (it still wakes every [`IDLE_TICK`](super::IDLE_TICK) for the timers `tick` polls).
     pub fn next_deadline(&self, now: Instant) -> Instant {
         let saving = (self.dirty || self.places_dirty).then(|| self.last_save + Duration::from_secs(3) + Duration::from_millis(1));
         let candidates = [
@@ -1538,6 +1542,6 @@ impl App {
             Some(self.camera_changed + Duration::from_millis(251)),
             saving,
         ];
-        candidates.into_iter().flatten().filter(|t| *t > now).fold(now + IDLE_TICK, Instant::min)
+        candidates.into_iter().flatten().filter(|t| *t > now).fold(now + IDLE_DRAW, Instant::min)
     }
 }

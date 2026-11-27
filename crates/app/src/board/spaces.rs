@@ -44,6 +44,7 @@ impl App {
         log::info!("toast: {msg}");
         self.messages.push(&msg, now_ms());
         self.toast = Some((msg, Instant::now() + show));
+        self.draw_wanted = true;
     }
 
     /// Tell, once, that the last run crashed and where its report is.

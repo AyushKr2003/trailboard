@@ -138,8 +138,14 @@ pub(crate) const MIN_CARD: f32 = 240.0;
 /// How long a half-typed sequence waits before the panel of what can
 /// follow it shows (typed quickly, `gg` never shows it).
 pub(crate) const PREFIX_PANEL_AFTER: Duration = Duration::from_millis(400);
-/// The longest the event loop sleeps with nothing scheduled (see `App::next_deadline`).
+/// The longest the event loop sleeps with nothing scheduled: [`App::tick`]'s
+/// polled timers run this often.
 pub(crate) const IDLE_TICK: Duration = Duration::from_millis(250);
+/// The longest between draws with nothing scheduled (see
+/// `App::next_deadline`): what the draw itself polls (the wallpaper file,
+/// a board photo decoding) shows within this. Not every tick: a frame built
+/// to be skipped as unchanged 4 times a second was most of idle's CPU.
+pub(crate) const IDLE_DRAW: Duration = Duration::from_secs(1);
 /// How long after a page loads (or retitles itself) its text is read for history.
 pub(crate) const TEXT_SETTLE: Duration = Duration::from_millis(1200);
 /// How long the outline around a newly chosen scroll section shows.
@@ -557,9 +563,14 @@ pub(crate) struct App {
     pub(crate) started: Instant,
     pub(crate) script: Option<Script>,
     pub quit: bool,
-    /// The last draw presented a new frame: something may still be moving,
-    /// so the loop draws again at the display's rate.
+    /// The last draw presented a frame laid out differently from the one
+    /// before: something may still be moving, so the loop draws again at the
+    /// display's rate. (A frame where only page pixels changed doesn't: the
+    /// page's next paint asks for the next one.)
     pub(crate) frame_changed: bool,
+    /// Something changed outside a window event or a page's (a toast from a
+    /// polled timer): draw on this pass ([`App::take_draw_wanted`]).
+    pub(crate) draw_wanted: bool,
     /// A window event came since the loop last asked ([`App::take_event`]).
     pub(crate) event_seen: bool,
     /// Present every frame, as before frames were compared (`TRAILBOARD_REDRAW=always`).

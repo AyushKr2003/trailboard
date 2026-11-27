@@ -35,9 +35,16 @@ pub fn set_waker(wake: Box<dyn Fn() + Send + Sync>) {
     let _ = WAKER.set(wake);
 }
 
-/// Wakes the app's event loop (from any thread): call after handing the
-/// main thread something through a channel.
+/// Wakes the app's event loop (from any thread) and counts as activity, so
+/// the loop draws: call after handing the main thread something through a
+/// channel.
 pub fn wake() {
+    note_activity();
+    wake_loop();
+}
+
+/// Wakes the loop without asking for a frame (CEF wants pumping).
+fn wake_loop() {
     if let Some(w) = WAKER.get() {
         w();
     }
@@ -47,7 +54,7 @@ pub fn wake() {
 pub(crate) fn schedule_pump(delay_ms: i64) {
     let due = std::time::Instant::now() + std::time::Duration::from_millis(delay_ms.max(0) as u64);
     PUMP_DUE.fetch_min(nanos_at(due), Ordering::AcqRel);
-    wake();
+    wake_loop();
 }
 
 /// Page paints received from CEF, and the bytes `on_paint` copied for them,
@@ -64,7 +71,8 @@ pub(crate) fn note_activity() {
     ACTIVITY.fetch_add(1, Ordering::Relaxed);
 }
 
-/// A count that grows whenever CEF sent an event or a page painted.
+/// A count that grows whenever CEF sent an event, a page painted or
+/// [`wake`] was called.
 pub fn activity() -> u64 {
     ACTIVITY.load(Ordering::Relaxed)
 }

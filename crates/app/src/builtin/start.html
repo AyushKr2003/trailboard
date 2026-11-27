@@ -48,6 +48,9 @@ button, input, select { font: inherit; color: inherit; }
 :focus { outline: none; }
 :focus-visible { outline: 2px solid var(--accenttext); outline-offset: 2px; }
 input:focus-visible { outline: none; }
+/* After a while without typing the caret stops blinking and stays shown, as
+   on the desktop: a blinking caret repaints the page twice a second. */
+:root.rest * { caret-animation: manual; }
 ::selection { background: var(--accentsoft); }
 [hidden] { display: none !important; }
 svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5;
@@ -572,6 +575,17 @@ function clock() {
   const left = st.show_seconds ? 1000 - now.getMilliseconds() : 60000 - (now.getSeconds() * 1000 + now.getMilliseconds());
   tick = setTimeout(clock, left + 20);
 }
+
+// ---- caret ----------------------------------------------------------------
+// Any key, click or focus wakes the blink; 10 s without one rests it (`.rest`).
+let rest;
+function wakeCaret() {
+  document.documentElement.classList.remove("rest");
+  clearTimeout(rest);
+  rest = setTimeout(() => document.documentElement.classList.add("rest"), 10000);
+}
+for (const ev of ["keydown", "pointerdown", "focusin", "input"]) addEventListener(ev, wakeCaret, true);
+wakeCaret();
 
 // ---- drawing ------------------------------------------------------------
 

@@ -141,6 +141,7 @@ impl App {
             script: Script::from_env(),
             quit: false,
             frame_changed: true,
+            draw_wanted: false,
             event_seen: false,
             always_redraw: false,
             perf: None,

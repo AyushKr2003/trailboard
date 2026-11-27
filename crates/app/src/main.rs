@@ -140,7 +140,7 @@ fn main() -> ExitCode {
         last = now;
         app.tick(dt);
         let activity = web::activity();
-        let redraw = moving || event || now >= deadline || activity != seen_activity;
+        let redraw = moving || event || now >= deadline || activity != seen_activity || app.take_draw_wanted();
         seen_activity = activity;
         if redraw {
             // Delivered when the compositor is ready for a frame (winit waits
@@ -152,7 +152,10 @@ fn main() -> ExitCode {
             // tick stays counted from the last draw).
             deadline = deadline.min(app.next_deadline(Instant::now()));
         }
-        let timeout = engine.next_due().min(deadline).saturating_duration_since(Instant::now());
+        // Awake every `IDLE_TICK` for the timers `tick` polls; that alone
+        // doesn't draw.
+        let now = Instant::now();
+        let timeout = engine.next_due().min(deadline).min(now + app::IDLE_TICK).saturating_duration_since(now);
         if let PumpStatus::Exit(code) = event_loop.pump_app_events(Some(timeout), &mut app) {
             break code;
         }

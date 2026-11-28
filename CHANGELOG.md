@@ -222,6 +222,10 @@ log up to 2026-11-21 is in git: `git show f554118:CHANGELOG.md`.
 
 ### Fixed
 
+- **Solo no longer crashes Trailboard.** A page shown 1:1 is copied to
+  the screen rather than drawn, but page textures weren't allowed to be
+  copied from, so the GPU check stopped the app as soon as a card went
+  Solo.
 - **On Omarchy, Trailboard no longer re-reads the desktop theme twelve
   times a second.** Reading the theme files looked to it like the theme
   changing, so it read them again 80 ms later, for as long as it ran,
